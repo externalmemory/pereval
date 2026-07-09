@@ -1,0 +1,25 @@
+# never commit personal documents from this working directory
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Inspect
+logs/
+.inspect/
+
+# tooling
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
