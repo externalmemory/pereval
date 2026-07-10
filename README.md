@@ -8,7 +8,9 @@
 
 ## What this is
 
-Generic coding and Q&A benchmarks don't test whether an LLM agent can *develop, estimate, and validate a statistical model* under real time-series discipline. perEval probes that corner: tasks drawn from credit risk and macroeconomic loss modeling, where solutions are hard to find but cheap to verify objectively.
+Generic coding and Q&A benchmarks don't test whether an LLM agent can *develop, estimate, and validate a statistical model* under real time-series discipline. perEval probes that corner with tasks drawn from credit risk and macroeconomic loss modeling.
+
+Macro history is a single realized path (N = 1), so goodness-of-fit on real data can never be the verification target — a model that backtests well on the one path that happened proves little about the next one. Every perEval task is instead constructed so that objective verification exists *by design*: a known data-generating process planted on real covariates, a mathematical identity the solution must satisfy, a statistical guarantee whose coverage is measurable by simulation, or a planted data defect whose detection is mechanically checkable. See [docs/task-design.md](docs/task-design.md) for the full taxonomy.
 
 Planned task themes:
 

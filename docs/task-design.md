@@ -1,0 +1,103 @@
+# Task design: objective verification under N = 1
+
+## The problem
+
+Econometric model quality cannot be objectively verified against real history. There is
+one realized macro path; backtesting on it — however the holdout is carved — measures
+fit to a single draw, and cannot distinguish a sound model from a lucky one (or an
+unlucky sound model from a degenerate one that shrinks to the mean). Any eval that
+scores "out-of-sample fit on real data" inherits this and rewards the wrong thing.
+
+Pure synthetic data solves verification (the data-generating process is known, so exact
+answers exist and instances can be replicated without limit) but severs the connection
+to reality: clean simulated covariates don't exercise the judgment that makes real
+econometrics hard.
+
+## The principle
+
+**Realism and ground truth can live in different parts of the same task.** In a
+conditional modeling problem, realism belongs to the covariates; ground truth only needs
+to exist for the response given the covariates — or for a property of the solution that
+is checkable without any data-generating process at all.
+
+Objective verification must own one of: the data-generating process, a mathematical
+invariant, or a planted defect. It must never require owning the future. Fit to realized
+history is the one verification target that is banned.
+
+## Task families
+
+### 1. Plasmode (real covariates, planted response) — the workhorse
+
+Real macro series (FRED), with their true collinearity, autocorrelation, structural
+breaks, and short T; response series generated from a known conditional DGP (e.g.,
+Vasicek one-factor with a planted macro loading). The agent faces realistic difficulty;
+the scorer knows true parameters and the true conditional law, and can draw unlimited
+fresh response replications for out-of-sample scoring on the same real covariate path.
+
+- **Scoring:** oracle-anchored regret. The correct estimator's own sampling distribution
+  (wide at T ≈ 120 quarters) is estimated by replication; the agent is scored relative
+  to oracle / competent-baseline / degenerate-baseline anchors, never on absolute error.
+- **Misspecified variants:** some instances plant a DGP outside the obvious model class
+  (threshold effects, regime asymmetry). Scoring switches from parameter recovery to
+  predictive log-density on fresh simulated continuations.
+- **Author-bias risk:** the planted DGP is the author's choice. Mitigate by rotating DGP
+  families across instances and documenting the generator.
+
+### 2. Estimated DGP (model-mediated resampling)
+
+Fit a rich generator (regime-switching VAR, factor model with fat-tailed shocks) to real
+macro + loss history; the fitted object becomes the known DGP. Realism is inherited from
+data by estimation; ground truth holds by construction.
+
+- **Circularity risk:** a Gaussian-VAR generator rewards agents that fit Gaussian VARs.
+  Inject structure outside convenient model classes; rotate generator families.
+- Note: *plain* path resampling (block bootstrap) is not a member of this family. It
+  yields replication without ground truth — averaging a fit metric over resampled
+  pseudo-histories reduces its variance but still measures fit — and adds splice
+  artifacts and a stationarity assumption macro data violates. Use it only as a
+  variance-reduction supplement, never as the verification basis.
+
+### 3. Cross-sectional real data
+
+The N = 1 problem is specific to the time dimension. Public loan-level datasets (Freddie
+Mac, Fannie Mae) offer millions of real outcomes; tasks hold out *entities*, and
+discrimination/calibration metrics on real data carry honest error bars.
+
+- **Scope limit:** defaults are correlated through the macro factor, so the effective N
+  for anything macro-sensitive collapses to the number of observed cycles. Standard
+  errors cluster by period. This family verifies ranking and level (AUC, calibration by
+  segment) — never macro sensitivity.
+
+### 4. Discipline traps (process-verifiable, no DGP needed)
+
+Plant a defect in otherwise real data and score its detection or avoidance mechanically
+from the agent's code and output:
+
+- revised vs. real-time data vintages (FRED vs. ALFRED) in a backtest;
+- a feature that mechanically contains the target (leakage);
+- survivorship-filtered panels;
+- holdout hygiene (does the agent's code touch data it was told is out of bounds).
+
+One realized history suffices here: the truth is the planted defect.
+
+### 5. Identity and guarantee tasks (mathematically verifiable)
+
+Solutions hard to find, verifiable in seconds against an invariant:
+
+- annual-to-quarterly rating transition matrix conversion (the Markov embedding
+  problem: naive matrix roots yield negative/complex probabilities; verification is one
+  matrix exponentiation plus validity checks);
+- conformal / Jackknife+ prediction intervals scored on empirical coverage across
+  simulated replications against the finite-sample guarantee;
+- closed-form estimators checked against known answers on per-instance fresh data.
+
+Instances are trivially generated per run, which also neutralizes training-set
+contamination for this family.
+
+## Statistical treatment (all families)
+
+- k repeated runs per task instance; many generated instances per family.
+- Paired-difference comparisons between models on identical instances; standard errors
+  clustered at the task level.
+- Reported scores are anchored (degenerate → baseline → oracle), not raw.
+- No leaderboard claims the sample size cannot support.
