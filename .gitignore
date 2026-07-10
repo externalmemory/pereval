@@ -10,6 +10,10 @@ build/
 .venv/
 venv/
 
+# secrets — Inspect auto-loads .env; never commit API keys
+.env
+.env.*
+
 # Inspect
 logs/
 .inspect/
