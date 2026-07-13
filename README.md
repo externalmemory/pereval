@@ -42,7 +42,7 @@ tests/              scorer and harness tests
 
 ## License
 
-MIT
+MIT for this repository's own code. The ballistic task depends on [py-ballisticcalc](https://github.com/o-murphy/py-ballisticcalc) (LGPL-3.0), used as an unmodified installed dependency and not redistributed here, so it imposes no obligations on this code.
 
 -------
 
