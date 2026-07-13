@@ -23,6 +23,7 @@ from inspect_ai.solver import basic_agent, system_message
 from inspect_ai.tool import bash, python
 
 from pereval.scorers.ballistic import ballistic_scorer
+from pereval.tasks.ballistic.baselines import parabola_baseline
 from pereval.tasks.ballistic.generator import (
     build_truth,
     generate,
@@ -63,16 +64,9 @@ not have internet access. When predictions.csv is written and complete, submit.
 """
 
 
-@task
-def ballistic(
-    n_instances: int = 5,
-    seed: int | None = None,
-    oracle_n: int = 2000,
-    message_limit: int = 40,
-) -> Task:
+def _build_samples(n_instances: int, seed: int | None, oracle_n: int) -> list[Sample]:
     base = seed if seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
     seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
-
     samples = []
     for i, s in enumerate(seeds):
         bundle = generate(seed=int(s), oracle_n=oracle_n)
@@ -87,14 +81,35 @@ def ballistic(
                 metadata={"truth": build_truth(bundle)},
             )
         )
+    return samples
 
-    return Task(
-        dataset=samples,
-        solver=basic_agent(
+
+@task
+def ballistic(
+    n_instances: int = 5,
+    seed: int | None = None,
+    oracle_n: int = 2000,
+    message_limit: int = 40,
+    baseline: bool = False,
+) -> Task:
+    """The ballistic extrapolation task.
+
+    baseline=True swaps the agent for the naive per-category parabola baseline
+    (no model calls), producing the reference score models must beat. Run it with
+    any placeholder model, e.g. --model mockllm/model.
+    """
+    if baseline:
+        solver = parabola_baseline()
+    else:
+        solver = basic_agent(
             init=system_message(INSTRUCTIONS),
             tools=[bash(timeout=180), python(timeout=180)],
             message_limit=message_limit,
-        ),
+        )
+
+    return Task(
+        dataset=_build_samples(n_instances, seed, oracle_n),
+        solver=solver,
         scorer=ballistic_scorer(),
         sandbox=("docker", COMPOSE),
     )
