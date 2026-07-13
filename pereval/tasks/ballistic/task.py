@@ -1,11 +1,19 @@
 """Inspect task wrapper for the ballistic trajectory model-building task.
 
-Sandbox isolation is the point: each instance is generated host-side (where
-py-ballisticcalc lives) and only the neutral train.csv / test.csv are injected
-into the agent's container. The generator, the ground-truth oracle, and the
-ballistics engine never enter the sandbox, and the container has no network, so
-the agent cannot recognize the domain and re-simulate it. The ground truth
-travels host-side in sample metadata, read only by the scorer.
+Each instance is generated host-side (where py-ballisticcalc lives) and only the
+neutral train.csv / test.csv are injected into the agent's container. The
+generator, the ground-truth oracle, and the ballistics engine never enter the
+sandbox, and the ground truth travels host-side in sample metadata, read only by
+the scorer.
+
+What forces the agent to model the data rather than re-simulate it is that
+category identifiers are opaque and the ballistic parameters are randomized per
+run: there is no known load to look up, and any simulation would first require
+estimating each category's parameters from the training data, which is the task
+itself. The sandbox additionally has no network, which blocks the weaker
+shortcuts of installing the exact engine, downloading its drag tables, or
+querying an online calculator. It does not prevent the agent from recognizing the
+physics from the data, which is legitimate.
 
 Run (requires Docker and a model):
     inspect eval pereval/tasks/ballistic/task.py --model openai-api/zen/<id>
