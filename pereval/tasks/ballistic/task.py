@@ -68,8 +68,14 @@ several small snippets. Instead write a single self-contained script that import
 what it needs, reads both CSVs, fits your model, and writes predictions.csv in
 one run. The reliable workflow is to save that script to a file (for example
 `solution.py`) and run it with `python solution.py`, then edit the file and rerun
-until predictions.csv is complete and correct. Verify predictions.csv exists and
-has one row per test input before submitting.
+until predictions.csv is complete and correct.
+
+Produce output early. As soon as possible, write a COMPLETE predictions.csv with
+a simple model covering every test row, even a rough one, and only then refine
+it. Always keep a valid, complete predictions.csv on disk, so that a usable
+submission exists at any point. Do not spend your whole budget exploring models
+before writing any predictions. Verify predictions.csv exists and has one row per
+test input before submitting.
 """
 
 
