@@ -60,7 +60,16 @@ exactly:
 one row per test input, with category and x copied exactly from data/test.csv.
 
 You have Python with numpy, pandas, scikit-learn, statsmodels, and scipy. You do
-not have internet access. When predictions.csv is written and complete, submit.
+not have internet access.
+
+Each code execution runs in a FRESH interpreter: variables, imports, and loaded
+data do NOT carry over between executions. So do not build up state across
+several small snippets. Instead write a single self-contained script that imports
+what it needs, reads both CSVs, fits your model, and writes predictions.csv in
+one run. The reliable workflow is to save that script to a file (for example
+`solution.py`) and run it with `python solution.py`, then edit the file and rerun
+until predictions.csv is complete and correct. Verify predictions.csv exists and
+has one row per test input before submitting.
 """
 
 
@@ -89,7 +98,7 @@ def ballistic(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 40,
+    message_limit: int = 80,
     baseline: bool = False,
 ) -> Task:
     """The ballistic extrapolation task.
