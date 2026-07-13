@@ -44,6 +44,8 @@ inspect eval pereval/tasks/ballistic/task.py --model <provider/model>   # needs 
 python -m pereval.tasks.ballistic.generator --out-dir runs/demo --seed 1   # inspect one instance
 ```
 
+See [docs/setup.md](docs/setup.md) for the Python environment, Docker install (required only for the sandboxed evaluation), and model credentials.
+
 ## Layout
 
 ```
