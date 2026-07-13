@@ -56,6 +56,12 @@ Solutions hard to find, verifiable in seconds against an invariant:
 
 Instances are trivially generated per run, which also neutralizes training-set contamination for this family.
 
+### 6. Simulator-Owned DGP (Validated Physical Simulator, Controlled Covariate)
+
+Realism supplied by a validated numerical simulator rather than by real historical data, over a covariate the task designer controls. The implemented ballistic trajectory task is the example: a projectile point-mass simulator (py-ballisticcalc) generates y (impact height) as a function of x (distance) with noise injected into muzzle velocity and launch angle, per-run randomized per-category ballistic truth, and a held-out x range beyond the training range. The scorer owns the exact predictive distribution by Monte Carlo, so point accuracy, interval coverage, and interval sharpness are all measurable against an oracle.
+
+Unlike family 1, the covariate is a designed grid, not messy real data, and unlike family 5 there is no closed-form invariant; the ground truth is the simulator's own output. Two design obligations are specific to this family: keep the held-out regime inside the simulator's validated range (for the ballistic task, rifle held-out distances stay supersonic, so the extrapolation difficulty is drag curvature rather than an unvalidated transonic regime), and isolate the simulator from the agent (generate host-side, inject only neutral data, no simulator or network in the sandbox) so the agent must model rather than recognize and re-run the generator.
+
 ## Statistical Treatment (all Families)
 
 - k repeated runs per task instance; many generated instances per family.

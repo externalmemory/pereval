@@ -304,20 +304,29 @@ def generate(
     }
 
 
-def write_outputs(bundle: dict, out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
+def _csv_text(header: list[str], rows) -> str:
+    import io
 
-    with (out_dir / "train.csv").open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["category", "x", "y"])
-        w.writerows(bundle["train_rows"])
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(header)
+    w.writerows(rows)
+    return buf.getvalue()
 
-    with (out_dir / "test.csv").open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["category", "x"])
-        w.writerows(bundle["test_index"])
 
-    truth = {
+def train_csv_text(bundle: dict) -> str:
+    """Agent-visible training data: category,x,y."""
+    return _csv_text(["category", "x", "y"], bundle["train_rows"])
+
+
+def test_csv_text(bundle: dict) -> str:
+    """Agent-visible held-out inputs: category,x (no y)."""
+    return _csv_text(["category", "x"], bundle["test_index"])
+
+
+def build_truth(bundle: dict) -> dict:
+    """Scorer-only ground truth: meta, per-category true params, and the oracle."""
+    return {
         "meta": bundle["meta"],
         "categories": bundle["categories"],
         "test": [
@@ -325,8 +334,14 @@ def write_outputs(bundle: dict, out_dir: Path) -> None:
             for (cid, x) in bundle["test_index"]
         ],
     }
+
+
+def write_outputs(bundle: dict, out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "train.csv").write_text(train_csv_text(bundle))
+    (out_dir / "test.csv").write_text(test_csv_text(bundle))
     with (out_dir / "truth.json").open("w") as f:
-        json.dump(truth, f, indent=2)
+        json.dump(build_truth(bundle), f, indent=2)
 
 
 def main() -> None:

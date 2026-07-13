@@ -1,0 +1,10 @@
+services:
+  default:
+    build: .
+    command: ["tail", "-f", "/dev/null"]
+    init: true
+    # No network: the agent cannot fetch drag tables or pip-install a ballistics
+    # engine, and the domain cannot be confirmed against any online source.
+    network_mode: none
+    cpus: 2.0
+    mem_limit: 2gb

@@ -31,13 +31,26 @@ This is a demonstration of eval construction, not a production benchmark. Corner
 - **Sample size.** Task count is deliberately small and narrow. Scores reported here are task-level diagnostics, not model rankings. *(To be expanded.)*
 - **Judge reliability.** Where rubric scoring is unavoidable, judge-model agreement and circularity are open issues. *(To be expanded.)*
 
+## Tasks
+
+### Ballistic Trajectory Extrapolation
+
+The agent receives (category, x, y) training rows and must predict y with 95% prediction intervals at held-out distances beyond the training range. y is projectile drop simulated by py-ballisticcalc with noise on muzzle velocity and launch angle; the held-out window for rifle categories is kept supersonic, so the extrapolation trap is pure velocity-dependent drag. It scores point accuracy (MAE vs the true conditional mean), interval calibration (coverage), and sharpness (width), combined into an oracle-anchored Winkler interval score.
+
+Each instance is generated host-side and only neutral CSVs enter the agent's sandbox: the ballistics engine, the generator, and the ground-truth oracle stay out, and the container has no network, so the agent cannot recognize the domain and re-simulate it instead of modeling. Category identifiers are opaque, so a recognized load cannot be looked up either.
+
+```
+inspect eval pereval/tasks/ballistic/task.py --model <provider/model>   # needs Docker
+python -m pereval.tasks.ballistic.generator --out-dir runs/demo --seed 1   # inspect one instance
+```
+
 ## Layout
 
 ```
 pereval/            Python package: Inspect tasks and scorers
-  tasks/            task definitions (@task entry points)
-  scorers/          custom scorers + their validation tests
-tests/              scorer and harness tests
+  tasks/ballistic/  generator, Inspect task, Docker sandbox (no ballistics engine)
+  scorers/          custom scorers (pure scoring core + Inspect wrapper)
+tests/              scorer validation suite + generator/scorer integration
 ```
 
 ## License
