@@ -60,7 +60,10 @@ def test_oracle_predictions_score_to_zero_regret(bundle):
         for tp in truth["test"]
     }
     r = score_instance(truth, preds)
-    assert r["winkler_regret"] == pytest.approx(0.0, abs=1e-9)
+    # The scorer recomputes the oracle interval from the (4-decimal-rounded) mc
+    # samples, while these preds use the (5-decimal-rounded) stored pi95, so
+    # regret is rounding-scale rather than exactly zero.
+    assert r["winkler_regret"] == pytest.approx(0.0, abs=0.02)
     assert r["mae"] == pytest.approx(0.0, abs=1e-9)
     assert r["coverage"] == pytest.approx(0.95, abs=0.06)
     assert r["n_missing"] == 0

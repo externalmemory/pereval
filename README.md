@@ -44,11 +44,28 @@ inspect eval pereval/tasks/ballistic/task.py --model <provider/model>   # needs 
 python -m pereval.tasks.ballistic.generator --out-dir runs/demo --seed 1   # inspect one instance
 ```
 
+### Two-Body Orbit (Angle Prediction)
+
+A planet on a fixed elliptical orbit around a star. Once per day the angle alpha (degrees, in the orbital plane) between the direction to the star and a fixed distant-star reference is recorded, over a run of consecutive days spanning several orbits. The agent predicts alpha for future days. The signal is strictly periodic and follows Kepler's second law (fast near periapsis, slow near apoapsis), so this is the easiest of the three tasks: the structure is a repeating pattern to identify, and a precise elliptical-orbit fit extrapolates it almost exactly. Measurement noise is added to the recorded angles. The target is circular (wraps at 360, so 359 and 1 are two degrees apart) and scored accordingly.
+
+### Three-Body Orbit (Angle Prediction)
+
+A second, slower planet is added, with its own angle beta. Planet masses are negligible, so the two planets do not interact and each follows an independent Kepler orbit; "three-body" refers only to the observed configuration. The agent is given t, alpha, and beta and must predict beta for future days. It is harder than the two-body task on two counts: beta belongs to the outer planet, observed for only a few orbits (so its period and shape are less constrained and extrapolation error accumulates over a longer horizon), and alpha is an independent distractor with no bearing on beta that a disciplined model must recognize as irrelevant rather than exploit.
+
+The orbital tasks use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task; their naive baseline (`-T baseline=true`) is a harmonic (Fourier) regression that does not use Kepler's laws. Only the period, eccentricity, orbit orientation, and time of periapsis affect the observed angle, so orbit size and star mass are not modeled. Kepler's equation is solved in pure numpy, so no extra dependency is needed.
+
+```
+inspect eval pereval/tasks/orbit/task.py@twobody --model <provider/model>     # needs Docker
+inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=true --model mockllm/model
+```
+
+By the naive baseline, the three tasks bracket in difficulty as intended (two-body easiest, ballistic in the middle, three-body hardest).
+
 See [docs/setup.md](docs/setup.md) for the Python environment, Docker install (required only for the sandboxed evaluation), and model credentials.
 
-### Example Scores (Harness Functionality Check, Not a Model Ranking)
+### Example Scores (Ballistic Task; Harness Functionality Check, Not a Model Ranking)
 
-The numbers below come from a single generated instance (N = 1, seed 1) and exist only to show that the harness runs end to end and that the scorer discriminates. They are not a ranking of these models. With one instance there are no error bars, so the mid-field ordering is not robust and would likely reorder on another draw. Lower Winkler regret is better; coverage targets 0.95. "Parabola baseline" is the naive quadratic reference (`-T baseline=true`), not a model.
+The numbers below come from a single generated instance (N = 1, seed 1) of the ballistic task and exist only to show that the harness runs end to end and that the scorer discriminates. They are not a ranking of these models. With one instance there are no error bars, so the mid-field ordering is not robust and would likely reorder on another draw. Lower Winkler regret is better; coverage targets 0.95. "Parabola baseline" is the naive quadratic reference (`-T baseline=true`), not a model.
 
 | Model | Winkler regret | MAE (m) | Coverage | Width (m) | Rifle regret | Pistol regret |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -65,8 +82,9 @@ The only claim is that the harness produces separable, interpretable scores: the
 
 ```
 pereval/            Python package: Inspect tasks and scorers
-  tasks/ballistic/  generator, Inspect task, Docker sandbox (no ballistics engine)
-  scorers/          custom scorers (pure scoring core + Inspect wrapper)
+  tasks/ballistic/  generator, Inspect task, Docker sandbox, quadratic baseline
+  tasks/orbit/      two-body and three-body generators, tasks, harmonic baseline
+  scorers/          shared oracle-anchored interval scorer (linear and circular)
 tests/              scorer validation suite + generator/scorer integration
 ```
 
