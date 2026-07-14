@@ -50,16 +50,14 @@ A planet on a fixed elliptical orbit around a star. Once per day the angle alpha
 
 ### Three-Body Orbit (Angle Prediction)
 
-A second, slower planet is added, with its own angle beta. Planet masses are negligible, so the two planets do not interact and each follows an independent Kepler orbit; "three-body" refers only to the observed configuration. The agent is given t, alpha, and beta and must predict beta for future days. It is harder than the two-body task on two counts: beta belongs to the outer planet, observed for only a few orbits (so its period and shape are less constrained and extrapolation error accumulates over a longer horizon), and alpha is an independent distractor with no bearing on beta that a disciplined model must recognize as irrelevant rather than exploit.
+A second, slower outer planet is added, and the observer (still on the inner planet) also records beta, the angle to that outer planet. Masses are negligible, so each planet follows its own Kepler orbit; "three-body" refers only to the observed configuration. beta is the apparent direction to the outer planet as seen from the inner one, so it depends on both planets' positions and shows retrograde motion, like Mars seen from Earth. The agent is given t, alpha, and beta and must predict beta for future days. It is harder than the two-body task because beta is not a simple Keplerian angle but a coupled, retrograde signal on the synodic period, and alpha is essential rather than a distractor: it pins the observer's position, which is half the geometry needed to reconstruct beta.
 
-The orbital tasks use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task; their naive baseline (`-T baseline=true`) is a harmonic (Fourier) regression that does not use Kepler's laws. Only the period, eccentricity, orbit orientation, and time of periapsis affect the observed angle, so orbit size and star mass are not modeled. Kepler's equation is solved in pure numpy, so no extra dependency is needed.
+The orbital tasks use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task; their naive baseline (`-T baseline=true`) is a harmonic (Fourier) regression that does not use Kepler's laws. For alpha only the period, eccentricity, orientation, and periapsis time matter (the direction to the star is radius-independent); beta also depends on the orbit size ratio, but that is fixed by the period ratio through Kepler's third law, so nothing external is needed. Kepler's equation is solved in pure numpy, so no extra dependency.
 
 ```
 inspect eval pereval/tasks/orbit/task.py@twobody --model <provider/model>     # needs Docker
 inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=true --model mockllm/model
 ```
-
-By the naive baseline, the three tasks bracket in difficulty as intended (two-body easiest, ballistic in the middle, three-body hardest).
 
 See [docs/setup.md](docs/setup.md) for the Python environment, Docker install (required only for the sandboxed evaluation), and model credentials.
 

@@ -76,6 +76,9 @@ You are given a time series in the `data/` directory:
 - `data/train.csv` with columns t,alpha,beta: t is time in days, alpha and beta
   are two measured angles in degrees (0 to 360).
 - `data/test.csv` with a column t: future days for which you must predict beta.
+
+The two angles are recorded from the same moving vantage point, so they are
+related; alpha may carry information useful for predicting beta.
 """
     + _TAIL.format(target="beta")
 )

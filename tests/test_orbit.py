@@ -9,12 +9,19 @@ from pereval.scorers.interval import _localize, interval_score, score_points
 from pereval.tasks.orbit.baselines import _fit_and_predict
 from pereval.scorers.interval import parse_predictions
 from pereval.tasks.orbit.generator import (
+    _apparent_longitude,
     _kepler_longitude,
     build_truth,
     generate_threebody,
     generate_twobody,
     truth_to_points,
 )
+
+
+def _orbit_dicts(meta):
+    inner = {k: meta["orbits"]["alpha"][k] for k in ("P", "e", "omega_deg", "t0")}
+    outer = {k: meta["orbits"]["beta"][k] for k in ("P", "e", "omega_deg", "t0")}
+    return inner, outer
 
 
 # --- circular scoring primitives -------------------------------------------
@@ -68,6 +75,22 @@ def test_threebody_target_is_undersampled_outer_planet():
     inner = m["total_days"] / m["orbits"]["alpha"]["P"]
     outer = m["total_days"] / m["orbits"]["beta"]["P"]
     assert outer < inner  # beta (outer) completes fewer orbits, the harder target
+
+
+def test_threebody_beta_is_coupled_and_retrograde():
+    """beta is the apparent direction to the outer planet from the inner one, so it
+    depends on the observer's position (coupled to alpha) and reverses direction
+    (retrograde), unlike a bare heliocentric longitude."""
+    b = generate_threebody(seed=1, oracle_n=20)
+    inner, outer = _orbit_dicts(b["meta"])
+    t = np.arange(0, b["meta"]["total_days"], dtype=float)
+    beta = _apparent_longitude(t, inner, outer)
+    helio = _kepler_longitude(t, outer["P"], outer["e"], outer["omega_deg"], outer["t0"])
+    # not equal to the outer planet's own heliocentric longitude
+    assert np.max(np.abs(_localize(beta, helio, 360.0) - helio)) > 5.0
+    # retrograde: apparent motion reverses on some days (heliocentric never does)
+    dbeta = np.diff(np.unwrap(np.radians(beta)))
+    assert (dbeta < 0).mean() > 0.02
 
 
 @pytest.mark.parametrize("gen", [generate_twobody, generate_threebody])
