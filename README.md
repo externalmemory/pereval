@@ -52,11 +52,12 @@ A planet on a fixed elliptical orbit around a star. Once per day the angle alpha
 
 A second, slower outer planet is added, and the observer (still on the inner planet) also records beta, the angle to that outer planet. Masses are negligible, so each planet follows its own Kepler orbit; "three-body" refers only to the observed configuration. beta is the apparent direction to the outer planet as seen from the inner one, so it depends on both planets' positions and shows retrograde motion, like Mars seen from Earth. The agent is given t, alpha, and beta and must predict beta for future days. It is harder than the two-body task because beta is not a simple Keplerian angle but a coupled, retrograde signal on the synodic period, and alpha is essential rather than a distractor: it pins the observer's position, which is half the geometry needed to reconstruct beta.
 
-The orbital tasks use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task; their naive baseline (`-T baseline=true`) is a harmonic (Fourier) regression that does not use Kepler's laws. For alpha only the period, eccentricity, orientation, and periapsis time matter (the direction to the star is radius-independent); beta also depends on the orbit size ratio, but that is fixed by the period ratio through Kepler's third law, so nothing external is needed. Kepler's equation is solved in pure numpy, so no extra dependency.
+The orbital tasks use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task. Each has two reference solvers that bracket it: a naive `harmonic` baseline (Fourier regression that does not use Kepler's laws, the epicycles approach) and a `kepler` reference that fits the true model, elliptical orbits, by least squares. For alpha only the period, eccentricity, orientation, and periapsis time matter (the direction to the star is radius-independent); beta also depends on the orbit size ratio, fixed by the period ratio through Kepler's third law. The generator is pure numpy; the Kepler reference solver uses scipy for the fit.
 
 ```
-inspect eval pereval/tasks/orbit/task.py@twobody --model <provider/model>     # needs Docker
-inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=true --model mockllm/model
+inspect eval pereval/tasks/orbit/task.py@twobody --model <provider/model>          # needs Docker
+inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=kepler --model mockllm/model
+inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=harmonic --model mockllm/model
 ```
 
 See [docs/setup.md](docs/setup.md) for the Python environment, Docker install (required only for the sandboxed evaluation), and model credentials.
@@ -78,24 +79,25 @@ The only claim is that the harness produces separable, interpretable scores: the
 
 ### Example Scores (Orbital Tasks; Harness Functionality Check, Not a Model Ranking)
 
-Same caveats: a single instance (N = 1, seed 1) per task, no error bars, not a ranking. Lower Winkler regret is better; coverage targets 0.95. "Harmonic baseline" is the naive Fourier reference (`-T baseline=true`), not a model. "fail" means the model did not produce predictions within its message budget and was penalty-scored.
+Same caveats: a single instance (N = 1, seed 1) per task, no error bars, not a ranking. Lower Winkler regret is better; coverage targets 0.95. The two reference rows are not models: "Harmonic baseline" is the naive Fourier fit and "Kepler reference" fits the true elliptical-orbit model. "fail" means the model did not produce predictions within its message budget and was penalty-scored.
 
-| Model | Two-body regret | Two-body coverage | Three-body regret | Three-body coverage |
+| Row | Two-body regret | Two-body coverage | Three-body regret | Three-body coverage |
 | --- | --- | --- | --- | --- |
 | GLM-5 | 0.04 | 0.95 | 57.9 | 1.00 |
 | GLM-5.1 | 0.04 | 0.95 | 14.9 | 0.92 |
 | Kimi-k2.6 | 1258 | 0.50 | fail | — |
 | Kimi-k2.7-code | 0.02 | 0.95 | 139.2 | 0.70 |
-| Harmonic baseline | 12.1 | 0.69 | 66.0 | 1.00 |
+| Harmonic baseline (naive) | 12.1 | 0.69 | 66.0 | 1.00 |
+| Kepler reference (true model) | 0.01 | 0.94 | 0.03 | 0.95 |
 
-The two-body signal is strictly periodic, and three of the four models effectively solve it (regret near 0, coverage near 0.95, well below the naive harmonic baseline at 12.1); the fourth produced badly miscalibrated output. The three-body target is the apparent, retrograde inter-planet angle coupled to alpha, and it is much harder: models range from a partial success (GLM-5.1) through over-hedging with tens-of-degrees-wide intervals to force coverage (GLM-5 and the baseline both reach coverage 1.00 that way) to plain wrong (Kimi-k2.7-code) to failing to submit. Across all three tasks the intended difficulty gradient holds: two-body (near-solved) is easier than ballistic, which is easier than three-body.
+The two references bracket each task and show what the score means. The Kepler reference reaches the oracle on both tasks (regret 0.01 and 0.03), so both are well posed: the signal is fully recoverable by the right model class. The naive harmonic fit does fine on the periodic two-body signal (12.1, still far above Kepler) but fails badly on three-body (66.0), because the apparent, retrograde inter-planet angle is not a Fourier series in the wrong period, the epicycles mistake. Three-body's difficulty is therefore real headroom, not ill-posedness. The models mostly sit between the two references and closer to the naive one: three of four effectively solve two-body, but on three-body they range from a partial success (GLM-5.1) through over-hedging with wide intervals to force coverage (GLM-5) to plain wrong (Kimi-k2.7-code) to failing to submit. Across all three tasks the difficulty gradient holds: two-body (near-solved) is easier than ballistic, which is easier than three-body.
 
 ## Layout
 
 ```
 pereval/            Python package: Inspect tasks and scorers
   tasks/ballistic/  generator, Inspect task, Docker sandbox, quadratic baseline
-  tasks/orbit/      two-body and three-body generators, tasks, harmonic baseline
+  tasks/orbit/      two-body and three-body generators, tasks, harmonic + Kepler baselines
   scorers/          shared oracle-anchored interval scorer (linear and circular)
 tests/              scorer validation suite + generator/scorer integration
 ```

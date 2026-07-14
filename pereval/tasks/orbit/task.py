@@ -22,7 +22,7 @@ from inspect_ai.tool import bash, python
 
 from pereval.scorers.interval import make_interval_scorer
 from pereval.tasks.ballistic.task import COMPOSE  # shared general modeling sandbox
-from pereval.tasks.orbit.baselines import harmonic_baseline
+from pereval.tasks.orbit.baselines import harmonic_baseline, kepler_baseline
 from pereval.tasks.orbit.generator import (
     build_truth,
     generate_threebody,
@@ -105,8 +105,11 @@ def _samples(generate, instructions, n_instances, seed, oracle_n):
 
 
 def _build(generate, instructions, name, target, n_instances, seed, oracle_n, message_limit, baseline):
-    if baseline:
+    method = str(baseline).lower()
+    if method in ("true", "harmonic"):
         solver = harmonic_baseline(target=target)
+    elif method == "kepler":
+        solver = kepler_baseline(target=target)
     else:
         solver = basic_agent(
             init=system_message(instructions),
@@ -127,9 +130,11 @@ def twobody(
     seed: int | None = None,
     oracle_n: int = 2000,
     message_limit: int = 80,
-    baseline: bool = False,
+    baseline: str = "",
 ) -> Task:
-    """Two-body: predict a planet's angle alpha at future days (the easier task)."""
+    """Two-body: predict a planet's angle alpha at future days (the easier task).
+
+    baseline: "" runs the agent; "harmonic" or "kepler" run those reference solvers."""
     return _build(generate_twobody, TWOBODY, "twobody", "alpha",
                   n_instances, seed, oracle_n, message_limit, baseline)
 
@@ -140,8 +145,10 @@ def threebody(
     seed: int | None = None,
     oracle_n: int = 2000,
     message_limit: int = 80,
-    baseline: bool = False,
+    baseline: str = "",
 ) -> Task:
-    """Three-body: predict the outer planet's angle beta, with alpha as a distractor."""
+    """Three-body: predict the outer planet's apparent angle beta (coupled, retrograde).
+
+    baseline: "" runs the agent; "harmonic" or "kepler" run those reference solvers."""
     return _build(generate_threebody, THREEBODY, "threebody", "beta",
                   n_instances, seed, oracle_n, message_limit, baseline)

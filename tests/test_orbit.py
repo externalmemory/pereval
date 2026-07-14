@@ -111,6 +111,23 @@ def test_oracle_scores_to_zero_regret(gen):
 
 # --- baseline ---------------------------------------------------------------
 
+def test_kepler_baseline_recovers_threebody_near_oracle():
+    """Fitting the true model class (elliptical orbits) recovers the coupled,
+    retrograde beta to the noise floor, proving the task is well posed. This is
+    the reference the harmonic baseline (wrong basis) fails to match."""
+    from pereval.tasks.orbit.baselines import _kepler_fit_and_predict
+    bundle = generate_threebody(seed=1, oracle_n=300)
+    truth = build_truth(bundle)
+    points = truth_to_points(truth)
+    train = "t,alpha,beta\n" + "\n".join(f"{t},{a},{b}" for t, a, b in bundle["train_rows"])
+    test = "t\n" + "\n".join(str(d) for d in bundle["test_days"])
+    preds = parse_predictions(_kepler_fit_and_predict(train, test, "beta"), ["t"])
+    r = score_points(points, preds, period=360.0)
+    assert r["n_missing"] == 0
+    assert r["winkler_regret"] < 1.0  # near oracle, unlike the harmonic baseline
+    assert r["coverage"] > 0.85
+
+
 def test_harmonic_baseline_produces_reasonable_predictions():
     """The naive periodic fit should predict every test point with a small point
     error, leaving interval calibration (undercoverage from period drift over the

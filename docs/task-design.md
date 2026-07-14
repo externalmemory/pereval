@@ -64,6 +64,8 @@ Unlike family 1, the covariate is a designed grid, not messy real data, and unli
 
 The generator need not be a numerical library; a closed-form physical model qualifies. The orbital-angle tasks generate the observed angle from Kepler's laws in pure numpy. The two-body task (predict one planet's heliocentric angle) is the easier, strictly periodic case. The three-body task predicts beta, the apparent direction to an outer planet as seen from the inner observer planet, which is coupled to the inner planet's position (given by alpha), shows retrograde motion, and is quasi-periodic on the synodic period rather than a bare Kepler angle. Here alpha is essential auxiliary data, not a distractor. These targets are circular (degrees mod 360), which the shared interval scorer handles by localizing every quantity to the branch nearest the known true value before applying the linear scoring math, valid while intervals and noise are small relative to the period.
 
+Each orbital task ships two reference solvers that bracket it and guard against confusing a wrong basis with a hard problem: a naive harmonic (Fourier) fit and a Kepler reference that fits the true elliptical-orbit model by least squares. The harmonic fit fails on the retrograde three-body angle (it is not a Fourier series in a single period), while the Kepler reference recovers it to the noise floor and scores near the oracle. The gap between them shows the difficulty is real headroom, and the model's distance from the Kepler reference measures how far it is from the right approach. This is the concrete instance of the degenerate/competent/oracle anchoring below.
+
 ## Statistical Treatment (all Families)
 
 - k repeated runs per task instance; many generated instances per family.
