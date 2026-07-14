@@ -78,6 +78,20 @@ inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=harmonic --model 
 
 See [docs/setup.md](docs/setup.md) for the Python environment, Docker install (required only for the sandboxed evaluation), and model credentials.
 
+### Example Scores (CCAR Task; Eight Instances, Free Models)
+
+Unlike the single-instance tables below, these are means over eight generated instances with standard errors, so the ordering is more robust (still a small, free-models-only sample). Lower Winkler regret is better; coverage targets 0.95. The Vasicek reference and naive OLS baseline (`-T baseline=vasicek|naive`) bracket the task.
+
+| Row | Winkler regret ± SE | Coverage | Note |
+| --- | --- | --- | --- |
+| Vasicek reference (true model) | 0.013 ± 0.004 | 0.93 | closed-form extended Vasicek |
+| hy3-free | 0.036 ± 0.011 | 0.92 | best free model |
+| deepseek-v4-flash-free | 0.084 ± 0.029 | 0.67 | 18 points unpredicted (hit message limit) |
+| mimo-v2.5-free | 0.131 ± 0.061 | 0.79 | |
+| Naive OLS baseline | 0.200 ± 0.090 | 0.63 | OLS on all nine levels |
+
+Every free model that completed beats the naive OLS baseline, and the best (hy3-free) approaches the near-oracle Vasicek reference, so CCAR is tractable for cheap models: a straightforward regression under noisy data. The task still discriminates the right way, with the fragile linear-on-levels approach worst and the physics-informed reference best. It is the suite's easy realistic task, in deliberate contrast to three-body. (nemotron-3-ultra-free and north-mini-code-free errored on this run and are omitted.)
+
 ### Example Scores (Ballistic Task; Harness Functionality Check, Not a Model Ranking)
 
 The numbers below come from a single generated instance (N = 1, seed 1) of the ballistic task and exist only to show that the harness runs end to end and that the scorer discriminates. They are not a ranking of these models. With one instance there are no error bars, so the mid-field ordering is not robust and would likely reorder on another draw. Lower Winkler regret is better; coverage targets 0.95. "Parabola baseline" is the naive quadratic reference (`-T baseline=true`), not a model.
