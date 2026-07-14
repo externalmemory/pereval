@@ -103,10 +103,14 @@ Same caveats: a single instance (N = 1, seed 1) per task, no error bars, not a r
 | GLM-5.1 | 0.04 | 0.95 | 14.9 | 0.92 |
 | Kimi-k2.6 | 1258 | 0.50 | fail | — |
 | Kimi-k2.7-code | 0.02 | 0.95 | 139.2 | 0.70 |
+| GPT-5.6 Sol (frontier, default effort) | — | — | 14.2 | 1.00 |
+| Claude Fable 5 (frontier, default effort) | — | — | 0.03 | 0.95 |
 | Harmonic baseline (naive) | 12.1 | 0.69 | 66.0 | 1.00 |
 | Kepler reference (true model) | 0.01 | 0.94 | 0.03 | 0.95 |
 
-The two references bracket each task and show what the score means. The Kepler reference reaches the oracle on both tasks (regret 0.01 and 0.03), so both are well posed: the signal is fully recoverable by the right model class. The naive harmonic fit does fine on the periodic two-body signal (12.1, still far above Kepler) but fails badly on three-body (66.0), because the apparent, retrograde inter-planet angle is not a Fourier series in the wrong period, the epicycles mistake. Three-body's difficulty is therefore real headroom, not ill-posedness. The models mostly sit between the two references and closer to the naive one: three of four effectively solve two-body, but on three-body they range from a partial success (GLM-5.1) through over-hedging with wide intervals to force coverage (GLM-5) to plain wrong (Kimi-k2.7-code) to failing to submit. Across all three tasks the difficulty gradient holds: two-body (near-solved) is easier than ballistic, which is easier than three-body.
+The two references bracket each task and show what the score means. The Kepler reference reaches the oracle on both tasks (regret 0.01 and 0.03), so both are well posed: the signal is fully recoverable by the right model class. The naive harmonic fit does fine on the periodic two-body signal (12.1, still far above Kepler) but fails badly on three-body (66.0), because the apparent, retrograde inter-planet angle is not a Fourier series in the wrong period, the epicycles mistake. Three-body's difficulty is therefore real headroom, not ill-posedness.
+
+Two-body is nearly solved by three of the four cheap models. Three-body produces an enormous spread that comes down to one thing: whether a model reconstructs the physics or curve-fits and hedges. The cheap models and GPT-5.6 Sol (at default reasoning effort) do the latter, scoring 14 to 139, mostly over-hedging to force coverage toward 1.00; Sol never attempted any orbital modeling in its 24 messages. Claude Fable 5, also at default effort, does the former: it found the periodicity by FFT, fit two coupled Kepler orbits by least squares, reconstructed the apparent inter-planet angle, and reached the reference (regret 0.03, coverage 0.95). So three-body is not beyond the frontier, but it cleanly separates models that recognize and model the coupled retrograde geometry from those that treat it as a generic regression. (Both frontier rows are single instances at default effort; whether higher effort would lift Sol is untested.)
 
 ## Layout
 
