@@ -33,6 +33,22 @@ This is a demonstration of eval construction, not a production benchmark. Corner
 
 ## Tasks
 
+The CCAR stress loss model is the realistic, domain task. The ballistic and orbital tasks are controlled mechanism tasks that calibrate the harness across a difficulty gradient (easy to hard) with exactly known ground truth.
+
+### CCAR Stress Loss Model
+
+The agent gets a quarterly panel of nine macroeconomic drivers (GDP, unemployment, home price index, BBB spread, S&P 500, DJIA, NASDAQ, VIX, CPI) plus a portfolio default rate over an in-time window, and a 9-quarter forward stress scenario for the same drivers, and must project the default rate (point plus 95% interval) for the stressed quarters. It scores the same oracle-anchored Winkler interval, averaged over the nine quarters.
+
+The data-generating process, disclosed to nobody, is built to reward sound out-of-sample judgment rather than recovering any particular model. Macros come from a diagonal-AR(1)-plus-correlated-innovations generator calibrated to real FRED series (matched persistence, marginal moments, cross-correlations, heavy-tailed crises). The default rate is an extended-Vasicek function of just two of the nine drivers, standardized unemployment level and standardized year-over-year HPI change, so the model must do feature selection under heavy collinearity (three of the nine are near-duplicate equity indices), discover a transform, choose a bounded functional form, and calibrate the systematic uncertainty for the interval. A rare one-quarter systemic crisis (a contaminated-normal COVID/GFC-like event) is added to the observed macros only: the default rate is generated from the fundamental drivers, so a COVID-style unemployment spike appears in the data but the default does not follow it, and a model that fits that quarter naively attenuates its unemployment sensitivity and pays for it under stress. Early quarters have ragged missing data, as on FRED. The scenario pushes the fundamentals past the in-time range, where linear-in-level fits and flipped signs get punished out of sample.
+
+Two references bracket it (`-T baseline=naive|vasicek`): a naive OLS on all nine levels (fragile under stress extrapolation) and a closed-form extended-Vasicek reference with robust outlier handling (near-oracle up to finite-sample error). See [the vasicekfit paper](https://CRAN.R-project.org/package=vasicekfit) for the estimator.
+
+```
+inspect eval pereval/tasks/ccar/task.py --model <provider/model>                 # needs Docker
+inspect eval pereval/tasks/ccar/task.py -T baseline=vasicek --model mockllm/model
+python -m pereval.tasks.ccar.generator --out-dir runs/ccar --seed 1              # inspect one instance
+```
+
 ### Ballistic Trajectory Extrapolation
 
 The agent receives (category, x, y) training rows and must predict y with 95% prediction intervals at held-out distances beyond the training range. y is projectile drop simulated by py-ballisticcalc with noise on muzzle velocity and launch angle; the held-out window for rifle categories is kept supersonic, so the extrapolation trap is pure velocity-dependent drag. It scores point accuracy (MAE vs the true conditional mean), interval calibration (coverage), and sharpness (width), combined into an oracle-anchored Winkler interval score.
@@ -96,6 +112,7 @@ The two references bracket each task and show what the score means. The Kepler r
 
 ```
 pereval/            Python package: Inspect tasks and scorers
+  tasks/ccar/       FRED-calibrated macro + Vasicek generator, task, OLS + Vasicek baselines
   tasks/ballistic/  generator, Inspect task, Docker sandbox, quadratic baseline
   tasks/orbit/      two-body and three-body generators, tasks, harmonic + Kepler baselines
   scorers/          shared oracle-anchored interval scorer (linear and circular)
