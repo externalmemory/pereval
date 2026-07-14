@@ -76,6 +76,20 @@ The numbers below come from a single generated instance (N = 1, seed 1) of the b
 
 The only claim is that the harness produces separable, interpretable scores: the spread is dominated by the supersonic rifle sub-task, where overconfident narrow intervals with near-zero coverage are penalized heavily, and the per-class split localizes each model's failure. Turning this into an actual comparison would require many instances per model and the paired, clustered error analysis described in [docs/task-design.md](docs/task-design.md).
 
+### Example Scores (Orbital Tasks; Harness Functionality Check, Not a Model Ranking)
+
+Same caveats: a single instance (N = 1, seed 1) per task, no error bars, not a ranking. Lower Winkler regret is better; coverage targets 0.95. "Harmonic baseline" is the naive Fourier reference (`-T baseline=true`), not a model. "fail" means the model did not produce predictions within its message budget and was penalty-scored.
+
+| Model | Two-body regret | Two-body coverage | Three-body regret | Three-body coverage |
+| --- | --- | --- | --- | --- |
+| GLM-5 | 0.04 | 0.95 | 57.9 | 1.00 |
+| GLM-5.1 | 0.04 | 0.95 | 14.9 | 0.92 |
+| Kimi-k2.6 | 1258 | 0.50 | fail | — |
+| Kimi-k2.7-code | 0.02 | 0.95 | 139.2 | 0.70 |
+| Harmonic baseline | 12.1 | 0.69 | 66.0 | 1.00 |
+
+The two-body signal is strictly periodic, and three of the four models effectively solve it (regret near 0, coverage near 0.95, well below the naive harmonic baseline at 12.1); the fourth produced badly miscalibrated output. The three-body target is the apparent, retrograde inter-planet angle coupled to alpha, and it is much harder: models range from a partial success (GLM-5.1) through over-hedging with tens-of-degrees-wide intervals to force coverage (GLM-5 and the baseline both reach coverage 1.00 that way) to plain wrong (Kimi-k2.7-code) to failing to submit. Across all three tasks the intended difficulty gradient holds: two-body (near-solved) is easier than ballistic, which is easier than three-body.
+
 ## Layout
 
 ```
