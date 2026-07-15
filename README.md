@@ -103,13 +103,14 @@ The numbers below come from a single generated instance (N = 1, seed 1) of the b
 | Model | Winkler regret | MAE (m) | Coverage | Width (m) | Rifle regret | Pistol regret |
 | --- | --- | --- | --- | --- | --- | --- |
 | GLM-5.1 | 3.34 | 0.76 | 0.87 | 2.86 | 0.93 | 9.66 |
+| Claude Fable 5 | 6.16 | 1.08 | 0.76 | 3.69 | 2.99 | 14.49 |
 | Kimi-k2.6 | 8.49 | 0.60 | 0.55 | 1.24 | 10.32 | 3.69 |
 | GLM-5 | 11.53 | 0.62 | 0.49 | 1.21 | 15.55 | 0.99 |
 | Parabola baseline | 21.77 | 0.67 | 0.12 | 0.25 | 19.28 | 28.31 |
 | Kimi-k2.7-code | 28.26 | 1.70 | 0.42 | 2.78 | 37.97 | 2.77 |
 | Claude Haiku 4.5 | 58.40 | 1.72 | 0.15 | 0.61 | 78.19 | 6.43 |
 
-The only claim is that the harness produces separable, interpretable scores: the spread is dominated by the supersonic rifle sub-task, where overconfident narrow intervals with near-zero coverage are penalized heavily, and the per-class split localizes each model's failure. Turning this into an actual comparison would require many instances per model and the paired, clustered error analysis described in [docs/task-design.md](docs/task-design.md).
+The only claim is that the harness produces separable, interpretable scores: the spread is dominated by the supersonic rifle sub-task, where overconfident narrow intervals with near-zero coverage are penalized heavily, and the per-class split localizes each model's failure. Claude Fable 5 lands near the top (6.16), nailing that hard rifle sub-task (rifle 2.99), so Claude Haiku 4.5's row at the bottom is not a Claude-family verdict: Haiku is tuned for fast answers to simple questions and likely runs at a low default effort here. Both are real single-instance results. Turning any of this into an actual comparison would require many instances per model and the paired, clustered error analysis described in [docs/task-design.md](docs/task-design.md).
 
 ### Example Scores (Orbital Tasks; Harness Functionality Check, Not a Model Ranking)
 
