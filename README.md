@@ -2,7 +2,7 @@
 
 **An [Inspect](https://inspect.aisi.org.uk/)-based evaluation suite for quantitative model development tasks.**
 
-> **Status: early scaffold.** Tasks and scorers are under development; nothing here is a usable benchmark yet.
+> **Status: working prototype.** Multiple tasks, baselines, and tests are in place; scoring is still evolving and the results shown here are illustrative, not a usable benchmark yet.
 
 ## Summary
 
