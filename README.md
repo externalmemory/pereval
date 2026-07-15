@@ -68,12 +68,16 @@ A planet on a fixed elliptical orbit around a star. Once per day the angle alpha
 
 A second, slower outer planet is added, and the observer (still on the inner planet) also records beta, the angle to that outer planet. Masses are negligible, so each planet follows its own Kepler orbit; "three-body" refers only to the observed configuration. beta is the apparent direction to the outer planet as seen from the inner one, so it depends on both planets' positions and shows retrograde motion, like Mars seen from Earth. The agent is given t, alpha, and beta and must predict beta for future days. It is harder than the two-body task because beta is not a simple Keplerian angle but a coupled, retrograde signal on the synodic period, and alpha is essential rather than a distractor: it pins the observer's position, which is half the geometry needed to reconstruct beta.
 
-The orbital tasks use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task. Each has two reference solvers that bracket it: a naive `harmonic` baseline (Fourier regression that does not use Kepler's laws, the epicycles approach) and a `kepler` reference that fits the true model, elliptical orbits, by least squares. For alpha only the period, eccentricity, orientation, and periapsis time matter (the direction to the star is radius-independent); beta also depends on the orbit size ratio, fixed by the period ratio through Kepler's third law. The generator is pure numpy; the Kepler reference solver uses scipy for the fit.
+### Hyperbolic Interstellar Flyby (the hardest orbital task)
+
+An interstellar object passes through on a hyperbolic, unbound trajectory whose plane is inclined to the planet's orbit. The observer records alpha (the star, pinning the planet), beta (the object's apparent azimuth), and gamma (its apparent elevation above the planet's plane); the object is only observable near its passage, so beta and gamma are blank early. The agent predicts gamma over the departure arc. It is harder than the two-body and three-body tasks on three counts: the flyby is non-periodic (no period to find, so the FFT trick that helps on three-body is useless), it is three-dimensional (inclination and node must be recovered), and it is angles-only orbit determination, a classically ill-conditioned problem where the observer's parallax from the planet's motion breaks the range degeneracy. Its baselines are a naive `poly` extrapolation (a flyby is not a polynomial) and an `od` reference that fits the planet from alpha and then the six-element 3D hyperbolic orbit from beta and gamma. Because a few percent of the fastest flybys defeat the reference's global fit, instances are rejection-sampled: the generator keeps the first seed offset whose reference reaches the noise floor, so every instance has a solvable anchor and generation stays deterministic.
+
+The orbital tasks use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task (period=360 for the circular angles alpha and beta, period=None for the bounded elevation gamma). Each has two reference solvers that bracket it: a naive baseline that ignores the physics and a reference that fits the true orbits by least squares. For alpha only the period, eccentricity, orientation, and periapsis time matter (the direction to the star is radius-independent); beta and the flyby geometry also depend on orbit size ratios, fixed by the period ratios through Kepler's third law. The generators are pure numpy; the reference solvers use scipy for the fits.
 
 ```
-inspect eval pereval/tasks/orbit/task.py@twobody --model <provider/model>          # needs Docker
+inspect eval pereval/tasks/orbit/task.py@twobody --model <provider/model>            # needs Docker
 inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=kepler --model mockllm/model
-inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=harmonic --model mockllm/model
+inspect eval pereval/tasks/orbit/task.py@hyperbolic -T baseline=od --model mockllm/model
 ```
 
 See [docs/setup.md](docs/setup.md) for the Python environment, Docker install (required only for the sandboxed evaluation), and model credentials.
@@ -132,7 +136,7 @@ Two-body is nearly solved by three of the four cheap models. Three-body produces
 pereval/            Python package: Inspect tasks and scorers
   tasks/ccar/       FRED-calibrated macro + Vasicek generator, task, OLS + Vasicek baselines
   tasks/ballistic/  generator, Inspect task, Docker sandbox, quadratic baseline
-  tasks/orbit/      two-body and three-body generators, tasks, harmonic + Kepler baselines
+  tasks/orbit/      two-body, three-body, and hyperbolic-flyby generators, tasks, baselines
   scorers/          shared oracle-anchored interval scorer (linear and circular)
 tests/              scorer validation suite + generator/scorer integration
 ```

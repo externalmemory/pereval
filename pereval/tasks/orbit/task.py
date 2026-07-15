@@ -22,6 +22,7 @@ from inspect_ai.tool import bash, python
 
 from pereval.scorers.interval import make_interval_scorer
 from pereval.tasks.ballistic.task import COMPOSE  # shared general modeling sandbox
+from pereval.tasks.orbit import hyperbolic as _hyp
 from pereval.tasks.orbit.baselines import harmonic_baseline, kepler_baseline
 from pereval.tasks.orbit.generator import (
     build_truth,
@@ -152,3 +153,74 @@ def threebody(
     baseline: "" runs the agent; "harmonic" or "kepler" run those reference solvers."""
     return _build(generate_threebody, THREEBODY, "threebody", "beta",
                   n_instances, seed, oracle_n, message_limit, baseline)
+
+
+HYPERBOLIC = """\
+You are given a time series in the `data/` directory:
+
+- `data/train.csv` with columns t,alpha,beta,gamma: t is time in days, and alpha,
+  beta, gamma are measured angles in degrees. alpha is recorded every day; beta
+  and gamma are blank on days when their source was not observable and present
+  only during its passage.
+- `data/test.csv` with a column t: future days for which you must predict gamma.
+
+The measurements contain observation noise, and the test days lie BEYOND the
+observed range. Build a predictive model. For every row in `data/test.csv`,
+produce a point estimate of gamma and a 95% prediction interval [lower, upper]
+for a NEW noisy measurement of gamma at that t. gamma is an elevation angle in
+degrees (roughly -90 to 90) and does not wrap.
+
+Write your predictions to `predictions.csv` in the working directory with columns
+exactly:
+
+    t,y_pred,y_lower,y_upper
+
+one row per test input, with t copied exactly from data/test.csv.
+
+You have Python with numpy, pandas, scikit-learn, statsmodels, and scipy. You do
+not have internet access. Each code execution runs in a FRESH interpreter, so
+write a single self-contained script (save it to a file and run it) rather than
+relying on state carrying over between executions. Produce a complete
+predictions.csv early, even from a rough model, and keep a valid one on disk;
+refine it after. Verify it has one row per test input before submitting.
+"""
+
+
+@task
+def hyperbolic(
+    n_instances: int = 5,
+    seed: int | None = None,
+    oracle_n: int = 2000,
+    message_limit: int = 120,
+    baseline: str = "",
+) -> Task:
+    """Hyperbolic interstellar-object flyby: predict the elevation gamma of an
+    unbound 3D flyby (angles-only orbit determination). The hardest orbital task.
+
+    baseline: "" runs the agent; "poly" (naive) or "od" (hyperbolic reference)."""
+    base = seed if seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
+    seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
+    samples = [
+        Sample(
+            input=HYPERBOLIC,
+            id=f"instance-{i}-seed-{int(s)}",
+            files={"data/train.csv": _hyp.train_csv_text(b), "data/test.csv": _hyp.test_csv_text(b)},
+            metadata={"truth": _hyp.build_truth(b)},
+        )
+        for i, s in enumerate(seeds)
+        for b in [_hyp.generate_hyperbolic(seed=int(s), oracle_n=oracle_n)]
+    ]
+    method = str(baseline).lower()
+    if method in ("poly", "polynomial"):
+        solver = _hyp.polynomial_baseline()
+    elif method in ("od", "reference"):
+        solver = _hyp.hyperbolic_od_baseline()
+    else:
+        solver = basic_agent(init=system_message(HYPERBOLIC),
+                             tools=[bash(timeout=240), python(timeout=240)], message_limit=message_limit)
+    return Task(
+        dataset=samples,
+        solver=solver,
+        scorer=make_interval_scorer("hyperbolic", ["t"], None, _hyp.truth_to_points),
+        sandbox=("docker", COMPOSE),
+    )
