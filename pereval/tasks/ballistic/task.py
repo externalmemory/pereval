@@ -112,7 +112,7 @@ def ballistic(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 80,
+    message_limit: int = 150,
     baseline: bool = False,
 ) -> Task:
     """The ballistic extrapolation task.

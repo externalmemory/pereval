@@ -1,4 +1,4 @@
-"""Inspect task wrappers for the orbital-angle tasks (two-body and three-body).
+"""Inspect task wrappers for the orbital tasks (two-body, three-body, hyperbolic).
 
 Same isolation and scoring model as the ballistic task: instances are generated
 host-side, only neutral CSVs enter the agent's sandbox, ground truth travels in
@@ -130,7 +130,7 @@ def twobody(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 80,
+    message_limit: int = 150,
     baseline: str = "",
 ) -> Task:
     """Two-body: predict a planet's angle alpha at future days (the easier task).
@@ -145,7 +145,7 @@ def threebody(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 80,
+    message_limit: int = 150,
     baseline: str = "",
 ) -> Task:
     """Three-body: predict the outer planet's apparent angle beta (coupled, retrograde).
@@ -191,7 +191,7 @@ def hyperbolic(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 120,
+    message_limit: int = 250,
     baseline: str = "",
 ) -> Task:
     """Hyperbolic interstellar-object flyby: predict the elevation gamma of an
