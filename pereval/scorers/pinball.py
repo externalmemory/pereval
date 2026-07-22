@@ -124,6 +124,12 @@ def aggregate(records: list[dict]) -> dict:
     for t in TAUS:
         out[f"regret_p{int(t * 100)}"] = float(
             np.mean([r["per_tau"][t] for r in records]))
+    # per-block detail, so tail-shape adaptivity can be tested after the fact:
+    # a rule that scales the tail by one order-statistic gap emits a CONSTANT
+    # spread, while the truth varies widely across populations.
+    out["per_block"] = [
+        {"regret": r["regret"], "hit": r["hit"], "spread": r["spread"],
+         "missing": r["missing"]} for r in records]
     return out
 
 

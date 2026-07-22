@@ -35,7 +35,8 @@ def line(name, a, msgs="", n=""):
 
 
 def main(logdir):
-    rows, seeds, failed = [], set(), []
+    """Grouped by instance seed. Rows from different seeds are NOT comparable."""
+    by_seed, failed = {}, []
     for f in sorted(glob.glob(os.path.join(logdir, "*.eval"))):
         log = read_eval_log(f)
         model = log.eval.model
@@ -48,12 +49,12 @@ def main(logdir):
                 failed.append((model, "no score"))
                 continue
             a = dict(sc.metadata)
-            rows.append((model, a, len(s.messages),
-                         f'{a["n_blocks"] - a["n_missing"]}/{a["n_blocks"]}'))
-            seeds.add(s.metadata["seed"])
+            hit_limit = " LIMIT" if s.limit else ""
+            by_seed.setdefault(s.metadata["seed"], []).append(
+                (model + hit_limit, a, len(s.messages),
+                 f'{a["n_blocks"] - a["n_missing"]}/{a["n_blocks"]}'))
 
-    print(HDR)
-    for seed in sorted(seeds):
+    for seed, rows in sorted(by_seed.items()):
         blocks = generate(seed)
         txt = _blocks_csv(blocks)
         for nm in REFS:
@@ -61,13 +62,14 @@ def main(logdir):
             a = aggregate([score_block(dict(pop=b["pop"], norm=b["norm"], x=b["x"]),
                                        p.get(b["block"])) for b in blocks])
             rows.append((f"[{nm}]", a, "", f'{len(blocks)}/{len(blocks)}'))
-
-    for name, a, msgs, n in sorted(rows, key=lambda r: r[1]["pinball_regret"]):
-        print(line(name, a, msgs, n))
+        print(f"\n=== instance seed {seed} ({len(blocks)} blocks) ===")
+        print(HDR)
+        for name, a, msgs, n in sorted(rows, key=lambda r: r[1]["pinball_regret"]):
+            print(line(name, a, msgs, n))
     if failed:
         print("\nfailed runs:")
         for m, e in failed:
-            print(f"  {m:44s} {e}")
+            print(f"  {m:44s} {e or '(no error message)'}")
 
 
 if __name__ == "__main__":

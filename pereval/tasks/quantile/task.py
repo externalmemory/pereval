@@ -131,6 +131,10 @@ def quantile_scorer():
             for t in truth
         ]
         agg = aggregate(records)
+        agg["true_spread"] = [
+            float((np.quantile(np.asarray(t["pop"], float), 0.99)
+                   - np.quantile(np.asarray(t["pop"], float), 0.95))
+                  / max(t["x"][-1] - t["x"][-2], 1e-12)) for t in truth]
         value, explanation = score_value_and_explanation(agg)
         return Score(value=value, metadata=agg, explanation=explanation)
 

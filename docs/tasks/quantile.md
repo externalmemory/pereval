@@ -50,7 +50,9 @@ Winkler is still reported as a diagnostic, because interval calibration is worth
 
 At tau = 0.90 the reference estimators are indistinguishable. At tau = 0.99 the bounded ones are structurally stuck. In units of the sample top gap `x_(10) - x_(9)`, the p99 - p95 spread is an exact constant for type7 (0.360), type8 (0.000, both levels clip to the sample maximum at n = 10) and both extrapolators (1.609), and varies only mildly for Harrell-Davis (about 0.16 to 0.20). The truth varies 1.25 to 4.15 across series.
 
-So none of the reference rules adapts to tail shape: they all scale the tail by one order-statistic gap. Summing over three tau captures that in a single scalar, because getting all three right requires the right shape. The reported `spread_ratio` diagnostic makes the behaviour legible directly: 0.0 means type 8, 0.36 means `np.percentile`, a constant 1.6 means one of the two extrapolating rules, and something that varies with the sample means the model is doing something none of them can.
+So the four rules that touch nothing but the top two order statistics are structurally incapable of adapting to tail shape. The normal fit and Harrell-Davis do vary, because they use all ten points; measured by rank correlation between a rule's per-block spread and the truth's, the naive normal scores 0.637 and HD 0.504, while type7, type8, wei8 and t6 are exact constants and have no correlation at all. That the naive rule is the *most* adaptive of the baselines is part of why it wins.
+
+Summing over three tau captures shape in a single scalar, because getting all three levels right requires getting the shape right. The reported `spread_ratio` diagnostic makes behaviour legible directly: 0.0 means type 8 or a degenerate q99 = q95, 0.36 means a bare `np.percentile` call, a constant 1.6 means one of the two extrapolating rules, and a spread that varies block to block means the rule is reading shape out of the sample.
 
 ## Data
 
