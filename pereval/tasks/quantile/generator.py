@@ -122,18 +122,52 @@ def generate(seed: int, n_blocks: int = N_BLOCKS,
     return blocks
 
 
-def prompt_text(blocks: list[dict]) -> str:
-    """The task statement. States the estimand explicitly.
+SCORING = """
+How your answers are scored. Each point estimate is scored by the pinball (check)
+loss against the FULL population, including the values you were not shown:
+
+    loss(tau) = average over all m population values x of  rho_tau(x - qhat)
+    rho_tau(d) = tau * d          if d >= 0
+               = (tau - 1) * d    if d < 0
+
+reported as the excess over the smallest value that loss can take, which is
+attained exactly at the population tau-percentile. The three levels are summed,
+so a perfect answer scores zero. Note the asymmetry: at tau = 0.95 a unit of
+underestimate costs 19 times a unit of overestimate.
+
+The interval is assessed on whether it contains the population 95th percentile,
+at a nominal 95% rate, so it should be an honest 95% interval rather than one
+tuned to any other target.
+"""
+
+
+def prompt_text(blocks: list[dict], disclose_metric: bool = True) -> str:
+    """The task statement. States both the estimand and the loss explicitly.
 
     Leaving "the 95th percentile" ambiguous would make this a reading test whose
     result flips on a paraphrase. Naming the estimand costs nothing: knowing
     that the population quantile is the target does not tell you how to
     extrapolate a tail from ten points.
+
+    The same argument applies to the loss. "Estimate the p95" is underspecified
+    without one, because the bias-variance choice is real: wei8 is essentially
+    median-unbiased and still loses on expected pinball loss, so a model aiming
+    at unbiasedness would be penalised for a target it was never told was wrong.
+    Disclosure is safe because pinball is a proper scoring rule, so the
+    loss-minimising answer is the correct answer and there is nothing to game.
+    That is not true of every metric: Winkler's optimum here sits at 0.81
+    coverage, so disclosing it would invite deliberately undercovering
+    intervals, which is why the interval is specified by nominal coverage
+    instead.
+
+    disclose_metric=False exists to measure how much of a score is
+    criterion-guessing rather than estimation.
     """
     ms = sorted({b["m"] for b in blocks})
     body = "\n\n".join(
         f"Block {b['block']} (population size m = {b['m']}):\n  "
         + ", ".join(f"{v:g}" for v in b["shown"]) for b in blocks)
+    scoring = SCORING if disclose_metric else ""
     return f"""You are given {len(blocks)} independent estimation problems.
 
 Each block below is a SAMPLE of {N_DRAW} values drawn uniformly at random, WITHOUT
@@ -152,7 +186,7 @@ you can see, and you should not assume they lie within their range. Also give a
 95% interval for the population 95th percentile.
 
 {body}
-
+{scoring}
 Write your answers to predictions.csv with exactly this header:
 
 block,q90,q95,q99,lo,hi

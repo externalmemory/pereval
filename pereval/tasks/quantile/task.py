@@ -77,7 +77,8 @@ def _blocks_csv(blocks: list[dict]) -> str:
     return "\n".join(rows) + "\n"
 
 
-def _samples(n_instances: int, seed: int | None, n_blocks: int):
+def _samples(n_instances: int, seed: int | None, n_blocks: int,
+             disclose_metric: bool = True):
     """Instances from child seeds of one base seed, as in the other tasks."""
     base = seed if seed is not None else int(
         np.random.SeedSequence().generate_state(1)[0])
@@ -98,7 +99,7 @@ def _samples(n_instances: int, seed: int | None, n_blocks: int):
             metadata={"truth": truth, "instance": i, "seed": int(s)},
             files={
                 "data/blocks.csv": _blocks_csv(blocks),
-                "data/task.txt": prompt_text(blocks),
+                "data/task.txt": prompt_text(blocks, disclose_metric),
             },
         )
 
@@ -144,7 +145,7 @@ def quantile_scorer():
 @task
 def quantile(n_instances: int = 8, seed: int | None = 1,
              n_blocks: int = N_BLOCKS, message_limit: int = 300,
-             baseline: str = ""):
+             baseline: str = "", disclose_metric: bool = True):
     """Small-sample population tail quantile estimation from FRED YoY data.
 
     baseline: "" runs the agent; a named estimator ("type7", "type8", "hd",
@@ -162,7 +163,7 @@ def quantile(n_instances: int = 8, seed: int | None = 1,
             message_limit=message_limit,
         )
     return Task(
-        dataset=list(_samples(n_instances, seed, n_blocks)),
+        dataset=list(_samples(n_instances, seed, n_blocks, disclose_metric)),
         solver=solver,
         scorer=quantile_scorer(),
         sandbox=("docker", COMPOSE),

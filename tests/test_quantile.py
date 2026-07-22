@@ -159,3 +159,43 @@ def test_perfect_answer_beats_every_baseline(blocks):
         agg = aggregate([score_block(dict(pop=b["pop"], norm=b["norm"], x=b["x"]),
                                      preds.get(b["block"])) for b in blocks])
         assert agg["pinball_regret"] > best["pinball_regret"]
+
+
+# --- metric disclosure -----------------------------------------------------
+
+def test_disclosure_states_the_loss_and_its_asymmetry(blocks):
+    """Without a stated loss, "estimate the p95" is underspecified: an
+    essentially median-unbiased rule still loses on expected pinball loss, so a
+    model aiming at unbiasedness would be scored against a target it was never
+    given."""
+    t = prompt_text(blocks)
+    assert "pinball" in t.lower() and "rho_tau" in t
+    assert "19 times" in t          # the tau/(1-tau) asymmetry at tau=0.95
+    assert "perfect answer scores zero" in t
+
+
+def test_disclosure_does_not_reveal_the_normaliser_or_the_population(blocks):
+    """The IQR normaliser is a per-block constant and cannot change the optimal
+    answer, so it stays out; nothing about the held-out values may appear."""
+    t = prompt_text(blocks)
+    assert "IQR" not in t and "interquartile" not in t.lower()
+    for b in blocks:
+        assert b["series"] not in t
+
+
+def test_interval_is_specified_by_nominal_coverage_not_by_winkler(blocks):
+    """Winkler's optimum on this task sits near 0.81 coverage, so disclosing it
+    would invite deliberately undercovering intervals. Coverage is stated."""
+    t = prompt_text(blocks).lower()
+    assert "winkler" not in t
+    assert "nominal 95%" in t
+
+
+def test_disclosure_can_be_switched_off_for_an_ab_test(blocks):
+    on, off = prompt_text(blocks, True), prompt_text(blocks, False)
+    assert "pinball" not in off.lower()
+    assert len(on) > len(off)
+    # the data and the estimand must be identical in both arms
+    for b in blocks:
+        assert ", ".join(f"{v:g}" for v in b["shown"]) in off
+    assert "OF THE POPULATION" in off
