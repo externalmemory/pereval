@@ -53,7 +53,9 @@ The two domain tasks are the realistic ones. The mechanism tasks calibrate the h
 > no error bars, blanks mean not run rather than failed, and no column has enough
 > instances to support an ordering. It exists to show coverage and that the
 > harness discriminates. Per-task tables with the actual caveats are behind the
-> links above.
+> links above. Everything here is provisional and will be regenerated once the
+> task set is finalised; rows for models that are no longer served are removed
+> rather than carried forward unreproducible.
 
 Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ballistic and orbital are Winkler regret on one instance (seed 1); quantile is pinball regret on one instance and has only a single plumbing-validation run.
 
@@ -67,7 +69,6 @@ Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ball
 | Kimi-k2.7-code | | 28.26 | 0.02 | 139.2 | | |
 | Kimi-k2.6 | | 8.49 | 1258 | fail | | |
 | Claude Haiku 4.5 | | 58.40 | | | | |
-| hy3-free | 0.036 ± 0.011 | | | | | |
 | deepseek-v4-flash-free | 0.043 ± 0.018 | | | | | |
 | mimo-v2.5-free | 0.131 ± 0.061 | | | | | 0.116 |
 | *reference* | *0.013 ± 0.004* | | *0.01* | *0.03* | | *0.089* |
