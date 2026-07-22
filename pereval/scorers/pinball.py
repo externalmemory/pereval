@@ -22,9 +22,10 @@ just not what this task is about.
 
 Three tau levels are scored because the reference estimators are indistinguishable
 at 0.90 and separate sharply at 0.99, where bounded interpolation is structurally
-stuck: in units of the sample top gap, the p99-p95 spread is a constant for every
-published estimator (type8 0.00, HD 0.16, type7 0.36, wei8 1.61) while the truth
-varies 1.25 to 4.15 across series.
+stuck: in units of the sample top gap, the p99-p95 spread is an exact constant
+for type7 (0.360), type8 (0.000) and both extrapolators (1.609), and varies only
+mildly for HD (about 0.16 to 0.20), while the truth varies 1.25 to 4.15 across
+series.
 """
 
 from __future__ import annotations

@@ -1,0 +1,3 @@
+FRED monthly NSA, lag-12 simple percent change.
+Fetched 2026-07-22. FRED revises: this is a frozen snapshot and must not be refetched without rerunning every published result.
+Screen: scripts/screen_fred.py. Enumeration: scripts/enumerate_fred.py. Cap 5/title prefix, seed 1.
