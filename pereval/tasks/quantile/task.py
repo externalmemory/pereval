@@ -49,10 +49,14 @@ each block and defines exactly what is being asked. Read it first.
 `data/blocks.csv` has the same numbers in tabular form, with columns `block`
 and `x`, ten rows per block.
 
-You have a Python sandbox with numpy, scipy, pandas, statsmodels and
-scikit-learn. Use it. The arithmetic is not worth doing by hand.
+You have Python with numpy, scipy, pandas, statsmodels and scikit-learn, and no
+internet access. Use it: the arithmetic is not worth doing by hand. Each code
+execution runs in a FRESH interpreter, so write a single self-contained script
+(save it to a file and run it) rather than relying on state carrying over
+between executions. Do not print the whole data file; read it programmatically.
 
-Write your answers to `predictions.csv` with exactly this header:
+Write your answers to `predictions.csv` in the working directory with columns
+exactly:
 
     block,q90,q95,q99,lo,hi
 
@@ -60,7 +64,9 @@ one row per block, no other columns, no commentary. `q90`, `q95` and `q99` are
 point estimates of the population percentiles; `lo` and `hi` are a 95% interval
 for the population 95th percentile.
 
-Submit when predictions.csv is written.
+Produce a complete predictions.csv early, even from a rough method, and keep a
+valid one on disk; refine it after. Verify it has one row per block before
+submitting.
 """
 
 
