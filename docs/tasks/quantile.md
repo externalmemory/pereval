@@ -99,55 +99,42 @@ Lower regret is better. One generated instance, 40 blocks, seed 1.
 
 The p99 column does the work: bounded rules 0.049-0.052, extrapolating rules 0.027. The naive moment-matched normal leading the table is a real result, not a bug. It is exactly the kind of criterion-dependent inversion this task is meant to surface, and a caution against reading any single column as a verdict.
 
-## First Model Run
+## First Model Runs
 
-A single instance (40 blocks, child seed of base seed 1), one free model, run through the agent loop with a Python sandbox. This exists to show the harness works end to end and the diagnostics are legible. It is not a result about the model.
+> Provisional and superseded. These predate the metric disclosure now in the
+> prompt, so they measure a task where the loss function was not stated. They
+> are retained as evidence the harness discriminates, not as results.
 
-| Row | Pinball regret | p90 | p95 | p99 | Hit rate | MAE | Coverage | Spread |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| normal | 0.0995 | 0.0320 | 0.0293 | 0.0382 | 0.450 | 0.911 | 0.725 | 2.545 |
-| wei8 | 0.1145 | 0.0433 | 0.0346 | 0.0366 | 0.650 | 1.084 | 0.800 | 1.609 |
-| **mimo-v2.5-free** | **0.1160** | 0.0363 | 0.0348 | 0.0449 | 0.375 | 0.939 | 0.825 | **6.100** |
-| t6 | 0.1240 | 0.0494 | 0.0384 | 0.0362 | 0.675 | 1.228 | 0.825 | 1.609 |
-| hd | 0.1333 | 0.0400 | 0.0345 | 0.0588 | 0.375 | 0.960 | 0.125 | 0.214 |
-| type8 | 0.1345 | 0.0433 | 0.0333 | 0.0579 | 0.475 | 0.987 | 0.350 | 0.000 |
-| type7 | 0.1429 | 0.0424 | 0.0394 | 0.0611 | 0.350 | 0.960 | 0.250 | 0.360 |
+Six free models, one instance each (40 blocks, seed 1835504127), all rows paired against reference estimators computed on the identical blocks. Lower regret is better; `LIMIT` marks a run that hit a budget cap.
 
-Answered all 40 blocks in 23 messages without approaching its limits.
+| Row | Regret | p90 | p95 | p99 | Hit | MAE | Cov | Spread | Msgs | Answered |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gemma-4-31b-it `LIMIT` | **0.0929** | 0.0333 | 0.0278 | 0.0318 | 0.550 | 0.947 | 0.475 | 3.690 | 6 | 40/40 |
+| `[normal]` | 0.0995 | 0.0320 | 0.0293 | 0.0382 | 0.450 | 0.911 | 0.725 | 2.545 | | 40/40 |
+| nemotron-3-ultra-550b | 0.1127 | 0.0348 | 0.0385 | 0.0394 | 0.375 | 0.890 | 0.750 | 3.553 | 44 | 40/40 |
+| `[wei8]` | 0.1145 | 0.0433 | 0.0346 | 0.0366 | 0.650 | 1.084 | 0.800 | 1.609 | | 40/40 |
+| mimo-v2.5-free | 0.1160 | 0.0363 | 0.0348 | 0.0449 | 0.375 | 0.939 | 0.825 | 6.103 | 23 | 40/40 |
+| `[t6]` | 0.1240 | 0.0494 | 0.0384 | 0.0362 | 0.675 | 1.228 | 0.825 | 1.609 | | 40/40 |
+| laguna-m.1 | 0.1291 | 0.0494 | 0.0454 | 0.0343 | **0.750** | 1.405 | 0.725 | 5.800 | 74 | 40/40 |
+| `[hd]` | 0.1333 | 0.0400 | 0.0345 | 0.0588 | 0.375 | 0.960 | 0.125 | 0.214 | | 40/40 |
+| `[type8]` | 0.1345 | 0.0433 | 0.0333 | 0.0579 | 0.475 | 0.987 | 0.350 | 0.000 | | 40/40 |
+| nemotron-3-super-120b | 0.1429 | 0.0424 | 0.0394 | 0.0611 | 0.350 | 0.960 | 0.450 | **0.360** | 52 | 40/40 |
+| `[type7]` | 0.1429 | 0.0424 | 0.0394 | 0.0611 | 0.350 | 0.960 | 0.250 | 0.360 | | 40/40 |
+| gpt-oss-20b `LIMIT` | 1.1312 | 0.2943 | 0.3687 | 0.4682 | 0.075 | 1.866 | 0.000 | 0.000 | 300 | 40/40 |
 
-The `spread_ratio` column is the interesting one. mimo reports 6.100, far above every reference rule (whose maximum is 1.609) and above the truth's range of 1.25 to 4.15. So even a cheap free model understands it must extrapolate past the sample maximum rather than calling `np.percentile`, and then overshoots badly at p99, which is precisely where its regret is worst (0.0449, its own weakest level). A single headline score would not have shown that.
+The task discriminates across its whole intended range, and the `spread_ratio` column reads out method directly.
 
-## Why The Naive Normal Leads, And Why That Is Not A Data Artifact
+**nemotron-3-super-120b reproduced `np.percentile` exactly.** Its row matches `[type7]` on every point metric including the 0.360 spread constant, after 52 messages of work. That is the failure mode the task exists to expose, and it is invisible in the regret column alone: 0.1429 looks merely mediocre until you see it is the same 0.1429.
 
-The obvious suspicion is that the moment-matched normal wins because the screened populations are close to normal, or because heavy-tailed series were filtered out. Neither is true.
+**gpt-oss-20b failed differently and worse.** Spread 0.000 means it set q99 = q95, coverage 0.000 means not one of its forty intervals contained the truth, and it exhausted all 300 messages getting there.
 
-Nothing was filtered on kurtosis: the universe spans excess kurtosis -0.86 to +690. And the populations are markedly non-normal at exactly the quantiles being estimated. For an exactly normal population `(p99 - median)/IQR = 1.725`; the observed median is 2.336, and 80.3% of populations are more heavy-tailed than normal at p99. At p95 the figures are 1.219 against an observed 1.479.
+**laguna-m.1 is the only model that overestimates**, at hit rate 0.750 against everyone else's 0.35 to 0.55, with the worst MAE of any completing model (1.405). Over-extrapolation is a real failure mode too, and the hit-rate diagnostic is what separates it from under-extrapolation, since both show up as an unremarkable regret.
 
-Stratifying by population kurtosis, the normal leads in every stratum, but its margin over wei8 collapses from 39% at the thinnest tails to 4% in the top decile. The tails are real and they do erode the advantage; they just do not reverse it.
+**gemma-4-31b-it led while hitting the time limit after 6 messages**, throttled by the free tier. It still scored 40/40 only because it wrote a complete predictions.csv early, which is the instruction added after an earlier run failed by building state across fresh interpreters.
 
-The mechanism is bias against variance at n = 10:
+### Environment Notes
 
-| p99 error / IQR | median (bias) | sd |
-| --- | --- | --- |
-| normal | -0.367 | 3.699 |
-| wei8 | **-0.131** | **5.536** |
-
-wei8 is 2.8x better centred and carries 50% more variance, and on p95 hit rate it scores 0.499 against the normal's 0.430, which is as close to median-unbiased as anything in the table. It is the better estimator by centring and still loses on expected loss, because ten observations cannot support the tail-shape estimate its extrapolation needs. The proof of concept found the same mechanism from the other direction: wei8's tail branch has L1 norm 4.87 against type 7's 1.00, so it amplifies the noise in a single order-statistic gap.
-
-This is correct behaviour for an expected-loss criterion rather than a defect. Pinball regret is a bias-variance tradeoff and unbiasedness was never its goal. It does mean the headline number and the hit-rate diagnostic answer different questions, which is why both are reported.
-
-### Kurtosis Is Not Tail Weight At The Estimand
-
-One trap worth naming, because it inverts the obvious intuition. In the most extreme stratum the *bounded* rule wins.
-
-| stratum | n | (max - p99)/IQR | (p99 - med)/IQR | kurt3 |
-| --- | --- | --- | --- | --- |
-| exkurt < 1.1 | 1274 | 0.34 | 1.87 | 0.207 |
-| 1.1 to 9.2 | 976 | 0.84 | 3.06 | 0.392 |
-| 9.2 to 50 | 203 | 4.54 | **6.75** | 0.769 |
-| exkurt > 50 | 47 | **37.67** | 3.98 | **0.999** |
-
-At `exkurt > 50`, 99.9% of the fourth central moment comes from three observations sitting 37 IQRs beyond p99. The estimand does not live out there: `(p99 - median)/IQR` is 3.98, actually *lower* than the 9.2-to-50 stratum's 6.75. Kurtosis measures mass beyond p99 while the task asks about p99 itself, so a COVID-style spike inflates the moments without stretching the quantile under estimation. The stratum where the tail genuinely bites is the intermediate one, which is also where the normal's lead is thinnest.
+Zen's free tier is not a usable validation surface: three of four models failed environmentally (two HTTP 400s, one response with no `choices` field). OpenRouter ran five of five and offers 13 tool-capable free models. `nemotron-3-ultra` failed on Zen and succeeded on OpenRouter, confirming the gateway rather than the model was at fault.
 
 ## Criterion Disagreement
 

@@ -71,6 +71,11 @@ Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ball
 | Claude Haiku 4.5 | | 58.40 | | | | |
 | deepseek-v4-flash-free | 0.043 ± 0.018 | | | | | |
 | mimo-v2.5-free | 0.131 ± 0.061 | | | | | 0.116 |
+| gemma-4-31b-it:free | | | | | | 0.093 |
+| nemotron-3-ultra-550b:free | | | | | | 0.113 |
+| laguna-m.1:free | | | | | | 0.129 |
+| nemotron-3-super-120b:free | | | | | | 0.143 |
+| gpt-oss-20b:free | | | | | | 1.131 |
 | *reference* | *0.013 ± 0.004* | | *0.01* | *0.03* | | *0.089* |
 | *naive baseline* | *0.200 ± 0.090* | *21.77* | *12.1* | *66.0* | | *0.134* |
 
