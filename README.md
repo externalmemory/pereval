@@ -73,7 +73,7 @@ Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ball
 | *reference* | *0.013 ± 0.004* | | *0.01* | *0.03* | | *0.089* |
 | *naive baseline* | *0.200 ± 0.090* | *21.77* | *12.1* | *66.0* | | *0.134* |
 
-The reference row is not the same kind of thing in every column. For CCAR and the orbital tasks it is the true generating model, so it marks the oracle. For quantile there is no true model: the floor is exactly 0 by construction and the reference shown is the best published estimator, which a model beating it would genuinely improve on.
+The reference row is not the same kind of thing in every column. For CCAR and the orbital tasks it is the true generating model, so it marks an oracle nothing can beat. For quantile there is no true model: the floor is exactly 0 by construction, and the cell shown is a literature-derived estimator rather than a bound. It is not even the strongest row in its own table, since a moment-matched normal scores 0.068 against its 0.089 on this metric.
 
 Two observations survive the caveats. Three-body separates models that reconstruct the physics from those that curve-fit and hedge, by two orders of magnitude, and more reasoning effort does not fix it: GPT-5.6 Sol got *worse* at high effort (276.2 versus 14.2) by committing harder to the wrong model. And CCAR is tractable for cheap models, with three of them clustering just above the near-oracle reference, which is why the suite needs the harder tasks to discriminate at the top.
 

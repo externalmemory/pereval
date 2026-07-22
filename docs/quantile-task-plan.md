@@ -27,7 +27,7 @@ returns per sub-sample point estimates of q90, q95 and q99, plus a 95% interval
 for q95.
 
 Score: pinball regret, summed over tau in {0.90, 0.95, 0.99}, normalised by
-population sd, averaged over sub-samples, reported mean +/- SE clustered by
+population IQR, averaged over sub-samples, reported mean +/- SE clustered by
 instance.
 
 ```
@@ -39,9 +39,19 @@ and zero only for a perfect answer. The population is the truth: there is no
 Harrell-Davis target, no oracle tuning, and no ambiguity between HD and the
 empirical quantile.
 
-Diagnostics reported alongside: hit rate P(qhat95 > population q95), MAE/sd,
-interval coverage, Winkler/sd, and the spread ratio
+Diagnostics reported alongside: hit rate P(qhat95 > population q95), MAE/IQR,
+interval coverage, Winkler/IQR, and the spread ratio
 `(qhat99 - qhat95) / (x_(10) - x_(9))`.
+
+### Why IQR And Not Standard Deviation
+
+The regret is exactly invariant to the values of observations below the estimate:
+each contributes `(1-tau)(qhat - q_tau)/m`, which depends on their count and not
+their magnitude. Replacing a population's minimum with -1e6 leaves it unchanged.
+Dividing by sd throws that away: the same substitution drives sd from 3.63 to
+57735 and the normalised score from 0.0118 to 0.000001, silently deleting the
+block from the average, and it would do so precisely on the fat-tailed blocks the
+task exists for. IQR depends only on ranks 25-75 and is immune to both tails.
 
 ### Why Not Winkler As The Headline
 
@@ -59,7 +69,7 @@ range and bottoms out at hit 0.494.
 At tau=0.90 the reference estimators are indistinguishable. At tau=0.99 the
 bounded ones are structurally stuck while the extrapolating ones pull away. The
 p99 - p95 spread, in units of the sample top gap, is a constant for every
-published estimator (type8 0.00, HD 0.16, type7 0.36, T8 1.61) while the truth
+reference rule (type8 0.00, HD 0.16, type7 0.36, T8 1.61) while the truth
 varies 1.25 to 4.15 across series. Summing over tau captures tail-shape
 adaptivity in one scalar, because no fixed multiple of `x_(10) - x_(9)` can get
 all three levels right.
@@ -165,7 +175,9 @@ truth 95% of the time.
 - README section with the pinball leaderboard plus the five diagnostic columns,
   and an explicit note that the criteria disagree: type7 wins MAE, T8 wins
   centring and coverage, naive normal theory wins Winkler, and a tuned
-  two-parameter oracle beats every published estimator on Winkler by 2.3x.
+  two-parameter oracle beats every reference estimator on Winkler by 2.3x.
+  None of these rules is "best": the criteria disagree, and the paper's own
+  criterion was interval coverage rather than either of these.
 
 ## Open Risks
 

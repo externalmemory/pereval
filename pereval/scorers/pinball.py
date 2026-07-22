@@ -25,7 +25,8 @@ at 0.90 and separate sharply at 0.99, where bounded interpolation is structurall
 stuck: in units of the sample top gap, the p99-p95 spread is an exact constant
 for type7 (0.360), type8 (0.000) and both extrapolators (1.609), and varies only
 mildly for HD (about 0.16 to 0.20), while the truth varies 1.25 to 4.15 across
-series.
+series. No reference rule adapts to tail shape; all of them scale it by one
+order-statistic gap.
 """
 
 from __future__ import annotations

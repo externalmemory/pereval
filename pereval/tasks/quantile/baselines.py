@@ -13,12 +13,19 @@ The floor and the ceiling are not the ones you would guess:
          p95 (h=10.15) and p99 (h=10.56), so both clip to the sample maximum and
          its p99-p95 spread is exactly zero.
   hd     Harrell-Davis, a convex combination of order statistics. Also bounded.
-  wei8   Wei, Wang and Hutson's tail extrapolation (Eq. 2.1) around a type-8
-         interior. The published reference: it does extrapolate past the sample
-         maximum, and it is the best centred of the classical rules.
-  t6     the same extrapolation around a type-6 interior, as in the paper.
+  t6     Wei, Wang and Hutson's tail extrapolation (Eq. 2.1) around a type-6
+         interior. This is the paper's own construction: their Q^L is exactly
+         Hyndman-Fan type 6.
+  wei8   the same extrapolation around a type-8 interior. A substitution the
+         paper did not test. Both extrapolate past the sample maximum, which is
+         the property that matters here.
   normal moment-matched normal, mu + z_tau * s. Naive, and better than it has any
-         right to be.
+         right to be: it beats both extrapolators on pinball regret.
+
+No row here is "the best". Which one leads depends entirely on the criterion:
+point accuracy favours type7, point centring favours the extrapolators, interval
+coverage favours the extrapolators, and pinball regret favours the naive normal.
+That disagreement is a finding, not a defect.
 
 Their p99-p95 spreads, in units of the sample top gap x_(n) - x_(n-1), are
 exact constants for type7 (0.360), type8 (0.000) and both extrapolators (1.609),

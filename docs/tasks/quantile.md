@@ -50,7 +50,7 @@ Winkler is still reported as a diagnostic, because interval calibration is worth
 
 At tau = 0.90 the reference estimators are indistinguishable. At tau = 0.99 the bounded ones are structurally stuck. In units of the sample top gap `x_(10) - x_(9)`, the p99 - p95 spread is an exact constant for type7 (0.360), type8 (0.000, both levels clip to the sample maximum at n = 10) and both extrapolators (1.609), and varies only mildly for Harrell-Davis (about 0.16 to 0.20). The truth varies 1.25 to 4.15 across series.
 
-So no published estimator adapts to tail shape: they all scale the tail by one order-statistic gap. Summing over three tau captures that in a single scalar, because getting all three right requires the right shape. The reported `spread_ratio` diagnostic makes the behaviour legible directly: 0.0 means type 8, 0.36 means `np.percentile`, a constant 1.6 means the published estimator, and something that varies with the sample means the model is doing better than all of them.
+So none of the reference rules adapts to tail shape: they all scale the tail by one order-statistic gap. Summing over three tau captures that in a single scalar, because getting all three right requires the right shape. The reported `spread_ratio` diagnostic makes the behaviour legible directly: 0.0 means type 8, 0.36 means `np.percentile`, a constant 1.6 means one of the two extrapolating rules, and something that varies with the sample means the model is doing something none of them can.
 
 ## Data
 
@@ -77,7 +77,11 @@ Blocks come from distinct series and are independently scaled, so they cannot be
 
 ## Baselines
 
-`-T baseline=type7|type8|hd|t6|wei8|normal`. The reference is `wei8`: the tail extrapolation of Wei, Wang and Hutson (Commun. Stat. Theory Methods, DOI 10.1080/03610926.2013.775304) around a Hyndman-Fan type-8 interior, which does extrapolate past the sample maximum. `t6` is the same extrapolation around the type-6 interior used in the paper. Intervals are the paper's smoothed bootstrap with a BCa correction.
+`-T baseline=type7|type8|hd|t6|wei8|normal`.
+
+`t6` is the literature construction: the tail extrapolation of Wei, Wang and Hutson (Commun. Stat. Theory Methods, DOI 10.1080/03610926.2013.775304) around the interior their paper uses, whose Q^L is exactly Hyndman-Fan type 6. `wei8` is the same extrapolation around a type-8 interior, a substitution the paper did not test. What matters for this task is the property they share: both extrapolate past the sample maximum, and none of the other rules can. Intervals are the paper's smoothed bootstrap with a BCa correction.
+
+None of these is "the best" estimator, and the comparison below should not be read as crowning one. The paper evaluated on 95% confidence-interval coverage, not on point accuracy and not on pinball regret, so it is being judged here on a criterion it was not designed for.
 
 Lower regret is better. One generated instance, 40 blocks, seed 1.
 
@@ -85,13 +89,13 @@ Lower regret is better. One generated instance, 40 blocks, seed 1.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | PERFECT (population quantile) | 0.0000 | | | | | | | |
 | normal (moment-matched) | 0.0677 | 0.0233 | 0.0216 | 0.0228 | 0.450 | 0.527 | 0.850 | 2.485 |
-| wei8 (published reference) | 0.0891 | 0.0343 | 0.0279 | 0.0269 | 0.525 | 0.714 | 0.875 | 1.609 |
-| t6 (paper's variant) | 0.0931 | 0.0367 | 0.0299 | 0.0265 | 0.550 | 0.789 | 0.900 | 1.609 |
+| wei8 (type-8 variant) | 0.0891 | 0.0343 | 0.0279 | 0.0269 | 0.525 | 0.714 | 0.875 | 1.609 |
+| t6 (literature construction) | 0.0931 | 0.0367 | 0.0299 | 0.0265 | 0.550 | 0.789 | 0.900 | 1.609 |
 | type8 | 0.1121 | 0.0343 | 0.0289 | 0.0489 | 0.475 | 0.640 | 0.425 | 0.000 |
 | hd (Harrell-Davis) | 0.1130 | 0.0322 | 0.0310 | 0.0498 | 0.350 | 0.616 | 0.225 | 0.197 |
 | type7 (`np.percentile` default) | 0.1339 | 0.0434 | 0.0384 | 0.0521 | 0.275 | 0.652 | 0.250 | 0.360 |
 
-The p99 column does the work: bounded rules 0.049-0.052, extrapolating rules 0.027. The naive moment-matched normal beating the published estimator is a real result, not a bug, and it is the kind of criterion-dependent inversion the task is meant to surface.
+The p99 column does the work: bounded rules 0.049-0.052, extrapolating rules 0.027. The naive moment-matched normal leading the table is a real result, not a bug. It is exactly the kind of criterion-dependent inversion this task is meant to surface, and a caution against reading any single column as a verdict.
 
 ## Criterion Disagreement
 
@@ -103,6 +107,7 @@ Four defensible criteria rank the same estimators in incompatible orders:
 | point centring (hit rate) | wei8 | best |
 | interval coverage | wei8 / t6 | best |
 | interval Winkler | normal | fourth of five |
+| pinball regret (this task's metric) | normal | second of six |
 
 This is not a defect to be resolved before shipping. It is the most interesting thing the task produces, and it is the model-risk point in miniature: whoever picks the criterion picks the winner.
 
