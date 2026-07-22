@@ -115,6 +115,38 @@ Answered all 40 blocks in 23 messages without approaching its limits.
 
 The `spread_ratio` column is the interesting one. mimo reports 6.100, far above every reference rule (whose maximum is 1.609) and above the truth's range of 1.25 to 4.15. So even a cheap free model understands it must extrapolate past the sample maximum rather than calling `np.percentile`, and then overshoots badly at p99, which is precisely where its regret is worst (0.0449, its own weakest level). A single headline score would not have shown that.
 
+## Why The Naive Normal Leads, And Why That Is Not A Data Artifact
+
+The obvious suspicion is that the moment-matched normal wins because the screened populations are close to normal, or because heavy-tailed series were filtered out. Neither is true.
+
+Nothing was filtered on kurtosis: the universe spans excess kurtosis -0.86 to +690. And the populations are markedly non-normal at exactly the quantiles being estimated. For an exactly normal population `(p99 - median)/IQR = 1.725`; the observed median is 2.336, and 80.3% of populations are more heavy-tailed than normal at p99. At p95 the figures are 1.219 against an observed 1.479.
+
+Stratifying by population kurtosis, the normal leads in every stratum, but its margin over wei8 collapses from 39% at the thinnest tails to 4% in the top decile. The tails are real and they do erode the advantage; they just do not reverse it.
+
+The mechanism is bias against variance at n = 10:
+
+| p99 error / IQR | median (bias) | sd |
+| --- | --- | --- |
+| normal | -0.367 | 3.699 |
+| wei8 | **-0.131** | **5.536** |
+
+wei8 is 2.8x better centred and carries 50% more variance, and on p95 hit rate it scores 0.499 against the normal's 0.430, which is as close to median-unbiased as anything in the table. It is the better estimator by centring and still loses on expected loss, because ten observations cannot support the tail-shape estimate its extrapolation needs. The proof of concept found the same mechanism from the other direction: wei8's tail branch has L1 norm 4.87 against type 7's 1.00, so it amplifies the noise in a single order-statistic gap.
+
+This is correct behaviour for an expected-loss criterion rather than a defect. Pinball regret is a bias-variance tradeoff and unbiasedness was never its goal. It does mean the headline number and the hit-rate diagnostic answer different questions, which is why both are reported.
+
+### Kurtosis Is Not Tail Weight At The Estimand
+
+One trap worth naming, because it inverts the obvious intuition. In the most extreme stratum the *bounded* rule wins.
+
+| stratum | n | (max - p99)/IQR | (p99 - med)/IQR | kurt3 |
+| --- | --- | --- | --- | --- |
+| exkurt < 1.1 | 1274 | 0.34 | 1.87 | 0.207 |
+| 1.1 to 9.2 | 976 | 0.84 | 3.06 | 0.392 |
+| 9.2 to 50 | 203 | 4.54 | **6.75** | 0.769 |
+| exkurt > 50 | 47 | **37.67** | 3.98 | **0.999** |
+
+At `exkurt > 50`, 99.9% of the fourth central moment comes from three observations sitting 37 IQRs beyond p99. The estimand does not live out there: `(p99 - median)/IQR` is 3.98, actually *lower* than the 9.2-to-50 stratum's 6.75. Kurtosis measures mass beyond p99 while the task asks about p99 itself, so a COVID-style spike inflates the moments without stretching the quantile under estimation. The stratum where the tail genuinely bites is the intermediate one, which is also where the normal's lead is thinnest.
+
 ## Criterion Disagreement
 
 Four defensible criteria rank the same estimators in incompatible orders:
