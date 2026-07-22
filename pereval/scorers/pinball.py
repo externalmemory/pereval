@@ -65,16 +65,21 @@ def type7(x, tau: float) -> float:
 
 def _blank(block: dict) -> dict:
     """Penalty record for a block the agent did not answer."""
-    pop, sd, x = block["pop"], block["sd"], block["x"]
-    per = {t: PENALTY_FACTOR * pinball_regret(type7(x, t), pop, t) / sd for t in TAUS}
+    pop, norm, x = block["pop"], block["norm"], block["x"]
+    per = {t: PENALTY_FACTOR * pinball_regret(type7(x, t), pop, t) / norm for t in TAUS}
     return dict(missing=True, per_tau=per, regret=sum(per.values()),
                 hit=0.0, mae=float("nan"), coverage=0.0,
                 winkler=float("nan"), spread=float("nan"), monotonic=True)
 
 
 def score_block(block: dict, pred: dict | None) -> dict:
-    """block: {"pop", "sd", "x"}; pred: {"q90","q95","q99","lo","hi"} or None."""
-    pop, sd, x = np.asarray(block["pop"], float), block["sd"], np.sort(block["x"])
+    """block: {"pop", "norm", "x"}; pred: {"q90","q95","q99","lo","hi"} or None.
+
+    `norm` is the population IQR, not its standard deviation. See the note in
+    generator.draw_block: the regret is invariant to lower-tail outliers but sd
+    is not, so sd normalisation would silently mute exactly the hardest blocks.
+    """
+    pop, norm, x = np.asarray(block["pop"], float), block["norm"], np.sort(block["x"])
     needed = ("q90", "q95", "q99", "lo", "hi")
     if pred is None or not all(np.isfinite(pred.get(k, np.nan)) for k in needed):
         return _blank(block)
@@ -82,7 +87,7 @@ def score_block(block: dict, pred: dict | None) -> dict:
     q = {t: float(pred[f"q{int(t * 100)}"]) for t in TAUS}
     lo, hi = sorted((float(pred["lo"]), float(pred["hi"])))
     truth95 = float(np.quantile(pop, 0.95))
-    per = {t: pinball_regret(q[t], pop, t) / sd for t in TAUS}
+    per = {t: pinball_regret(q[t], pop, t) / norm for t in TAUS}
     gap = x[-1] - x[-2]
 
     return dict(
@@ -90,9 +95,9 @@ def score_block(block: dict, pred: dict | None) -> dict:
         per_tau=per,
         regret=sum(per.values()),
         hit=float(q[0.95] > truth95),
-        mae=abs(q[0.95] - truth95) / sd,
+        mae=abs(q[0.95] - truth95) / norm,
         coverage=float(lo <= truth95 <= hi),
-        winkler=interval_score(lo, hi, truth95) / sd,
+        winkler=interval_score(lo, hi, truth95) / norm,
         spread=(q[0.99] - q[0.95]) / gap if gap > 0 else float("nan"),
         monotonic=q[0.90] <= q[0.95] <= q[0.99],
     )

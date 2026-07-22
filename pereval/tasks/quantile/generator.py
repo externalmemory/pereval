@@ -81,10 +81,17 @@ def draw_block(pop_full: np.ndarray, rng: np.random.Generator) -> dict:
     scale = float(np.exp(rng.uniform(np.log(SCALE_LO), np.log(SCALE_HI))))
 
     shown = sigfig(window[idx] * scale)
+    pop = np.sort(window[mask]) * scale      # population excluding the drawn 10
     return dict(
-        m=m, start=start, scale=scale,
-        pop=np.sort(window[mask]) * scale,   # population excluding the drawn 10
-        sd=float(window[mask].std(ddof=1) * scale),
+        m=m, start=start, scale=scale, pop=pop,
+        # IQR, not sd, is the normaliser. Pinball REGRET is exactly invariant to
+        # the values of observations below the estimate (only their count
+        # matters), but sd is not: one extreme negative outlier inflates sd
+        # without touching the regret, which would silently delete that block
+        # from the average. IQR depends only on ranks 25-75 and is immune to
+        # both tails. Two of the 1503 screened series have sd/IQR above 20.
+        norm=float(np.subtract(*np.percentile(pop, [75, 25]))),
+        sd=float(pop.std(ddof=1)),           # reported, not used for scoring
         x=np.sort(shown),                    # ascending, host side
         shown=shown,                         # draw order, already random
     )

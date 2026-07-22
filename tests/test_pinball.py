@@ -26,7 +26,7 @@ def pop():
 def _block(pop, rng=None):
     rng = rng or np.random.default_rng(3)
     x = np.sort(rng.choice(pop, 10, replace=False))
-    return dict(pop=pop, sd=float(pop.std()), x=x)
+    return dict(pop=pop, norm=float(np.subtract(*np.percentile(pop, [75, 25]))), x=x)
 
 
 # --- properness ------------------------------------------------------------
@@ -68,6 +68,41 @@ def test_asymptotic_slope_ratio_is_tau_over_one_minus_tau(pop):
     D = 500.0 * pop.std()
     ratio = pinball_regret(q - D, pop, 0.95) / pinball_regret(q + D, pop, 0.95)
     assert ratio == pytest.approx(0.95 / 0.05, rel=0.02)
+
+
+def test_regret_ignores_values_below_the_estimate(pop):
+    """Replacing the population minimum with an arbitrarily large negative value
+    must not move the regret at all.
+
+    For any observation below both qhat and q_tau its contribution to the
+    REGRET is (1-tau)(qhat - q_tau)/m, which depends on how many such
+    observations there are and not on their values. The loss L(q) diverges, but
+    it diverges equally at qhat and at q_tau, so the divergence cancels.
+    """
+    qhat = float(np.quantile(pop, 0.95)) * 0.8
+    base = pinball_regret(qhat, pop, 0.95)
+    for v in (-1e2, -1e4, -1e6):
+        p = np.sort(np.concatenate([[v], pop[1:]]))
+        assert pinball_regret(qhat, p, 0.95) == pytest.approx(base, rel=1e-12)
+
+
+def test_normaliser_is_immune_to_tail_outliers(pop):
+    """The regret is robust but sd is not, so scoring must not divide by sd: one
+    extreme outlier would inflate sd and silently mute that block. IQR depends
+    only on ranks 25-75."""
+    pred = dict(q90=8.0, q95=9.0, q99=12.0, lo=7.0, hi=11.0)
+    got = []
+    for v in (None, -1e4, 1e4):
+        p = pop.copy()
+        if v is not None:
+            p[0 if v < 0 else -1] = v
+        p = np.sort(p)
+        b = dict(pop=p, norm=float(np.subtract(*np.percentile(p, [75, 25]))),
+                 x=np.sort(pop)[-10:])
+        got.append(score_block(b, pred))
+    for r in got[1:]:
+        assert r["regret"] == pytest.approx(got[0]["regret"], rel=1e-9)
+        assert r["mae"] == pytest.approx(got[0]["mae"], rel=1e-9)
 
 
 # --- block scoring ---------------------------------------------------------

@@ -86,7 +86,7 @@ def _samples(n_instances: int, seed: int | None, n_blocks: int):
         blocks = generate(int(s), n_blocks=n_blocks)
         truth = [
             dict(block=b["block"], series=b["series"], m=b["m"], start=b["start"],
-                 scale=b["scale"], sd=b["sd"], x=b["x"].tolist(),
+                 scale=b["scale"], norm=b["norm"], sd=b["sd"], x=b["x"].tolist(),
                  pop=b["pop"].tolist())
             for b in blocks
         ]
@@ -124,7 +124,7 @@ def quantile_scorer():
         preds = parse_predictions(text)
         records = [
             score_block(
-                dict(pop=np.asarray(t["pop"], float), sd=t["sd"],
+                dict(pop=np.asarray(t["pop"], float), norm=t["norm"],
                      x=np.asarray(t["x"], float)),
                 preds.get(t["block"]),
             )

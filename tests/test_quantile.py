@@ -137,7 +137,7 @@ def test_extrapolators_exceed_the_sample_max_and_bounded_rules_do_not(blocks):
 
 def test_baselines_produce_scoreable_predictions(blocks):
     preds = parse_predictions(predictions_csv("wei8", _blocks_csv(blocks)))
-    recs = [score_block(dict(pop=b["pop"], sd=b["sd"], x=b["x"]),
+    recs = [score_block(dict(pop=b["pop"], norm=b["norm"], x=b["x"]),
                         preds.get(b["block"])) for b in blocks]
     agg = aggregate(recs)
     assert agg["n_missing"] == 0 and agg["n_nonmonotonic"] == 0
@@ -151,11 +151,11 @@ def test_perfect_answer_beats_every_baseline(blocks):
         q99=float(np.quantile(b["pop"], 0.99)),
         lo=float(np.quantile(b["pop"], 0.95)) - 1e-9,
         hi=float(np.quantile(b["pop"], 0.95)) + 1e-9) for b in blocks}
-    best = aggregate([score_block(dict(pop=b["pop"], sd=b["sd"], x=b["x"]),
+    best = aggregate([score_block(dict(pop=b["pop"], norm=b["norm"], x=b["x"]),
                                   perfect[b["block"]]) for b in blocks])
     assert best["pinball_regret"] == pytest.approx(0.0, abs=1e-12)
     for name in ("type7", "type8", "hd", "wei8", "normal"):
         preds = parse_predictions(predictions_csv(name, _blocks_csv(blocks)))
-        agg = aggregate([score_block(dict(pop=b["pop"], sd=b["sd"], x=b["x"]),
+        agg = aggregate([score_block(dict(pop=b["pop"], norm=b["norm"], x=b["x"]),
                                      preds.get(b["block"])) for b in blocks])
         assert agg["pinball_regret"] > best["pinball_regret"]
