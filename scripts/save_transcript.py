@@ -66,7 +66,9 @@ def main(paths):
         log = read_eval_log(p)
         slug = log.eval.model.replace("/", "-")
         for s in (log.samples or []):
-            out = os.path.join(RUNS, f"{slug}-{log.eval.task}-{s.id}.md")
+            sid = str(s.id)
+            name = sid if sid.startswith(log.eval.task) else f"{log.eval.task}-{sid}"
+            out = os.path.join(RUNS, f"{slug}-{name}.md")
             with open(out, "w") as f:
                 f.write(render(log, s))
             print(out)

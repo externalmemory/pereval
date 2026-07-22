@@ -55,7 +55,7 @@ The two domain tasks are the realistic ones. The mechanism tasks calibrate the h
 > harness discriminates. Per-task tables with the actual caveats are behind the
 > links above.
 
-Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ballistic and orbital are Winkler regret on one instance (seed 1); quantile has no model results yet.
+Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ballistic and orbital are Winkler regret on one instance (seed 1); quantile is pinball regret on one instance and has only a single plumbing-validation run.
 
 | Model | CCAR | Ballistic | Two-body | Three-body | Flyby | Quantile |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -69,7 +69,7 @@ Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ball
 | Claude Haiku 4.5 | | 58.40 | | | | |
 | hy3-free | 0.036 ± 0.011 | | | | | |
 | deepseek-v4-flash-free | 0.043 ± 0.018 | | | | | |
-| mimo-v2.5-free | 0.131 ± 0.061 | | | | | |
+| mimo-v2.5-free | 0.131 ± 0.061 | | | | | 0.116 |
 | *reference* | *0.013 ± 0.004* | | *0.01* | *0.03* | | *0.089* |
 | *naive baseline* | *0.200 ± 0.090* | *21.77* | *12.1* | *66.0* | | *0.134* |
 

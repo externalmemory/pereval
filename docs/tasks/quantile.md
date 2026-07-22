@@ -1,9 +1,9 @@
 # Small-Sample Tail Quantile Estimation
 
-> **Status: implemented, not yet benchmarked.** The generator, scorer, baselines
-> and Inspect wrapper are in place and validated end to end under mockllm; no
-> model results exist yet. The baseline table below is real, the leaderboard is
-> empty.
+> **Status: implemented, one validation run.** The generator, scorer, baselines
+> and Inspect wrapper are in place and validated end to end, including one real
+> agent run through the Docker sandbox. That is a plumbing check on a single
+> weak model, not a benchmark: no model cast has been run.
 
 The suite's second realistic domain task, and the only one whose ground truth is
 empirical rather than generated from a known DGP. Implementation notes and the
@@ -96,6 +96,24 @@ Lower regret is better. One generated instance, 40 blocks, seed 1.
 | type7 (`np.percentile` default) | 0.1339 | 0.0434 | 0.0384 | 0.0521 | 0.275 | 0.652 | 0.250 | 0.360 |
 
 The p99 column does the work: bounded rules 0.049-0.052, extrapolating rules 0.027. The naive moment-matched normal leading the table is a real result, not a bug. It is exactly the kind of criterion-dependent inversion this task is meant to surface, and a caution against reading any single column as a verdict.
+
+## First Model Run
+
+A single instance (40 blocks, child seed of base seed 1), one free model, run through the agent loop with a Python sandbox. This exists to show the harness works end to end and the diagnostics are legible. It is not a result about the model.
+
+| Row | Pinball regret | p90 | p95 | p99 | Hit rate | MAE | Coverage | Spread |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| normal | 0.0995 | 0.0320 | 0.0293 | 0.0382 | 0.450 | 0.911 | 0.725 | 2.545 |
+| wei8 | 0.1145 | 0.0433 | 0.0346 | 0.0366 | 0.650 | 1.084 | 0.800 | 1.609 |
+| **mimo-v2.5-free** | **0.1160** | 0.0363 | 0.0348 | 0.0449 | 0.375 | 0.939 | 0.825 | **6.100** |
+| t6 | 0.1240 | 0.0494 | 0.0384 | 0.0362 | 0.675 | 1.228 | 0.825 | 1.609 |
+| hd | 0.1333 | 0.0400 | 0.0345 | 0.0588 | 0.375 | 0.960 | 0.125 | 0.214 |
+| type8 | 0.1345 | 0.0433 | 0.0333 | 0.0579 | 0.475 | 0.987 | 0.350 | 0.000 |
+| type7 | 0.1429 | 0.0424 | 0.0394 | 0.0611 | 0.350 | 0.960 | 0.250 | 0.360 |
+
+Answered all 40 blocks in 23 messages without approaching its limits.
+
+The `spread_ratio` column is the interesting one. mimo reports 6.100, far above every reference rule (whose maximum is 1.609) and above the truth's range of 1.25 to 4.15. So even a cheap free model understands it must extrapolate past the sample maximum rather than calling `np.percentile`, and then overshoots badly at p99, which is precisely where its regret is worst (0.0449, its own weakest level). A single headline score would not have shown that.
 
 ## Criterion Disagreement
 
