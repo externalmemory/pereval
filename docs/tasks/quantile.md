@@ -132,9 +132,23 @@ The task discriminates across its whole intended range, and the `spread_ratio` c
 
 **gemma-4-31b-it led while hitting the time limit after 6 messages**, throttled by the free tier. It still scored 40/40 only because it wrote a complete predictions.csv early, which is the instruction added after an earlier run failed by building state across fresh interpreters.
 
+### One Post-Disclosure Run
+
+The rows above predate the metric disclosure now in the prompt. Claude Haiku 4.5 was run once *after* disclosure, on the same instance (seed 1835504127), so it is comparable on data but not on instructions. A single sense-check of a midrange model, not a result.
+
+| Row | Regret | p90 | p95 | p99 | Hit | MAE | Cov | Spread | Msgs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `[normal]` | 0.0995 | 0.0320 | 0.0293 | 0.0382 | 0.450 | 0.911 | 0.725 | 2.545 | |
+| Claude Haiku 4.5 (post-disclosure) | 0.1060 | 0.0346 | 0.0307 | 0.0407 | 0.400 | **0.904** | **0.200** | 2.414 | 58 |
+| `[wei8]` | 0.1145 | 0.0433 | 0.0346 | 0.0366 | 0.650 | 1.084 | 0.800 | 1.609 | |
+
+Haiku is the sharpest illustration of the task's premise so far, because it split its method. For the point estimates it fit parametric distributions (normal, lognormal, t) to each 10-point sample, which extrapolate past the sample maximum and adapt their shape per block: the best MAE of any completing model (0.904) and an adaptive spread (2.414). For the interval it used a nonparametric bootstrap of the sample quantile, resampling the 10 points and taking bootstrap percentiles.
+
+That interval method is the one the source literature singles out as failing. A nonparametric bootstrap of a sample quantile is bounded by the sample maximum, so the resampled q95 can never exceed the largest of the ten points and the interval structurally undercovers a tail quantile. The proof of concept measured bootstrap coverage of 0.28 for type7 and 0.18 for HD for exactly this reason; Haiku's 0.200 lands in that band. It is a fluent, competent-looking analysis that picked a good method for the point and a provably wrong one for the tail interval, miscalibrated precisely where it matters. On this task Haiku would rank near the top on point accuracy and near the bottom on interval calibration, which is the criterion disagreement below made concrete in one model.
+
 ### Environment Notes
 
-Zen's free tier is not a usable validation surface: three of four models failed environmentally (two HTTP 400s, one response with no `choices` field). OpenRouter ran five of five and offers 13 tool-capable free models. `nemotron-3-ultra` failed on Zen and succeeded on OpenRouter, confirming the gateway rather than the model was at fault.
+Zen's free tier is not a usable validation surface: three of four models failed environmentally (two HTTP 400s, one response with no `choices` field). OpenRouter ran five of five and offers 13 tool-capable free models. `nemotron-3-ultra` failed on Zen and succeeded on OpenRouter, confirming the gateway rather than the model was at fault. Zen's paid tier is reliable; Claude Haiku 4.5 ran there without issue.
 
 ## Criterion Disagreement
 
