@@ -16,7 +16,7 @@ inspect eval pereval/tasks/quantile/task.py -T baseline=wei8 --model mockllm/mod
 
 ## The Task
 
-Each instance presents 40 independent problems. Each is 10 values drawn uniformly without replacement from a population of m year-over-year percent changes of one undisclosed macroeconomic series over an undisclosed window (m >= 250). The agent estimates that population's 90th, 95th and 99th percentiles, plus a 95% interval for the 95th.
+Each instance presents 100 independent problems (the results tables below predate this and used 40). Each is 10 values drawn uniformly without replacement from a population of m year-over-year percent changes of one undisclosed macroeconomic series over an undisclosed window (m >= 250). The agent estimates that population's 90th, 95th and 99th percentiles, plus a 95% interval for the 95th.
 
 The estimand is stated explicitly in the prompt, because leaving "the 95th percentile" ambiguous would make this a reading-comprehension test whose result flips on a paraphrase. Naming the target costs nothing: knowing that the population quantile is wanted does not tell you how to extrapolate a tail from ten points.
 

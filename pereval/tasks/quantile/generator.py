@@ -31,7 +31,7 @@ import os
 import numpy as np
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-N_BLOCKS = 40
+N_BLOCKS = 100
 N_DRAW = 10
 M_MIN = 250          # below this, HD at p95 is squeezed against the sample max
 M_MAX = 600
