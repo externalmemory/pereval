@@ -1,9 +1,10 @@
 # Small-Sample Tail Quantile Estimation
 
-> **Status: implemented, one validation run.** The generator, scorer, baselines
-> and Inspect wrapper are in place and validated end to end, including one real
-> agent run through the Docker sandbox. That is a plumbing check on a single
-> weak model, not a benchmark: no model cast has been run.
+> **Status: benchmarked on a free-model cast.** Generator, scorer, baselines and
+> Inspect wrapper are in place and validated end to end. Four free models have a
+> 3-run mean ± 2 SD result at 100 blocks with the metric disclosed (see
+> [Stability Across Seeds](#stability-across-seeds-100-blocks-metric-disclosed)).
+> A paid-model cast is still pending.
 
 The suite's second realistic domain task, and the only one whose ground truth is
 empirical rather than generated from a known DGP. Implementation notes and the
