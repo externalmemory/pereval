@@ -61,7 +61,7 @@ Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ball
 
 | Model | CCAR | Ballistic | Two-body | Three-body | Flyby | Quantile |
 | --- | --- | --- | --- | --- | --- | --- |
-| Kimi K3 | 0.033 ± 0.014 | 6.00 | 0.02 | 0.03 | 0.012 | |
+| Kimi K3 | 0.033 ± 0.082 | 6.00 | 0.02 | 0.03 | 0.012 | |
 | Claude Fable 5 | | 6.16 | | 0.03 | | |
 | GPT-5.6 Sol | | | | 14.2 | | |
 | GLM-5.1 | | 3.34 | 0.04 | 14.9 | | |
@@ -69,15 +69,15 @@ Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ball
 | Kimi-k2.7-code | | 28.26 | 0.02 | 139.2 | | |
 | Kimi-k2.6 | | 8.49 | 1258 | fail | | |
 | Claude Haiku 4.5 | | 58.40 | | | | 0.106 |
-| deepseek-v4-flash-free | 0.043 ± 0.018 | | | | | |
-| mimo-v2.5-free | 0.131 ± 0.061 | | | | | 0.116 |
+| deepseek-v4-flash-free | 0.043 ± 0.102 | | | | | |
+| mimo-v2.5-free | 0.131 ± 0.371 | | | | | 0.116 |
 | gemma-4-31b-it:free | | | | | | 0.093 |
 | nemotron-3-ultra-550b:free | | | | | | 0.113 |
 | laguna-m.1:free | | | | | | 0.129 |
 | nemotron-3-super-120b:free | | | | | | 0.143 |
 | gpt-oss-20b:free | | | | | | 1.131 |
-| *reference* | *0.013 ± 0.004* | | *0.01* | *0.03* | | *0.089* |
-| *naive baseline* | *0.200 ± 0.090* | *21.77* | *12.1* | *66.0* | | *0.134* |
+| *reference* | *0.013 ± 0.022* | | *0.01* | *0.03* | | *0.089* |
+| *naive baseline* | *0.200 ± 0.544* | *21.77* | *12.1* | *66.0* | | *0.134* |
 
 The reference row is not the same kind of thing in every column. For CCAR and the orbital tasks it is the true generating model, so it marks an oracle nothing can beat. For quantile there is no true model: the floor is exactly 0 by construction, and the cell shown is a literature-derived estimator rather than a bound. It is not even the strongest row in its own table, since a moment-matched normal scores 0.068 against its 0.089 on this metric.
 
