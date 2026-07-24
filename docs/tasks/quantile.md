@@ -99,11 +99,61 @@ Lower regret is better. One generated instance, 40 blocks, seed 1.
 
 The p99 column does the work: bounded rules 0.049-0.052, extrapolating rules 0.027. The naive moment-matched normal leading the table is a real result, not a bug. It is exactly the kind of criterion-dependent inversion this task is meant to surface, and a caution against reading any single column as a verdict.
 
-## First Model Runs
+## Stability Across Seeds (100 blocks, metric disclosed)
 
-> Provisional and superseded. These predate the metric disclosure now in the
-> prompt, so they measure a task where the loss function was not stated. They
-> are retained as evidence the harness discriminates, not as results.
+The primary result. Free models, three seeds each (base seeds 1, 2, 3, so a
+near-disjoint 100-series draw per seed), 100 blocks per instance, scoring metric
+disclosed in the prompt. Reported as **mean ± 2 SD** over the runs (2× the
+sample standard deviation, not a confidence interval), ordered by the upper end
+mean + 2 SD, so the ranking rewards consistency rather than a lucky low mean.
+Lower is better. Every reported number has at least three valid runs behind it;
+a model that could not reach three is excluded with its failure rate noted
+rather than reported on thin data.
+
+The four reference estimators are deterministic given the blocks, so their spread
+is **pure block-sampling noise** — the irreducible floor at 100 blocks (about
+± 0.03). A model tighter than that floor has negligible run-to-run method
+variance; a model wider than it is switching methods between runs, which no
+increase in block count can fix.
+
+| Row | runs | per-run regret | mean ± 2 SD |
+| --- | --- | --- | --- |
+| `[normal]` | 3 | 0.0796, 0.0907, 0.0638 | 0.078 ± 0.027 |
+| **nemotron-3-ultra-550b** | 3 | 0.0767, 0.0987, 0.0875 | **0.088 ± 0.022** |
+| nemotron-3-super-120b | 3 | 0.1024, 0.1182, 0.0983 | 0.106 ± 0.021 |
+| `[wei8]` | 3 | 0.0975, 0.1242, 0.1001 | 0.107 ± 0.029 |
+| `[t6]` | 3 | 0.1089, 0.1389, 0.1157 | 0.121 ± 0.032 |
+| `[type7]` | 3 | 0.1168, 0.1375, 0.1040 | 0.119 ± 0.034 |
+| mimo-v2.5-free | 3 | 0.1218, 0.0945, 0.1507 | 0.122 ± 0.056 |
+| laguna-m.1 | 3 | 0.1568, 0.1209, 0.0641 | 0.114 ± 0.093 |
+
+**gpt-oss-20b is excluded, and the exclusion is the finding.** It produced valid
+output on only 2 of 6 attempts (seeds 1 and 2 succeeded at 0.122 and 0.118; seed
+3 failed twice and seeds 4 and 5 once each, every failure running the full agent
+loop for 84 to 296 messages and then emitting no parseable predictions.csv). A
+~67% rate of answering nothing is worse than an unstable answer, and it cannot
+meet the three-run bar, so no regret number is reported for it.
+
+Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022)
+and nemotron-3-super (± 0.021) are as stable as the deterministic baselines**, so
+their method is fixed across runs and their single-run numbers are trustworthy.
+nemotron-ultra is the only model that beats every reference estimator on the
+conservative bound (upper 0.110 vs wei8's 0.137), edged only by the naive normal.
+
+Two models sit far above the floor: **mimo at ± 0.056 (about 2× the floor) and
+laguna at ± 0.093 (about 3×)**. Roughly two-thirds of laguna's variance is
+method-switching, not block-sampling. Its per-run values run 0.157, 0.121, 0.064
+— worst in the table on seed 1, best on seed 3. A single run of laguna is a coin
+flip, and more blocks would not change that. This is the empirical case for the
+suite's repeated-run standard: for method-switching models no single number
+means anything, and the *stability itself* is a reported property.
+
+## First Model Runs (provisional, pre-disclosure, 40 blocks)
+
+> Provisional and superseded by the table above. These predate the metric
+> disclosure now in the prompt and used 40 blocks, so they measure a different,
+> now-retired configuration. Retained as evidence the harness discriminates, not
+> as results.
 
 Six free models, one instance each (40 blocks, seed 1835504127), all rows paired against reference estimators computed on the identical blocks. Lower regret is better; `LIMIT` marks a run that hit a budget cap.
 
