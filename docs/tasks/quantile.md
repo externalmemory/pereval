@@ -49,9 +49,15 @@ Winkler is still reported as a diagnostic, because interval calibration is worth
 
 ## Why Three Quantile Levels
 
-At tau = 0.90 the reference estimators are indistinguishable. At tau = 0.99 the bounded ones are structurally stuck. In units of the sample top gap `x_(10) - x_(9)`, the p99 - p95 spread is an exact constant for type7 (0.360), type8 (0.000, both levels clip to the sample maximum at n = 10) and both extrapolators (1.609), and varies only mildly for Harrell-Davis (about 0.16 to 0.20). The truth varies 1.25 to 4.15 across series.
+At tau = 0.90 the reference estimators are indistinguishable. At tau = 0.99 the bounded ones are structurally stuck. In units of the sample top gap `x_(10) - x_(9)`, the p99 - p95 spread is an exact constant for type7 (0.360), type8 (0.000, both levels clip to the sample maximum at n = 10) and both extrapolators (1.609). Harrell-Davis alone among the bounded rules is not a fixed constant — its ratio is typically low (median 0.16) but has a long right tail (up to ~3). The truth varies 1.25 to 4.15 across series.
 
-So the four rules that touch nothing but the top two order statistics are structurally incapable of adapting to tail shape. The normal fit and Harrell-Davis do vary, because they use all ten points; measured by rank correlation between a rule's per-block spread and the truth's, the naive normal scores 0.637 and HD 0.504, while type7, type8, wei8 and t6 are exact constants and have no correlation at all. That the naive rule is the *most* adaptive of the baselines is part of why it wins.
+"Adapting to tail shape" is really two separate abilities, and the reference rules split differently on each.
+
+First, can a rule place the tail quantile *above the sample maximum*? type7, type8 and Harrell-Davis cannot: each is a weighted average of order statistics with non-negative weights, so it is structurally bounded by the observed maximum and systematically undershoots a tail that runs past the data (q99 exceeds the sample max in 0% of blocks for all three). wei8, t6 and the normal fit can and do exceed it (100%, 100% and ~87% of blocks).
+
+Second, does the p99 − p95 spread *vary with the sample*? Measured by rank correlation between a rule's per-block spread ratio and the truth's, the normal scores 0.637 and Harrell-Davis 0.504, while type7, type8, wei8 and t6 are exact constants. wei8 and t6 are the instructive case: they extrapolate, and their absolute tail width scales with the top gap x_(10) − x_(9), so they *do* adapt tail scale — but they pin the ratio (q99 − q95) / gap at exactly log 5 = 1.609 regardless of shape, so they cannot match the shape variation the truth shows (ratio 1.25 to 4.15). Harrell-Davis is the mirror image: its ratio varies with the sample, but being bounded by the maximum it cannot extrapolate at all.
+
+Only the normal does both — extrapolate and vary its ratio — which is part of why it wins on this data.
 
 Summing over three tau captures shape in a single scalar, because getting all three levels right requires getting the shape right. The reported `spread_ratio` diagnostic makes behaviour legible directly: 0.0 means type 8 or a degenerate q99 = q95, 0.36 means a bare `np.percentile` call, a constant 1.6 means one of the two extrapolating rules, and a spread that varies block to block means the rule is reading shape out of the sample.
 
