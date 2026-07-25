@@ -13,7 +13,7 @@ Macro history is a single realized path (N = 1), so goodness-of-fit on real data
 ### Design Principles
 
 1. **Hard to find, easy to verify.** Every task has an objectively checkable target (e.g., recovery of known data-generating-process parameters), not a vibes-based judge.
-2. **Headroom over impossibility.** Tasks target the 20–70% frontier-model pass band, where an eval actually discriminates. Item information is p(1−p): tasks every model fails are as uninformative as tasks every model solves.
+2. **Scalar regret, not pass/fail.** Each task scores a continuous regret against an oracle or reference and reports its run-to-run variability, rather than a one-bit pass. A scalar carries far more than a single bit, so a task keeps discriminating even when every model clears it or every model struggles: the regret *magnitudes* separate them, and so do their *stabilities* — a model that answers consistently and one that gives a different answer each run are distinguishable even at the same mean. Headroom still matters (a task where everything sits on the oracle floor says nothing), but it is headroom in the regret distribution, not a target pass rate.
 3. **Validated scorers.** Each scorer ships with its own tests: it must separate a planted-correct solution, a planted-subtly-flawed solution, and a planted-degenerate solution before it is trusted to score a model.
 4. **Statistical honesty.** Repeated runs per task, paired-difference comparisons, clustered standard errors. No leaderboards with error bars the sample size can't support.
 
