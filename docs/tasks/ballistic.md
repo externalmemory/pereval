@@ -16,9 +16,26 @@ The agent receives (category, x, y) training rows and must predict y with 95% pr
 
 Each instance is generated host-side and only neutral CSVs enter the agent's sandbox: the ballistics engine, the generator, and the ground-truth oracle stay out. What forces the agent to model the data rather than re-simulate it is that category identifiers are opaque and the ballistic parameters are randomized per run, so there is no known load to look up, and any simulation would first require estimating each category's parameters from the training data, which is the task itself. The sandbox additionally has no network, which blocks the weaker shortcuts of installing the exact engine, downloading its drag tables, or querying an online calculator. It does not prevent the agent from recognizing the physics from the data, which is legitimate.
 
-## Scores (Harness Functionality Check, Not a Model Ranking)
+## Scores (three runs, mean ± 2 SD)
 
-The numbers below come from a single generated instance (N = 1, seed 1) and exist only to show that the harness runs end to end and that the scorer discriminates. They are not a ranking of these models. With one instance there are no error bars, so the mid-field ordering is not robust and would likely reorder on another draw. Lower Winkler regret is better; coverage targets 0.95. "Parabola baseline" is the naive quadratic reference (`-T baseline=true`), not a model.
+Three instances (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across the runs, ordered by the upper end mean + 2 SD. Every row is paired on the same three instances. Lower Winkler regret is better; coverage targets 0.95. The parabola baseline (`-T baseline=true`) is the naive quadratic reference, not a model.
+
+| Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
+| --- | --- | --- | --- |
+| GLM-5.1 | 3 | 7.97 ± 12.79 | 0.56 |
+| nemotron-3-ultra-550b (free) | 3 | 10.97 ± 10.77 | 0.42 |
+| Parabola baseline | 3 | 17.19 ± 9.33 | 0.23 |
+| Claude Haiku 4.5 | 3 | 37.84 ± 79.83 | 0.22 |
+
+GLM-5.1 is the only model that clearly clears the naive parabola baseline (upper bound 20.8 vs the baseline's 26.5); nemotron-3-ultra sits right at it. **Claude Haiku 4.5 is worse than the naive quadratic** — mean 37.8 against the baseline's 17.2 — which is a real result, not a low-effort artifact, since it holds across three instances. Its ± 79.8 band is enormous because one instance blew out to 83; even so its whole band sits above the baseline mean.
+
+The bands are wide relative to the mean gaps, so at three instances only the extremes are resolved: GLM-5.1 above the field, Haiku below the baseline. The middle is not separated, which is the same small-sample caution the CCAR and quantile tables carry.
+
+## Earlier single-run exploration (provisional, N = 1)
+
+> Superseded for GLM-5.1 and Haiku by the three-run table above. The other rows are still single instances and are kept only as an illustration that the scorer discriminates and localises failure by sub-task. The single-run GLM-5.1 (3.34) and Haiku (58.40) numbers here both differ materially from their three-run means (7.97, 37.84), which is exactly why single runs are not reported as results.
+
+The numbers below come from a single generated instance (N = 1, seed 1). With one instance there are no error bars, so the mid-field ordering is not robust and would likely reorder on another draw. Lower Winkler regret is better; coverage targets 0.95. "Parabola baseline" is the naive quadratic reference (`-T baseline=true`), not a model.
 
 | Model | Winkler regret | MAE (m) | Coverage | Width (m) | Rifle regret | Pistol regret |
 | --- | --- | --- | --- | --- | --- | --- |

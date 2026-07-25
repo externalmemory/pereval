@@ -32,7 +32,8 @@ def _text(content):
 
 
 def render(log, sample) -> str:
-    sc = (sample.scores or {}).get("quantile")
+    scores = sample.scores or {}
+    sc = scores.get(log.eval.task) or (next(iter(scores.values())) if scores else None)
     head = [f"# {log.eval.model} — {log.eval.task} (id={sample.id})", ""]
     if sc:
         head.append(f"- {sc.explanation}")

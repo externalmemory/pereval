@@ -34,7 +34,46 @@ Structural complexity is not the same as difficulty for a model, though: this ta
 
 The flyby's baselines are a naive `poly` extrapolation (a flyby is not a polynomial) and an `od` reference that fits the planet from alpha and then the six-element 3D hyperbolic orbit from beta and gamma. Because a few percent of the fastest flybys defeat the reference's global fit, instances are rejection-sampled: the generator keeps the first seed offset whose reference reaches the noise floor, so every instance has a solvable anchor and generation stays deterministic.
 
-## Scores (Harness Functionality Check, Not a Model Ranking)
+## Scores (three runs, mean ± 2 SD)
+
+Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across the runs, ordered by the upper end mean + 2 SD, paired on the same three instances. Lower Winkler regret is better; coverage targets 0.95. The reference and naive rows (`-T baseline=kepler|harmonic` for two/three-body, `od|poly` for the flyby) are solvers, not models. `†` marks a row with fewer than three valid runs; the paid model cast ran out of credits during three-body and the flyby, so GLM-5.1 is incomplete there.
+
+**Two-body** (the easy task):
+
+| Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
+| --- | --- | --- | --- |
+| Kepler reference | 3 | 0.004 ± 0.002 | 0.95 |
+| GLM-5.1 | 3 | 0.040 ± 0.092 | 0.96 |
+| Harmonic baseline (naive) | 3 | 9.86 ± 16.26 | 0.78 |
+| Claude Haiku 4.5 | 3 | 81.20 ± 45.65 | 1.00 |
+
+**Three-body** (the hard leap):
+
+| Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
+| --- | --- | --- | --- |
+| Kepler reference | 3 | 0.018 ± 0.037 | 0.95 |
+| GLM-5.1 † | 1 | [1.92] | 0.86 |
+| Harmonic baseline (naive) | 3 | 139.8 ± 336.2 | 0.78 |
+| Claude Haiku 4.5 | 3 | 370.3 ± 384.3 | 0.73 |
+
+**Hyperbolic flyby** (most structurally complex):
+
+| Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
+| --- | --- | --- | --- |
+| OD reference | 3 | 0.175 ± 0.308 | 0.94 |
+| Claude Haiku 4.5 | 3 | 500.7 ± 1469.3 | 0.46 |
+| Polynomial baseline (naive) | 3 | 9571 ± 18872 | 0.15 |
+| GLM-5.1 † | 0 | credits exhausted | — |
+
+GLM-5.1 solves two-body at reference level (0.04, reproducing its earlier single-run 0.04) and is the only model cast that clears the naive harmonic baseline there. **Claude Haiku 4.5 fails every orbital task**, worse than the naive baseline on two-body and three-body across all three instances. Its two-body failure has a specific signature: coverage 1.00 with regret 81 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit at all — the fast-model reflex of buying coverage with sharpness.
+
+The one GLM-5.1 three-body run that completed before credits ran out scored 1.92 — far better than its earlier single-run 14.9, but n=1, so it is not reported as a result; whether GLM-5.1 makes the retrograde leap needs the other two runs. The baselines behave as designed: the OD and Kepler references reach the oracle, and the naive polynomial flyby fit is astronomically bad (9571), confirming a flyby is nothing like a polynomial.
+
+The bands are wide, so as elsewhere only the extremes are resolved at n=3. That the naive polynomial's ± 2 SD (± 18872) exceeds its own mean is the heavy-tailed-regret pattern again: one instance dominates.
+
+## Earlier single-run exploration (provisional, N = 1)
+
+> Superseded for GLM-5.1 (two-body) and Haiku by the three-run tables above. The remaining rows are single instances, kept to show the difficulty gradient and the physics-vs-curve-fit split. Single runs are not reported as results.
 
 A single instance (N = 1, seed 1) per task, no error bars, not a ranking. Lower Winkler regret is better; coverage targets 0.95. The two reference rows are not models: "Harmonic baseline" is the naive Fourier fit and "Kepler reference" fits the true elliptical-orbit model. "fail" means the model did not produce predictions within its message budget and was penalty-scored.
 

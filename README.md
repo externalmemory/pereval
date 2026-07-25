@@ -64,11 +64,11 @@ Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ball
 | Kimi K3 | 0.033 ± 0.082 | 6.00 | 0.02 | 0.03 | 0.012 | |
 | Claude Fable 5 | | 6.16 | | 0.03 | | |
 | GPT-5.6 Sol | | | | 14.2 | | |
-| GLM-5.1 | | 3.34 | 0.04 | 14.9 | | |
+| GLM-5.1 | | 7.97 | 0.04 | 14.9 | | |
 | GLM-5 | | 11.53 | 0.04 | 57.9 | | |
 | Kimi-k2.7-code | | 28.26 | 0.02 | 139.2 | | |
 | Kimi-k2.6 | | 8.49 | 1258 | fail | | |
-| Claude Haiku 4.5 | | 58.40 | | | | 0.106 |
+| Claude Haiku 4.5 | | 37.84 | 81.2 | 370 | 501 | 0.106 |
 | deepseek-v4-flash-free | 0.043 ± 0.102 | | | | | |
 | mimo-v2.5-free | 0.131 ± 0.371 | | | | | 0.116 |
 | gemma-4-31b-it:free | | | | | | 0.093 |
