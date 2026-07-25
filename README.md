@@ -48,40 +48,31 @@ The two domain tasks are the realistic ones. The mechanism tasks calibrate the h
 
 ## Summary Scores
 
-> **This is a placeholder, not a leaderboard.** Cells are not comparable across
-> columns (different metrics on different scales), most are single instances with
-> no error bars, blanks mean not run rather than failed, and no column has enough
-> instances to support an ordering. It exists to show coverage and that the
-> harness discriminates. Per-task tables with the actual caveats are behind the
-> links above. Everything here is provisional and will be regenerated once the
-> task set is finalised; rows for models that are no longer served are removed
-> rather than carried forward unreproducible.
+> **Not a leaderboard, and not comparable across columns.** Every column is Winkler
+> regret except Quantile, which is pinball regret, and the scales differ by orders
+> of magnitude, so a number in one column says nothing about another. What the
+> matrix shows is coverage and within-column contrast. Blank means not yet measured
+> at three runs, not a failure; single-run exploratory results live in the per-task
+> docs behind the links above.
 
-Lower is better everywhere. CCAR is Winkler regret over 8 paired instances; ballistic and orbital are Winkler regret on one instance (seed 1); quantile is pinball regret on one instance and has only a single plumbing-validation run.
+Every cell is **mean ± 2 SD** over at least three runs (CCAR and its baselines over 8 instances; all other columns over 3). Lower is better everywhere. Cells that had only a single run have been dropped from this matrix and remain in the per-task docs.
 
 | Model | CCAR | Ballistic | Two-body | Three-body | Flyby | Quantile |
 | --- | --- | --- | --- | --- | --- | --- |
-| Kimi K3 | 0.033 ± 0.082 | 6.00 | 0.02 | 0.03 | 0.012 | |
-| Claude Fable 5 | | 6.16 | | 0.03 | | |
-| GPT-5.6 Sol | | | | 14.2 | | |
-| GLM-5.1 | | 7.97 | 0.04 | 14.9 | | |
-| GLM-5 | | 11.53 | 0.04 | 57.9 | | |
-| Kimi-k2.7-code | | 28.26 | 0.02 | 139.2 | | |
-| Kimi-k2.6 | | 8.49 | 1258 | fail | | |
-| Claude Haiku 4.5 | | 37.84 | 81.2 | 370 | 501 | 0.106 |
+| Kimi K3 | 0.033 ± 0.082 | | | | | |
 | deepseek-v4-flash-free | 0.043 ± 0.102 | | | | | |
-| mimo-v2.5-free | 0.131 ± 0.371 | | | | | 0.116 |
-| gemma-4-31b-it:free | | | | | | 0.093 |
-| nemotron-3-ultra-550b:free | | | | | | 0.113 |
-| laguna-m.1:free | | | | | | 0.129 |
-| nemotron-3-super-120b:free | | | | | | 0.143 |
-| gpt-oss-20b:free | | | | | | 1.131 |
-| *reference* | *0.013 ± 0.022* | | *0.01* | *0.03* | | *0.089* |
-| *naive baseline* | *0.200 ± 0.544* | *21.77* | *12.1* | *66.0* | | *0.134* |
+| GLM-5.1 | | 7.97 ± 12.79 | 0.04 ± 0.09 | | | |
+| Claude Haiku 4.5 | | 37.84 ± 79.83 | 81.20 ± 45.65 | 370 ± 384 | 501 ± 1469 | |
+| nemotron-3-ultra:free | | 10.97 ± 10.77 | | | | 0.088 ± 0.022 |
+| nemotron-3-super:free | | | | | | 0.106 ± 0.021 |
+| laguna-m.1:free | | | | | | 0.114 ± 0.093 |
+| mimo-v2.5-free | 0.131 ± 0.371 | | | | | 0.122 ± 0.056 |
+| *reference (true model)* | *0.013 ± 0.022* | *—* | *0.004 ± 0.002* | *0.018 ± 0.037* | *0.175 ± 0.308* | *—* |
+| *naive baseline* | *0.200 ± 0.544* | *17.19 ± 9.33* | *9.86 ± 16.26* | *139.8 ± 336* | *9571 ± 18872* | *0.119 ± 0.034* |
 
-The reference row is not the same kind of thing in every column. For CCAR and the orbital tasks it is the true generating model, so it marks an oracle nothing can beat. For quantile there is no true model: the floor is exactly 0 by construction, and the cell shown is a literature-derived estimator rather than a bound. It is not even the strongest row in its own table, since a moment-matched normal scores 0.068 against its 0.089 on this metric.
+The reference row is not the same kind of thing in every column. For CCAR and the orbital tasks it is the true generating model, an oracle nothing can beat. Ballistic and quantile have no true-model reference (a `—`): ballistic's only anchor is the naive parabola, and quantile's floor is 0 by construction with the naive row being `np.percentile` (type 7).
 
-Two observations survive the caveats. Three-body separates models that reconstruct the physics from those that curve-fit and hedge, by two orders of magnitude, and more reasoning effort does not fix it: GPT-5.6 Sol got *worse* at high effort (276.2 versus 14.2) by committing harder to the wrong model. And CCAR is tractable for cheap models, with three of them clustering just above the near-oracle reference, which is why the suite needs the harder tasks to discriminate at the top.
+Three findings survive the caveats and the wide bands. **GLM-5.1 solves two-body at reference level** (0.04, band clear of the naive baseline's 9.86) and clears the naive baseline on ballistic. **Claude Haiku 4.5 fails every orbital task** — worse than the naive baseline on two- and three-body across all three runs. And on quantile, **nemotron-3-ultra (± 0.022) is as stable as the deterministic baselines** while laguna (± 0.093) is a coin flip, so their equal-looking means are not equally trustworthy. The three-body physics-vs-curve-fit split and the GPT-5.6 Sol effort-hurts result are still real but sit at n=1, so they live in [the orbital doc](docs/tasks/orbital.md) rather than here.
 
 ## Layout
 
