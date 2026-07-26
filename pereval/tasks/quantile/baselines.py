@@ -21,6 +21,9 @@ The floor and the ceiling are not the ones you would guess:
          the property that matters here.
   normal moment-matched normal, mu + z_tau * s. Naive, and better than it has any
          right to be: it beats both extrapolators on pinball regret.
+  logist moment-matched logistic, mu + (sd sqrt(3)/pi) * logit(tau). Same idea as
+         normal but a heavier-tailed family (excess kurtosis 1.2 vs 0), so it
+         reaches further into the tail for the same variance.
 
 No row here is "the best". Which one leads depends entirely on the criterion:
 point accuracy favours type7, point centring favours the extrapolators, interval
@@ -127,6 +130,15 @@ def _qf(name: str):
         return lambda xs, u: (xs.mean(1)[:, None]
                               + norm.ppf(np.clip(u, 1e-12, 1 - 1e-12))
                               * xs.std(1, ddof=1)[:, None])
+    if name == "logistic":
+        # moment-matched logistic: mean = mu, var = s^2 pi^2/3, so s = sd sqrt(3)/pi.
+        # Q(u) = mu + s*logit(u). Heavier tails than the normal (excess kurtosis
+        # 1.2 vs 0), so it extends further into the tail for the same variance.
+        def f(xs, u):
+            u = np.clip(u, 1e-12, 1 - 1e-12)
+            s = xs.std(1, ddof=1)[:, None] * np.sqrt(3.0) / np.pi
+            return xs.mean(1)[:, None] + s * np.log(u / (1.0 - u))
+        return f
     raise KeyError(name)
 
 

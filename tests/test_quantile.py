@@ -199,3 +199,17 @@ def test_disclosure_can_be_switched_off_for_an_ab_test(blocks):
     for b in blocks:
         assert ", ".join(f"{v:g}" for v in b["shown"]) in off
     assert "OF THE POPULATION" in off
+
+
+def test_logistic_baseline_matches_moments_and_out_tails_the_normal(blocks):
+    """Moment-matched logistic: its q50 is the sample mean, and being a
+    heavier-tailed family it places q99 strictly above the moment-matched
+    normal's for the same sample (excess kurtosis 1.2 vs 0)."""
+    xs = np.stack([b["x"] for b in blocks])
+    med = point_estimate("logistic", xs, 0.50)
+    assert med == pytest.approx(xs.mean(1), rel=1e-9)          # logit(0.5)=0
+    assert np.all(point_estimate("logistic", xs, 0.99)
+                  > point_estimate("normal", xs, 0.99))
+    # but at a mild upper quantile the normal reaches at least as far
+    assert np.all(point_estimate("logistic", xs, 0.90)
+                  <= point_estimate("normal", xs, 0.90) + 1e-9)

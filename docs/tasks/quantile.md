@@ -86,7 +86,9 @@ Blocks come from distinct series and are independently scaled, so they cannot be
 
 ## Baselines
 
-`-T baseline=type7|type8|hd|t6|wei8|normal`.
+`-T baseline=type7|type8|hd|t6|wei8|normal|logistic`.
+
+The `logistic` baseline is the moment-matched normal's heavier-tailed sibling: same construction, `mu + (sd sqrt(3)/pi) * logit(tau)`, but a family with excess kurtosis 1.2 against the normal's 0. It edges out the normal to lead the baselines (0.076 ± 0.027 vs 0.078 ± 0.027 over the three 100-block seeds), and the win is located exactly where the heavier tail should help: at tau = 0.99 it scores 0.026 against the normal's 0.029, while at tau = 0.90 it is marginally worse (it over-reaches for a mild quantile). That a two-parameter logistic fit beats the literature's tail-extrapolation estimators on this metric is the same uncomfortable finding the normal already delivered, only more so.
 
 `t6` is the literature construction: the tail extrapolation of Wei, Wang and Hutson (Commun. Stat. Theory Methods, DOI 10.1080/03610926.2013.775304) around the interior their paper uses, whose Q^L is exactly Hyndman-Fan type 6. `wei8` is the same extrapolation around a type-8 interior, a substitution the paper did not test. What matters for this task is the property they share: both extrapolate past the sample maximum, and none of the other rules can. Intervals are the paper's smoothed bootstrap with a BCa correction.
 
@@ -97,6 +99,7 @@ Lower regret is better. One generated instance, 40 blocks, seed 1.
 | Baseline | Pinball regret | p90 | p95 | p99 | Hit rate | MAE | Coverage | Spread |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | PERFECT (population quantile) | 0.0000 | | | | | | | |
+| logistic (moment-matched) | 0.0661 | 0.0239 | 0.0219 | 0.0203 | 0.450 | 0.526 | 0.850 | 3.318 |
 | normal (moment-matched) | 0.0677 | 0.0233 | 0.0216 | 0.0228 | 0.450 | 0.527 | 0.850 | 2.485 |
 | wei8 (type-8 variant) | 0.0891 | 0.0343 | 0.0279 | 0.0269 | 0.525 | 0.714 | 0.875 | 1.609 |
 | t6 (literature construction) | 0.0931 | 0.0367 | 0.0299 | 0.0265 | 0.550 | 0.789 | 0.900 | 1.609 |
@@ -125,6 +128,7 @@ increase in block count can fix.
 
 | Row | runs | per-run regret | mean ± 2 SD |
 | --- | --- | --- | --- |
+| `[logistic]` | 3 | 0.0775, 0.0881, 0.0617 | 0.076 ± 0.027 |
 | `[normal]` | 3 | 0.0796, 0.0907, 0.0638 | 0.078 ± 0.027 |
 | **nemotron-3-ultra-550b** | 3 | 0.0767, 0.0987, 0.0875 | **0.088 ± 0.022** |
 | nemotron-3-super-120b | 3 | 0.1024, 0.1182, 0.0983 | 0.106 ± 0.021 |

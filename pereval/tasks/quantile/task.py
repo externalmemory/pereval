@@ -148,7 +148,7 @@ def quantile(n_instances: int = 8, seed: int | None = 1,
              baseline: str = "", disclose_metric: bool = True):
     """Small-sample population tail quantile estimation from FRED YoY data.
 
-    baseline: "" runs the agent; a named estimator ("type7", "type8", "hd",
+    baseline: "" runs the agent; a named estimator ("type7", "type8", "hd", "logistic",
     "wei8", "t6", "normal") runs that reference solver under mockllm to produce
     the README baseline rows and to validate plumbing without model spend.
     """
