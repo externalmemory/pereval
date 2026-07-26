@@ -44,8 +44,12 @@ Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD**
 | --- | --- | --- | --- |
 | Kepler reference | 3 | 0.004 ± 0.002 | 0.95 |
 | GLM-5.1 | 3 | 0.040 ± 0.092 | 0.96 |
+| mimo-v2.5 (free) | 3 | 0.074 ± 0.206 | 0.95 |
 | Harmonic baseline (naive) | 3 | 9.86 ± 16.26 | 0.78 |
-| Claude Haiku 4.5 | 3 | 81.20 ± 45.65 | 1.00 |
+| laguna-m.1 (free) | 3 | 33.5 ± 80.3 | 0.96 |
+| Claude Haiku 4.5 | 3 | 81.2 ± 45.6 | 1.00 |
+| nemotron-3-super (free) | 3 | 75.8 ± 51.8 | 0.97 |
+| nemotron-3-ultra (free) | 3 | 653.5 ± 1568 | 0.08 |
 
 **Three-body** (the hard leap):
 
@@ -55,21 +59,30 @@ Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD**
 | GLM-5.1 † | 1 | [1.92] | 0.86 |
 | Harmonic baseline (naive) | 3 | 139.8 ± 336.2 | 0.78 |
 | Claude Haiku 4.5 | 3 | 370.3 ± 384.3 | 0.73 |
+| nemotron-3-ultra (free) | 3 | 877.6 ± 1428 | 0.37 |
+| nemotron-3-super (free) | 3 | 1029 ± 2976 | 0.60 |
+| laguna-m.1 (free) | 3 | 1239 ± 1439 | 0.43 |
+| mimo-v2.5 (free) | 3 | 1150 ± 2445 | 0.33 |
 
 **Hyperbolic flyby** (most structurally complex):
 
 | Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
 | --- | --- | --- | --- |
 | OD reference | 3 | 0.175 ± 0.308 | 0.94 |
-| Claude Haiku 4.5 | 3 | 500.7 ± 1469.3 | 0.46 |
+| mimo-v2.5 (free) | 3 | 170.8 ± 214.8 | 0.57 |
+| nemotron-3-super (free) | 3 | 522.1 ± 808.5 | 0.27 |
+| laguna-m.1 (free) | 3 | 783.3 ± 399.4 | 0.15 |
+| nemotron-3-ultra (free) | 3 | 894.6 ± 934.9 | 0.04 |
+| Claude Haiku 4.5 | 3 | 500.7 ± 1469 | 0.46 |
 | Polynomial baseline (naive) | 3 | 9571 ± 18872 | 0.15 |
-| GLM-5.1 † | 0 | credits exhausted | — |
 
-GLM-5.1 solves two-body at reference level (0.04, reproducing its earlier single-run 0.04) and is the only model cast that clears the naive harmonic baseline there. **Claude Haiku 4.5 fails every orbital task**, worse than the naive baseline on two-body and three-body across all three instances. Its two-body failure has a specific signature: coverage 1.00 with regret 81 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit at all — the fast-model reflex of buying coverage with sharpness.
+Two-body separates the cast cleanly. GLM-5.1 (0.04) and **mimo-v2.5 (0.07) both solve it at near-reference level** — mimo is the standout free model, essentially matching a frontier model on the easy task. Everything else fails, and the failures are not uniform: laguna and both nemotrons land in the tens to hundreds. The most striking is **nemotron-3-ultra at 653 ± 1568 with coverage 0.08** — the *best* model on the quantile task is nearly the worst here, a sharp reminder that these tasks measure different things and a single "capability" number would hide it.
 
-The one GLM-5.1 three-body run that completed before credits ran out scored 1.92 — far better than its earlier single-run 14.9, but n=1, so it is not reported as a result; whether GLM-5.1 makes the retrograde leap needs the other two runs. The baselines behave as designed: the OD and Kepler references reach the oracle, and the naive polynomial flyby fit is astronomically bad (9571), confirming a flyby is nothing like a polynomial.
+Haiku's two-body failure has a specific signature: coverage 1.00 at regret 81 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit — the fast-model reflex of buying coverage with sharpness.
 
-The bands are wide, so as elsewhere only the extremes are resolved at n=3. That the naive polynomial's ± 2 SD (± 18872) exceeds its own mean is the heavy-tailed-regret pattern again: one instance dominates.
+Three-body and the flyby defeat the entire cast: every model lands in the hundreds to low thousands, orders of magnitude above the reference (0.018, 0.175) and mostly above the naive baseline too. On three-body, Haiku (370) is actually the *best* non-baseline, and on the flyby mimo (171) is; no model comes close to solving either. GLM-5.1's one completed three-body run scored 1.92 — far better than its earlier single-run 14.9 — but n=1, so it is not reported; whether GLM-5.1 makes the retrograde leap needs the other two runs, blocked on paid credits.
+
+The baselines behave as designed: the OD and Kepler references reach the oracle, and the naive polynomial flyby fit is astronomically bad (9571 ± 18872, its ± 2 SD exceeding its own mean in the heavy-tailed-regret pattern), confirming a flyby is nothing like a polynomial.
 
 ## Earlier single-run exploration (provisional, N = 1)
 

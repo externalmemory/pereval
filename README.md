@@ -63,16 +63,16 @@ Every cell is **mean ± 2 SD** over at least three runs (CCAR and its baselines 
 | deepseek-v4-flash-free | 0.043 ± 0.102 | | | | | |
 | GLM-5.1 | | 7.97 ± 12.79 | 0.04 ± 0.09 | | | |
 | Claude Haiku 4.5 | | 37.84 ± 79.83 | 81.20 ± 45.65 | 370 ± 384 | 501 ± 1469 | |
-| nemotron-3-ultra:free | | 10.97 ± 10.77 | | | | 0.088 ± 0.022 |
-| nemotron-3-super:free | | | | | | 0.106 ± 0.021 |
-| laguna-m.1:free | | | | | | 0.114 ± 0.093 |
-| mimo-v2.5-free | 0.131 ± 0.371 | | | | | 0.122 ± 0.056 |
+| nemotron-3-ultra:free | | 10.97 ± 10.77 | 653 ± 1568 | 878 ± 1428 | 895 ± 935 | 0.088 ± 0.022 |
+| nemotron-3-super:free | | 59.1 ± 1.3 | 75.8 ± 51.8 | 1029 ± 2976 | 522 ± 809 | 0.106 ± 0.021 |
+| laguna-m.1:free | | 59.1 ± 1.3 | 33.5 ± 80.3 | 1239 ± 1439 | 783 ± 399 | 0.114 ± 0.093 |
+| mimo-v2.5-free | 0.131 ± 0.371 | 10.5 ± 4.0 | 0.07 ± 0.21 | 1150 ± 2445 | 171 ± 215 | 0.122 ± 0.056 |
 | *reference (true model)* | *0.013 ± 0.022* | *—* | *0.004 ± 0.002* | *0.018 ± 0.037* | *0.175 ± 0.308* | *—* |
 | *naive baseline* | *0.200 ± 0.544* | *17.19 ± 9.33* | *9.86 ± 16.26* | *139.8 ± 336* | *9571 ± 18872* | *0.119 ± 0.034* |
 
 The reference row is not the same kind of thing in every column. For CCAR and the orbital tasks it is the true generating model, an oracle nothing can beat. Ballistic and quantile have no true-model reference (a `—`): ballistic's only anchor is the naive parabola, and quantile's floor is 0 by construction with the naive row being `np.percentile` (type 7).
 
-Three findings survive the caveats and the wide bands. **GLM-5.1 solves two-body at reference level** (0.04, band clear of the naive baseline's 9.86) and clears the naive baseline on ballistic. **Claude Haiku 4.5 fails every orbital task** — worse than the naive baseline on two- and three-body across all three runs. And on quantile, **nemotron-3-ultra (± 0.022) is as stable as the deterministic baselines** while laguna (± 0.093) is a coin flip, so their equal-looking means are not equally trustworthy. The three-body physics-vs-curve-fit split and the GPT-5.6 Sol effort-hurts result are still real but sit at n=1, so they live in [the orbital doc](docs/tasks/orbital.md) rather than here.
+Several findings survive the caveats and the wide bands. **GLM-5.1 solves two-body at reference level** (0.04, band clear of the naive baseline's 9.86) and clears the naive baseline on ballistic. **Claude Haiku 4.5 fails every orbital task** — worse than the naive baseline on two- and three-body across all three runs. mimo-v2.5 (free) matches GLM-5.1 on two-body (0.07 vs 0.04), the only free model to solve it. And the axes are not one capability: **nemotron-3-ultra is the best model on quantile (± 0.022, tight) yet nearly the worst on two-body (653), coverage 0.08** — a single "capability" number would hide exactly this. On quantile itself, nemotron-3-ultra's tight band and laguna's wide one (± 0.093, a coin flip) mean their similar means are not equally trustworthy. The three-body physics-vs-curve-fit split and the GPT-5.6 Sol effort-hurts result are still real but sit at n=1, so they live in [the orbital doc](docs/tasks/orbital.md) rather than here.
 
 ## Layout
 
