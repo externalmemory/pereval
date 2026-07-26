@@ -27,9 +27,10 @@ Two references bracket it (`-T baseline=naive|vasicek`): a naive OLS on all nine
 
 ## Scores (Eight Instances)
 
-> Provisional. These predate the current task set and will be regenerated once
-> the suite is finalised. A row for `hy3-free` was removed because the model is
-> no longer served and the result cannot be reproduced.
+> All rows are n=8 and meet the repeated-run standard. The cast is still partial
+> (no paid frontier models beyond Kimi K3, no full free roster), and a row for
+> `hy3-free` was removed because the model is no longer served and cannot be
+> reproduced.
 
 Means over eight generated instances, reported as **mean ± 2 SD** (2× the sample standard deviation across the instances, not a confidence interval), ordered by the upper end mean + 2 SD so consistency is rewarded, matching the quantile table. Every row runs the same eight instances (seed 1), so the comparison is paired. Lower is better; coverage targets 0.95.
 
@@ -38,11 +39,16 @@ Means over eight generated instances, reported as **mean ± 2 SD** (2× the samp
 | Vasicek reference (true model) | 0.013 ± 0.022 | 0.93 | closed-form extended Vasicek |
 | Kimi K3 | 0.033 ± 0.082 | 0.90 | frontier (not free); best model |
 | deepseek-v4-flash-free | 0.043 ± 0.102 | 0.89 | message limit 300 (at 120 it left 18 points unpredicted and scored 0.084) |
-| mimo-v2.5-free | 0.131 ± 0.371 | 0.79 | one scenario at 0.567 dominates its spread |
+| nemotron-3-ultra (free) | 0.085 ± 0.161 | 0.76 | best of the newly-added free models |
+| nemotron-3-super (free) | 0.136 ± 0.303 | 0.73 | |
+| mimo-v2.5 (free) | 0.131 ± 0.371 | 0.79 | one scenario at 0.567 dominates its spread |
 | Naive OLS baseline | 0.200 ± 0.544 | 0.63 | OLS on all nine levels |
+| laguna-m.1 (free) | 0.216 ± 0.694 | 0.67 | the only model worse than the naive baseline |
 
-Every model that completed beats the naive OLS baseline, and the best of them approach the near-oracle Vasicek reference, so CCAR is tractable even for cheap models. The task still discriminates the right way, with the fragile linear-on-levels approach worst and the physics-informed reference best.
+Six of seven models beat the naive OLS baseline, and the best of them approach the near-oracle Vasicek reference, so CCAR is tractable even for cheap models. The task still discriminates the right way, with the fragile linear-on-levels approach near the bottom and the physics-informed reference at the top. The one model that lands *below* the naive baseline is laguna (0.216 vs 0.200), and by the upper-bound ordering it ranks last — the naive regression is a real floor that a weak enough model can fall through.
 
-The ± 2 SD bands are wide, and honestly so: per-instance regret is heavy-right-tailed because a single badly-missed scenario dominates the Winkler score, so the instance-to-instance spread dwarfs the mean gaps. At n=8 the two model rows (Kimi K3 0.033 ± 0.082, deepseek 0.043 ± 0.102) overlap each other and the Vasicek reference completely — eight instances do not resolve them. K3 is nominally best with coverage 0.90, dragged below target by one scenario where it was overconfident (regret 0.12, coverage 0.68), and that one scenario is most of its 2 SD. The mean ordering is suggestive; the bands say it is not established at this sample size, the same repeated-run lesson the quantile study makes explicit.
+nemotron-3-ultra is the best of the free models here (0.085), consistent with it being the strongest free model on the quantile task too — though on the orbital tasks it was among the worst, so CCAR and quantile (both statistical-modelling tasks) track together while the physics tasks do not.
+
+The ± 2 SD bands are wide, and honestly so: per-instance regret is heavy-right-tailed because a single badly-missed scenario dominates the Winkler score, so the instance-to-instance spread dwarfs the mean gaps. At n=8 the leading model rows (Kimi K3 0.033 ± 0.082, deepseek 0.043 ± 0.102, nemotron-3-ultra 0.085 ± 0.161) overlap each other and the Vasicek reference completely — eight instances do not resolve them. The mean ordering is suggestive; the bands say only the extremes (the reference at the top, laguna at the bottom) are established at this sample size, the same repeated-run lesson the quantile study makes explicit.
 
 deepseek illustrates the budget caveat directly: at message limit 120 it ran out on several instances and scored a penalty-inflated 0.084 at coverage 0.67, but at limit 300 it finishes all eight (130 to 189 messages each) and drops to 0.043, so its earlier row reflected budget, not capability. Most rows here finish well under 120 messages; only deepseek needed the higher cap, and raising it does not advantage the others, which were never budget-constrained. (nemotron-3-ultra-free and north-mini-code-free errored on this run and are omitted.)
