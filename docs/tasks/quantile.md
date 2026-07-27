@@ -146,10 +146,21 @@ loop for 84 to 296 messages and then emitting no parseable predictions.csv). A
 meet the three-run bar, so no regret number is reported for it.
 
 Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022)
-and nemotron-3-super (± 0.021) are as stable as the deterministic baselines**, so
-their method is fixed across runs and their single-run numbers are trustworthy.
-nemotron-ultra is the only model that beats every reference estimator on the
-conservative bound (upper 0.110 vs wei8's 0.137), edged only by the naive normal.
+and nemotron-3-super (± 0.021) score as consistently as the deterministic
+baselines**, and nemotron-ultra is the only model that beats every reference
+estimator on the conservative bound (upper 0.110 vs wei8's 0.137), edged only by
+the naive normal.
+
+A tight band means the *score* is stable, not that the *method* is. The
+transcripts show nemotron-3-ultra using materially different approaches across
+the three seeds — GPD-plus-t with bootstrap on one, a kitchen sink of logistic,
+gennorm, skew-normal, Weibull, gamma and KDE on another — that happen to land in
+a similar score range. So its trustworthiness is empirical (its varying methods
+all scored well here) rather than structural (one fixed method), and a single run
+is trustworthy only in the weak sense that any one of its methods would have
+scored similarly. Whether that method variation is driven by sampling temperature
+or by the different data each seed presents is not separable from these runs, and
+is the object of a planned same-seed repeat experiment.
 
 Two models sit far above the floor: **mimo at ± 0.056 (about 2× the floor) and
 laguna at ± 0.093 (about 3×)**. Roughly two-thirds of laguna's variance is
