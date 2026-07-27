@@ -69,6 +69,11 @@ def main(paths):
         for s in (log.samples or []):
             sid = str(s.id)
             name = sid if sid.startswith(log.eval.task) else f"{log.eval.task}-{sid}"
+            # Some tasks (quantile) reuse one sample id across seed runs, so the
+            # seed must be in the filename or the runs overwrite each other.
+            seed = (s.metadata or {}).get("seed")
+            if seed is not None and f"seed-{seed}" not in name:
+                name = f"{name}-seed-{seed}"
             out = os.path.join(RUNS, f"{slug}-{name}.md")
             with open(out, "w") as f:
                 f.write(render(log, s))
