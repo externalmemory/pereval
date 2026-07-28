@@ -51,9 +51,9 @@ The two domain tasks are the realistic ones. The mechanism tasks calibrate the h
 > **Not a leaderboard, and not comparable across columns.** Every column is Winkler
 > regret except Quantile, which is pinball regret, and the scales differ by orders
 > of magnitude, so a number in one column says nothing about another. What the
-> matrix shows is coverage and within-column contrast. Blank means not yet measured
-> at three runs, not a failure; single-run exploratory results live in the per-task
-> docs behind the links above.
+> matrix shows is within-column contrast: which models clear the naive baseline and
+> which fall through it. Blank means not yet measured at three runs, not a failure;
+> single-run exploratory results live in the per-task docs behind the links above.
 
 Each cell is the **worst-case (maximum) regret across the runs** — a single, always-positive number that reads more cleanly than a band and reports the worst any run did. It is measured over at least three runs (CCAR over 8 instances, all other columns over 3). Lower is better everywhere. The per-task pages carry the full mean ± 2 SD; single-run-only cells are dropped and live there too.
 
