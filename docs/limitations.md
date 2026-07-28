@@ -42,3 +42,15 @@ Limits are therefore set generously by default, actual message counts are record
 ## Metric Choice Is Not Neutral
 
 The quantile task makes this explicit: four defensible criteria (point accuracy, point centring, interval coverage, interval score) rank the same five reference estimators in incompatible orders. A single headline number always encodes a choice about what matters. Where that choice is contestable, the alternatives are reported alongside rather than buried.
+
+## The Overall Rank Depends on the Task Mix
+
+The README's mean-rank column is a Borda count over the six tasks currently in the suite — four physics/mechanism tasks (ballistic, two-body, three-body, flyby) and two statistical-modelling tasks (CCAR, quantile). That is not a neutral portfolio: the physics axis carries two thirds of the votes, so the aggregate tilts toward physics-capable models.
+
+The tilt is large enough to change who leads. GLM-5.1 tops the all-six ranking (2.75), but that is partly an artifact of the mix:
+
+- **On the two statistical tasks alone, nemotron-3-ultra ranks first and GLM-5.1 falls out of the top four.**
+- On the four physics tasks alone, GLM-5.1 leads and nemotron-3-ultra sinks near the bottom.
+- Weighting the two axes equally (average the statistical-task ranks and the physics-task ranks, then average those) still puts GLM-5.1 first but lifts nemotron-3-ultra from fourth to third.
+
+So the overall rank is a property of the task portfolio, not of the models in isolation. It is meaningful only relative to the stated task set, and this suite makes no claim that its mix is canonical or balanced — it is simply the tasks that exist so far. A different or larger mix would reorder the field, and the more honest reading of the matrix is the per-axis story (who is good at statistical modelling, who at physics reconstruction) rather than the single aggregate, which the mean-rank column exposes precisely by ranking three models at or below the naive baseline.
