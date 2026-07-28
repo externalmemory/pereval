@@ -62,7 +62,7 @@ Each cell is the **worst-case (maximum) regret across the runs** — a single, a
 | Kimi K3 | 0.12 | | | | | |
 | deepseek-v4-flash-free | 0.14 | | | | | |
 | GLM-5.1 | | 12 | 0.092 | | | |
-| Claude Haiku 4.5 | | 83 | 105 | 575 | 1348 | |
+| Claude Haiku 4.5 | 0.37 | 83 | 105 | 575 | 1348 | 0.10 |
 | nemotron-3-ultra:free | 0.27 | 16 | 1525 | 1579 | 1356 | 0.099 |
 | nemotron-3-super:free | 0.45 | 60 | 106 | 2744 | 918 | 0.12 |
 | laguna-m.1:free | 1.1 | 60 | 78 | 2067 | 1014 | 0.16 |

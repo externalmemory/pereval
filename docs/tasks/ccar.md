@@ -40,6 +40,7 @@ Means over eight generated instances, reported as **mean ± 2 SD** (2× the samp
 | Kimi K3 | 0.033 ± 0.082 | 0.90 | frontier (not free); best model |
 | deepseek-v4-flash-free | 0.043 ± 0.102 | 0.89 | message limit 300 (at 120 it left 18 points unpredicted and scored 0.084) |
 | nemotron-3-ultra (free) | 0.085 ± 0.161 | 0.76 | best of the newly-added free models |
+| Claude Haiku 4.5 | 0.137 ± 0.274 | 0.74 | strong here despite failing every orbital task |
 | nemotron-3-super (free) | 0.136 ± 0.303 | 0.73 | |
 | mimo-v2.5 (free) | 0.131 ± 0.371 | 0.79 | one scenario at 0.567 dominates its spread |
 | Naive OLS baseline | 0.200 ± 0.544 | 0.63 | OLS on all nine levels |
