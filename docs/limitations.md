@@ -11,9 +11,17 @@ The quantile task is the exception and needs its own argument, because its data 
 
 ## Sample Size
 
-Most example-score tables are single-instance (N = 1) harness checks, not model rankings, and are labeled as such. The exception is CCAR, which reports eight paired instances with standard errors.
+Every score table now reports at least three runs per model — CCAR over eight instances, the other tasks over three — as mean ± 2 SD, after the repeated-run standard was adopted. Single-run exploratory results are quarantined in the per-task docs' provisional sections. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3, and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
 
-The harness already supports the honest version: `-T n_instances=N` draws many fresh instances and the scorer emits per-metric means with standard errors. A real comparison would run tens of instances per model with the paired, instance-matched, task-clustered error analysis described in [task-design.md](task-design.md); the mid-field orderings shown are explicitly not robust to that.
+## Run-to-Run Reproducibility
+
+The reason three runs is a floor rather than a nicety: **on this suite an LLM agent's score is dominated by sampling temperature, not by the data.** A controlled experiment reran four free models on byte-identical inputs — the same seeds, the same generated instances, a second time — and compared each cell to its first run.
+
+The results barely reproduce. Of 48 paired mechanism-task instances, **37 (77%) differed materially on the rerun**, and the swings are enormous: nemotron-3-super's three-body score went 2744 → 133, mimo's flyby went 89 → 2601, nemotron-3-ultra's three-body went 1579 → 3726 — up to a 30× change on identical data. On the quantile task the same pattern held, most sharply where it matters: nemotron-3-ultra's *best* run (0.077) reran to 0.142, so the tight ± 0.022 band that made it look like the most reliable model was an artifact of three lucky draws, not a stable method.
+
+Only a small minority of instances reproduced bit-for-bit — 4 of 48 on the mechanism tasks, plus one quantile cell. Every one of them is a **deterministic-method collapse**: the model degenerated to a fixed computation with no free choices — a per-category linear least-squares fit on ballistic, a bare `np.percentile` (Hyndman-Fan type 7) on quantile — which reproduces exactly because there is nothing stochastic left. The paradox is that the only reproducible behaviour is the *worst* behaviour (the naive method the tasks are built to expose); everything a capable model does is a dice roll.
+
+Two consequences follow. First, "method-switching" is not the model reading the data and choosing an approach — it is stochastic method *sampling*, confirmed by the fact that the data is held constant. A model that fits a GPD on one run and a kitchen sink of skew-normal, Weibull and KDE on the next is not responding to the sample; it is rolling dice over its own repertoire. Second, this is itself a model-risk finding worth more than any single score: for these agentic modelling tasks, **a deployed model would hand you a materially different analysis each time you ran it on the same data**, and only a repeated-run harness makes that visible. A mean-only or single-shot leaderboard would report one of those draws as *the* number and hide the fact that the next draw is 30× worse.
 
 ## Objective Scoring, No Judge
 

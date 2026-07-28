@@ -161,9 +161,10 @@ gennorm, skew-normal, Weibull, gamma and KDE on another — that happen to land 
 a similar score range. So its trustworthiness is empirical (its varying methods
 all scored well here) rather than structural (one fixed method), and a single run
 is trustworthy only in the weak sense that any one of its methods would have
-scored similarly. Whether that method variation is driven by sampling temperature
-or by the different data each seed presents is not separable from these runs, and
-is the object of a planned same-seed repeat experiment.
+scored similarly. A same-seed repeat experiment settled which it is: rerunning on
+byte-identical data still moved the score — nemotron-3-ultra's best run (0.077)
+reran to 0.142 — so the method variation is **sampling temperature, not a response
+to the data**. See [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility).
 
 Two models sit far above the floor: **mimo at ± 0.056 (about 2× the floor) and
 laguna at ± 0.093 (about 3×)**. Roughly two-thirds of laguna's variance is
