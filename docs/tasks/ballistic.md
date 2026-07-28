@@ -28,6 +28,7 @@ Three instances (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across t
 | Parabola baseline (naive) | 3 | 17.2 ± 9.3 | 0.23 |
 | nemotron-3-super (free) | 3 | 59.1 ± 1.3 | 0.13 |
 | laguna-m.1 (free) | 3 | 59.1 ± 1.3 | 0.13 |
+| deepseek-v4-flash (free) | 3 | 30.5 ± 77.2 | 0.14 |
 | Claude Haiku 4.5 | 3 | 37.8 ± 79.8 | 0.22 |
 
 Three rows clear the naive parabola baseline: mimo-v2.5, GLM-5.1 and nemotron-3-ultra (upper bounds 14.5, 20.8, 21.8 vs the baseline's 26.5). mimo is the tightest of them (± 4.0), which is why it leads on the upper-bound ordering despite not having the lowest mean.

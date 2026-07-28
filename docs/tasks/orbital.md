@@ -36,7 +36,7 @@ The flyby's baselines are a naive `poly` extrapolation (a flyby is not a polynom
 
 ## Scores (three runs, mean ± 2 SD)
 
-Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across the runs, ordered by the upper end mean + 2 SD, paired on the same three instances. Lower Winkler regret is better; coverage targets 0.95. The reference and naive rows (`-T baseline=kepler|harmonic` for two/three-body, `od|poly` for the flyby) are solvers, not models. `†` marks a row with fewer than three valid runs; the paid model cast ran out of credits during three-body and the flyby, so GLM-5.1 is incomplete there.
+Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across the runs, ordered by the upper end mean + 2 SD, paired on the same three instances. Lower Winkler regret is better; coverage targets 0.95. The reference and naive rows (`-T baseline=kepler|harmonic` for two/three-body, `od|poly` for the flyby) are solvers, not models.
 
 **Two-body** (the easy task):
 
@@ -45,6 +45,7 @@ Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD**
 | Kepler reference | 3 | 0.004 ± 0.002 | 0.95 |
 | GLM-5.1 | 3 | 0.040 ± 0.092 | 0.96 |
 | mimo-v2.5 (free) | 3 | 0.074 ± 0.206 | 0.95 |
+| deepseek-v4-flash (free) | 3 | 3.53 ± 6.06 | 0.63 |
 | Harmonic baseline (naive) | 3 | 9.86 ± 16.26 | 0.78 |
 | laguna-m.1 (free) | 3 | 33.5 ± 80.3 | 0.96 |
 | Claude Haiku 4.5 | 3 | 81.2 ± 45.6 | 1.00 |
@@ -56,8 +57,9 @@ Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD**
 | Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
 | --- | --- | --- | --- |
 | Kepler reference | 3 | 0.018 ± 0.037 | 0.95 |
-| GLM-5.1 † | 1 | [1.92] | 0.86 |
+| deepseek-v4-flash (free) | 3 | 9.63 ± 9.16 | 0.00 |
 | Harmonic baseline (naive) | 3 | 139.8 ± 336.2 | 0.78 |
+| GLM-5.1 | 3 | 194.6 ± 342.0 | 0.64 |
 | Claude Haiku 4.5 | 3 | 370.3 ± 384.3 | 0.73 |
 | nemotron-3-ultra (free) | 3 | 877.6 ± 1428 | 0.37 |
 | nemotron-3-super (free) | 3 | 1029 ± 2976 | 0.60 |
@@ -69,18 +71,20 @@ Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD**
 | Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
 | --- | --- | --- | --- |
 | OD reference | 3 | 0.175 ± 0.308 | 0.94 |
+| deepseek-v4-flash (free) | 3 | 13.6 ± 11.0 | 0.00 |
 | mimo-v2.5 (free) | 3 | 170.8 ± 214.8 | 0.57 |
+| GLM-5.1 | 3 | 421.1 ± 888.7 | 0.39 |
 | nemotron-3-super (free) | 3 | 522.1 ± 808.5 | 0.27 |
 | laguna-m.1 (free) | 3 | 783.3 ± 399.4 | 0.15 |
 | nemotron-3-ultra (free) | 3 | 894.6 ± 934.9 | 0.04 |
 | Claude Haiku 4.5 | 3 | 500.7 ± 1469 | 0.46 |
 | Polynomial baseline (naive) | 3 | 9571 ± 18872 | 0.15 |
 
-Two-body separates the cast cleanly. GLM-5.1 (0.04) and **mimo-v2.5 (0.07) both solve it at near-reference level** — mimo is the standout free model, essentially matching a frontier model on the easy task. Everything else fails, and the failures are not uniform: laguna and both nemotrons land in the tens to hundreds. The most striking is **nemotron-3-ultra at 653 ± 1568 with coverage 0.08** — the *best* model on the quantile task is nearly the worst here, a sharp reminder that these tasks measure different things and a single "capability" number would hide it.
+Two-body separates the cast cleanly. GLM-5.1 (0.04) and **mimo-v2.5 (0.07) both solve it at near-reference level**, deepseek is close behind (3.5), and everything else fails — most strikingly **nemotron-3-ultra at 653 with coverage 0.08**, the *best* model on the quantile task and nearly the worst here.
+
+The two hard tasks produce the sharpest cross-task result. **deepseek-v4-flash is the best non-baseline on both three-body (9.6) and the flyby (13.6)** — an order of magnitude better than every other free model and than Haiku, and the only model to stay in the single-to-low-double digits on the physics tasks at all. Its catch is calibration: coverage **0.00** on both, so its point estimates are good but its intervals never contain the truth — the confident-and-narrow failure, the mirror of Haiku's over-wide hedging (coverage 1.00 on two-body). **GLM-5.1 is bimodal on three-body**: its three runs were [0.0, 263, 321] — one instance hit the reference exactly (it made the retrograde leap), two failed completely, giving a 194.6 mean that understates both what it can do and how often it doesn't. That confirms its earlier lone 1.92 was real capability, not a fluke, and that the leap is available to it only intermittently. No model comes near solving either hard task consistently.
 
 Haiku's two-body failure has a specific signature: coverage 1.00 at regret 81 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit — the fast-model reflex of buying coverage with sharpness.
-
-Three-body and the flyby defeat the entire cast: every model lands in the hundreds to low thousands, orders of magnitude above the reference (0.018, 0.175) and mostly above the naive baseline too. On three-body, Haiku (370) is actually the *best* non-baseline, and on the flyby mimo (171) is; no model comes close to solving either. GLM-5.1's one completed three-body run scored 1.92 — far better than its earlier single-run 14.9 — but n=1, so it is not reported; whether GLM-5.1 makes the retrograde leap needs the other two runs, blocked on paid credits.
 
 The baselines behave as designed: the OD and Kepler references reach the oracle, and the naive polynomial flyby fit is astronomically bad (9571 ± 18872, its ± 2 SD exceeding its own mean in the heavy-tailed-regret pattern), confirming a flyby is nothing like a polynomial.
 

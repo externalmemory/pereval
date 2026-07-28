@@ -60,8 +60,8 @@ Each cell is the **worst-case (maximum) regret across the runs** — a single, a
 | Model | CCAR | Ballistic | Two-body | Three-body | Flyby | Quantile |
 | --- | --- | --- | --- | --- | --- | --- |
 | Kimi K3 | 0.12 | | | | | |
-| deepseek-v4-flash-free | 0.14 | | | | | |
-| GLM-5.1 | | 12 | 0.092 | | | |
+| deepseek-v4-flash-free | 0.14 | 75 | 5.3 | 13 | 17 | 0.17 |
+| GLM-5.1 | 0.055 | 12 | 0.092 | 321 | 899 | 0.25 |
 | Claude Haiku 4.5 | 0.37 | 83 | 105 | 575 | 1348 | 0.10 |
 | nemotron-3-ultra:free | 0.27 | 16 | 1525 | 1579 | 1356 | 0.099 |
 | nemotron-3-super:free | 0.45 | 60 | 106 | 2744 | 918 | 0.12 |
@@ -72,7 +72,9 @@ Each cell is the **worst-case (maximum) regret across the runs** — a single, a
 
 The reference row is not the same kind of thing in every column. For CCAR and the orbital tasks it is the true generating model, an oracle nothing can beat. Ballistic and quantile have no true-model reference (a `—`): ballistic's only anchor is the naive parabola, and quantile's floor is 0 by construction with the naive row being `np.percentile` (type 7).
 
-Several findings survive even this worst-case view. **GLM-5.1 solves two-body** (worst run 0.092, against the naive baseline's 17) and clears the naive baseline on ballistic; **mimo-v2.5 (free) also solves it** (0.19), the only free model to. **Claude Haiku 4.5 fails every orbital task**, worse than the naive baseline on two- and three-body. And the axes are not one capability: **nemotron-3-ultra is the best free model on CCAR and quantile yet nearly the worst on two-body** (worst run 1525) — the statistical-modelling tasks and the physics tasks rank models differently, which a single number would erase. The three-body physics-vs-curve-fit split and the GPT-5.6 Sol effort-hurts result sit at n=1, so they live in [the orbital doc](docs/tasks/orbital.md) rather than here, along with the run-to-run stability that a worst-case cell cannot show.
+The clearest thing the matrix shows is that **there are two capability axes, not one, and models sit in opposite corners.** Claude Haiku 4.5 and nemotron-3-ultra are strong on the *statistical* tasks (CCAR, quantile) and fail every *physics* task — Haiku's quantile worst run (0.10) is near the best in the table while its two-body is 105. GLM-5.1 and deepseek are the mirror image: GLM-5.1 leads CCAR (0.055, near the reference), solves two-body, and only reaches the retrograde three-body on some runs, but is weak on quantile (0.25); **deepseek-v4-flash is the best free model on the physics tasks by an order of magnitude** (three-body 13, flyby 17, against the other free models' hundreds to thousands) yet middling on quantile. A single "capability" number would collapse these opposite profiles into one, which is the whole reason for a multi-task matrix.
+
+Beyond that, everything sits at n=3 worst-case, so only coarse contrasts survive: who clears the naive baseline and who falls through it (laguna falls through on CCAR; the nemotrons, laguna and mimo fall an order of magnitude below the naive fit on the two hard orbital tasks). The three-body physics-vs-curve-fit split, the GPT-5.6 Sol effort-hurts result, and the run-to-run stability a worst-case cell cannot show all live in the per-task docs behind the links above.
 
 ## Layout
 

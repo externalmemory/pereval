@@ -136,8 +136,10 @@ increase in block count can fix.
 | `[wei8]` | 3 | 0.0975, 0.1242, 0.1001 | 0.107 ± 0.029 |
 | `[t6]` | 3 | 0.1089, 0.1389, 0.1157 | 0.121 ± 0.032 |
 | `[type7]` | 3 | 0.1168, 0.1375, 0.1040 | 0.119 ± 0.034 |
+| deepseek-v4-flash (free) | 3 | 0.1668, 0.0704, 0.1140 | 0.117 ± 0.097 |
 | mimo-v2.5-free | 3 | 0.1218, 0.0945, 0.1507 | 0.122 ± 0.056 |
 | laguna-m.1 | 3 | 0.1568, 0.1209, 0.0641 | 0.114 ± 0.093 |
+| GLM-5.1 | 3 | 0.2456, 0.1486, 0.0760 | 0.157 ± 0.170 |
 
 **gpt-oss-20b is excluded, and the exclusion is the finding.** It produced valid
 output on only 2 of 6 attempts (seeds 1 and 2 succeeded at 0.122 and 0.118; seed
