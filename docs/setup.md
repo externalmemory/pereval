@@ -1,7 +1,5 @@
 # Setup
 
-## What Needs What
-
 Docker is required only to run the agentic evaluation, which executes the model under test inside an isolated sandbox. The instance generator, the unit tests, and the scorer logic all run without Docker. So you can develop and test tasks and scorers with Python alone, and only need Docker when you actually evaluate a model end to end.
 
 ## Python Environment

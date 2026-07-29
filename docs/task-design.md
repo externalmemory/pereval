@@ -1,6 +1,6 @@
 # Task Design: Objective Verification under N = 1
 
-## The problem
+## The Problem
 
 Econometric model quality cannot be objectively verified against real history. There is one realized macro path; backtesting on it, however the holdout is carved, measures fit to a single draw, and cannot distinguish a sound model from a lucky one (or an unlucky sound model from a degenerate one that shrinks to the mean). Any eval that scores "out-of-sample fit on real data" inherits this and rewards the wrong thing.
 

@@ -1,14 +1,7 @@
 # Small-Sample Tail Quantile Estimation
 
-> **Status: benchmarked on a free-model cast.** Generator, scorer, baselines and
-> Inspect wrapper are in place and validated end to end. Four free models have a
-> 3-run mean ± 2 SD result at 100 blocks with the metric disclosed (see
-> [Stability Across Seeds](#stability-across-seeds-100-blocks-metric-disclosed)).
-> A paid-model cast is still pending.
-
 The suite's second realistic domain task, and the only one whose ground truth is
-empirical rather than generated from a known DGP. Implementation notes and the
-build plan are in [../quantile-task-plan.md](../quantile-task-plan.md).
+empirical rather than generated from a known DGP.
 
 ```
 inspect eval pereval/tasks/quantile/task.py --model <provider/model>            # needs Docker
@@ -17,7 +10,7 @@ inspect eval pereval/tasks/quantile/task.py -T baseline=wei8 --model mockllm/mod
 
 ## The Task
 
-Each instance presents 100 independent problems (the results tables below predate this and used 40). Each is 10 values drawn uniformly without replacement from a population of m year-over-year percent changes of one undisclosed macroeconomic series over an undisclosed window (m >= 250). The agent estimates that population's 90th, 95th and 99th percentiles, plus a 95% interval for the 95th.
+Each instance presents 100 independent problems (the single-instance baseline illustration further down still uses 40). Each is 10 values drawn uniformly without replacement from a population of m year-over-year percent changes of one undisclosed macroeconomic series over an undisclosed window (m >= 250). The agent estimates that population's 90th, 95th and 99th percentiles, plus a 95% interval for the 95th.
 
 The estimand is stated explicitly in the prompt, because leaving "the 95th percentile" ambiguous would make this a reading-comprehension test whose result flips on a paraphrase. Naming the target costs nothing: knowing that the population quantile is wanted does not tell you how to extrapolate a tail from ten points.
 
@@ -39,7 +32,7 @@ Two properties matter:
 - **Asymmetry.** `dL/dq = F(q) - tau`, so the slope tends to `-tau` far below the support and `1 - tau` far above it: a 19:1 ratio at tau = 0.95. Underestimating a tail quantile is expensive, which is the pressure type 7 fails under. The ratio at finite displacement is much smaller on a heavy right tail, because F barely moves above q95.
 - **Robustness.** The regret is exactly invariant to the values of observations lying below the estimate, since each contributes `(1-tau)(qhat - q_tau)/m`, which depends on their count and not their magnitude. Replacing a population's minimum with -1e6 leaves the regret bit-for-bit unchanged. Normalising by standard deviation would throw this away (sd explodes, the score collapses toward zero, and the block is silently deleted from the average), which is why the normaliser is the IQR.
 
-## Why Not Winkler
+## Target Metric
 
 The rest of the suite scores Winkler interval regret. It is the wrong headline here, and the pilot measured why.
 
@@ -47,17 +40,17 @@ Grafting one fixed interval shape onto every candidate rule's own point estimate
 
 Winkler is still reported as a diagnostic, because interval calibration is worth measuring. It is just not what this task is about.
 
-## Why Three Quantile Levels
+## Quantile Levels
 
-At tau = 0.90 the reference estimators are indistinguishable. At tau = 0.99 the bounded ones are structurally stuck. In units of the sample top gap `x_(10) - x_(9)`, the p99 - p95 spread is an exact constant for type7 (0.360), type8 (0.000, both levels clip to the sample maximum at n = 10) and both extrapolators (1.609). Harrell-Davis alone among the bounded rules is not a fixed constant — its ratio is typically low (median 0.16) but has a long right tail (up to ~3). The truth varies 1.25 to 4.15 across series.
+At tau = 0.90 the reference estimators are indistinguishable. At tau = 0.99 the bounded ones are structurally stuck. In units of the sample top gap `x_(10) - x_(9)`, the p99 - p95 spread is an exact constant for type7 (0.360), type8 (0.000, both levels clip to the sample maximum at n = 10) and both extrapolators (1.609). Harrell-Davis alone among the bounded rules is not a fixed constant: its ratio is typically low (median 0.16) but has a long right tail (up to ~3). The truth varies 1.25 to 4.15 across series.
 
 "Adapting to tail shape" is really two separate abilities, and the reference rules split differently on each.
 
 First, can a rule place the tail quantile *above the sample maximum*? type7, type8 and Harrell-Davis cannot: each is a weighted average of order statistics with non-negative weights, so it is structurally bounded by the observed maximum and systematically undershoots a tail that runs past the data (q99 exceeds the sample max in 0% of blocks for all three). wei8, t6 and the normal fit can and do exceed it (100%, 100% and ~87% of blocks).
 
-Second, does the p99 − p95 spread *vary with the sample*? Measured by rank correlation between a rule's per-block spread ratio and the truth's, the normal scores 0.637 and Harrell-Davis 0.504, while type7, type8, wei8 and t6 are exact constants. wei8 and t6 are the instructive case: they extrapolate, and their absolute tail width scales with the top gap x_(10) − x_(9), so they *do* adapt tail scale — but they pin the ratio (q99 − q95) / gap at exactly log 5 = 1.609 regardless of shape, so they cannot match the shape variation the truth shows (ratio 1.25 to 4.15). Harrell-Davis is the mirror image: its ratio varies with the sample, but being bounded by the maximum it cannot extrapolate at all.
+Second, does the p99 − p95 spread *vary with the sample*? Measured by rank correlation between a rule's per-block spread ratio and the truth's, the normal scores 0.637 and Harrell-Davis 0.504, while type7, type8, wei8 and t6 are exact constants. wei8 and t6 are the instructive case: they extrapolate, and their absolute tail width scales with the top gap x_(10) − x_(9), so they *do* adapt tail scale, but they pin the ratio (q99 − q95) / gap at exactly log 5 = 1.609 regardless of shape, so they cannot match the shape variation the truth shows (ratio 1.25 to 4.15). Harrell-Davis is the mirror image: its ratio varies with the sample, but being bounded by the maximum it cannot extrapolate at all.
 
-Only the normal does both — extrapolate and vary its ratio — which is part of why it wins on this data.
+Only the normal does both (extrapolate and vary its ratio), which is part of why it wins on this data.
 
 Summing over three tau captures shape in a single scalar, because getting all three levels right requires getting the shape right. The reported `spread_ratio` diagnostic makes behaviour legible directly: 0.0 means type 8 or a degenerate q99 = q95, 0.36 means a bare `np.percentile` call, a constant 1.6 means one of the two extrapolating rules, and a spread that varies block to block means the rule is reading shape out of the sample.
 
@@ -88,7 +81,7 @@ Blocks come from distinct series and are independently scaled, so they cannot be
 
 `-T baseline=type7|type8|hd|t6|wei8|normal|logistic`.
 
-The `logistic` baseline is the moment-matched normal's heavier-tailed sibling: same construction, `mu + (sd sqrt(3)/pi) * logit(tau)`, but a family with excess kurtosis 1.2 against the normal's 0. It edges out the normal to lead the baselines (0.076 ± 0.027 vs 0.078 ± 0.027 over the three 100-block seeds), and the win is located exactly where the heavier tail should help: at tau = 0.99 it scores 0.026 against the normal's 0.029, while at tau = 0.90 it is marginally worse (it over-reaches for a mild quantile). That a two-parameter logistic fit beats the literature's tail-extrapolation estimators on this metric is the same uncomfortable finding the normal already delivered, only more so.
+The `logistic` baseline is the moment-matched normal's heavier-tailed sibling: same construction, `mu + (sd sqrt(3)/pi) * logit(tau)`, but a family with excess kurtosis 1.2 against the normal's 0. It edges out the normal to lead the baselines (0.076 ± 0.027 vs 0.078 ± 0.027 over the three 100-block seeds), and the win is located exactly where the heavier tail should help: at tau = 0.99 it scores 0.026 against the normal's 0.029, while at tau = 0.90 it is marginally worse (it over-reaches for a mild quantile).
 
 `t6` is the literature construction: the tail extrapolation of Wei, Wang and Hutson (Commun. Stat. Theory Methods, DOI 10.1080/03610926.2013.775304) around the interior their paper uses, whose Q^L is exactly Hyndman-Fan type 6. `wei8` is the same extrapolation around a type-8 interior, a substitution the paper did not test. What matters for this task is the property they share: both extrapolate past the sample maximum, and none of the other rules can. Intervals are the paper's smoothed bootstrap with a BCa correction.
 
@@ -121,7 +114,7 @@ a model that could not reach three is excluded with its failure rate noted
 rather than reported on thin data.
 
 The four reference estimators are deterministic given the blocks, so their spread
-is **pure block-sampling noise** — the irreducible floor at 100 blocks (about
+is **pure block-sampling noise**: the irreducible floor at 100 blocks (about
 ± 0.03). A model tighter than that floor has negligible run-to-run method
 variance; a model wider than it is switching methods between runs, which no
 increase in block count can fix.
@@ -156,75 +149,23 @@ the naive normal.
 
 A tight band means the *score* is stable, not that the *method* is. The
 transcripts show nemotron-3-ultra using materially different approaches across
-the three seeds — GPD-plus-t with bootstrap on one, a kitchen sink of logistic,
-gennorm, skew-normal, Weibull, gamma and KDE on another — that happen to land in
+the three seeds: GPD-plus-t with bootstrap on one, a kitchen sink of logistic,
+gennorm, skew-normal, Weibull, gamma and KDE on another, that happen to land in
 a similar score range. So its trustworthiness is empirical (its varying methods
 all scored well here) rather than structural (one fixed method), and a single run
 is trustworthy only in the weak sense that any one of its methods would have
 scored similarly. A same-seed repeat experiment settled which it is: rerunning on
-byte-identical data still moved the score — nemotron-3-ultra's best run (0.077)
-reran to 0.142 — so the method variation is **sampling temperature, not a response
+byte-identical data still moved the score. nemotron-3-ultra's best run (0.077)
+reran to 0.142, so the method variation is **sampling temperature, not a response
 to the data**. See [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility).
 
 Two models sit far above the floor: **mimo at ± 0.056 (about 2× the floor) and
 laguna at ± 0.093 (about 3×)**. Roughly two-thirds of laguna's variance is
-method-switching, not block-sampling. Its per-run values run 0.157, 0.121, 0.064
-— worst in the table on seed 1, best on seed 3. A single run of laguna is a coin
+method-switching, not block-sampling. Its per-run values run 0.157, 0.121, 0.064:
+worst in the table on seed 1, best on seed 3. A single run of laguna is a coin
 flip, and more blocks would not change that. This is the empirical case for the
 suite's repeated-run standard: for method-switching models no single number
 means anything, and the *stability itself* is a reported property.
-
-## First Model Runs (provisional, pre-disclosure, 40 blocks)
-
-> Provisional and superseded by the table above. These predate the metric
-> disclosure now in the prompt and used 40 blocks, so they measure a different,
-> now-retired configuration. Retained as evidence the harness discriminates, not
-> as results.
-
-Six free models, one instance each (40 blocks, seed 1835504127), all rows paired against reference estimators computed on the identical blocks. Lower regret is better; `LIMIT` marks a run that hit a budget cap.
-
-| Row | Regret | p90 | p95 | p99 | Hit | MAE | Cov | Spread | Msgs | Answered |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| gemma-4-31b-it `LIMIT` | **0.0929** | 0.0333 | 0.0278 | 0.0318 | 0.550 | 0.947 | 0.475 | 3.690 | 6 | 40/40 |
-| `[normal]` | 0.0995 | 0.0320 | 0.0293 | 0.0382 | 0.450 | 0.911 | 0.725 | 2.545 | | 40/40 |
-| nemotron-3-ultra-550b | 0.1127 | 0.0348 | 0.0385 | 0.0394 | 0.375 | 0.890 | 0.750 | 3.553 | 44 | 40/40 |
-| `[wei8]` | 0.1145 | 0.0433 | 0.0346 | 0.0366 | 0.650 | 1.084 | 0.800 | 1.609 | | 40/40 |
-| mimo-v2.5-free | 0.1160 | 0.0363 | 0.0348 | 0.0449 | 0.375 | 0.939 | 0.825 | 6.103 | 23 | 40/40 |
-| `[t6]` | 0.1240 | 0.0494 | 0.0384 | 0.0362 | 0.675 | 1.228 | 0.825 | 1.609 | | 40/40 |
-| laguna-m.1 | 0.1291 | 0.0494 | 0.0454 | 0.0343 | **0.750** | 1.405 | 0.725 | 5.800 | 74 | 40/40 |
-| `[hd]` | 0.1333 | 0.0400 | 0.0345 | 0.0588 | 0.375 | 0.960 | 0.125 | 0.214 | | 40/40 |
-| `[type8]` | 0.1345 | 0.0433 | 0.0333 | 0.0579 | 0.475 | 0.987 | 0.350 | 0.000 | | 40/40 |
-| nemotron-3-super-120b | 0.1429 | 0.0424 | 0.0394 | 0.0611 | 0.350 | 0.960 | 0.450 | **0.360** | 52 | 40/40 |
-| `[type7]` | 0.1429 | 0.0424 | 0.0394 | 0.0611 | 0.350 | 0.960 | 0.250 | 0.360 | | 40/40 |
-| gpt-oss-20b `LIMIT` | 1.1312 | 0.2943 | 0.3687 | 0.4682 | 0.075 | 1.866 | 0.000 | 0.000 | 300 | 40/40 |
-
-The task discriminates across its whole intended range, and the `spread_ratio` column reads out method directly.
-
-**nemotron-3-super-120b reproduced `np.percentile` exactly.** Its row matches `[type7]` on every point metric including the 0.360 spread constant, after 52 messages of work. That is the failure mode the task exists to expose, and it is invisible in the regret column alone: 0.1429 looks merely mediocre until you see it is the same 0.1429.
-
-**gpt-oss-20b failed differently and worse.** Spread 0.000 means it set q99 = q95, coverage 0.000 means not one of its forty intervals contained the truth, and it exhausted all 300 messages getting there.
-
-**laguna-m.1 is the only model that overestimates**, at hit rate 0.750 against everyone else's 0.35 to 0.55, with the worst MAE of any completing model (1.405). Over-extrapolation is a real failure mode too, and the hit-rate diagnostic is what separates it from under-extrapolation, since both show up as an unremarkable regret.
-
-**gemma-4-31b-it led while hitting the time limit after 6 messages**, throttled by the free tier. It still scored 40/40 only because it wrote a complete predictions.csv early, which is the instruction added after an earlier run failed by building state across fresh interpreters.
-
-### One Post-Disclosure Run
-
-The rows above predate the metric disclosure now in the prompt. Claude Haiku 4.5 was run once *after* disclosure, on the same instance (seed 1835504127), so it is comparable on data but not on instructions. A single sense-check of a midrange model, not a result.
-
-| Row | Regret | p90 | p95 | p99 | Hit | MAE | Cov | Spread | Msgs |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `[normal]` | 0.0995 | 0.0320 | 0.0293 | 0.0382 | 0.450 | 0.911 | 0.725 | 2.545 | |
-| Claude Haiku 4.5 (post-disclosure) | 0.1060 | 0.0346 | 0.0307 | 0.0407 | 0.400 | **0.904** | **0.200** | 2.414 | 58 |
-| `[wei8]` | 0.1145 | 0.0433 | 0.0346 | 0.0366 | 0.650 | 1.084 | 0.800 | 1.609 | |
-
-Haiku is the sharpest illustration of the task's premise so far, because it split its method. For the point estimates it fit parametric distributions (normal, lognormal, t) to each 10-point sample, which extrapolate past the sample maximum and adapt their shape per block: the best MAE of any completing model (0.904) and an adaptive spread (2.414). For the interval it used a nonparametric bootstrap of the sample quantile, resampling the 10 points and taking bootstrap percentiles.
-
-That interval method is the one the source literature singles out as failing. A nonparametric bootstrap of a sample quantile is bounded by the sample maximum, so the resampled q95 can never exceed the largest of the ten points and the interval structurally undercovers a tail quantile. The proof of concept measured bootstrap coverage of 0.28 for type7 and 0.18 for HD for exactly this reason; Haiku's 0.200 lands in that band. It is a fluent, competent-looking analysis that picked a good method for the point and a provably wrong one for the tail interval, miscalibrated precisely where it matters. On this task Haiku would rank near the top on point accuracy and near the bottom on interval calibration, which is the criterion disagreement below made concrete in one model.
-
-### Environment Notes
-
-Zen's free tier is not a usable validation surface: three of four models failed environmentally (two HTTP 400s, one response with no `choices` field). OpenRouter ran five of five and offers 13 tool-capable free models. `nemotron-3-ultra` failed on Zen and succeeded on OpenRouter, confirming the gateway rather than the model was at fault. Zen's paid tier is reliable; Claude Haiku 4.5 ran there without issue.
 
 ## Criterion Disagreement
 
@@ -239,7 +180,3 @@ Four defensible criteria rank the same estimators in incompatible orders:
 | pinball regret (this task's metric) | normal | second of six |
 
 This is not a defect to be resolved before shipping. It is the most interesting thing the task produces, and it is the model-risk point in miniature: whoever picks the criterion picks the winner.
-
-## Acknowledgement
-
-Built on a prior proof of concept comparing these estimators on 12 quarterly FRED series, which established the reference implementations (validated bit-identical against the original R), their properties, and the screening rules carried over here.

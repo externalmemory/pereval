@@ -10,7 +10,7 @@ inspect eval pereval/tasks/orbit/task.py@threebody -T baseline=kepler --model mo
 inspect eval pereval/tasks/orbit/task.py@hyperbolic -T baseline=od --model mockllm/model
 ```
 
-All three use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task (period=360 for the circular angles alpha and beta, period=None for the bounded elevation gamma). Each has two reference solvers that bracket it: a naive baseline that ignores the physics and a reference that fits the true orbits by least squares. For alpha only the period, eccentricity, orientation, and periapsis time matter (the direction to the star is radius-independent); beta and the flyby geometry also depend on orbit size ratios, fixed by the period ratios through Kepler's third law. The generators are pure numpy; the reference solvers use scipy for the fits.
+All three use the same host-side generation, sandbox isolation, and oracle-anchored interval scoring as the ballistic task (period=360 for the circular angles alpha and beta, period=None for the bounded elevation gamma). Each has two reference solvers that bracket it: a naive baseline that ignores the physics, and a reference that fits the true orbits by least squares. For alpha only the period, eccentricity, orientation, and periapsis time matter (the direction to the star is radius-independent); beta and the flyby geometry also depend on orbit size ratios, fixed by the period ratios through Kepler's third law. The generators are pure numpy; the reference solvers use scipy for the fits.
 
 ## Two-Body Orbit (Angle Prediction)
 
@@ -80,39 +80,11 @@ Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD**
 | Claude Haiku 4.5 | 3 | 500.7 ± 1469 | 0.46 |
 | Polynomial baseline (naive) | 3 | 9571 ± 18872 | 0.15 |
 
-Two-body separates the cast cleanly. GLM-5.1 (0.04) and **mimo-v2.5 (0.07) both solve it at near-reference level**, deepseek is close behind (3.5), and everything else fails — most strikingly **nemotron-3-ultra at 653 with coverage 0.08**, the *best* model on the quantile task and nearly the worst here.
+Two-body separates the cast cleanly. GLM-5.1 (0.04) and **mimo-v2.5 (0.07) both solve it at near-reference level**, deepseek is close behind (3.5), and everything else fails, most strikingly **nemotron-3-ultra at 653 with coverage 0.08**, the *best* model on the quantile task and nearly the worst here.
 
-The two hard tasks produce the sharpest cross-task result. **deepseek-v4-flash is the best non-baseline on both three-body (9.6) and the flyby (13.6)** — an order of magnitude better than every other free model and than Haiku, and the only model to stay in the single-to-low-double digits on the physics tasks at all. Its catch is calibration: coverage **0.00** on both, so its point estimates are good but its intervals never contain the truth — the confident-and-narrow failure, the mirror of Haiku's over-wide hedging (coverage 1.00 on two-body). **GLM-5.1 is bimodal on three-body**: its three runs were [0.0, 263, 321] — one instance hit the reference exactly (it made the retrograde leap), two failed completely, giving a 194.6 mean that understates both what it can do and how often it doesn't. That confirms its earlier lone 1.92 was real capability, not a fluke, and that the leap is available to it only intermittently. No model comes near solving either hard task consistently.
+The two hard tasks produce the sharpest cross-task result. **deepseek-v4-flash is the best non-baseline on both three-body (9.6) and the flyby (13.6)**, an order of magnitude better than every other free model and than Haiku, and the only model to stay in the single-to-low-double digits on the physics tasks at all. Its catch is calibration: coverage **0.00** on both, so its point estimates are good but its intervals never contain the truth, the confident-and-narrow failure, the mirror of Haiku's over-wide hedging (coverage 1.00 on two-body). **GLM-5.1 is bimodal on three-body**: its three runs were [0.0, 263, 321]: one instance hit the reference exactly (it made the retrograde leap), two failed completely, giving a 194.6 mean that understates both what it can do and how often it doesn't. That confirms its earlier lone 1.92 was real capability, not a fluke, and that the leap is available to it only intermittently. No model comes near solving either hard task consistently.
 
-Haiku's two-body failure has a specific signature: coverage 1.00 at regret 81 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit — the fast-model reflex of buying coverage with sharpness.
+Haiku's two-body failure has a specific signature: coverage 1.00 at regret 81 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit, the fast-model reflex of buying coverage with sharpness.
 
 The baselines behave as designed: the OD and Kepler references reach the oracle, and the naive polynomial flyby fit is astronomically bad (9571 ± 18872, its ± 2 SD exceeding its own mean in the heavy-tailed-regret pattern), confirming a flyby is nothing like a polynomial.
 
-## Earlier single-run exploration (provisional, N = 1)
-
-> Superseded for GLM-5.1 (two-body) and Haiku by the three-run tables above. The remaining rows are single instances, kept to show the difficulty gradient and the physics-vs-curve-fit split. Single runs are not reported as results.
-
-A single instance (N = 1, seed 1) per task, no error bars, not a ranking. Lower Winkler regret is better; coverage targets 0.95. The two reference rows are not models: "Harmonic baseline" is the naive Fourier fit and "Kepler reference" fits the true elliptical-orbit model. "fail" means the model did not produce predictions within its message budget and was penalty-scored.
-
-| Row | Two-body regret | Two-body coverage | Three-body regret | Three-body coverage |
-| --- | --- | --- | --- | --- |
-| GLM-5 | 0.04 | 0.95 | 57.9 | 1.00 |
-| GLM-5.1 | 0.04 | 0.95 | 14.9 | 0.92 |
-| Kimi-k2.6 | 1258 | 0.50 | fail | — |
-| Kimi-k2.7-code | 0.02 | 0.95 | 139.2 | 0.70 |
-| GPT-5.6 Sol (frontier, default effort) | — | — | 14.2 | 1.00 |
-| GPT-5.6 Sol (frontier, high effort) | — | — | 276.2 | 0.90 |
-| Kimi K3 (frontier, default effort) | 0.02 | 0.95 | 0.03 | 0.95 |
-| Claude Fable 5 (frontier, default effort) | — | — | 0.03 | 0.95 |
-| Harmonic baseline (naive) | 12.1 | 0.69 | 66.0 | 1.00 |
-| Kepler reference (true model) | 0.01 | 0.94 | 0.03 | 0.95 |
-
-The two references bracket each task and show what the score means. The Kepler reference reaches the oracle on both tasks (regret 0.01 and 0.03), so both are well posed: the signal is fully recoverable by the right model class. The naive harmonic fit does fine on the periodic two-body signal (12.1, still far above Kepler) but fails badly on three-body (66.0), because the apparent, retrograde inter-planet angle is not a Fourier series in the wrong period, the epicycles mistake. Three-body's difficulty is therefore real headroom, not ill-posedness.
-
-Two-body is nearly solved by three of the four cheap models. Three-body produces an enormous spread that comes down to one thing: whether a model reconstructs the physics or curve-fits and hedges. The cheap models and GPT-5.6 Sol (at default reasoning effort) do the latter, scoring 14 to 139, mostly over-hedging to force coverage toward 1.00; Sol never attempted any orbital modeling in its 24 messages. Claude Fable 5 and Kimi K3, both at default effort, do the former and reach the reference (regret 0.03, coverage 0.95). Fable found the periodicity by FFT, fit two coupled Kepler orbits by least squares, and reconstructed the apparent inter-planet angle; K3 derived the generative geometry from scratch in its reasoning trace, recovering the exact bearing identity beta = theta1 + atan2(r2 sin phi, r2 cos phi - r1), the synodic period, and the observer-on-the-inner-body configuration, then fit and extrapolated it.
-
-So three-body is not beyond the frontier, but it cleanly separates models that recognize and model the coupled retrograde geometry from those that treat it as a generic regression.
-
-Re-running Sol at high reasoning effort made it worse, not better (276.2 versus 14.2): with more effort it committed to an elaborate Fourier extrapolation of beta as an autonomous circa-933-day signal, exactly the epicycle mistake the naive harmonic baseline makes, but with far tighter, more confident intervals. Its point estimates were often within a few to a couple dozen degrees, but the intervals were miscalibrated (roughly ten to twenty-five times too wide against the oracle) and one test day fell 58 degrees outside its interval, where the interval score's tail penalty alone contributed about 1565 of the total. So effort did not buy the missing conceptual leap; it bought a more confident wrong model.
-
-Two frontier models make the leap (Fable 5 and K3) and one does not (Sol, at either effort); every row here is a single instance (N = 1, seed 1).
