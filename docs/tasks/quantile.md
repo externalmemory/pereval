@@ -149,9 +149,9 @@ the naive normal.
 
 A tight band means the *score* is stable, not that the *method* is. The
 transcripts show nemotron-3-ultra using materially different approaches across
-the three seeds: GPD-plus-t with bootstrap on one, a kitchen sink of logistic,
-gennorm, skew-normal, Weibull, gamma and KDE on another, that happen to land in
-a similar score range. So its trustworthiness is empirical (its varying methods
+the three seeds (GPD-plus-t with bootstrap on one, a kitchen sink of logistic,
+gennorm, skew-normal, Weibull, gamma and KDE on another) that all happen to land
+in a similar score range. So its trustworthiness is empirical (its varying methods
 all scored well here) rather than structural (one fixed method), and a single run
 is trustworthy only in the weak sense that any one of its methods would have
 scored similarly. A same-seed repeat experiment settled which it is: rerunning on
