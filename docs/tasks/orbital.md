@@ -1,15 +1,8 @@
 # Orbital Tasks
 
-> **Three-body scores below were produced by a superseded scorer** that rewrote
-> submitted intervals wider than half the circle. Re-scoring the archived predictions
-> moves affected runs in both directions (2744 to 726, 343 to 1086), so they are valid
-> under the rule that produced them but do not compare to new runs. Two-body is verified
-> unaffected. See
-> [limitations](../limitations.md#circular-intervals-were-rewritten-by-the-scorer).
+> **Three-body scores below were produced by a superseded scorer** that rewrote submitted intervals wider than half the circle. Re-scoring the archived predictions moves affected runs in both directions (2744 to 726, 343 to 1086), so they are valid under the rule that produced them but do not compare to new runs. Two-body is verified unaffected. See [limitations](../limitations.md#circular-intervals-were-rewritten-by-the-scorer).
 
-Three controlled mechanism tasks on a difficulty gradient: two-body (easy),
-three-body (the suite's hardest for models), and the hyperbolic flyby (the most
-structurally complex).
+Three controlled mechanism tasks on a difficulty gradient: two-body (easy), three-body (the suite's hardest for models), and the hyperbolic flyby (the most structurally complex).
 
 ```
 inspect eval pereval/tasks/orbit/task.py@twobody --model <provider/model>            # needs Docker
@@ -43,10 +36,7 @@ The flyby's baselines are a naive `poly` extrapolation (a flyby is not a polynom
 
 ## Flyby Instances Are Selected on the Reference Succeeding
 
-`generate_hyperbolic` advances the seed until the 3D orbit-determination reference
-reaches the noise floor, so every shipped instance has a working competent anchor. That
-is selection on an outcome, and it is disclosed here with its measured size rather than
-left in the source.
+`generate_hyperbolic` advances the seed until the 3D orbit-determination reference reaches the noise floor, so every shipped instance has a working competent anchor. That is selection on an outcome, and it is disclosed here with its measured size rather than left in the source.
 
 Over 60 unfiltered draws the reference regret runs:
 
@@ -56,21 +46,11 @@ Over 60 unfiltered draws the reference regret runs:
 
 Two consequences, in order of how much they matter.
 
-The reference row is bounded below the acceptance threshold by construction, so strictly
-it reports the criterion rather than an observation. In practice the bound rarely binds:
-87% of draws pass unfiltered, and the published 0.31 is an ordinary value for an
-unfiltered draw. This part is real but minor.
+The reference row is bounded below the acceptance threshold by construction, so strictly it reports the criterion rather than an observation. In practice the bound rarely binds: 87% of draws pass unfiltered, and the published 0.31 is an ordinary value for an unfiltered draw. This part is real but minor.
 
-The discarded eighth is the part to take seriously, because it is not a random eighth. It
-is the flybys that this least-squares implementation, with this multistart grid, fails to
-solve, which are the fast, deep ones. Whether those are also the instances that best
-separate agents is unknown, so the flyby column describes agent performance on flybys
-that a competent classical method can handle, which is a narrower population than "flybys".
+The discarded eighth is the part to take seriously, because it is not a random eighth. It is the flybys that this least-squares implementation, with this multistart grid, fails to solve, which are the fast, deep ones. Whether those are also the instances that best separate agents is unknown, so the flyby column describes agent performance on flybys that a competent classical method can handle, which is a narrower population than "flybys".
 
-Draw unfiltered with `-T filter_reference=False` to measure into that tail. Each instance
-records `seed_offset`, `tries`, `reference_regret` and `reference_filtered` in its truth
-metadata, and the sample id carries the offset, since the instance comes from
-`seed + offset` and a bare seed does not identify it.
+Draw unfiltered with `-T filter_reference=False` to measure into that tail. Each instance records `seed_offset`, `tries`, `reference_regret` and `reference_filtered` in its truth metadata, and the sample id carries the offset, since the instance comes from `seed + offset` and a bare seed does not identify it.
 
 ## Scores (three runs, mean ± 2 SD)
 
@@ -125,4 +105,3 @@ The two hard tasks produce the sharpest cross-task result. **deepseek-v4-flash i
 Haiku's two-body failure has a specific signature: coverage 1.00 at regret 81 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit, the fast-model reflex of buying coverage with sharpness.
 
 The baselines behave as designed: the OD and Kepler references reach the oracle, and the naive polynomial flyby fit is astronomically bad (9571 ± 18872, its ± 2 SD exceeding its own mean in the heavy-tailed-regret pattern), confirming a flyby is nothing like a polynomial.
-

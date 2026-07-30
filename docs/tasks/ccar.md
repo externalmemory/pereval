@@ -1,7 +1,6 @@
 # CCAR Stress Loss Model
 
-The suite's realistic domain task. A regression under noisy data with a response law
-that is drawn per instance, included deliberately as a contrast to three-body.
+The suite's realistic domain task. A regression under noisy data with a response law that is drawn per instance, included deliberately as a contrast to three-body.
 
 ```
 inspect eval pereval/tasks/ccar/task.py --model <provider/model>                 # needs Docker
@@ -11,18 +10,9 @@ inspect eval pereval/tasks/ccar/task.py -T n_instances=1 -T repeats=5           
 python -m pereval.tasks.ccar.generator --out-dir runs/ccar --seed 1 --family interaction
 ```
 
-> **Scores below measure a superseded variant and do not compare to new runs.** The
-> response law used to be eight constants hard-coded in the public generator, which made
-> every instance solvable in closed form with no estimation: that exploit scored 0.00014
-> mean regret against 0.013 for the reference. The law is now drawn per instance and its
-> form rotates.
+> **Scores below measure a superseded variant and do not compare to new runs.** The response law used to be eight constants hard-coded in the public generator, which made every instance solvable in closed form with no estimation: that exploit scored 0.00014 mean regret against 0.013 for the reference. The law is now drawn per instance and its form rotates.
 >
-> The old numbers are valid and are kept. No tested model could have used the exploit
-> (all cutoffs predate this repository, the sandbox has no network) and none did: the
-> best measured cell is 0.055 against the exploit's 0.00014. They are simply not
-> comparable to the new generator, which is harder, and they demonstrate solving one
-> fixed law rather than an ability to recover a law. See
-> [limitations](../limitations.md#the-ccar-response-law-was-public).
+> The old numbers are valid and are kept. No tested model could have used the exploit (all cutoffs predate this repository, the sandbox has no network) and none did: the best measured cell is 0.055 against the exploit's 0.00014. They are simply not comparable to the new generator, which is harder, and they demonstrate solving one fixed law rather than an ability to recover a law. See [limitations](../limitations.md#the-ccar-response-law-was-public).
 
 ## The Task
 
@@ -70,13 +60,9 @@ The gap from `informed` up to `vasicek` is the measured cost of feature selectio
 
 ## Scores (Eight Instances, Fixed-Law Variant)
 
-> **These rows measured the fixed-law task.** They are valid measurements, not
-> contaminated ones, and they stand as a result for that variant. They do not compare
-> to results from the current generator, which is harder. A rerun is pending.
+> **These rows measured the fixed-law task.** They are valid measurements, not contaminated ones, and they stand as a result for that variant. They do not compare to results from the current generator, which is harder. A rerun is pending.
 >
-> All rows were n=8. The cast was partial (no paid frontier models beyond Kimi K3, no
-> full free roster), and a row for `hy3-free` was removed because the model is no longer
-> served and cannot be reproduced.
+> All rows were n=8. The cast was partial (no paid frontier models beyond Kimi K3, no full free roster), and a row for `hy3-free` was removed because the model is no longer served and cannot be reproduced.
 
 Means over eight generated instances, reported as **mean ± 2 SD** (2× the sample standard deviation across the instances, not a confidence interval), ordered by the upper end mean + 2 SD so consistency is rewarded, matching the quantile table. Every row runs the same eight instances (seed 1), so the comparison is paired. Lower is better; coverage targets 0.95.
 

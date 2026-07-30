@@ -1,7 +1,6 @@
 # Ballistic Trajectory Extrapolation
 
-A controlled mechanism task with exactly known ground truth, used to calibrate
-the harness at the easy end of the difficulty gradient.
+A controlled mechanism task with exactly known ground truth, used to calibrate the harness at the easy end of the difficulty gradient.
 
 ```
 inspect eval pereval/tasks/ballistic/task.py --model <provider/model>      # needs Docker
@@ -18,19 +17,9 @@ Each instance is generated host-side and only neutral CSVs enter the agent's san
 
 ## No Competent Anchor, Deliberately
 
-The other tasks bracket a model between a naive floor and a competent reference: CCAR
-has the probit-linear Vasicek fit, the orbital tasks have the Kepler fit. Ballistic has
-only the naive parabola and the degenerate answer, so a score of 12 cannot be read as
-"near the achievable frontier" or "ten times off it". That gap is a real limitation on
-what this column supports, and it is accepted rather than closed.
+The other tasks bracket a model between a naive floor and a competent reference: CCAR has the probit-linear Vasicek fit, the orbital tasks have the Kepler fit. Ballistic has only the naive parabola and the degenerate answer, so a score of 12 cannot be read as "near the achievable frontier" or "ten times off it". That gap is a real limitation on what this column supports, and it is accepted rather than closed.
 
-A competent reference here would have to fit a drag model, which means it would have to
-know the data is ballistic. The task withholds exactly that: category identifiers are
-opaque so the agent cannot invert a label into a known load. Disclosing the domain in
-the prompt to make a fair reference possible would change the task, invalidate every run
-already recorded, and hand over the isolation property that the design is built on. For
-a task whose job is calibrating the harness across a difficulty gradient rather than
-carrying a domain claim, that is a bad trade.
+A competent reference here would have to fit a drag model, which means it would have to know the data is ballistic. The task withholds exactly that: category identifiers are opaque so the agent cannot invert a label into a known load. Disclosing the domain in the prompt to make a fair reference possible would change the task, invalidate every run already recorded, and hand over the isolation property that the design is built on. For a task whose job is calibrating the harness across a difficulty gradient rather than carrying a domain claim, that is a bad trade.
 
 ## Scores (three runs, mean ± 2 SD)
 
@@ -52,4 +41,3 @@ Three rows clear the naive parabola baseline: mimo-v2.5, GLM-5.1 and nemotron-3-
 The bottom of the table is more interesting than a mean ranking shows. **Claude Haiku 4.5's mean (37.8) is lower than laguna's and nemotron-3-super's (59.1), yet it ranks last**, because its ± 79.8 band (one instance blew out to 83) pushes its upper bound to 118 against their 60. Ordering by the worst case rewards the consistent-but-mediocre over the erratic, which is the intended behaviour.
 
 **laguna and nemotron-3-super score bit-for-bit identically (59.1 ± 1.3).** That is not a duplicate: both weak models independently fell back to the same deterministic per-category *linear* least-squares fit, which produces identical predictions and is simply wrong for nonlinear velocity-dependent drop (a straight line where the drag curve bends). Two different models converging on the same naive method is itself a finding, and the near-zero ± 1.3 band confirms it: a fixed method has no run-to-run method variance, only the small block-sampling wobble.
-

@@ -1,7 +1,6 @@
 # Known Limitations and Design Decisions
 
-This is a demonstration of eval construction, not a production benchmark.
-Corners deliberately cut are documented here rather than hidden.
+This is a demonstration of eval construction, not a production benchmark. Corners deliberately cut are documented here rather than hidden.
 
 ## Four Defects Found by Independent Review
 

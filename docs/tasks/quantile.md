@@ -1,7 +1,6 @@
 # Small-Sample Tail Quantile Estimation
 
-The suite's second realistic domain task, and the only one whose ground truth is
-empirical rather than generated from a known DGP.
+The suite's second realistic domain task, and the only one whose ground truth is empirical rather than generated from a known DGP.
 
 ```
 inspect eval pereval/tasks/quantile/task.py --model <provider/model>            # needs Docker
@@ -25,13 +24,7 @@ rho_tau(d)  = d * (tau - 1[d < 0])
 
 Summed over tau in {0.90, 0.95, 0.99} and normalised by the population interquartile range. `E_pop` is a plain average over all m population values, the ten shown and the m - 10 not shown.
 
-Until this was corrected the scored population excluded the ten drawn values, so the
-scorer measured a different estimand from the one the prompt states and the exactly
-correct answer to the question as asked carried a small penalty. Immaterial in size but
-wrong in kind: switching to the full population moves every baseline down by 0.0017 to
-0.0028, which is ten to seventeen times below the +-0.03 block-sampling floor, so the
-scores below remain comparable. The population holds unrounded values; the rounding to
-four significant figures is a disguise on the observation, not on the population.
+Until this was corrected the scored population excluded the ten drawn values, so the scorer measured a different estimand from the one the prompt states and the exactly correct answer to the question as asked carried a small penalty. Immaterial in size but wrong in kind: switching to the full population moves every baseline down by 0.0017 to 0.0028, which is ten to seventeen times below the +-0.03 block-sampling floor, so the scores below remain comparable. The population holds unrounded values; the rounding to four significant figures is a disguise on the observation, not on the population.
 
 The minimiser of the pinball loss is exactly the population tau-quantile, so the population supplies both the truth and the achievable floor. Regret is non-negative and zero only for a perfect answer, with no Harrell-Davis target, no oracle tuning, and no Monte-Carlo simulation. This is what replaces the generated-DGP oracle the other tasks have.
 
@@ -112,20 +105,9 @@ The p99 column does the work: bounded rules 0.049-0.052, extrapolating rules 0.0
 
 ## Stability Across Seeds (100 blocks, metric disclosed)
 
-The primary result. Free models, three seeds each (base seeds 1, 2, 3, so a
-near-disjoint 100-series draw per seed), 100 blocks per instance, scoring metric
-disclosed in the prompt. Reported as **mean ± 2 SD** over the runs (2× the
-sample standard deviation, not a confidence interval), ordered by the upper end
-mean + 2 SD, so the ranking rewards consistency rather than a lucky low mean.
-Lower is better. Every reported number has at least three valid runs behind it;
-a model that could not reach three is excluded with its failure rate noted
-rather than reported on thin data.
+The primary result. Free models, three seeds each (base seeds 1, 2, 3, so a near-disjoint 100-series draw per seed), 100 blocks per instance, scoring metric disclosed in the prompt. Reported as **mean ± 2 SD** over the runs (2× the sample standard deviation, not a confidence interval), ordered by the upper end mean + 2 SD, so the ranking rewards consistency rather than a lucky low mean. Lower is better. Every reported number has at least three valid runs behind it; a model that could not reach three is excluded with its failure rate noted rather than reported on thin data.
 
-The four reference estimators are deterministic given the blocks, so their spread
-is **pure block-sampling noise**: the irreducible floor at 100 blocks (about
-± 0.03). A model tighter than that floor has negligible run-to-run method
-variance; a model wider than it is switching methods between runs, which no
-increase in block count can fix.
+The four reference estimators are deterministic given the blocks, so their spread is **pure block-sampling noise**: the irreducible floor at 100 blocks (about ± 0.03). A model tighter than that floor has negligible run-to-run method variance; a model wider than it is switching methods between runs, which no increase in block count can fix.
 
 | Row | runs | per-run regret | mean ± 2 SD |
 | --- | --- | --- | --- |
@@ -142,38 +124,13 @@ increase in block count can fix.
 | laguna-m.1 | 3 | 0.1568, 0.1209, 0.0641 | 0.114 ± 0.093 |
 | GLM-5.1 | 3 | 0.2456, 0.1486, 0.0760 | 0.157 ± 0.170 |
 
-**gpt-oss-20b is excluded, and the exclusion is the finding.** It produced valid
-output on only 2 of 6 attempts (seeds 1 and 2 succeeded at 0.122 and 0.118; seed
-3 failed twice and seeds 4 and 5 once each, every failure running the full agent
-loop for 84 to 296 messages and then emitting no parseable predictions.csv). A
-~67% rate of answering nothing is worse than an unstable answer, and it cannot
-meet the three-run bar, so no regret number is reported for it.
+**gpt-oss-20b is excluded, and the exclusion is the finding.** It produced valid output on only 2 of 6 attempts (seeds 1 and 2 succeeded at 0.122 and 0.118; seed 3 failed twice and seeds 4 and 5 once each, every failure running the full agent loop for 84 to 296 messages and then emitting no parseable predictions.csv). A ~67% rate of answering nothing is worse than an unstable answer, and it cannot meet the three-run bar, so no regret number is reported for it.
 
-Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022)
-and nemotron-3-super (± 0.021) score as consistently as the deterministic
-baselines**, and nemotron-ultra is the only model that beats every reference
-estimator on the conservative bound (upper 0.110 vs wei8's 0.137), edged only by
-the naive normal.
+Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022) and nemotron-3-super (± 0.021) score as consistently as the deterministic baselines**, and nemotron-ultra is the only model that beats every reference estimator on the conservative bound (upper 0.110 vs wei8's 0.137), edged only by the naive normal.
 
-A tight band means the *score* is stable, not that the *method* is. The
-transcripts show nemotron-3-ultra using materially different approaches across
-the three seeds (GPD-plus-t with bootstrap on one, a kitchen sink of logistic,
-gennorm, skew-normal, Weibull, gamma and KDE on another) that all happen to land
-in a similar score range. So its trustworthiness is empirical (its varying methods
-all scored well here) rather than structural (one fixed method), and a single run
-is trustworthy only in the weak sense that any one of its methods would have
-scored similarly. A same-seed repeat experiment settled which it is: rerunning on
-byte-identical data still moved the score. nemotron-3-ultra's best run (0.077)
-reran to 0.142, so the method variation is **sampling temperature, not a response
-to the data**. See [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility).
+A tight band means the *score* is stable, not that the *method* is. The transcripts show nemotron-3-ultra using materially different approaches across the three seeds (GPD-plus-t with bootstrap on one, a kitchen sink of logistic, gennorm, skew-normal, Weibull, gamma and KDE on another) that all happen to land in a similar score range. So its trustworthiness is empirical (its varying methods all scored well here) rather than structural (one fixed method), and a single run is trustworthy only in the weak sense that any one of its methods would have scored similarly. A same-seed repeat experiment settled which it is: rerunning on byte-identical data still moved the score. nemotron-3-ultra's best run (0.077) reran to 0.142, so the method variation is **sampling temperature, not a response to the data**. See [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility).
 
-Two models sit far above the floor: **mimo at ± 0.056 (about 2× the floor) and
-laguna at ± 0.093 (about 3×)**. Roughly two-thirds of laguna's variance is
-method-switching, not block-sampling. Its per-run values run 0.157, 0.121, 0.064:
-worst in the table on seed 1, best on seed 3. A single run of laguna is a coin
-flip, and more blocks would not change that. This is the empirical case for the
-suite's repeated-run standard: for method-switching models no single number
-means anything, and the *stability itself* is a reported property.
+Two models sit far above the floor: **mimo at ± 0.056 (about 2× the floor) and laguna at ± 0.093 (about 3×)**. Roughly two-thirds of laguna's variance is method-switching, not block-sampling. Its per-run values run 0.157, 0.121, 0.064: worst in the table on seed 1, best on seed 3. A single run of laguna is a coin flip, and more blocks would not change that. This is the empirical case for the suite's repeated-run standard: for method-switching models no single number means anything, and the *stability itself* is a reported property.
 
 ## Criterion Disagreement
 

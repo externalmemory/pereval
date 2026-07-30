@@ -47,9 +47,7 @@ The two domain tasks are the realistic ones. The mechanism tasks calibrate the h
 
 ## Summary Scores
 
-> **Not a leaderboard, and not comparable across columns.** Every column is Winkler
-> regret except Quantile, which is pinball regret, and the scales differ by orders
-> of magnitude, so a number in one column says nothing about another.
+> **Not a leaderboard, and not comparable across columns.** Every column is Winkler regret except Quantile, which is pinball regret, and the scales differ by orders of magnitude, so a number in one column says nothing about another.
 
 Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR over eight instances. Lower is better everywhere, and a cell is reported only if every run behind it produced complete output. The last column is the **mean rank** (a Borda count within each column), deliberately the only aggregate, since the cells are not comparable across columns. Per-task detail is in the docs linked above.
 
