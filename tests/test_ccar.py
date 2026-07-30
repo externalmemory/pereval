@@ -52,8 +52,13 @@ def test_stress_default_rises(bundle):
 
 
 def test_crisis_disconnect_exists():
-    # find an instance with a crisis, and confirm the observed unemployment spike
-    # does not move the default rate (uses the fundamental)
+    # find an instance with a crisis, and confirm the observed unemployment spike does
+    # not move the default rate (which is generated from the fundamental).
+    #
+    # The comparison is against the instance's OWN typical quarter-to-quarter movement
+    # rather than an absolute threshold. The default rate's level and idiosyncratic
+    # scale are drawn per instance now, so a fixed cutoff in percentage points tested
+    # the drawn value of rho as much as the disconnect.
     for seed in range(10):
         b = generate(seed=seed, n_intime=80, oracle_n=20)
         ci = np.where(b["crisis"] > 0)[0]
@@ -62,10 +67,15 @@ def test_crisis_disconnect_exists():
         c = ci[0]
         dr, unemp = b["default_rate"], b["levels"]["unemployment"]
         spike = unemp[c] - 0.5 * (unemp[c - 1] + unemp[c + 1])
+        if spike <= 3.0:  # not a real observed unemployment spike (percentage points)
+            continue
+        it = b["intime_slice"]
+        jumps = np.abs(dr[it][1:-1] - 0.5 * (dr[it][:-2] + dr[it][2:]))
         dr_jump = abs(dr[c] - 0.5 * (dr[c - 1] + dr[c + 1]))
-        if spike > 3.0:  # a real observed unemployment spike (percentage points)
-            assert dr_jump < 0.01  # default barely moves
-            return
+        # the crisis quarter is an ordinary quarter as far as the default rate is
+        # concerned: its move is not an outlier in the instance's own jump distribution
+        assert dr_jump < np.quantile(jumps, 0.95)
+        return
     pytest.skip("no suitable crisis instance in the first 10 seeds")
 
 

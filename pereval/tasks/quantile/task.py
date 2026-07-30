@@ -32,6 +32,7 @@ from inspect_ai.solver import basic_agent, system_message
 from inspect_ai.tool import bash, python
 from inspect_ai.util import sandbox
 
+from pereval.scorers.stability import epochs as _epochs
 from pereval.scorers.pinball import (
     aggregate,
     parse_predictions,
@@ -108,6 +109,11 @@ def _samples(n_instances: int, seed: int | None, n_blocks: int,
     name="quantile",
     metrics={
         "pinball_regret": [mean(), stderr()],
+        "degenerate_regret": [mean()],
+        "completion": [mean()],
+        "runs": [mean()],
+        "regret_worst": [mean()],
+        "regret_spread": [mean()],
         "hit_rate": [mean(), stderr()],
         "mae": [mean(), stderr()],
         "coverage": [mean()],
@@ -145,7 +151,8 @@ def quantile_scorer():
 @task
 def quantile(n_instances: int = 8, seed: int | None = 1,
              n_blocks: int = N_BLOCKS, message_limit: int = 300,
-             baseline: str = "", disclose_metric: bool = True):
+             baseline: str = "", disclose_metric: bool = True,
+             repeats: int = 1):
     """Small-sample population tail quantile estimation from FRED YoY data.
 
     baseline: "" runs the agent; a named estimator ("type7", "type8", "hd", "logistic",
@@ -167,4 +174,5 @@ def quantile(n_instances: int = 8, seed: int | None = 1,
         solver=solver,
         scorer=quantile_scorer(),
         sandbox=("docker", COMPOSE),
+        epochs=_epochs(repeats),
     )

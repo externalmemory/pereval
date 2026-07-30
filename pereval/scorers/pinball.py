@@ -40,6 +40,12 @@ TAUS = (0.90, 0.95, 0.99)
 ALPHA = 0.05          # the interval requested alongside the point estimates
 PENALTY_FACTOR = 5.0  # missing answers cost this multiple of the type-7 regret
 
+# This scorer already prices non-response against the DEGENERATE answer (a bare
+# np.percentile call) rather than against the achievable floor, which is the
+# convention pereval.scorers.interval was corrected to adopt. The degenerate score
+# is also reported directly, as degenerate_regret, so a model that carries less
+# information than np.percentile is visible as such.
+
 
 def pinball_loss(qhat: float, pop, tau: float) -> float:
     """Mean rho_tau(X - qhat) over the population."""
@@ -64,11 +70,18 @@ def type7(x, tau: float) -> float:
     return float(np.quantile(np.asarray(x, dtype=float), tau, method="linear"))
 
 
+def _degenerate(block: dict) -> float:
+    """Score of the do-nothing answer: np.percentile (Hyndman-Fan type 7)."""
+    pop, norm, x = block["pop"], block["norm"], block["x"]
+    return float(sum(pinball_regret(type7(x, t), pop, t) / norm for t in TAUS))
+
+
 def _blank(block: dict) -> dict:
     """Penalty record for a block the agent did not answer."""
     pop, norm, x = block["pop"], block["norm"], block["x"]
     per = {t: PENALTY_FACTOR * pinball_regret(type7(x, t), pop, t) / norm for t in TAUS}
     return dict(missing=True, per_tau=per, regret=sum(per.values()),
+                degenerate=_degenerate(block),
                 hit=0.0, mae=float("nan"), coverage=0.0,
                 winkler=float("nan"), spread=float("nan"), monotonic=True)
 
@@ -95,6 +108,7 @@ def score_block(block: dict, pred: dict | None) -> dict:
         missing=False,
         per_tau=per,
         regret=sum(per.values()),
+        degenerate=_degenerate(block),
         hit=float(q[0.95] > truth95),
         mae=abs(q[0.95] - truth95) / norm,
         coverage=float(lo <= truth95 <= hi),
@@ -109,8 +123,10 @@ def aggregate(records: list[dict]) -> dict:
         v = [r[key] for r in records if not r["missing"] and np.isfinite(r[key])]
         return float(np.mean(v)) if v else float("nan")
 
+    n_missing = int(sum(r["missing"] for r in records))
     out = {
         "pinball_regret": float(np.mean([r["regret"] for r in records])),
+        "degenerate_regret": float(np.mean([r["degenerate"] for r in records])),
         "hit_rate": float(np.mean([r["hit"] for r in records if not r["missing"]]))
         if any(not r["missing"] for r in records) else float("nan"),
         "mae": m("mae"),
@@ -118,7 +134,8 @@ def aggregate(records: list[dict]) -> dict:
         "winkler": m("winkler"),
         "spread_ratio": m("spread"),
         "n_blocks": len(records),
-        "n_missing": int(sum(r["missing"] for r in records)),
+        "n_missing": n_missing,
+        "completion": float(1.0 - n_missing / len(records)) if records else 0.0,
         "n_nonmonotonic": int(sum(not r["monotonic"] for r in records)),
     }
     for t in TAUS:
@@ -154,11 +171,15 @@ def parse_predictions(text: str | None) -> dict[int, dict]:
 
 
 def score_value_and_explanation(agg: dict) -> tuple[dict, str]:
-    value = {k: agg[k] for k in ("pinball_regret", "hit_rate", "mae",
-                                 "coverage", "winkler", "spread_ratio")}
+    value = {k: agg[k] for k in ("pinball_regret", "degenerate_regret", "hit_rate", "mae",
+                                 "coverage", "winkler", "spread_ratio", "completion")}
+    # Always present so the epoch reducer only has to overwrite them; see
+    # pereval.scorers.stability.
+    value.update(runs=1.0, regret_worst=agg["pinball_regret"], regret_spread=0.0)
     explanation = (
         f"{agg['n_blocks'] - agg['n_missing']}/{agg['n_blocks']} blocks answered; "
         f"pinball regret {agg['pinball_regret']:.4f} "
+        f"(degenerate {agg['degenerate_regret']:.4f}) "
         f"(p90 {agg['regret_p90']:.4f}, p95 {agg['regret_p95']:.4f}, "
         f"p99 {agg['regret_p99']:.4f}); hit rate {agg['hit_rate']:.3f}; "
         f"MAE {agg['mae']:.3f}; coverage {agg['coverage']:.3f}; "

@@ -31,6 +31,7 @@ from inspect_ai.solver import basic_agent, system_message
 from inspect_ai.tool import bash, python
 
 from pereval.scorers.ballistic import ballistic_scorer
+from pereval.scorers.stability import epochs as _epochs
 from pereval.tasks.ballistic.baselines import parabola_baseline
 from pereval.tasks.ballistic.generator import (
     build_truth,
@@ -114,12 +115,17 @@ def ballistic(
     oracle_n: int = 2000,
     message_limit: int = 150,
     baseline: bool = False,
+    repeats: int = 1,
 ) -> Task:
     """The ballistic extrapolation task.
 
     baseline=True swaps the agent for the naive per-category parabola baseline
     (no model calls), producing the reference score models must beat. Run it with
     any placeholder model, e.g. --model mockllm/model.
+
+    repeats>1 runs the agent that many times on each instance, on byte-identical
+    inputs, and reports the worst case and the spread. See
+    pereval.scorers.stability.
     """
     if baseline:
         solver = parabola_baseline()
@@ -135,4 +141,5 @@ def ballistic(
         solver=solver,
         scorer=ballistic_scorer(),
         sandbox=("docker", COMPOSE),
+        epochs=_epochs(repeats),
     )

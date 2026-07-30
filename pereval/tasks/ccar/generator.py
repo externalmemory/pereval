@@ -20,20 +20,36 @@ Data-generating process, none of which is disclosed to the agent:
   the OBSERVED macros only, as a common correlated spike (unemployment/spread/VIX
   up, GDP/equities down). It is transient and reverts next quarter.
 
-- Default rate: extended-Vasicek, dr = Phi((Phi^-1(p) + k1*u1 + k2*u2 +
-  sqrt(rho)*eps)/sqrt(1-rho)), with u1 = standardized unemployment level, u2 =
-  standardized YoY change in HPI, p=0.028, rho=0.02, k1=0.13, k2=-0.07, eps ~ N(0,1)
-  i.i.d. Crucially the default uses the FUNDAMENTAL (pre-crisis) drivers, so a COVID
-  unemployment spike appears in the data but the default rate does not follow it;
-  only persistent moves in the fundamental drive defaults. The other seven macros
-  are correlated distractors.
+- Default rate: extended-Vasicek, dr = Phi((lin + sqrt(rho)*eps)/sqrt(1-rho)) with
+  eps ~ N(0,1) i.i.d., where lin is a probit-scale conditional mean built from two
+  standardized drivers: u1, one macro that rises in a recession, as a level, and u2,
+  one that falls, as a year-over-year change. Crucially the default uses the
+  FUNDAMENTAL (pre-crisis) drivers, so a COVID-style spike appears in the data but
+  the default rate does not follow it; only persistent moves in the fundamental drive
+  defaults. The other seven macros are correlated distractors.
+
+  Every parameter of that law (p, rho, k1, k2), WHICH two macros are the drivers, and
+  the functional form of lin, rotated over three families, are all DRAWN PER
+  INSTANCE. This
+  is load-bearing rather than cosmetic. When the coefficients were fixed module
+  constants they were also published in this file, so the whole instance was
+  solvable in closed form from the repo without estimating anything: that exploit
+  scored 0.0001 mean regret against 0.013 for the fitted reference and 0.029 for
+  the best measured model, and it defeated the contamination argument in
+  docs/limitations.md, which rests on parameters not being recoverable from the
+  source. Rotating the family does the second half of the job. A single fixed form
+  means a good score can only demonstrate that the agent recovers THIS law; the
+  inference the suite wants to support is that it can recover A law, which requires
+  the form to vary. docs/task-design.md names both mitigations (per-instance
+  parameters, rotate DGP families) as obligations of the plasmode family.
 
 - Stress scenario: the 9 out-of-time quarters apply a sustained recession drift to
-  the FUNDAMENTAL (unemployment up, HPI down, and the rest co-moving), pushing the
-  drivers past the in-time range, so the default rate rises. Unlike the transient
-  crisis, this is a real deterioration and the default responds. A model that
-  attenuated its unemployment sensitivity to fit the COVID quarter, or flipped a
-  sign under collinearity, will misproject here and pay for it in Winkler regret.
+  the FUNDAMENTAL (unemployment, spreads and VIX up, GDP, HPI and equities down),
+  pushing every candidate driver past the in-time range, so the default rate rises
+  whichever pair was drawn. Unlike the transient crisis, this is a real deterioration
+  and the default responds. A model that attenuated its sensitivity to fit the COVID
+  quarter, or flipped a sign under collinearity, will misproject here and pay for it
+  in Winkler regret.
 
 - Missing data: the later-starting series (HPI, VIX, BBB spread, S&P, DJIA) are
   NaN for the early quarters, as on FRED, so the agent must handle ragged history.
@@ -85,10 +101,63 @@ R = np.array([
 SIBLINGS = {"sp500": (0.0311, 0.0467, 0.91), "djia": (0.0263, 0.0427, 0.80)}
 MACRO_COLUMNS = ["gdp", "unemployment", "hpi", "bbb_spread", "sp500", "djia", "nasdaq", "vix", "cpi"]
 
-# extended-Vasicek default parameters and predictor standardization (from FRED / vasicekfit)
-P, RHO, K1, K2 = 0.028, 0.02, 0.13, -0.07
-U_MEAN, U_SD = 5.66, 1.72  # unemployment raw-level standardization
-YM, YS = 0.0442, 0.0580  # HPI YoY standardization
+# Extended-Vasicek default parameters, drawn per instance. The ranges bracket the
+# FRED / vasicekfit calibration that these were previously fixed at (p 0.028,
+# rho 0.02, k1 0.13, k2 -0.07, unemployment 5.66/1.72, HPI YoY 0.0442/0.0580), so
+# a drawn instance is as plausible as the old fixed one; it is just not knowable in
+# advance. The standardizations are absorbed by any fitted model and are randomized
+# only to close constant-matching; the coefficients and the family are what matter.
+DGP_RANGES = {
+    "p": (0.015, 0.045),
+    "rho": (0.010, 0.050),
+    "k1": (0.090, 0.200),
+    "k2": (-0.120, -0.030),
+    # threshold family: the kink sits at this quantile of the IN-TIME u1 distribution,
+    # not at a fixed number of sd. Placing it near the top of the observed range is what
+    # makes the trap sharp: only a handful of in-time quarters sit above it, so the
+    # nonlinearity is nearly invisible to an in-sample fit, while the whole stress path
+    # is above it. A fixed sd threshold left some instances where u1 never crossed the
+    # kink until the final quarter, making the family indistinguishable from `vasicek`.
+    "thresh_q": (0.80, 0.95),
+    "thresh_extra": (0.08, 0.22),  # threshold family: added slope above the kink
+    # interaction family: coefficient on u1*u2. Kept small because the cross term is
+    # the product of two drivers that each reach about 3 sd under a severe scenario,
+    # so it moves the probit mean by roughly 9*|k3| at the end of the path; wider than
+    # this and the stressed default rate leaves any plausible range.
+    "inter_k3": (-0.045, -0.020),
+}
+
+# Which macros are the true drivers also rotates. One driver is taken from the
+# series that rise in a recession and enters as a level; the other from the series
+# that fall and enters as a year-over-year change, so the transform-discovery step
+# survives while the identity of the driver stops being memorizable. Nine pairs
+# times three families is twenty-seven distinct laws, none of them in this file.
+DRIVERS_UP = ("unemployment", "bbb_spread", "vix")
+DRIVERS_DOWN = ("hpi", "gdp", "nasdaq")
+
+# Response families. All three keep the probit link and the systematic factor, so
+# rho and the interval math are recoverable in every one; what rotates is the shape
+# of the macro dependence.
+#
+#   vasicek      probit-linear in u1 and u2. The classic form.
+#   threshold    u1 gains extra sensitivity above a kink, so the driver bites harder
+#                in a deep recession than a linear fit calibrated in normal times
+#                predicts. Regime asymmetry, and outside the obvious model class.
+#   interaction  a u1*u2 cross term. Nearly invisible in sample, where the two
+#                drivers are both near their means, and decisive under a scenario
+#                that pushes them adversely at the same time. The purest form of the
+#                trap this task exists to set.
+#
+# `lagged` (the driver entering one or two quarters back) was tried and dropped: the
+# level drivers are persistent enough (AR(1) 0.79 to 0.89) and the stress ramp smooth
+# enough that a short lag is nearly unidentifiable, and it left the linear reference
+# at 0.0174 against 0.0173 on `vasicek`, so it added a family without adding a
+# distinction.
+#
+# The shipped vasicek_baseline fits the `vasicek` form. It is therefore a near-oracle
+# reference on that family and a COMPETENT BUT MISSPECIFIED reference on the other
+# two, which is the intended bracketing: see docs/tasks/ccar.md.
+FAMILIES = ("vasicek", "threshold", "interaction")
 
 CRISIS_P = 2.0 / 80.0  # ~2 systemic crises per 20-year window (GFC + COVID scale)
 N_STRESS = 9
@@ -115,17 +184,69 @@ def _hpi_yoy(level):
     return y
 
 
-def _default_rate(unemp_level, hpi_level, rng):
-    u1 = (unemp_level - U_MEAN) / U_SD
-    u2 = (_hpi_yoy(hpi_level) - YM) / YS
-    eps = rng.standard_normal(len(unemp_level))
-    z = (norm.ppf(P) + K1 * u1 + K2 * u2 + np.sqrt(RHO) * eps) / np.sqrt(1.0 - RHO)
+def draw_dgp(rng, family: str | None = None) -> dict:
+    """Draw the response law for one instance: family, drivers, and every parameter."""
+    d = {k: _uni(rng, *v) for k, v in DGP_RANGES.items()}
+    d["family"] = family if family is not None else FAMILIES[int(rng.integers(len(FAMILIES)))]
+    if d["family"] not in FAMILIES:
+        raise ValueError(f"unknown family {d['family']!r}, expected one of {FAMILIES}")
+    d["d1"] = DRIVERS_UP[int(rng.integers(len(DRIVERS_UP)))]
+    d["d2"] = DRIVERS_DOWN[int(rng.integers(len(DRIVERS_DOWN)))]
+    return d
+
+
+def _standardize(x, pre_stress: slice):
+    """Standardize by PRE-STRESS moments only, so nothing depends on the scenario.
+
+    The window is warmup plus in-time rather than in-time alone. The level drivers are
+    persistent (AR(1) 0.79 to 0.89), so the sample sd of an 80-quarter stretch of one
+    is itself noisy and biased low, and standardizing on the shorter window let that
+    artifact drive how severe the stressed default path came out. A model fitted by the
+    agent sees only the in-time window and absorbs any constant rescaling into its own
+    coefficient, so the longer window costs it nothing.
+    """
+    ref = np.asarray(x, dtype=float)[pre_stress]
+    ref = ref[np.isfinite(ref)]
+    return (np.asarray(x, dtype=float) - ref.mean()) / ref.std()
+
+
+def probit_mean(dgp: dict, fund_levels: dict, pre_stress: slice):
+    """The probit-scale conditional mean `lin`, so that E[dr | macros] = Phi(lin).
+
+    Single source of truth for the response law: the observed default rate and the
+    scorer's oracle both go through here, so they cannot drift apart. Standardizing
+    on the in-time window rather than on published constants means the scale of each
+    driver is instance-specific and absorbed by any fitted model, which is one less
+    thing recoverable from this file.
+    """
+    u1 = _standardize(fund_levels[dgp["d1"]], pre_stress)
+    u2 = _standardize(_hpi_yoy(fund_levels[dgp["d2"]]), pre_stress)
+    lin = norm.ppf(dgp["p"]) + dgp["k1"] * u1 + dgp["k2"] * u2
+    if dgp["family"] == "vasicek":
+        return lin
+    if dgp["family"] == "threshold":
+        ref = u1[pre_stress]
+        c = float(np.quantile(ref[np.isfinite(ref)], dgp["thresh_q"]))
+        return lin + dgp["thresh_extra"] * np.maximum(u1 - c, 0.0)
+    if dgp["family"] == "interaction":
+        return lin + dgp["inter_k3"] * u1 * u2
+    raise ValueError(dgp["family"])
+
+
+def _default_rate(dgp, fund_levels, pre_stress, rng):
+    lin = probit_mean(dgp, fund_levels, pre_stress)
+    eps = rng.standard_normal(len(lin))
+    z = (lin + np.sqrt(dgp["rho"]) * eps) / np.sqrt(1.0 - dgp["rho"])
     return norm.cdf(z)
 
 
-def _simulate(seed: int, n_intime: int, oracle_n: int) -> dict:
+def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None) -> dict:
     ss = np.random.SeedSequence(seed)
     rng_struct, rng_default, rng_oracle = (np.random.default_rng(s) for s in ss.spawn(3))
+
+    # Drawn first, off rng_struct, so the response law is a function of the seed and
+    # nothing about it is knowable from this file.
+    dgp = draw_dgp(rng_struct, family)
 
     total = _WARMUP + n_intime + N_STRESS
     L = np.linalg.cholesky(R)
@@ -141,9 +262,15 @@ def _simulate(seed: int, n_intime: int, oracle_n: int) -> dict:
             _, m, s, phi, _ = CORE[n]
             fund[n][t] = m + phi * (fund[n][t - 1] - m) + innov_sd[n] * z[i]
 
-    # sustained recession over the stress window (deterministic scenario overlay):
-    # level series ramp from the last in-time value; growth/return series take a
-    # stressed constant. Fundamental deterioration, so the default responds.
+    # Sustained recession over the stress window (deterministic scenario overlay).
+    # Level series ramp from the last in-time value to a TARGET anchored on the
+    # marginal mean; growth/return series take a stressed constant, likewise anchored.
+    # Anchoring on the mean rather than adding an increment to the last value is what a
+    # supervisory scenario actually does ("unemployment reaches 10 percent", not "rises
+    # by four points from wherever it is"), and it fixes a real defect: with an
+    # increment, how adverse the scenario was in standardized units depended on where
+    # the series happened to sit, so a series that started low could end barely above
+    # its own in-time mean. Fundamental deterioration, so the default responds.
     stress = slice(_WARMUP + n_intime, total)
     last = _WARMUP + n_intime - 1
     severity = _uni(rng_struct, 1.0, 1.8)
@@ -153,7 +280,8 @@ def _simulate(seed: int, n_intime: int, oracle_n: int) -> dict:
     for n in CORE_NAMES:
         kind, m, s, phi, _ = CORE[n]
         if kind in ("level", "loglevel"):
-            fund[n][stress] = fund[n][last] + level_target[n] * s * severity * ramp
+            target = m + level_target[n] * s * severity
+            fund[n][stress] = fund[n][last] + (target - fund[n][last]) * ramp
         else:
             fund[n][stress] = m + growth_shift[n] * s * severity
 
@@ -175,9 +303,9 @@ def _simulate(seed: int, n_intime: int, oracle_n: int) -> dict:
         obs[name] = r  # stored as return series; level built below
 
     # default rate from FUNDAMENTAL drivers (crisis does not propagate)
-    unemp_fund_level = _to_level("loglevel", fund["unemployment"])
-    hpi_fund_level = _to_level("growth", fund["hpi"])
-    dr = _default_rate(unemp_fund_level, hpi_fund_level, rng_default)
+    pre_stress = slice(0, _WARMUP + n_intime)
+    fund_levels = {n: _to_level(CORE[n][0], fund[n]) for n in CORE_NAMES}
+    dr = _default_rate(dgp, fund_levels, pre_stress, rng_default)
 
     # observed levels for all nine macros
     levels = {}
@@ -186,13 +314,12 @@ def _simulate(seed: int, n_intime: int, oracle_n: int) -> dict:
     for name in SIBLINGS:
         levels[name] = _to_level("ret", obs[name])
 
-    # oracle over the stress window: predictive distribution of dr from eps
+    # oracle over the stress window: predictive distribution of dr from eps. Same
+    # probit_mean call as the observed data, so the oracle cannot drift from the DGP.
     xs = list(range(_WARMUP + n_intime, total))
-    u1_s = (unemp_fund_level[stress] - U_MEAN) / U_SD
-    u2_s = (_hpi_yoy(hpi_fund_level)[stress] - YM) / YS
-    lin = norm.ppf(P) + K1 * u1_s + K2 * u2_s  # macro part on the probit scale
-    center = lin / np.sqrt(1.0 - RHO)
-    scale = np.sqrt(RHO) / np.sqrt(1.0 - RHO)
+    lin = probit_mean(dgp, fund_levels, pre_stress)[stress]
+    center = lin / np.sqrt(1.0 - dgp["rho"])
+    scale = np.sqrt(dgp["rho"]) / np.sqrt(1.0 - dgp["rho"])
     points = []
     for j, t in enumerate(xs):
         mc = norm.cdf(center[j] + scale * rng_oracle.standard_normal(oracle_n))
@@ -241,11 +368,14 @@ def _simulate(seed: int, n_intime: int, oracle_n: int) -> dict:
         "starts": starts,
         "seed": seed,
         "severity": severity,
+        "dgp": dgp,
     }
 
 
-def generate(seed: int, n_intime: int = 80, oracle_n: int = 2000) -> dict:
-    return _simulate(seed, n_intime, oracle_n)
+def generate(seed: int, n_intime: int = 80, oracle_n: int = 2000,
+             family: str | None = None) -> dict:
+    """One instance. family=None draws one of FAMILIES from the seed."""
+    return _simulate(seed, n_intime, oracle_n, family)
 
 
 # --- serialization ---------------------------------------------------------
@@ -273,7 +403,10 @@ def scenario_csv_text(bundle):
 def build_truth(bundle):
     return {
         "meta": {"seed": bundle["seed"], "n_intime": bundle["n_intime"],
-                 "severity": bundle["severity"], "starts": bundle["starts"]},
+                 "severity": bundle["severity"], "starts": bundle["starts"],
+                 # Recorded so a published result is auditable after the fact. It
+                 # never enters the agent's sandbox; only train.csv and scenario.csv do.
+                 "dgp": bundle["dgp"]},
         "points": bundle["points"],
     }
 
@@ -300,11 +433,19 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--n-intime", type=int, default=80)
     ap.add_argument("--oracle-n", type=int, default=2000)
+    ap.add_argument("--family", choices=FAMILIES, default=None,
+                    help="pin the response family; default draws one from the seed")
     args = ap.parse_args()
     seed = args.seed if args.seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
-    bundle = generate(seed=seed, n_intime=args.n_intime, oracle_n=args.oracle_n)
+    bundle = generate(seed=seed, n_intime=args.n_intime, oracle_n=args.oracle_n, family=args.family)
     write_outputs(bundle, args.out_dir)
+    d = bundle["dgp"]
     print(f"seed={seed} n_intime={args.n_intime} severity={bundle['severity']:.2f}")
+    print(f"dgp: family={d['family']} drivers={d['d1']} (level), {d['d2']} (YoY) "
+          f"p={d['p']:.4f} rho={d['rho']:.4f} k1={d['k1']:.4f} k2={d['k2']:.4f}"
+          + (f" kink_q={d['thresh_q']:.2f} extra={d['thresh_extra']:.3f}"
+             if d["family"] == "threshold" else "")
+          + (f" k3={d['inter_k3']:.4f}" if d["family"] == "interaction" else ""))
     print("stress default means: " + " ".join(f"{p['true_mean']*100:.1f}" for p in bundle["points"]))
 
 

@@ -11,7 +11,6 @@ import glob
 import os
 import sys
 
-import numpy as np
 from inspect_ai.log import read_eval_log
 
 sys.path.insert(0, os.path.abspath(os.path.join(

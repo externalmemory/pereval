@@ -7,10 +7,16 @@ interval scorer (linear, keyed by quarter). Nothing about the data-generating
 process (the drivers, the transforms, the functional form, the crisis mechanism)
 is disclosed.
 
+The response law is drawn per instance and its functional form rotates over three
+families, so nothing about it is recoverable from this repository; see the generator
+docstring for why that is load-bearing rather than cosmetic.
+
 Run (requires Docker and a model):
     inspect eval pereval/tasks/ccar/task.py --model openai-api/zen/<id>
     inspect eval pereval/tasks/ccar/task.py -T baseline=vasicek --model mockllm/model
     inspect eval pereval/tasks/ccar/task.py -T baseline=naive --model mockllm/model
+    inspect eval pereval/tasks/ccar/task.py -T family=threshold      # pin the form
+    inspect eval pereval/tasks/ccar/task.py -T n_instances=1 -T repeats=5  # stability
 """
 
 from __future__ import annotations
@@ -22,9 +28,11 @@ from inspect_ai.solver import basic_agent, system_message
 from inspect_ai.tool import bash, python
 
 from pereval.scorers.interval import make_interval_scorer
+from pereval.scorers.stability import epochs as _epochs
 from pereval.tasks.ballistic.task import COMPOSE  # shared general modeling sandbox
-from pereval.tasks.ccar.baselines import naive_baseline, vasicek_baseline
+from pereval.tasks.ccar.baselines import informed_baseline, naive_baseline, vasicek_baseline
 from pereval.tasks.ccar.generator import (
+    FAMILIES,
     build_truth,
     generate,
     scenario_csv_text,
@@ -68,16 +76,20 @@ refine it after. Verify it has one row per scenario quarter before submitting.
 """
 
 
-def _samples(n_instances, seed, oracle_n, n_intime):
+def _samples(n_instances, seed, oracle_n, n_intime, family):
     base = seed if seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
     seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
     samples = []
     for i, s in enumerate(seeds):
-        bundle = generate(seed=int(s), n_intime=n_intime, oracle_n=oracle_n)
+        # Rotate the response family across instances rather than drawing it, so a
+        # shipped dataset is balanced over FAMILIES instead of balanced in
+        # expectation. Pinning `family` overrides this.
+        fam = family or FAMILIES[i % len(FAMILIES)]
+        bundle = generate(seed=int(s), n_intime=n_intime, oracle_n=oracle_n, family=fam)
         samples.append(
             Sample(
                 input=INSTRUCTIONS,
-                id=f"instance-{i}-seed-{int(s)}",
+                id=f"instance-{i}-{fam}-seed-{int(s)}",
                 files={
                     "data/train.csv": train_csv_text(bundle),
                     "data/scenario.csv": scenario_csv_text(bundle),
@@ -96,17 +108,27 @@ def ccar(
     n_intime: int = 80,
     message_limit: int = 150,
     baseline: str = "",
+    family: str = "",
+    repeats: int = 1,
 ) -> Task:
     """CCAR-style stress-loss projection.
 
-    baseline: "" runs the agent; "naive" (OLS on all nine levels) or "vasicek"
-    (closed-form extended-Vasicek reference) run those solvers with mockllm.
+    baseline: "" runs the agent; "naive" (OLS on all nine levels), "vasicek"
+    (probit-linear reference that selects its own drivers) or "informed" (the same
+    fit handed the true drivers from hidden truth, a diagnostic anchor rather than a
+    competitor) run those solvers with mockllm.
+    family: "" rotates the response family across instances; pin one of
+    "vasicek", "threshold", "interaction" to hold the functional form fixed.
+    repeats>1 runs the agent that many times per instance on byte-identical inputs
+    and reports the worst case and the spread; see pereval.scorers.stability.
     """
     method = str(baseline).lower()
     if method == "naive":
         solver = naive_baseline()
     elif method == "vasicek":
         solver = vasicek_baseline()
+    elif method == "informed":
+        solver = informed_baseline()
     else:
         solver = basic_agent(
             init=system_message(INSTRUCTIONS),
@@ -114,8 +136,9 @@ def ccar(
             message_limit=message_limit,
         )
     return Task(
-        dataset=_samples(n_instances, seed, oracle_n, n_intime),
+        dataset=_samples(n_instances, seed, oracle_n, n_intime, str(family).lower()),
         solver=solver,
         scorer=make_interval_scorer("ccar", ["quarter"], None, truth_to_points),
         sandbox=("docker", COMPOSE),
+        epochs=_epochs(repeats),
     )

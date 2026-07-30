@@ -21,6 +21,7 @@ from inspect_ai.solver import basic_agent, system_message
 from inspect_ai.tool import bash, python
 
 from pereval.scorers.interval import make_interval_scorer
+from pereval.scorers.stability import epochs as _epochs
 from pereval.tasks.ballistic.task import COMPOSE  # shared general modeling sandbox
 from pereval.tasks.orbit import hyperbolic as _hyp
 from pereval.tasks.orbit.baselines import harmonic_baseline, kepler_baseline
@@ -105,7 +106,8 @@ def _samples(generate, instructions, n_instances, seed, oracle_n):
     return samples
 
 
-def _build(generate, instructions, name, target, n_instances, seed, oracle_n, message_limit, baseline):
+def _build(generate, instructions, name, target, n_instances, seed, oracle_n, message_limit,
+           baseline, repeats=1):
     method = str(baseline).lower()
     if method in ("true", "harmonic"):
         solver = harmonic_baseline(target=target)
@@ -122,6 +124,7 @@ def _build(generate, instructions, name, target, n_instances, seed, oracle_n, me
         solver=solver,
         scorer=make_interval_scorer(name, ["t"], 360.0, truth_to_points),
         sandbox=("docker", COMPOSE),
+        epochs=_epochs(repeats),
     )
 
 
@@ -132,12 +135,14 @@ def twobody(
     oracle_n: int = 2000,
     message_limit: int = 150,
     baseline: str = "",
+    repeats: int = 1,
 ) -> Task:
     """Two-body: predict a planet's angle alpha at future days (the easier task).
 
-    baseline: "" runs the agent; "harmonic" or "kepler" run those reference solvers."""
+    baseline: "" runs the agent; "harmonic" or "kepler" run those reference solvers.
+    repeats>1 measures same-instance stability; see pereval.scorers.stability."""
     return _build(generate_twobody, TWOBODY, "twobody", "alpha",
-                  n_instances, seed, oracle_n, message_limit, baseline)
+                  n_instances, seed, oracle_n, message_limit, baseline, repeats)
 
 
 @task
@@ -147,12 +152,14 @@ def threebody(
     oracle_n: int = 2000,
     message_limit: int = 150,
     baseline: str = "",
+    repeats: int = 1,
 ) -> Task:
     """Three-body: predict the outer planet's apparent angle beta (coupled, retrograde).
 
-    baseline: "" runs the agent; "harmonic" or "kepler" run those reference solvers."""
+    baseline: "" runs the agent; "harmonic" or "kepler" run those reference solvers.
+    repeats>1 measures same-instance stability; see pereval.scorers.stability."""
     return _build(generate_threebody, THREEBODY, "threebody", "beta",
-                  n_instances, seed, oracle_n, message_limit, baseline)
+                  n_instances, seed, oracle_n, message_limit, baseline, repeats)
 
 
 HYPERBOLIC = """\
@@ -193,6 +200,7 @@ def hyperbolic(
     oracle_n: int = 2000,
     message_limit: int = 250,
     baseline: str = "",
+    repeats: int = 1,
 ) -> Task:
     """Hyperbolic interstellar-object flyby: predict the elevation gamma of an
     unbound 3D flyby (angles-only orbit determination). The hardest orbital task.
