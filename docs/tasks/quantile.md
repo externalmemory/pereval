@@ -23,7 +23,15 @@ regret(tau) = E_pop[rho_tau(X - qhat)] - min_q E_pop[rho_tau(X - q)]
 rho_tau(d)  = d * (tau - 1[d < 0])
 ```
 
-Summed over tau in {0.90, 0.95, 0.99} and normalised by the population interquartile range. `E_pop` is a plain average over the m - 10 population values the agent did not see.
+Summed over tau in {0.90, 0.95, 0.99} and normalised by the population interquartile range. `E_pop` is a plain average over all m population values, the ten shown and the m - 10 not shown.
+
+Until this was corrected the scored population excluded the ten drawn values, so the
+scorer measured a different estimand from the one the prompt states and the exactly
+correct answer to the question as asked carried a small penalty. Immaterial in size but
+wrong in kind: switching to the full population moves every baseline down by 0.0017 to
+0.0028, which is ten to seventeen times below the +-0.03 block-sampling floor, so the
+scores below remain comparable. The population holds unrounded values; the rounding to
+four significant figures is a disguise on the observation, not on the population.
 
 The minimiser of the pinball loss is exactly the population tau-quantile, so the population supplies both the truth and the achievable floor. Regret is non-negative and zero only for a perfect answer, with no Harrell-Davis target, no oracle tuning, and no Monte-Carlo simulation. This is what replaces the generated-DGP oracle the other tasks have.
 

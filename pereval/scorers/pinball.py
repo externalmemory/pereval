@@ -1,9 +1,11 @@
 """Pinball-regret scoring for the quantile task.
 
 The agent sees 10 values drawn without replacement from a population of m and
-estimates that population's tail quantiles. Unlike the other perEval tasks there
-is no generated DGP, so there is no Monte-Carlo oracle. There does not need to be
-one: the pinball loss
+estimates that population's tail quantiles. The scored population is all m values,
+including the ten shown, which is the estimand the prompt states.
+
+Unlike the other perEval tasks there is no generated DGP, so there is no Monte-Carlo
+oracle. There does not need to be one: the pinball loss
 
     L(q, tau) = E_pop[rho_tau(X - q)],   rho_tau(d) = d * (tau - 1[d < 0])
 

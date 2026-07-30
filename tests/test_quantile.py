@@ -46,7 +46,7 @@ def test_blocks_come_from_distinct_series(blocks):
 
 def test_population_excludes_the_drawn_values(blocks):
     for b in blocks:
-        assert len(b["pop"]) == b["m"] - N_DRAW
+        assert len(b["pop"]) == b["m"]  # the population includes the drawn sample
         assert len(b["shown"]) == N_DRAW
 
 
@@ -65,13 +65,16 @@ def test_shown_is_not_in_sorted_order(blocks):
     assert any(not np.all(np.diff(b["shown"]) > 0) for b in blocks)
 
 
-def test_drawn_values_and_population_share_one_window_and_scale(blocks):
-    """pop and x must be the same window under the same scale, minus the draw."""
+def test_population_is_the_whole_window_and_contains_the_drawn_values(blocks):
+    """pop is the full window under the block's scale, and the shown values are members
+    of it up to the 4-significant-figure rounding applied to the observation only."""
     series = load_series()
     for b in blocks:
-        w = series[b["series"]][b["start"]:b["start"] + b["m"]] * b["scale"]
-        merged = np.sort(np.concatenate([b["pop"], b["x"]]))
-        assert np.allclose(merged, np.sort(w), rtol=0, atol=5e-3 * np.abs(w).max())
+        w = np.sort(series[b["series"]][b["start"]:b["start"] + b["m"]] * b["scale"])
+        assert np.allclose(b["pop"], w, rtol=0, atol=1e-12)
+        tol = 5e-3 * np.abs(w).max()
+        for v in b["x"]:
+            assert np.min(np.abs(b["pop"] - v)) <= tol
 
 
 def test_sigfig_rounds_to_four_significant_figures():

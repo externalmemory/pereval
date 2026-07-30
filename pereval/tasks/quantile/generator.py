@@ -76,12 +76,16 @@ def draw_block(pop_full: np.ndarray, rng: np.random.Generator) -> dict:
     # serially correlated series, and time order would leak structure the
     # estimand (an unordered population) does not reward.
     idx = rng.choice(m, N_DRAW, replace=False)
-    mask = np.ones(m, bool)
-    mask[idx] = False
     scale = float(np.exp(rng.uniform(np.log(SCALE_LO), np.log(SCALE_HI))))
 
     shown = sigfig(window[idx] * scale)
-    pop = np.sort(window[mask]) * scale      # population excluding the drawn 10
+    # All m values, which is the population the prompt describes: "the POPULATION of m
+    # values" the sample was drawn from, so it contains the ten the agent can see. This
+    # used to exclude them, which scored a different estimand than the one stated and
+    # meant the exactly correct answer to the question as asked carried a small penalty.
+    # It holds the UNROUNDED values: the rounding to 4 significant figures is a disguise
+    # applied to the observation, not a property of the population.
+    pop = np.sort(window) * scale
     return dict(
         m=m, start=start, scale=scale, pop=pop,
         # IQR, not sd, is the normaliser. Pinball REGRET is exactly invariant to
@@ -124,7 +128,8 @@ def generate(seed: int, n_blocks: int = N_BLOCKS,
 
 SCORING = """
 How your answers are scored. Each point estimate is scored by the pinball (check)
-loss against the FULL population, including the values you were not shown:
+loss against all m population values, the ten you were shown and the m - 10 you were
+not:
 
     loss(tau) = average over all m population values x of  rho_tau(x - qhat)
     rho_tau(d) = tau * d          if d >= 0
