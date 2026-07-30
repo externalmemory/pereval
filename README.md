@@ -54,23 +54,25 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | Model | CCAR¹ | Ballistic | Two-body | Three-body² | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | 0.031 | — | 0.005 | 0.039 | 0.31 | — | *floor* |
-| GLM-5.1 | 0.055 | 12 | 0.092 | 321 | 899 | 0.25 | **2.08** |
-| mimo-v2.5-free | 0.57 | 12 | 0.19 | 2438 | 292 | 0.15 | 2.92 |
-| *Naive baseline* | 0.85 | 22 | 17 | 332 | 20037 | 0.14 | *3.67* |
-| Claude Haiku 4.5 | 0.37 | 83 | 105 | 575 | 1348 | 0.10 | 3.67 |
-| nemotron-3-super:free | 0.45 | 60 | 106 | 2744 | 918 | 0.12 | 4.08 |
-| laguna-m.1:free | 1.1 | 60 | 78 | 2067 | 1014 | 0.16 | 4.58 |
+| GLM-5.1 | 0.055 | 12 | 0.092 | 321 | 899 | 0.25 | **2.25** |
+| mimo-v2.5-free | 0.57 | 12 | 0.19 | 2438 | 292 | 0.15 | 3.42 |
+| nemotron-3-ultra:free | 0.27 | 16 | 2429 | 1579 | 1356 | 0.099 | 3.83 |
+| Claude Haiku 4.5 | 0.37 | 83 | 105 | 575 | 1348 | 0.10 | 4.17 |
+| *Naive baseline* | 0.85 | 22 | 17 | 332 | 20037 | 0.14 | *4.33* |
+| nemotron-3-super:free | 0.45 | 60 | 106 | 2744 | 918 | 0.12 | 4.75 |
+| laguna-m.1:free | 1.1 | 60 | 78 | 2067 | 1014 | 0.16 | 5.25 |
 | *Degenerate answer* | *0.57* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
-| deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m | 0.17 | *not ranked* |
-| nemotron-3-ultra:free | 0.27 | 16 | n/m | 1579 | 1356 | 0.099 | *not ranked* |
+| deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m³ | 0.17 | *not ranked* |
 
 ¹ CCAR measures a **superseded variant**: its response law was fixed and published, so it is valid but not comparable to future CCAR runs ([why kept, why not comparable](docs/tasks/ccar.md)).
+
+³ deepseek's Flyby runs were re-measured and remain unreported, for a different reason from the other two: two of the three terminated at the 2400 second time cap, so the cell is budget-limited rather than unattempted. The one run that finished clean scored **103.9 against a degenerate anchor of 112.1**, the only sign so far of any agent carrying more information than a constant on that task. At n=1 it is an observation, not a cell.
 
 ² Three-body was scored by a **superseded scorer**, which rewrote submitted intervals wider than half the circle. Re-scoring the recorded predictions moves affected runs in both directions, including the matrix's worst cell (nemotron-3-super 2744 to 726) and Haiku's (343 to 1086), so this column does not compare to future runs either ([detail](docs/limitations.md#circular-intervals-were-rewritten-by-the-scorer)). Two-body is verified unaffected: its wide intervals all wrap through zero with the truth inside the arc, which both scorers read identically.
 
 - **`n/m`**: at least one run failed for reasons outside the agent's control, so the cell is unmeasured rather than scored. An agent that works inside its budget and still produces nothing usable is scored, at the degenerate answer. This cost deepseek-v4-flash-free its previously best-in-suite three-body and flyby figures, which were penalties from an upstream failure ([detail](docs/limitations.md#non-response-was-cheaper-than-failure)).
-- **Degenerate answer**: one constant point estimate, no interval. It reads differently by column, and that is the point of having it. On Flyby *every measured model is worse than a constant* (292 to 20037 against 138); on two-body and three-body the reverse, by a wide margin. In the Quantile column it is the same estimator as the naive row, `np.percentile`.
-- **Mean rank**: GLM-5.1 leads and the naive baseline ties Claude Haiku 4.5 for third. Permuting ranks within each column, the null of no cross-task skill, reproduces the observed spread at p = 0.25, so read this as a description of the table and not a separation of the models ([why the aggregate is weak](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
+- **Degenerate answer**: one constant point estimate, no interval. It reads differently by column, and that is the point of having it. On Flyby every model with a reportable cell is worse than a constant (292 to 20037 against 138), though see note 3; on two-body and three-body the reverse, by a wide margin. In the Quantile column it is the same estimator as the naive row, `np.percentile`.
+- **Mean rank**: GLM-5.1 leads and the naive baseline is fifth of seven. Permuting ranks within each column, the null of no cross-task skill, reproduces the observed spread at p = 0.30, so read this as a description of the table and not a separation of the models ([why the aggregate is weak](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
 - **Oracle**: the true generating model for CCAR and the orbital tasks. Ballistic and quantile have no true-model reference by design; ballistic is anchored by the naive parabola and quantile's floor is 0 by construction.
 
 ## Layout

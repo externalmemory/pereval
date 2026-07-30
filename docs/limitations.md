@@ -70,6 +70,24 @@ The problem is reproducibility, not change control. Rerunning a development tool
 
 The reproducibility study below already measured this once by hand and found the spread large for capable models and near zero only for models that had collapsed to a fixed deterministic method, which is the worst behaviour the tasks exist to expose. Making it a first-class mode on every task is what turns that observation into a reportable property.
 
+## What the Re-Run Actually Cost
+
+Nine free runs were spent re-measuring the four `n/m` cells. One cell came back. The rest is a record of how much of an eval's effort goes into establishing that a number is not a measurement.
+
+**nemotron-3-ultra two-body is now measured**, at a worst case of 2429. No run hit a cap (38, 36 and 66 messages against a limit of 150), and the failing instance produced nothing usable after 36 messages of genuine work, which under the rule in [task-design.md](task-design.md#anchoring-and-non-response) is capability rather than infrastructure. The row is complete, so it enters the ranking, where it lands third of seven.
+
+**deepseek two-body failed twice, in two different ways.** At the default limit of 150 all three runs terminated exactly at the cap. Re-run at 500 all three returned two messages and no assistant turn, which the endpoint explained on a direct probe: `FreeUsageLimitError`, the free-tier quota exhausted by the earlier runs. Neither attempt is a measurement.
+
+**deepseek Flyby is budget-limited**, which is not what it looked like at first. Two of its three runs hit the 2400 second time cap, including the one that produced no predictions after 86 messages and 31,105 output tokens of real analysis. Only the third finished clean.
+
+Three things follow that are worth more than the cell would have been.
+
+The rate-limit diagnosis retires the "upstream outage" reading of the July failures and replaces it with something specific: free-tier quota exhaustion, which arrives silently. Inspect recorded those samples with `error: None`, `usage: {}` and no assistant turn, so nothing in the log says the provider refused. That is precisely the condition under which a penalty gets mistaken for a score, and it is why the rule keys on cap and provider terminations rather than on whether output appeared.
+
+A free tier cannot support the repeated-run standard. The quota that survived one three-instance task did not survive four, so measuring one model on one task can consume the budget that the next measurement needs. Any free-tier row is therefore contingent on what was run before it, which is not a property a benchmark should have.
+
+And the one clean Flyby run is the most interesting number in the batch: 103.9 against a degenerate anchor of 112.1, the only case so far of an agent carrying more information than a constant on that task. At n=1 it is an observation, not a result, and it is recorded as one.
+
 ## Contamination
 
 The repo is public, so anything fixed in it can enter training corpora. The four generated tasks (CCAR, ballistic, orbital) therefore draw fresh instances per run from a seeded, public generator with per-run randomized parameters (orbital elements, ballistic loads, macro draws, and the CCAR response law including which macros drive it), so there are no fixed answers to memorize and every score is computed against freshly drawn ground truth. The residual exposure is structural: a model could learn the generator's functional form from the source. That is largely defanged by design, because knowing the form does not reveal an instance's parameters, which must still be estimated from the provided data, which is the task itself.
