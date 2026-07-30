@@ -20,7 +20,7 @@ Real macro series (FRED), with their true collinearity, autocorrelation, structu
 
 - **Scoring:** oracle-anchored regret. The correct estimator's own sampling distribution (wide at T ≈ 120 quarters) is estimated by replication; the agent is scored relative   to oracle / competent-baseline / degenerate-baseline anchors, never on absolute error.
 - **Misspecified variants:** some instances plant a DGP outside the obvious model class (threshold effects, regime asymmetry). Scoring switches from parameter recovery to   predictive log-density on fresh simulated continuations.
-- **Author-bias risk:** the planted DGP is the author's choice. Mitigate by rotating DGP families across instances and documenting the generator.
+- **Author-bias risk:** the planted DGP is the author's choice. Mitigate by rotating DGP families across instances and documenting the generator. Implemented for CCAR, and load-bearing rather than cosmetic: while its law was a single fixed form with published coefficients, a good score could only show that the agent recovers *that* law, and the instance was in fact solvable in closed form straight from the source.
 
 ### 2. Estimated DGP (model-mediated resampling)
 
@@ -62,16 +62,30 @@ Realism supplied by a validated numerical simulator rather than by real historic
 
 Unlike family 1, the covariate is a designed grid, not messy real data, and unlike family 5 there is no closed-form invariant; the ground truth is the simulator's own output. Two design obligations are specific to this family. First, keep the held-out regime inside the simulator's validated range (for the ballistic task, rifle held-out distances stay supersonic, so the extrapolation difficulty is drag curvature rather than an unvalidated transonic regime). Second, prevent the agent from re-simulating instead of modeling. The load-bearing defense for that is opaque category identifiers plus per-run randomized generator parameters: with no known instance to look up, any simulation first requires estimating the parameters from the data, which is the task itself (and a physics-informed parameter fit is exactly what the task should reward). Generating host-side, injecting only neutral data, and running the sandbox with no network are secondary hardening: they keep the simulator and oracle out of reach and block fetching the exact generator, its reference tables, or an online equivalent. None of this prevents the agent from recognizing the domain from the data, which is legitimate and, absent the known parameters, does not shortcut the task.
 
-The generator need not be a numerical library; a closed-form physical model qualifies. The orbital-angle tasks generate the observed angle from Kepler's laws in pure numpy. The two-body task (predict one planet's heliocentric angle) is the easier, strictly periodic case. The three-body task predicts beta, the apparent direction to an outer planet as seen from the inner observer planet, which is coupled to the inner planet's position (given by alpha), shows retrograde motion, and is quasi-periodic on the synodic period rather than a bare Kepler angle. Here alpha is essential auxiliary data, not a distractor. These targets are circular (degrees mod 360), which the shared interval scorer handles by localizing every quantity to the branch nearest the known true value before applying the linear scoring math, valid while intervals and noise are small relative to the period.
+The generator need not be a numerical library; a closed-form physical model qualifies. The orbital-angle tasks generate the observed angle from Kepler's laws in pure numpy. The two-body task (predict one planet's heliocentric angle) is the easier, strictly periodic case. The three-body task predicts beta, the apparent direction to an outer planet as seen from the inner observer planet, which is coupled to the inner planet's position (given by alpha), shows retrograde motion, and is quasi-periodic on the synodic period rather than a bare Kepler angle. Here alpha is essential auxiliary data, not a distractor. These targets are circular (degrees mod 360), which the shared interval scorer handles by localizing every quantity to the branch nearest the known true value before applying the linear scoring math. The submitted interval is localized as a unit rather than endpoint by endpoint, so its width survives the move; doing it separately used to rewrite the interval and credit coverage for an arc the agent never submitted. See [limitations.md](limitations.md#circular-intervals-were-rewritten-by-the-scorer).
 
 Each orbital task ships two reference solvers that bracket it and guard against confusing a wrong basis with a hard problem: a naive harmonic (Fourier) fit and a Kepler reference that fits the true elliptical-orbit model by least squares. The harmonic fit fails on the retrograde three-body angle (it is not a Fourier series in a single period), while the Kepler reference recovers it to the noise floor and scores near the oracle. The gap between them shows the difficulty is real headroom, and the model's distance from the Kepler reference measures how far it is from the right approach. This is the concrete instance of the degenerate/competent/oracle anchoring below.
 
 ## Statistical Treatment (all Families)
 
 - k repeated runs per task instance; many generated instances per family.
-- Paired-difference comparisons between models on identical instances; standard errors clustered at the task level.
 - Reported scores are anchored (degenerate → baseline → oracle), not raw.
 - No leaderboard claims the sample size cannot support.
+- Standard errors clustered at the task level.
+- **Paired-difference comparison was prescribed here and does not work on this suite.** It was measured rather than assumed; see below.
+
+### Pairing Is Not the Lever
+
+The obvious reading of the tables is that they waste power: runs are paired on identical instances and the numbers are reported as unpaired mean ± 2 SD. `scripts/paired_analysis.py` tests that against the archived runs, over every model pair sharing at least three instances, and the criticism does not survive.
+
+| Pairing scale | Pairs | Median paired / independent SD | Variance reduction |
+| --- | --- | --- | --- |
+| regret levels | 71 | 0.99 | 1% |
+| log regret | 71 | 0.95 | 10% |
+
+Instance difficulty is a real common factor: each model's per-instance profile rank-correlates with the mean of the others at +0.71 on ballistic, +0.42 on three-body, +0.30 on two-body and +0.27 on CCAR. But it carries almost none of the magnitude variance, because per-instance regret is dominated by whether *that* model blew up on *that* instance rather than by how hard the instance was. The effect is multiplicative, which is why the log scale recovers ten times more than the level scale and still only reaches 10%.
+
+The reproducibility study closes the argument: the same model on byte-identical data swings by up to 30x, so the variance lives in the model-by-run interaction, and no amount of differencing across instances reaches it. The lever on variance is more runs per instance (`-T repeats=K`), not pairing.
 
 ### Anchoring and Non-Response
 
