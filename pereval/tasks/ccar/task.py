@@ -76,6 +76,13 @@ refine it after. Verify it has one row per scenario quarter before submitting.
 """
 
 
+# Full statement in the system message, short pointer as the sample input; see the
+# ballistic task for why.
+SAMPLE_INPUT = ("Project the default rate with a 95% interval for every quarter in "
+                "data/scenario.csv and write predictions.csv, as specified in the "
+                "system instructions.")
+
+
 def _samples(n_instances, seed, oracle_n, n_intime, family):
     base = seed if seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
     seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
@@ -88,7 +95,7 @@ def _samples(n_instances, seed, oracle_n, n_intime, family):
         bundle = generate(seed=int(s), n_intime=n_intime, oracle_n=oracle_n, family=fam)
         samples.append(
             Sample(
-                input=INSTRUCTIONS,
+                input=SAMPLE_INPUT,
                 id=f"instance-{i}-{fam}-seed-{int(s)}",
                 files={
                     "data/train.csv": train_csv_text(bundle),

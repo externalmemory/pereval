@@ -88,6 +88,13 @@ test input before submitting.
 """
 
 
+# The full task statement goes in the system message; the sample input is a short
+# pointer to it. Sending INSTRUCTIONS as both duplicated the longest prompt in the suite
+# in every context.
+SAMPLE_INPUT = ("Predict y with a 95% interval for every row in data/test.csv and write "
+                "predictions.csv, as specified in the system instructions.")
+
+
 def _build_samples(n_instances: int, seed: int | None, oracle_n: int) -> list[Sample]:
     base = seed if seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
     seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
@@ -96,7 +103,7 @@ def _build_samples(n_instances: int, seed: int | None, oracle_n: int) -> list[Sa
         bundle = generate(seed=int(s), oracle_n=oracle_n)
         samples.append(
             Sample(
-                input=INSTRUCTIONS,
+                input=SAMPLE_INPUT,
                 id=f"instance-{i}-seed-{int(s)}",
                 files={
                     "data/train.csv": train_csv_text(bundle),

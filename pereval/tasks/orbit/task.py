@@ -86,7 +86,13 @@ related; alpha may carry information useful for predicting beta.
 )
 
 
-def _samples(generate, instructions, n_instances, seed, oracle_n):
+def _sample_input(target: str) -> str:
+    """Short pointer; the full statement is the system message. See the ballistic task."""
+    return (f"Predict {target} with a 95% interval for every t in data/test.csv and write "
+            f"predictions.csv, as specified in the system instructions.")
+
+
+def _samples(generate, n_instances, seed, oracle_n, target):
     base = seed if seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
     seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
     samples = []
@@ -94,7 +100,7 @@ def _samples(generate, instructions, n_instances, seed, oracle_n):
         bundle = generate(seed=int(s), oracle_n=oracle_n)
         samples.append(
             Sample(
-                input=instructions,
+                input=_sample_input(target),
                 id=f"instance-{i}-seed-{int(s)}",
                 files={
                     "data/train.csv": train_csv_text(bundle),
@@ -120,7 +126,7 @@ def _build(generate, instructions, name, target, n_instances, seed, oracle_n, me
             message_limit=message_limit,
         )
     return Task(
-        dataset=_samples(generate, instructions, n_instances, seed, oracle_n),
+        dataset=_samples(generate, n_instances, seed, oracle_n, target),
         solver=solver,
         scorer=make_interval_scorer(name, ["t"], 360.0, truth_to_points),
         sandbox=("docker", COMPOSE),
@@ -217,7 +223,7 @@ def hyperbolic(
     seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
     samples = [
         Sample(
-            input=HYPERBOLIC,
+            input=_sample_input("gamma"),
             # The offset is part of the id: the instance is drawn from seed+offset, so a
             # bare seed does not identify it and two ids could name different data.
             id=f"instance-{i}-seed-{int(s) + b['meta']['seed_offset']}"
