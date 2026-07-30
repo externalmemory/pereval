@@ -14,11 +14,16 @@ venv/
 .env
 .env.*
 
-# generated task instances (train.csv / test.csv / truth.json)
-runs/
+# Run artifacts ARE committed. They cost real money and time to produce, and they are
+# the evidence behind every published table: the tables in README.md and docs/tasks/
+# were hand-transcribed, so without these nobody (including the author later) can
+# recompute or audit them. Verified free of credentials before committing.
+#   runs/  markdown transcripts, one per model per instance, with the score header
+#   logs/  Inspect .eval logs, which carry per-instance scores and the ground truth
+# Committing ground truth leaks nothing: instances are regenerable from their seed by
+# the public generator anyway.
 
 # Inspect
-logs/
 .inspect/
 
 # tooling
