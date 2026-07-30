@@ -13,16 +13,20 @@ collapses the k scores into one record that keeps the dispersion:
     regret_spread   max - min across the k runs, pure method variance
     runs            k, so a table can show what the spread was measured over
 
-Why it is the headline number rather than a diagnostic. SR 26-2 makes validation
-frequency a function of, among other things, the "frequency and scope of model
-changes" (Model Validation and Monitoring, page 7 of the guidance attached to
-https://www.federalreserve.gov/supervisionreg/srletters/SR2602.htm). If an agent
-hands back a materially different analysis every time it is run on the same data,
-then every invocation is a model change, and validation cannot be discharged once
-before first use: it recurs at the invocation rate. regret_spread prices that. A
-spread near zero means one validation covers every future run of the same
-pipeline; a large spread means each run needs its own review, and that is a
-governance cost denominated in validator hours rather than an eval curiosity.
+Why it is a headline number rather than a diagnostic: it decides how far evidence
+about the process carries to the artifact. A spread near zero means the model in
+front of a validator is close to what the pipeline reliably produces, so evidence
+about the pipeline is evidence about it. A large spread means it is a draw, and has
+to be judged on its own terms.
+
+The problem is reproducibility, not change control. Rerunning a development tool is
+not a model change: a model change is a change to what runs in production, and
+exercising a model during development or validation is not one. What instability
+costs is developmental evidence, which SR 26-2 puts at the centre of conceptual
+soundness when it asks for "the quality and extent of developmental evidence"
+(Conceptual Soundness, page 8 of the guidance attached to
+https://www.federalreserve.gov/supervisionreg/srletters/SR2602.htm). A specification
+that cannot be re-derived cannot be replicated by an independent team either.
 
 The suite's own reproducibility experiment (docs/limitations.md) found this spread
 to be large for capable models and near zero only for models that had collapsed to

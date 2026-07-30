@@ -24,7 +24,11 @@ That is weaker than the statement "this agent's models can be trusted", and this
 
 > Agent A's output distribution on tasks of this family has median regret X and worst-case Z over K runs. A single unreconciled invocation should be treated as a draw from that distribution.
 
-That implies the unit being qualified is an agent **plus a protocol**. Agent A run once is not qualified. Agent A run K times with a reconciliation step might be. `-T repeats=K` exists to measure exactly that, and it is the number a validator should ask for first, because SR 26-2 ties validation frequency to the "frequency and scope of model changes": an agent whose output moves every run makes every invocation a model change.
+That implies the unit being qualified is an agent **plus a protocol**. Agent A run once is not qualified. Agent A run K times with a reconciliation step might be. `-T repeats=K` measures how much work the protocol has to do: the wider the spread, the more the artifact you happen to receive is a draw rather than a derivation.
+
+The problem this creates is reproducibility rather than change control. Rerunning a development tool produces nothing a bank would book as a model change, since a model change is a change to what runs in production, and a developer or validator exercising a model does not make one. What the spread undermines is developmental evidence, which SR 26-2 puts at the centre of conceptual soundness: "Sound practice subjects modeling aspects to critical analysis by evaluating both the quality and extent of developmental evidence." A process that yields a different specification each time cannot be re-derived by a validator or reproduced by an independent replication, so the artifact has to earn approval on its own terms rather than on the strength of how it was produced.
+
+Change control does engage in one case: an agent invoked inside a production process, say to re-estimate each quarter, produces a different model on each invocation, and each of those is a model change like any other.
 
 ## Claims Not Supported
 
