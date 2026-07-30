@@ -72,3 +72,13 @@ Each orbital task ships two reference solvers that bracket it and guard against 
 - Paired-difference comparisons between models on identical instances; standard errors clustered at the task level.
 - Reported scores are anchored (degenerate → baseline → oracle), not raw.
 - No leaderboard claims the sample size cannot support.
+
+### Anchoring and Non-Response
+
+Three anchors, not one. The oracle gives the achievable floor and a naive or competent reference gives the practical one, but neither answers the question "does this model carry any information at all". That needs a third: the **degenerate answer**, the least informative admissible response, taken here as one constant point estimate for the whole instance with no interval. It is computed from ground truth on every run and reported as `degenerate_regret`, so it costs nothing.
+
+It earns its place empirically. On the hyperbolic flyby task every measured model scores worse than a constant, which regret against the oracle alone cannot reveal, because a large regret and a *useless* regret look identical when the only reference is zero. On the two orbital tasks the same anchor sits in the thousands and real models beat it easily. Same metric, opposite verdicts, and only the degenerate anchor separates them.
+
+The degenerate answer also prices abstention. A missing prediction is scored as though that answer had been submitted, floored at a multiple of the oracle for targets with almost no variation. Anchoring the penalty on the oracle instead, as this suite originally did, prices non-response at the *measurement noise* rather than at the cost of being wrong, which on tasks where a bad answer costs hundreds and the noise floor is one to four degrees makes silence the dominant strategy. See [limitations.md](limitations.md#non-response-was-cheaper-than-failure) for what that did to a published leaderboard.
+
+Pricing is not enough on its own, because a penalty is still a number and a number still gets averaged into a cell. So a run that fails to produce complete output is reported as **unmeasured**, never as a score. The scorer cannot tell a model that declined from a provider that failed, and neither is a measurement of capability.

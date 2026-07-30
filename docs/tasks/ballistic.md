@@ -16,6 +16,22 @@ The agent receives (category, x, y) training rows and must predict y with 95% pr
 
 Each instance is generated host-side and only neutral CSVs enter the agent's sandbox: the ballistics engine, the generator, and the ground-truth oracle stay out. What forces the agent to model the data rather than re-simulate it is that category identifiers are opaque and the ballistic parameters are randomized per run, so there is no known load to look up, and any simulation would first require estimating each category's parameters from the training data, which is the task itself. The sandbox additionally has no network, which blocks the weaker shortcuts of installing the exact engine, downloading its drag tables, or querying an online calculator. It does not prevent the agent from recognizing the physics from the data, which is legitimate.
 
+## No Competent Anchor, Deliberately
+
+The other tasks bracket a model between a naive floor and a competent reference: CCAR
+has the probit-linear Vasicek fit, the orbital tasks have the Kepler fit. Ballistic has
+only the naive parabola and the degenerate answer, so a score of 12 cannot be read as
+"near the achievable frontier" or "ten times off it". That gap is a real limitation on
+what this column supports, and it is accepted rather than closed.
+
+A competent reference here would have to fit a drag model, which means it would have to
+know the data is ballistic. The task withholds exactly that: category identifiers are
+opaque so the agent cannot invert a label into a known load. Disclosing the domain in
+the prompt to make a fair reference possible would change the task, invalidate every run
+already recorded, and hand over the isolation property that the design is built on. For
+a task whose job is calibrating the harness across a difficulty gradient rather than
+carrying a domain claim, that is a bad trade.
+
 ## Scores (three runs, mean ± 2 SD)
 
 Three instances (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across the runs, ordered by the upper end mean + 2 SD. Every row is paired on the same three instances. Lower Winkler regret is better; coverage targets 0.95. The parabola baseline (`-T baseline=true`) is the naive quadratic reference, not a model.
