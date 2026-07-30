@@ -2,8 +2,8 @@
 
 perEval does not validate models. It qualifies a model *development process*, by running
 that process on problems where the answer is known and measuring regret against it. This
-page states the claim that supports, the claim it does not, and how the coverage maps
-onto supervisory expectations.
+page states the claim it supports, the claims it does not, and how its coverage maps onto
+supervisory expectations.
 
 ## Why Not Validate the Model
 
@@ -34,9 +34,9 @@ review. What is new when the developer is an agent is not the concept but the sa
 and the availability of known truth. The same process can be rerun on hundreds of fresh
 instances with planted answers for a few dollars, which no human process ever supported.
 
-## What a Good Score Licenses
+## What a Good Score Supports
 
-Evidence about the **distribution of outputs** an agent produces on problems of these
+A claim about the **distribution of outputs** an agent produces on problems of these
 families, at the sample size actually run.
 
 That is deliberately weaker than "this agent's models can be trusted", and this project's
@@ -56,7 +56,7 @@ exists to measure exactly that, and it is the number a validator should ask for 
 because SR 26-2 ties validation frequency to the "frequency and scope of model changes":
 an agent whose output moves every run makes every invocation a model change.
 
-## What It Does Not License
+## What It Does Not Support
 
 - **A statement about any single artifact**, until within-instance stability is measured.
 - **A ranking of models.** The aggregate mean rank is reproduced by independently permuting

@@ -8,7 +8,7 @@
 
 Generic coding and Q&A benchmarks don't test whether an LLM agent can *develop and estimate a statistical model*. perEval probes that corner with tasks drawn from diverse areas including credit risk and macroeconomic loss modeling.
 
-It qualifies a development *process*, not a model. A nine-quarter stress projection cannot be validated against outcomes, because the actuals arrive nine quarters late on a path that is not the scenario path, so the testable object is the process that produced it. [docs/claim.md](docs/claim.md) states what a score licenses, what it does not, and how the coverage maps onto SR 26-2.
+It qualifies a development *process*, not a model. A nine-quarter stress projection cannot be validated against outcomes, because the actuals arrive nine quarters late on a path that is not the scenario path, so the testable object is the process that produced it. [docs/claim.md](docs/claim.md) states what a score supports, what it does not, and how the coverage maps onto SR 26-2.
 
 ### Design Principles
 
@@ -84,9 +84,10 @@ pereval/            Python package: Inspect tasks and scorers
   tasks/ballistic/  generator, Inspect task, Docker sandbox, quadratic baseline
   tasks/orbit/      two-body, three-body, and hyperbolic-flyby generators, tasks, baselines
   scorers/          oracle-anchored interval scorer (linear and circular), pinball regret
-scripts/            FRED enumeration and screening, transcript export
+scripts/            FRED enumeration and screening, transcript export, paired analysis
 tests/              scorer validation suite + generator/scorer integration
-docs/tasks/         per-task documentation and scores
+runs/, logs/        archived transcripts and Inspect logs behind every published table
+docs/               claim and scope, task design, limitations, per-task scores
 ```
 
 ## License
