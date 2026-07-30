@@ -321,6 +321,43 @@ def test_linear_targets_still_swap_inverted_endpoints():
     assert localize_interval(1.0, 5.0, 0.0, None) == (1.0, 5.0)
 
 
+# --- 5. flyby selection on the reference's own success ----------------------
+
+@pytest.fixture(scope="module")
+def flyby():
+    """One filtered flyby instance. Module-scoped because each draw runs a multistart
+    least-squares orbit determination, which is the expensive part of this file."""
+    from pereval.tasks.orbit import hyperbolic as H
+    return H, H.generate_hyperbolic(seed=1000, oracle_n=60, max_tries=3)
+
+
+def test_flyby_records_which_instance_it_actually_drew(flyby):
+    """The filter advances the seed, so a bare seed does not identify the data. The
+    recorded offset has to close that gap or a published id names the wrong instance."""
+    H, b = flyby
+    off = b["meta"]["seed_offset"]
+    direct = H._draw_instance(1000 + off, 60)
+    assert H.train_csv_text(b) == H.train_csv_text(direct)
+    assert b["meta"]["tries"] == off + 1
+
+
+def test_flyby_reference_regret_is_bounded_by_the_acceptance_threshold(flyby):
+    """Which is exactly why the reference row is definitional and not a measurement:
+    it cannot exceed the threshold unless the search gave up."""
+    H, b = flyby
+    assert b["meta"]["reference_filtered"] is True
+    assert (b["meta"]["reference_regret"] < H.MAX_REFERENCE_REGRET
+            or b["meta"]["tries"] == 3)
+
+
+def test_flyby_filter_can_be_disabled(flyby):
+    H, _ = flyby
+    b = H.generate_hyperbolic(seed=1000, oracle_n=60, max_reference_regret=None)
+    assert b["meta"]["seed_offset"] == 0
+    assert b["meta"]["tries"] == 1
+    assert b["meta"]["reference_filtered"] is False
+
+
 # --- 3. same-instance stability --------------------------------------------
 
 def _score(value):

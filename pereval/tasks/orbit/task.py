@@ -201,22 +201,34 @@ def hyperbolic(
     message_limit: int = 250,
     baseline: str = "",
     repeats: int = 1,
+    filter_reference: bool = True,
 ) -> Task:
     """Hyperbolic interstellar-object flyby: predict the elevation gamma of an
     unbound 3D flyby (angles-only orbit determination). The hardest orbital task.
 
-    baseline: "" runs the agent; "poly" (naive) or "od" (hyperbolic reference)."""
+    baseline: "" runs the agent; "poly" (naive) or "od" (hyperbolic reference).
+    filter_reference=True (the default) skips seed offsets on which the OD reference
+    fails, so every instance ships with a working competent anchor. That is selection
+    on an outcome: it makes the reference row definitional rather than measured, and
+    truncates the instance distribution by an amount nobody has quantified against
+    agent difficulty. Set it False to draw unfiltered. See generate_hyperbolic.
+    """
     base = seed if seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
     seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
     samples = [
         Sample(
             input=HYPERBOLIC,
-            id=f"instance-{i}-seed-{int(s)}",
+            # The offset is part of the id: the instance is drawn from seed+offset, so a
+            # bare seed does not identify it and two ids could name different data.
+            id=f"instance-{i}-seed-{int(s) + b['meta']['seed_offset']}"
+               + (f"-off{b['meta']['seed_offset']}" if b["meta"]["seed_offset"] else ""),
             files={"data/train.csv": _hyp.train_csv_text(b), "data/test.csv": _hyp.test_csv_text(b)},
             metadata={"truth": _hyp.build_truth(b)},
         )
         for i, s in enumerate(seeds)
-        for b in [_hyp.generate_hyperbolic(seed=int(s), oracle_n=oracle_n)]
+        for b in [_hyp.generate_hyperbolic(
+            seed=int(s), oracle_n=oracle_n,
+            max_reference_regret=_hyp.MAX_REFERENCE_REGRET if filter_reference else None)]
     ]
     method = str(baseline).lower()
     if method in ("poly", "polynomial"):

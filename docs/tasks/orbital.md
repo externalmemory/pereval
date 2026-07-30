@@ -41,6 +41,37 @@ Structural complexity is not the same as difficulty for a model, though: this ta
 
 The flyby's baselines are a naive `poly` extrapolation (a flyby is not a polynomial) and an `od` reference that fits the planet from alpha and then the six-element 3D hyperbolic orbit from beta and gamma. Because a few percent of the fastest flybys defeat the reference's global fit, instances are rejection-sampled: the generator keeps the first seed offset whose reference reaches the noise floor, so every instance has a solvable anchor and generation stays deterministic.
 
+## Flyby Instances Are Selected on the Reference Succeeding
+
+`generate_hyperbolic` advances the seed until the 3D orbit-determination reference
+reaches the noise floor, so every shipped instance has a working competent anchor. That
+is selection on an outcome, and it is disclosed here with its measured size rather than
+left in the source.
+
+Over 60 unfiltered draws the reference regret runs:
+
+| median | p75 | p90 | max | accepted below 0.5 |
+| --- | --- | --- | --- | --- |
+| 0.050 | 0.153 | 0.859 | 38.4 | 87% |
+
+Two consequences, in order of how much they matter.
+
+The reference row is bounded below the acceptance threshold by construction, so strictly
+it reports the criterion rather than an observation. In practice the bound rarely binds:
+87% of draws pass unfiltered, and the published 0.31 is an ordinary value for an
+unfiltered draw. This part is real but minor.
+
+The discarded eighth is the part to take seriously, because it is not a random eighth. It
+is the flybys that this least-squares implementation, with this multistart grid, fails to
+solve, which are the fast, deep ones. Whether those are also the instances that best
+separate agents is unknown, so the flyby column describes agent performance on flybys
+that a competent classical method can handle, which is a narrower population than "flybys".
+
+Draw unfiltered with `-T filter_reference=False` to measure into that tail. Each instance
+records `seed_offset`, `tries`, `reference_regret` and `reference_filtered` in its truth
+metadata, and the sample id carries the offset, since the instance comes from
+`seed + offset` and a bare seed does not identify it.
+
 ## Scores (three runs, mean ± 2 SD)
 
 Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across the runs, ordered by the upper end mean + 2 SD, paired on the same three instances. Lower Winkler regret is better; coverage targets 0.95. The reference and naive rows (`-T baseline=kepler|harmonic` for two/three-body, `od|poly` for the flyby) are solvers, not models.

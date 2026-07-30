@@ -161,21 +161,55 @@ def _draw_instance(seed: int, oracle_n: int) -> dict:
     }
 
 
-def generate_hyperbolic(seed: int, oracle_n: int = 2000, max_tries: int = 30) -> dict:
-    """Keep the first seed offset whose 3D hyperbolic-OD reference reaches the noise
-    floor, so every shipped instance has a solvable competent anchor (angles-only
-    determination defeats the reference on a few percent of the fastest flybys).
-    Deterministic in `seed`, so still reproducible."""
+MAX_REFERENCE_REGRET = 0.5
+
+
+def reference_regret(bundle: dict) -> float:
+    """Winkler regret of the 3D hyperbolic-OD reference on one instance."""
     from pereval.scorers.interval import parse_predictions, score_points
 
+    preds = parse_predictions(_od_fit_predict(train_csv_text(bundle), test_csv_text(bundle)), ["t"])
+    return float(score_points(truth_to_points(build_truth(bundle)), preds, period=None)["winkler_regret"])
+
+
+def generate_hyperbolic(seed: int, oracle_n: int = 2000, max_tries: int = 30,
+                        max_reference_regret: float | None = MAX_REFERENCE_REGRET) -> dict:
+    """Keep the first seed offset whose 3D hyperbolic-OD reference reaches the noise
+    floor, so every shipped instance has a solvable competent anchor (angles-only
+    determination defeats the reference on the fastest, deepest flybys). Deterministic
+    in `seed`, so still reproducible. Pass max_reference_regret=None to draw unfiltered.
+
+    THIS IS SELECTION ON AN OUTCOME. Measured over 60 unfiltered draws, the reference
+    regret has median 0.050, p75 0.153, p90 0.859 and max 38.4, so the threshold of 0.5
+    accepts 87% and the filter discards roughly one draw in eight. Two consequences
+    follow, and the numbers above set their size.
+
+    First, the reference row is bounded below the threshold by construction, so it is
+    the acceptance criterion rather than an observation of where the anchor lands. In
+    practice the bound rarely binds, since most draws pass anyway, and the published
+    0.31 is unremarkable for an unfiltered draw. The circularity is real but small.
+
+    Second, and less comfortably, the discarded eighth is not a random eighth: it is the
+    flybys this particular least-squares implementation with this particular multistart
+    grid fails to solve, which are the fast, deep ones. Whether those are also the
+    instances that best separate agents is unknown and unmeasured. That is the part
+    worth treating as a live limitation.
+
+    It is kept because the alternative is worse: without it about 13% of instances ship
+    with no working competent anchor, and a task whose only anchors are the oracle and a
+    naive polynomial cannot distinguish "hard" from "wrong basis". At a 13% failure rate
+    exhausting max_tries is effectively impossible and the mean cost is 1.15 draws.
+    """
     last = None
     for off in range(max_tries):
         b = _draw_instance(seed + off, oracle_n)
-        preds = parse_predictions(_od_fit_predict(train_csv_text(b), test_csv_text(b)), ["t"])
-        regret = score_points(truth_to_points(build_truth(b)), preds, period=None)["winkler_regret"]
-        b["meta"]["seed_offset"] = off
-        b["meta"]["reference_regret"] = round(float(regret), 4)
-        if np.isfinite(regret) and regret < 0.5:
+        regret = reference_regret(b)
+        b["meta"].update(seed_offset=off, tries=off + 1,
+                         reference_regret=round(regret, 4),
+                         reference_filtered=max_reference_regret is not None)
+        if max_reference_regret is None:
+            return b
+        if np.isfinite(regret) and regret < max_reference_regret:
             return b
         last = b
     return last
