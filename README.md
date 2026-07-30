@@ -51,7 +51,7 @@ The two domain tasks are the realistic ones. The mechanism tasks calibrate the h
 
 Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR over eight instances. Lower is better everywhere, and a cell is reported only if every run behind it produced complete output. The last column is the **mean rank** (a Borda count within each column), deliberately the only aggregate, since the cells are not comparable across columns. Per-task detail is in the docs linked above.
 
-| Model | CCAR¹ | Ballistic | Two-body | Three-body | Flyby | Quantile | Mean rank |
+| Model | CCAR¹ | Ballistic | Two-body | Three-body² | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | 0.031 | — | 0.005 | 0.039 | 0.31 | — | *floor* |
 | GLM-5.1 | 0.055 | 12 | 0.092 | 321 | 899 | 0.25 | **2.08** |
@@ -65,6 +65,8 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | nemotron-3-ultra:free | 0.27 | 16 | n/m | 1579 | 1356 | 0.099 | *not ranked* |
 
 ¹ CCAR measures a **superseded variant**: its response law was fixed and published, so it is valid but not comparable to future CCAR runs ([why kept, why not comparable](docs/tasks/ccar.md)).
+
+² Three-body was scored by a **superseded scorer**, which rewrote submitted intervals wider than half the circle. Re-scoring the recorded predictions moves affected runs in both directions, including the matrix's worst cell (nemotron-3-super 2744 to 726) and Haiku's (343 to 1086), so this column does not compare to future runs either ([detail](docs/limitations.md#circular-intervals-were-rewritten-by-the-scorer)). Two-body is verified unaffected: its wide intervals all wrap through zero with the truth inside the arc, which both scorers read identically.
 
 - **`n/m`**: the runs behind that cell produced no output, so it is unmeasured rather than scored. This cost deepseek-v4-flash-free its previously best-in-suite three-body and flyby figures, which were penalties from an upstream failure ([detail](docs/limitations.md#non-response-was-cheaper-than-failure)).
 - **Degenerate answer**: one constant point estimate, no interval. It reads differently by column, and that is the point of having it. On Flyby *every measured model is worse than a constant* (292 to 20037 against 138); on two-body and three-body the reverse, by a wide margin. In the Quantile column it is the same estimator as the naive row, `np.percentile`.

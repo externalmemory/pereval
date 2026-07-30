@@ -3,9 +3,9 @@
 This is a demonstration of eval construction, not a production benchmark.
 Corners deliberately cut are documented here rather than hidden.
 
-## Three Defects Found by Independent Review
+## Four Defects Found by Independent Review
 
-An independent review of the suite found three problems that each changed a published conclusion. They are recorded here in full, because a suite whose selling point is auditable reporting has to survive its own effective challenge, and because the fixes are the most interesting design work in the project.
+An independent review of the suite found four problems that each changed a published conclusion. They are recorded here in full, because a suite whose selling point is auditable reporting has to survive its own effective challenge, and because the fixes are the most interesting design work in the project.
 
 ### Non-Response Was Cheaper Than Failure
 
@@ -48,6 +48,18 @@ What those numbers cannot do is compare across the change, because the replaceme
 Two caveats do survive the concession. With drivers and coefficients fixed across instances, every CCAR instance posed the *same* feature-selection problem, so a good score demonstrated solving one law rather than an ability to recover a law: a narrower claim, not a wrong one. And the exposure was live for any *future* model, which is why the fix still had to happen; a fixed public law is a landmine with a delayed fuse, harmless until the first model trained after publication is tested and then silently rewarding memorization.
 
 Separately, the old "near-oracle" reference turned out to be near-oracle partly because it was handed the answer to the feature-selection step, which is now its own measured quantity; see [tasks/ccar.md](tasks/ccar.md).
+
+### Circular Intervals Were Rewritten by the Scorer
+
+On the two circular tasks the scorer localized the two endpoints of a submitted interval to the branch nearest the true value **independently**, then swapped them if they came out inverted. That silently replaced the agent's interval with a different one. With a true value of 10 and a submission of `[100, 200]`, the upper endpoint wrapped to -160, the pair was swapped, and the agent was scored on `[-160, 100]`: 260 degrees wide and covering the truth it had missed by 90 degrees. The Winkler score fell from 3700 to 260, so the scorer credited coverage for an arc nobody submitted.
+
+A submitted interval is now localized as a unit, preserving its width, by placing the midpoint of the arc from `lo` counterclockwise to `hi` on the nearest branch. Wrapping intervals such as `[350, 30]` still read as the 40-degree arc through zero, which is what an agent writing that means, and claiming the whole circle now costs the full period instead of collapsing to a point.
+
+The guarded property is not monotonicity in width. Winkler is deliberately not monotone in width, since widening buys coverage, and on a circle growing an arc from a fixed lower endpoint brings its far end round toward the truth, so a penalty can legitimately fall. The property is that coverage is credited exactly when the true value lies on the submitted arc, checked across a grid of positions and widths.
+
+This one was not latent. Re-scoring the predictions recorded in `runs/` shows 121 affected rows and moves whole runs in both directions: nemotron-3-super's three-body instance from 2744 to 726, which was the worst cell in the summary matrix, and Claude Haiku 4.5's from 343 to 1086. The three-body column is therefore labelled as scored by a superseded scorer, on the same reasoning as the superseded CCAR generator: valid measurements under the rule that produced them, not comparable across the change. Two-body is verified unaffected, because every wide interval in its recorded runs wraps through zero with the truth inside the arc, which both the old and the new rule read identically.
+
+Re-scoring from the archived predictions was only possible because `runs/` and `logs/` are committed. It reproduces 11 of 15 unaffected runs exactly and mismatches on 4, where an agent wrote several versions of `predictions.csv` and the transcript does not identify which one was on disk at scoring time. That is enough to establish which cells move and not enough to publish corrected values, so no corrected values are published.
 
 ### Same-Instance Stability
 

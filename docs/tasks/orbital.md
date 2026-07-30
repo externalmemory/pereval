@@ -1,5 +1,12 @@
 # Orbital Tasks
 
+> **Three-body scores below were produced by a superseded scorer** that rewrote
+> submitted intervals wider than half the circle. Re-scoring the archived predictions
+> moves affected runs in both directions (2744 to 726, 343 to 1086), so they are valid
+> under the rule that produced them but do not compare to new runs. Two-body is verified
+> unaffected. See
+> [limitations](../limitations.md#circular-intervals-were-rewritten-by-the-scorer).
+
 Three controlled mechanism tasks on a difficulty gradient: two-body (easy),
 three-body (the suite's hardest for models), and the hyperbolic flyby (the most
 structurally complex).

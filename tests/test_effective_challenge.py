@@ -14,6 +14,11 @@ problems, which is the only useful kind.
 3. Repeated runs varied the instance as well as the agent, so method instability and
    instance difficulty were not separable, even though instability is the thing a
    validator has to price.
+
+4. On circular targets the two endpoints of a submitted interval were localized to the
+   branch nearest the truth independently, which rewrote the interval. Widening an
+   equally wrong answer could cut its penalty 14-fold, so the score was not monotone in
+   how wrong the answer was.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from scipy.stats import norm
 from pereval.scorers.interval import (
     MISSING_PENALTY_FLOOR,
     degenerate_answer,
+    localize_interval,
     score_points,
 )
 from pereval.scorers.stability import epochs, stability
@@ -234,6 +240,85 @@ def test_truth_records_the_law_for_audit():
     dgp = truth["meta"]["dgp"]
     assert dgp["family"] in ccar_gen.FAMILIES
     assert {"p", "rho", "k1", "k2", "d1", "d2"} <= set(dgp)
+
+
+# --- 4. circular interval localization -------------------------------------
+
+def _circular_points(true_mean=10.0, sd=1.0, n_mc=20000, seed=0):
+    rng = np.random.default_rng(seed)
+    return [{"key": (1.0,), "class": None, "true_mean": true_mean,
+             "mc": (true_mean + rng.normal(0.0, sd, n_mc)) % 360.0}]
+
+
+def _winkler(pred, true_mean=10.0):
+    return score_points(_circular_points(true_mean), {(1.0,): pred}, 360.0)["winkler_agent"]
+
+
+def test_a_wrapping_interval_keeps_its_width():
+    """[350, 30] means the 40-degree arc through zero, not a 320-degree arc."""
+    lo, hi = localize_interval(350.0, 30.0, 10.0, 360.0)
+    assert hi - lo == pytest.approx(40.0)
+    assert lo == pytest.approx(-10.0)
+
+
+def test_an_unwrapped_prediction_is_placed_on_the_right_branch():
+    """The harmonic baseline emits continuous longitudes in the thousands."""
+    lo, hi = localize_interval(4990.0, 5010.0, 10.0, 360.0)
+    assert hi - lo == pytest.approx(20.0)
+    assert abs(((lo + hi) / 2.0) - 10.0) < 180.0
+
+
+def test_coverage_is_claimed_exactly_when_the_truth_is_on_the_submitted_arc():
+    """The real invariant, and the one the old code broke.
+
+    Winkler is deliberately NOT monotone in width: widening an interval eventually buys
+    coverage, and on a circle growing an arc from a fixed lower endpoint brings its far
+    end round toward the truth, so the penalty can legitimately fall. What must never
+    happen is the scorer crediting coverage for an arc the agent did not submit, which
+    is what independent endpoint localization did.
+    """
+    tm, sd = 10.0, 0.05
+    for lo in range(0, 360, 10):
+        for width in (5.0, 40.0, 100.0, 200.0, 350.0):
+            offset = float(np.mod(tm - lo, 360.0))
+            agg = score_points(_circular_points(tm, sd=sd),
+                               {(1.0,): (lo + width / 2.0, float(lo), lo + width)}, 360.0)
+            assert agg["mean_width"] == pytest.approx(width), (lo, width)
+            # Skip arcs whose endpoint sits on the true value: the noisy draws straddle
+            # it there, so a coverage near 0.5 is correct rather than a defect.
+            if min(offset, abs(offset - width)) < 10.0 * sd:
+                continue
+            assert (agg["coverage"] > 0.5) == (offset <= width), (lo, width, agg["coverage"])
+
+
+def test_the_regression_case_that_scored_260():
+    """True value 10, submission [100, 200]: a 90-degree miss. The old scorer wrapped the
+    upper endpoint to -160, swapped the pair, and scored [-160, 100]: 260 wide and
+    covering the truth, for a Winkler of 260 against 3610 for the same miss held tight."""
+    agg = score_points(_circular_points(), {(1.0,): (150.0, 100.0, 200.0)}, 360.0)
+    assert agg["coverage"] == 0.0
+    assert agg["mean_width"] == pytest.approx(100.0)
+    assert agg["winkler_agent"] == pytest.approx(100.0 + 40.0 * 90.0, rel=0.02)
+
+
+def test_claiming_the_whole_circle_costs_the_period():
+    """An honest refusal to localize should cost its width, not collapse to a point."""
+    agg = score_points(_circular_points(), {(1.0,): (10.0, 0.0, 359.999)}, 360.0)
+    assert agg["coverage"] == pytest.approx(1.0)
+    assert 355.0 < agg["mean_width"] <= 360.0
+
+
+def test_a_correct_circular_interval_is_unaffected():
+    """The fix must not move the cases the old code got right."""
+    agg = score_points(_circular_points(), {(1.0,): (10.0, 8.0, 12.0)}, 360.0)
+    assert agg["coverage"] > 0.9
+    assert agg["mean_width"] == pytest.approx(4.0)
+    assert agg["mae"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_linear_targets_still_swap_inverted_endpoints():
+    assert localize_interval(5.0, 1.0, 0.0, None) == (1.0, 5.0)
+    assert localize_interval(1.0, 5.0, 0.0, None) == (1.0, 5.0)
 
 
 # --- 3. same-instance stability --------------------------------------------

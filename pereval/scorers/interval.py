@@ -13,8 +13,9 @@ It is generic in two ways so the ballistic and orbital tasks can share it:
   - circular targets: pass period=360 when the target is an angle in degrees. The
     scorer then measures errors, coverage, and interval width on the circle,
     localizing every quantity to the branch nearest the known true value before
-    applying the linear scoring math. This is correct while intervals and noise
-    are small relative to the period, which holds here.
+    applying the linear scoring math. The submitted interval is localized as a unit
+    so its width survives the move; see localize_interval for why doing that to the
+    endpoints separately made the score non-monotone in how wrong an answer was.
 
 Three anchors, not two. Besides the Monte-Carlo oracle (the achievable floor) the
 scorer also computes the DEGENERATE anchor: the score of the least informative
@@ -69,6 +70,29 @@ def _localize(values, ref: float, period: float | None):
     if period is None:
         return np.asarray(values, dtype=float)
     return ref + _wrap(np.asarray(values, dtype=float) - ref, period)
+
+
+def localize_interval(lo: float, hi: float, ref: float, period: float | None):
+    """Put a submitted interval on the branch nearest ref, PRESERVING ITS WIDTH.
+
+    Localizing the two endpoints independently, which this scorer used to do, silently
+    rewrites the interval. With a true value of 10 and a submission of [100, 200], `hi`
+    wraps to -160, the endpoints are swapped, and the agent is scored on [-160, 100]:
+    260 degrees wide and now covering the truth it missed by 90 degrees. Measured, that
+    turned a Winkler score of 3700 into 260, so widening an equally wrong interval cut
+    its penalty 14-fold and the score stopped being monotone in how wrong the answer was.
+
+    Instead read the submission as the arc running counterclockwise from lo to hi, take
+    its width, and place its midpoint on the branch nearest ref. A wrapping interval such
+    as [350, 30] is still read as the 40-degree arc through zero, which is what an agent
+    writing it means, and claiming the whole circle costs the full period rather than
+    collapsing to a point.
+    """
+    if period is None:
+        return (hi, lo) if lo > hi else (lo, hi)
+    width = float(np.mod(hi - lo, period))
+    mid = float(_localize([lo + width / 2.0], ref, period)[0])
+    return mid - width / 2.0, mid + width / 2.0
 
 
 def _circular_mean(values, period: float) -> float:
@@ -141,10 +165,7 @@ def score_points(points: list[dict], preds: dict[tuple, tuple[float, float, floa
         if valid:
             point, lo, hi = pred
             point = float(_localize([point], tm, period)[0])
-            lo = float(_localize([lo], tm, period)[0])
-            hi = float(_localize([hi], tm, period)[0])
-            if lo > hi:
-                lo, hi = hi, lo
+            lo, hi = localize_interval(lo, hi, tm, period)
             rec.update(
                 missing=False,
                 ws_agent=float(interval_score(lo, hi, mc).mean()),
