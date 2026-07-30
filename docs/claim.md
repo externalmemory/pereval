@@ -1,11 +1,11 @@
-# What a perEval Score Claims
+# perEval Claim
 
-perEval does not validate models. It qualifies a model *development process*, by running
-that process on problems where the answer is known and measuring regret against it. This
-page states the claim it supports, the claims it does not, and how its coverage maps onto
-supervisory expectations.
+Instead of validating a specific model, perEval qualifies a model *development process* by
+running that process on problems where the answer is known and measuring regret against
+it. This page states the claim it supports, the claims it does not, and how its coverage
+maps onto supervisory expectations.
 
-## Why Not Validate the Model
+## The N = 1 Problem
 
 A nine-quarter stress projection cannot be validated against outcomes. The actuals arrive
 nine quarters late and only along the one macro path that actually happened, which is not
@@ -26,21 +26,26 @@ guidance's own words for the target are close: "When a model's design relies sub
 on expert judgment, quantitative outcomes analysis helps to evaluate the quality of that
 judgment."
 
-## Why This Became Possible
+## Independence Across Runs
 
-Process validation of a human modeller was never impossible, only expensive and n = 1:
-independent replication by a second team, a challenger model, a developer qualification
-review. What is new when the developer is an agent is not the concept but the sample size
-and the availability of known truth. The same process can be rerun on hundreds of fresh
-instances with planted answers for a few dollars, which no human process ever supported.
+Process validation of a human modeller was difficult and expensive rather than impossible.
+Independent replication by a second team can discover discrepancies between model
+documentation and code, but not necessarily conceptual errors. Some information sharing
+between the developers of champion and challenger models is inevitable, so challenger
+models are not completely independent and might share weaknesses. Human model developers
+remember. Asked to repeat a task, their second attempt is anchored on the first, so it is
+not an independent draw. A developer qualification review is necessarily subjective.
 
-## What a Good Score Supports
+What is new when the developer is an LLM agent is the ability to run the entire model
+development process multiple times with no information sharing between runs.
 
-A claim about the **distribution of outputs** an agent produces on problems of these
-families, at the sample size actually run.
+## Interpreting the Results
 
-That is deliberately weaker than "this agent's models can be trusted", and this project's
-own measurements are why. The same agent on byte-identical data produces materially
+The outcome is a claim about the **distribution of outputs** an LLM agent produces on
+problems of these families, at the sample size actually run.
+
+That is weaker than the statement "this agent's models can be trusted", and this project's
+own measurements quantify it. The same agent on byte-identical data may produce materially
 different analyses run to run, up to 30x apart in score
 ([reproducibility](limitations.md#run-to-run-reproducibility)). A good aggregate therefore
 says the *draw* is usually decent, not that the *one artifact in front of the validator*
@@ -50,28 +55,27 @@ is. The honest form is:
 > Z over K runs. A single unreconciled invocation should be treated as a draw from that
 > distribution.
 
-Which implies the unit being qualified is an agent **plus a protocol**. Agent A run once is
+That implies the unit being qualified is an agent **plus a protocol**. Agent A run once is
 not qualified. Agent A run K times with a reconciliation step might be. `-T repeats=K`
 exists to measure exactly that, and it is the number a validator should ask for first,
 because SR 26-2 ties validation frequency to the "frequency and scope of model changes":
 an agent whose output moves every run makes every invocation a model change.
 
-## What It Does Not Support
+## Claims Not Supported
 
-- **A statement about any single artifact**, until within-instance stability is measured.
 - **A ranking of models.** The aggregate mean rank is reproduced by independently permuting
   each column at p = 0.25, so it describes the table rather than separating the models.
 - **A claim about conceptual soundness.** Only the numeric prediction is scored, never the
   reasoning. An agent that reaches a well-calibrated answer for a bad reason is not
   penalized except where the flaw surfaces out of sample.
 - **A transfer claim to deployment.** Whether a perEval score predicts the quality of a
-  model that agent builds on a real portfolio is **unmeasured**. No such study exists here.
-  Representativeness of this task set for any particular deployment is asserted by nobody.
+  model that the agent builds on a real portfolio is **unmeasured**. No such study exists
+  here.
 
-## Coverage Against SR 26-2
+## Relation to SR 26-2
 
-SR 26-2 places generative and agentic AI outside its scope, but the half of that footnote
-usually left unquoted is the operative half:
+Footnote 3 in SR 26-2 places generative and agentic AI outside its scope, but the half of
+that footnote often left unquoted is also important:
 
 > "Nonetheless, a banking organization's risk management and governance practices should
 > guide the determination of appropriate governance and controls for any tools, processes,
@@ -99,17 +103,3 @@ relevance, and inputs". perEval covers one of those three.
 | Outcomes analysis against real-world outcomes | **Not applicable.** See the N = 1 argument above. |
 | Effective challenge | **Not performed by perEval.** SR 26-2 has it "performed by individuals" with "organizational standing and influence to effect any change", which a tool structurally cannot have. perEval produces evidence *for* a human challenger. |
 
-## perEval Is Itself a Tool in Scope
-
-If a perEval result is offered to a validator, perEval falls under the same footnote as any
-other uncovered tool, and the closest template for what it then owes is the guidance's
-treatment of vendor products: an understanding of "conceptual soundness, design,
-development data, and performance", plus ongoing monitoring. That is the honest reading of
-why an opaque third-party component can be governed at all, since when the code, data and
-methodology are not inspectable, performance evidence and monitoring are what remain.
-
-Against that template: design and development data are in [task-design.md](task-design.md)
-and the generators; performance is the score tables; conceptual soundness and every known
-defect, including four found by independent review that each changed a published
-conclusion, are in [limitations.md](limitations.md). Ongoing monitoring of the instrument
-itself does not exist yet.
