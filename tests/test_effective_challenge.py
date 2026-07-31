@@ -140,10 +140,16 @@ def test_response_law_varies_across_seeds():
     assert len({(d["family"], d["d1"], d["d2"]) for d in dgps}) > 1
 
 
-def test_drivers_and_families_both_rotate():
+def test_drivers_rotate_by_default_and_families_only_on_request():
+    """Drivers rotate by default because that is the security fix. The functional form
+    does not, because rotating it changes the task rather than protecting it, and
+    switching it on by default would strand the archived CCAR results."""
     seeds = np.random.SeedSequence(6).generate_state(40, dtype=np.uint32)
     dgps = [ccar_gen.generate(seed=int(s), oracle_n=20)["dgp"] for s in seeds]
-    assert {d["family"] for d in dgps} == set(ccar_gen.FAMILIES)
+    assert {d["family"] for d in dgps} == {ccar_gen.DEFAULT_FAMILY}
+    rotated = [ccar_gen.generate(seed=int(s), oracle_n=20, family="rotate")["dgp"]
+               for s in seeds]
+    assert {d["family"] for d in rotated} == set(ccar_gen.FAMILIES)
     assert len({d["d1"] for d in dgps}) > 1
     assert len({d["d2"] for d in dgps}) > 1
     assert all(d["d1"] in ccar_gen.DRIVERS_UP for d in dgps)
@@ -369,7 +375,7 @@ def test_benign_scenarios_make_over_prediction_expensive():
 
 def test_scenario_and_family_are_crossed_in_a_shipped_dataset():
     from pereval.tasks.ccar.task import _samples
-    ids = [s.id for s in _samples(9, 1, 20, 80, "", "")]
+    ids = [s.id for s in _samples(9, 1, 20, 80, "rotate", "rotate")]
     combos = {(i.split("-")[2], i.split("-")[3]) for i in ids}
     assert len(combos) == 9  # every family x scenario pair exactly once
 

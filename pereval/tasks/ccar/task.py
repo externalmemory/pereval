@@ -92,16 +92,20 @@ def _samples(n_instances, seed, oracle_n, n_intime, family, scenario):
         # Rotate the response family across instances rather than drawing it, so a
         # shipped dataset is balanced over FAMILIES instead of balanced in
         # expectation. Pinning `family` overrides this.
-        # Cross the two factors so a nine-instance dataset covers every combination
-        # once, rather than being balanced only in expectation.
-        fam = family or FAMILIES[i % len(FAMILIES)]
-        scen = scenario or SCENARIO_NAMES[(i // len(FAMILIES)) % len(SCENARIO_NAMES)]
+        # Defaults reproduce the legacy task: probit-linear, legacy severity range. Only
+        # the response law is drawn, which is the whole of the fix. "rotate" crosses the
+        # factors deterministically so a nine-instance dataset covers every combination.
+        fam = None if not family else (
+            FAMILIES[i % len(FAMILIES)] if family == "rotate" else family)
+        scen = None if not scenario else (
+            SCENARIO_NAMES[(i // len(FAMILIES)) % len(SCENARIO_NAMES)]
+            if scenario == "rotate" else scenario)
         bundle = generate(seed=int(s), n_intime=n_intime, oracle_n=oracle_n,
                           family=fam, scenario=scen)
         samples.append(
             Sample(
                 input=SAMPLE_INPUT,
-                id=f"instance-{i}-{fam}-{scen}-seed-{int(s)}",
+                id=f"instance-{i}-{bundle['dgp']['family']}-{bundle['scenario']}-seed-{int(s)}",
                 files={
                     "data/train.csv": train_csv_text(bundle),
                     "data/scenario.csv": scenario_csv_text(bundle),
@@ -130,12 +134,13 @@ def ccar(
     (probit-linear reference that selects its own drivers) or "informed" (the same
     fit handed the true drivers from hidden truth, a diagnostic anchor rather than a
     competitor) run those solvers with mockllm.
-    family: "" rotates the response family across instances; pin one of
-    "vasicek", "threshold", "interaction" to hold the functional form fixed.
-    scenario: "" crosses scenario severity with the family; pin one of "baseline",
-    "adverse", "severe". Benign scenarios are deliberate: a loss model has to be
-    accurate across the range, and over-predicting in benign conditions is an error
-    rather than a safe choice.
+    family: "" is probit-linear, matching the task as originally published; "rotate"
+    varies the functional form across instances, or pin one of "vasicek", "threshold",
+    "interaction".
+    scenario: "" is the legacy severity range, all adverse; "rotate" crosses severity
+    with the family, or pin one of "baseline", "adverse", "severe". Benign scenarios
+    detect a model that substitutes conservatism for accuracy, but they change the
+    instance mix, so they are opt-in rather than default.
     repeats>1 runs the agent that many times per instance on byte-identical inputs
     and reports the worst case and the spread; see pereval.scorers.stability.
     """

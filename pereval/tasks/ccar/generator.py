@@ -116,10 +116,34 @@ MACRO_COLUMNS = ["gdp", "unemployment", "hpi", "bbb_spread", "sp500", "djia", "n
 # advance. The standardizations are absorbed by any fitted model and are randomized
 # only to close constant-matching; the coefficients and the family are what matter.
 DGP_RANGES = {
-    "p": (0.015, 0.045),
-    "rho": (0.010, 0.050),
-    "k1": (0.090, 0.200),
-    "k2": (-0.120, -0.030),
+    # Centred on the FRED / vasicekfit calibration these were fixed at (p 0.028, rho 0.02,
+    # k1 0.13, k2 -0.07) and kept tight around it, so the drawn task has the same scale as
+    # the published one rather than merely bracketing it. An earlier version used ranges
+    # roughly three times wider, which put mean rho at 0.030 against the old 0.020 and
+    # moved the oracle from 0.070 to 0.100, changing the units every archived CCAR number
+    # was reported in for no gain: the exploit is closed by the draw existing, not by its
+    # width, and it is the driver pair that carries most of that.
+    # Centred tightly on the calibration these were fixed at (p 0.028, rho 0.02, k1 0.13,
+    # k2 -0.07), so the drawn task keeps the scale of the published one.
+    #
+    # Width was deliberately NOT pushed further, and the tradeoff is worth recording. The
+    # exploit works while guessing a coefficient's midpoint beats estimating it from 80
+    # noisy quarters, so suppressing it entirely needs a spread wider than that estimation
+    # error. Trying that (k1 over [0.08, 0.20]) damaged the task: the reference fit, handed
+    # the true drivers, fell to 0.52 interval coverage, because a wide k1 amplifies any
+    # standardization difference three standard deviations out along the scenario path. A
+    # generator whose own correctly specified reference cannot cover is not a better task.
+    #
+    # So a residual remains: a model that memorized these published ranges and guessed
+    # their midpoints would score a little better than an honest fit. That is a reduction
+    # of roughly 400x from the fixed-constant exploit, which scored 0.00014 against an
+    # oracle, and it is a future risk rather than a present one, since every model measured
+    # here has a knowledge cutoff predating this repository. Closing it further costs more
+    # than it buys.
+    "p": (0.020, 0.038),
+    "rho": (0.014, 0.028),
+    "k1": (0.100, 0.170),
+    "k2": (-0.100, -0.045),
     # threshold family: the kink sits at this quantile of the IN-TIME u1 distribution,
     # not at a fixed number of sd. Placing it near the top of the observed range is what
     # makes the trap sharp: only a handful of in-time quarters sit above it, so the
@@ -155,6 +179,16 @@ DRIVERS_DOWN = ("hpi", "gdp", "nasdaq")
 # the scenario scores well on both.
 SCENARIOS = {"baseline": (0.0, 0.3), "adverse": (0.8, 1.2), "severe": (1.4, 1.8)}
 SCENARIO_NAMES = tuple(SCENARIOS)
+
+# The DEFAULT is the legacy range, not the three-point factor, and the default family is
+# the probit-linear one. Only the response law needed to change: the exploit was that the
+# coefficients were published, and drawing which two are non-zero and what they are closes
+# it. Rotating the functional form and splitting scenario severity are improvements to the
+# task, not fixes to the defect, and switching them on by default would discard the
+# archived CCAR results for no security benefit. They are opt-in via -T family=rotate and
+# -T scenario=rotate, or by pinning a single value.
+LEGACY_SEVERITY = (1.0, 1.8)
+DEFAULT_FAMILY = "vasicek"
 
 # Response families. All three keep the probit link and the systematic factor, so
 # rho and the interval math are recoverable in every one; what rotates is the shape
@@ -208,7 +242,12 @@ def _hpi_yoy(level):
 def draw_dgp(rng, family: str | None = None) -> dict:
     """Draw the response law for one instance: family, drivers, and every parameter."""
     d = {k: _uni(rng, *v) for k, v in DGP_RANGES.items()}
-    d["family"] = family if family is not None else FAMILIES[int(rng.integers(len(FAMILIES)))]
+    if family is None:
+        d["family"] = DEFAULT_FAMILY
+    elif family == "rotate":
+        d["family"] = FAMILIES[int(rng.integers(len(FAMILIES)))]
+    else:
+        d["family"] = family
     if d["family"] not in FAMILIES:
         raise ValueError(f"unknown family {d['family']!r}, expected one of {FAMILIES}")
     d["d1"] = DRIVERS_UP[int(rng.integers(len(DRIVERS_UP)))]
@@ -295,11 +334,17 @@ def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None,
     # its own in-time mean. Fundamental deterioration, so the default responds.
     stress = slice(_WARMUP + n_intime, total)
     last = _WARMUP + n_intime - 1
-    scen = scenario if scenario is not None else \
-        SCENARIO_NAMES[int(rng_struct.integers(len(SCENARIO_NAMES)))]
-    if scen not in SCENARIOS:
-        raise ValueError(f"unknown scenario {scen!r}, expected one of {SCENARIO_NAMES}")
-    severity = _uni(rng_struct, *SCENARIOS[scen])
+    if scenario is None:
+        scen, band = "legacy", LEGACY_SEVERITY
+    elif scenario == "rotate":
+        scen = SCENARIO_NAMES[int(rng_struct.integers(len(SCENARIO_NAMES)))]
+        band = SCENARIOS[scen]
+    elif scenario in SCENARIOS:
+        scen, band = scenario, SCENARIOS[scenario]
+    else:
+        raise ValueError(f"unknown scenario {scenario!r}; expected 'rotate', "
+                         f"one of {SCENARIO_NAMES}, or None for the legacy range")
+    severity = _uni(rng_struct, *band)
     ramp = np.arange(1, N_STRESS + 1) / N_STRESS
     level_target = {"unemployment": 1.2, "bbb_spread": 1.5, "vix": 1.5}
     growth_shift = {"gdp": -1.5, "hpi": -1.5, "cpi": -0.8, "nasdaq": -1.0}
