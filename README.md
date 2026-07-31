@@ -51,7 +51,7 @@ The two domain tasks are the realistic ones. The mechanism tasks calibrate the h
 
 Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR over eight instances. Lower is better everywhere, and a cell is reported only if none of its runs failed for reasons outside the agent's control. The last column is the **mean rank** (a Borda count within each column), deliberately the only aggregate, since the cells are not comparable across columns. Per-task detail is in the docs linked above.
 
-| Model | CCAR¹ | Ballistic | Two-body | Three-body² | Flyby | Quantile | Mean rank |
+| Model | CCAR | Ballistic | Two-body | Three-body¹ | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | 0.031 | — | 0.005 | 0.039 | 0.31 | — | *floor* |
 | GLM-5.1 | 0.055 | 12 | 0.092 | 321 | 899 | 0.25 | **2.25** |
@@ -62,18 +62,16 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | nemotron-3-super:free | 0.45 | 60 | 106 | 2744 | 918 | 0.12 | 4.75 |
 | laguna-m.1:free | 1.1 | 60 | 78 | 2067 | 1014 | 0.16 | 5.25 |
 | *Degenerate answer* | *0.57* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
-| ling-3.0-flash:free | n/c⁴ | 43 | 1556 | n/c⁴ | 591 | 0.076⁵ | *not ranked* |
+| ling-3.0-flash:free | *not run* | 43 | 1556 | n/c¹ | 591 | 0.076² | *not ranked* |
 | deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m³ | 0.17 | *not ranked* |
 
-¹ CCAR measures a **superseded variant**: its response law was fixed and published. The runs are valid, and no agent could have exploited the fixed drivers since none was told them. They are not comparable to current CCAR runs because the replacement also widened the parameter draws and made two of three instances nonlinear ([decomposition](docs/limitations.md#the-ccar-response-law-was-public)).
+¹ Three-body was scored by a **superseded scorer**, which rewrote submitted intervals wider than half the circle. Re-scoring the archived predictions moves affected runs in both directions (Haiku 574.7 to 1849.8, laguna 889.1 to 802.2), and `scripts/rescore_threebody.py` can identify and re-score 13 of the 21 archived runs, but four of the six cell-defining maxima are among the eight it cannot pin down, so the column cannot be rebuilt without re-running. `n/c` means not comparable: a run today would be scored by the corrected rule and could not sit beside these.
 
-⁵ ling's 0.076 is the best model score in that column, but it is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimals, and the moment-matched logistic beats it on all three. The task's standing finding is that those naive families beat every literature construction here, and a model that lands on one inherits the result ([detail](docs/tasks/quantile.md)).
-
-⁴ **`n/c` means not comparable, not missing.** ling was added after the CCAR generator and the circular scorer were corrected, so a run today measures the current task while those two columns hold values from the superseded ones. The cell cannot be filled without re-measuring the whole cast, which is why ling is unranked despite being the only model in the table whose every run finished cleanly, well inside its caps (17 to 82 messages), on all four columns it can occupy.
+² ling's 0.076 is the best model score in that column, but it is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimals, and the moment-matched logistic beats it on all three. The task's standing finding is that those naive families beat every literature construction here, and a model that lands on one inherits the result ([detail](docs/tasks/quantile.md)).
 
 ³ deepseek's Flyby runs were re-measured and remain unreported, for a different reason from the other two: two of the three terminated at the 2400 second time cap, so the cell is budget-limited rather than unattempted. The one run that finished clean scored **103.9 against a degenerate anchor of 112.1**, the only sign so far of any agent carrying more information than a constant on that task. At n=1 it is an observation, not a cell.
 
-² Three-body was scored by a **superseded scorer**, which rewrote submitted intervals wider than half the circle. Re-scoring the recorded predictions moves affected runs in both directions, including the matrix's worst cell (nemotron-3-super 2744 to 726) and Haiku's (343 to 1086), so this column does not compare to future runs either ([detail](docs/limitations.md#circular-intervals-were-rewritten-by-the-scorer)). Two-body is verified unaffected: its wide intervals all wrap through zero with the truth inside the arc, which both scorers read identically.
+**CCAR is no longer frozen.** Its response law had fixed, published coefficients, which made every instance solvable in closed form; the fix is that the law is now drawn per instance, including which two macros are non-zero. That is a change to the answer key, not to the question: no agent was ever told the drivers, so the problem an agent faces is the one it always faced, and the archived runs measure it. The parameter draws are centred tightly on the old calibration so the scale is preserved (oracle 0.082 against 0.070, overlapping across seed sets). The optional extras that would have broken comparability, rotating the functional form and splitting scenario severity, are off by default and available via `-T family=rotate` and `-T scenario=rotate`.
 
 - **`n/m`**: at least one run failed for reasons outside the agent's control, so the cell is unmeasured rather than scored. An agent that works inside its budget and still produces nothing usable is scored, at the degenerate answer. This cost deepseek-v4-flash-free its previously best-in-suite three-body and flyby figures, which were penalties from an upstream failure ([detail](docs/limitations.md#non-response-was-cheaper-than-failure)).
 - **Degenerate answer**: one constant point estimate, no interval. It reads differently by column, and that is the point of having it. On Flyby every model with a reportable cell is worse than a constant (292 to 20037 against 138), though see note 3; on two-body and three-body the reverse, by a wide margin. In the Quantile column it is the same estimator as the naive row, `np.percentile`.

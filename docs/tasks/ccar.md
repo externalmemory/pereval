@@ -10,9 +10,17 @@ inspect eval pereval/tasks/ccar/task.py -T n_instances=1 -T repeats=5           
 python -m pereval.tasks.ccar.generator --out-dir runs/ccar --seed 1 --family interaction
 ```
 
-> **Scores below measure a superseded variant and do not compare to new runs.** The response law used to be eight constants hard-coded in the public generator, which made every instance solvable in closed form with no estimation: that exploit scored 0.00014 mean regret against 0.013 for the reference. The law is now drawn per instance and its form rotates.
+> **These scores stand.** The response law used to be eight constants hard-coded in the
+> public generator, which made every instance solvable in closed form with no estimation:
+> that exploit scored 0.00014 mean regret against 0.013 for the reference. The law is now
+> drawn per instance, including which two macros are non-zero.
 >
-> The old numbers are valid and are kept. No tested model could have used the exploit (all cutoffs predate this repository, the sandbox has no network) and none did: the best measured cell is 0.055 against the exploit's 0.00014. They are simply not comparable to the new generator, which is harder, and they demonstrate solving one fixed law rather than an ability to recover a law. See [limitations](../limitations.md#the-ccar-response-law-was-public).
+> That is a change to the answer key, not to the question. No agent was ever told the
+> drivers, so the problem an agent faces is unchanged, and the archived runs measure it.
+> The parameter draws are centred tightly on the old calibration, so the scale is preserved
+> (oracle 0.082 against 0.070, overlapping across seed sets) and old and new runs sit in
+> one column. Optional extras that would break that, rotating the functional form and
+> splitting scenario severity, are off by default.
 
 ## The Task
 
