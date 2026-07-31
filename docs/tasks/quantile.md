@@ -107,6 +107,13 @@ The p99 column does the work: bounded rules 0.049-0.052, extrapolating rules 0.0
 
 The primary result. Free models, three seeds each (base seeds 1, 2, 3, so a near-disjoint 100-series draw per seed), 100 blocks per instance, scoring metric disclosed in the prompt. Reported as **mean ± 2 SD** over the runs (2× the sample standard deviation, not a confidence interval), ordered by the upper end mean + 2 SD, so the ranking rewards consistency rather than a lucky low mean. Lower is better. Every reported number has at least three valid runs behind it; a model that could not reach three is excluded with its failure rate noted rather than reported on thin data.
 
+> **Estimand generations.** Every row below except ling was measured before the estimand
+> was corrected to the full population, which moves scores down by roughly 0.002. That is
+> far inside the bands shown and does not affect any ordering here, but it does mean
+> differences finer than about 0.005 cannot be read across rows of different generations.
+> The like-for-like recomputation of the baselines against ling is in the paragraph above,
+> and it reverses the apparent ordering between them.
+
 The four reference estimators are deterministic given the blocks, so their spread is **pure block-sampling noise**: the irreducible floor at 100 blocks (about ± 0.03). A model tighter than that floor has negligible run-to-run method variance; a model wider than it is switching methods between runs, which no increase in block count can fix.
 
 | Row | runs | per-run regret | mean ± 2 SD |
@@ -127,9 +134,21 @@ The four reference estimators are deterministic given the blocks, so their sprea
 
 **gpt-oss-20b is excluded, and the exclusion is the finding.** It produced valid output on only 2 of 6 attempts (seeds 1 and 2 succeeded at 0.122 and 0.118; seed 3 failed twice and seeds 4 and 5 once each, every failure running the full agent loop for 84 to 296 messages and then emitting no parseable predictions.csv). A ~67% rate of answering nothing is worse than an unstable answer, and it cannot meet the three-run bar, so no regret number is reported for it.
 
-**ling-3.0-flash is the first model to beat every reference estimator**, including the moment-matched logistic that leads them, and it does so on the mean (0.070 against 0.076) and on the conservative bound (0.082 against 0.103). Its ± 0.012 is also tighter than the deterministic baselines' own block-sampling spread of about ± 0.03, which means its run-to-run method variance is not detectable at three runs. Two caveats. It was measured after the estimand was corrected to the full population, which moves every score down by roughly 0.002, an order of magnitude below the block-sampling floor but not zero; adding it back still leaves ling first. And a tight band is a statement about the score, not the method, which the nemotron entry below explains.
+**ling-3.0-flash posts the best model score on this task, and it does so by reproducing a reference estimator rather than beating one.** Recomputed on the current estimand over the same three seeds, it ties the moment-matched normal to four decimal places on two of them and loses to the moment-matched logistic on all three:
 
-Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022) and nemotron-3-super (± 0.021) score as consistently as the deterministic baselines**, and nemotron-ultra is the only model that beats every reference estimator on the conservative bound (upper 0.110 vs wei8's 0.137), edged only by the naive normal.
+| Seed | ling | `normal` | `logistic` |
+| --- | --- | --- | --- |
+| 1 | 0.0756 | 0.0765 | **0.0726** |
+| 2 | 0.0699 | 0.0699 | **0.0672** |
+| 3 | 0.0632 | 0.0632 | **0.0602** |
+
+The transcripts confirm what the scores imply. On seeds 2 and 3 it fits a moment-matched normal; on seed 1 it uses a t distribution, which is why that seed is the only one where it differs from `normal` at all. It reaches those by search rather than by assumption, trying GPD, KDE, lognormal and bootstrap along the way, but the answer it submits is the naive construction the baselines already implement.
+
+So the result belongs to the task, not the model. This task's standing finding is that moment-matched families beat every literature construction on it, by margins of 0.03 to 0.05, and a model that lands on one of them inherits that. Its ± 0.012 band, tighter than the deterministic baselines' own block-sampling spread, has the same explanation: this is the deterministic-method collapse described under [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility), and quantile is the one task where collapsing to the naive method is the right move rather than the failure the other tasks are built to expose.
+
+The claim first published here, that ling beat every reference estimator, was wrong. It compared ling's scores against baseline figures computed under the superseded estimand instead of recomputing them, and the ~0.002 correction it ignored ran the wrong way against a gap of ~0.003.
+
+Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022) and nemotron-3-super (± 0.021) score as consistently as the deterministic baselines**, and nemotron-ultra beats the extrapolating rules on the conservative bound (upper 0.110 against wei8's 0.149 recomputed), but is edged by both moment-matched rules, whose upper bounds are 0.083 for `normal` and 0.079 for `logistic`.
 
 A tight band means the *score* is stable, not that the *method* is. The transcripts show nemotron-3-ultra using materially different approaches across the three seeds (GPD-plus-t with bootstrap on one, a kitchen sink of logistic, gennorm, skew-normal, Weibull, gamma and KDE on another) that all happen to land in a similar score range. So its trustworthiness is empirical (its varying methods all scored well here) rather than structural (one fixed method), and a single run is trustworthy only in the weak sense that any one of its methods would have scored similarly. A same-seed repeat experiment settled which it is: rerunning on byte-identical data still moved the score. nemotron-3-ultra's best run (0.077) reran to 0.142, so the method variation is **sampling temperature, not a response to the data**. See [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility).
 
