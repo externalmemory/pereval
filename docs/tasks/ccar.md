@@ -36,6 +36,24 @@ The scenario overlay ramps each level driver to a target anchored on its margina
 
 A rare one-quarter systemic crisis (a contaminated-normal COVID/GFC-like event) is added to the observed macros only: the default rate is generated from the fundamental drivers, so a COVID-style unemployment spike appears in the data but the default does not follow it, and a model that fits that quarter naively attenuates its unemployment sensitivity and pays for it under stress. Early quarters have ragged missing data, as on FRED. The scenario pushes the fundamentals past the in-time range, where linear-in-level fits and flipped signs get punished out of sample.
 
+## Scenario Severity Is a Factor, Not a Residual
+
+Each instance draws a scenario type, crossed with the response family so a nine-instance dataset covers every combination once: `baseline` leaves the drivers at their unconditional means, `adverse` and `severe` ramp them progressively further. Pin one with `-T scenario=baseline`.
+
+Benign scenarios are there on purpose. A loss model has to be accurate across the whole range, and over-predicting losses in benign conditions is an error rather than a safe choice, because conservatism is not a substitute for accuracy. Keeping only adverse scenarios would test whether a model is pessimistic, not whether it is right.
+
+That is measurable rather than rhetorical. Taking the probit-linear reference and shifting it adverse by a fixed amount, which is what a habitually conservative model does, gives mean Winkler regret over ten instances per scenario:
+
+| Scenario | accurate fit | +0.15 probit | +0.30 | +0.50 |
+| --- | --- | --- | --- | --- |
+| baseline | **0.037** | 0.041 | 0.092 | 0.348 |
+| adverse | 0.200 | 0.083 | **0.070** | 0.205 |
+| severe | 1.452 | 1.020 | 0.698 | **0.499** |
+
+On severe scenarios leaning adverse *improves* regret by 2.9x, because a linear fit under-predicts a nonlinear response out of range and the bias partly cancels the misspecification. On benign scenarios the same habit costs 9.4x. A suite scored only on stress would read that first column as skill.
+
+**Pooling defeats it, which matters more than the table above.** Averaged over all three scenarios, raw regret is *minimised* by a bump of +0.30 (0.287 against 0.563 for the accurate fit), because severe instances carry far larger absolute regret and dominate the mean. Normalising each instance by its own degenerate anchor pulls the optimum back to +0.15 but does not reach zero. So the scenario factor makes conservatism detectable only if the results are read per scenario; a single pooled CCAR number still rewards leaning adverse, and should not be quoted on its own.
+
 ## Baselines and Anchors
 
 Four anchors (`-T baseline=naive|vasicek|informed`, plus the degenerate answer computed by the scorer):

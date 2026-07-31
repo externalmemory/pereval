@@ -33,6 +33,7 @@ from pereval.tasks.ballistic.task import COMPOSE  # shared general modeling sand
 from pereval.tasks.ccar.baselines import informed_baseline, naive_baseline, vasicek_baseline
 from pereval.tasks.ccar.generator import (
     FAMILIES,
+    SCENARIO_NAMES,
     build_truth,
     generate,
     scenario_csv_text,
@@ -83,7 +84,7 @@ SAMPLE_INPUT = ("Project the default rate with a 95% interval for every quarter 
                 "system instructions.")
 
 
-def _samples(n_instances, seed, oracle_n, n_intime, family):
+def _samples(n_instances, seed, oracle_n, n_intime, family, scenario):
     base = seed if seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
     seeds = np.random.SeedSequence(base).generate_state(n_instances, dtype=np.uint32)
     samples = []
@@ -91,12 +92,16 @@ def _samples(n_instances, seed, oracle_n, n_intime, family):
         # Rotate the response family across instances rather than drawing it, so a
         # shipped dataset is balanced over FAMILIES instead of balanced in
         # expectation. Pinning `family` overrides this.
+        # Cross the two factors so a nine-instance dataset covers every combination
+        # once, rather than being balanced only in expectation.
         fam = family or FAMILIES[i % len(FAMILIES)]
-        bundle = generate(seed=int(s), n_intime=n_intime, oracle_n=oracle_n, family=fam)
+        scen = scenario or SCENARIO_NAMES[(i // len(FAMILIES)) % len(SCENARIO_NAMES)]
+        bundle = generate(seed=int(s), n_intime=n_intime, oracle_n=oracle_n,
+                          family=fam, scenario=scen)
         samples.append(
             Sample(
                 input=SAMPLE_INPUT,
-                id=f"instance-{i}-{fam}-seed-{int(s)}",
+                id=f"instance-{i}-{fam}-{scen}-seed-{int(s)}",
                 files={
                     "data/train.csv": train_csv_text(bundle),
                     "data/scenario.csv": scenario_csv_text(bundle),
@@ -116,6 +121,7 @@ def ccar(
     message_limit: int = 150,
     baseline: str = "",
     family: str = "",
+    scenario: str = "",
     repeats: int = 1,
 ) -> Task:
     """CCAR-style stress-loss projection.
@@ -126,6 +132,10 @@ def ccar(
     competitor) run those solvers with mockllm.
     family: "" rotates the response family across instances; pin one of
     "vasicek", "threshold", "interaction" to hold the functional form fixed.
+    scenario: "" crosses scenario severity with the family; pin one of "baseline",
+    "adverse", "severe". Benign scenarios are deliberate: a loss model has to be
+    accurate across the range, and over-predicting in benign conditions is an error
+    rather than a safe choice.
     repeats>1 runs the agent that many times per instance on byte-identical inputs
     and reports the worst case and the spread; see pereval.scorers.stability.
     """
@@ -143,7 +153,8 @@ def ccar(
             message_limit=message_limit,
         )
     return Task(
-        dataset=_samples(n_instances, seed, oracle_n, n_intime, str(family).lower()),
+        dataset=_samples(n_instances, seed, oracle_n, n_intime,
+                         str(family).lower(), str(scenario).lower()),
         solver=solver,
         scorer=make_interval_scorer("ccar", ["quarter"], None, truth_to_points),
         sandbox=("docker", COMPOSE),

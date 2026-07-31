@@ -4,8 +4,11 @@ The agent gets a quarterly panel of nine macroeconomic drivers plus a portfolio
 default rate over an in-time window, and a 9-quarter forward stress scenario for
 the same nine drivers, and must project the default rate (point plus 95% interval)
 for the nine stressed quarters. It is the realistic analog of the toy tasks: the
-in-time fit is easy to overfit, and the stressed out-of-time path (drivers pushed
-beyond the observed range) is where a sound model separates from a fragile one.
+in-time fit is easy to overfit, and the out-of-time path is where a sound model separates
+from a fragile one. Not because the drivers necessarily leave their observed range, which
+they do for only about 15% of the nine on a typical instance, but because the scenario
+describes a joint configuration the history need not contain, and because the response is
+nonlinear in two of the three families.
 
 Data-generating process, none of which is disclosed to the agent:
 
@@ -43,10 +46,15 @@ Data-generating process, none of which is disclosed to the agent:
   the form to vary. docs/task-design.md names both mitigations (per-instance
   parameters, rotate DGP families) as obligations of the plasmode family.
 
-- Stress scenario: the 9 out-of-time quarters apply a sustained recession drift to
-  the FUNDAMENTAL (unemployment, spreads and VIX up, GDP, HPI and equities down),
-  pushing every candidate driver past the in-time range, so the default rate rises
-  whichever pair was drawn. Unlike the transient crisis, this is a real deterioration
+- Stress scenario: the 9 out-of-time quarters ramp the FUNDAMENTAL drivers toward a
+  target anchored on each series' marginal mean (unemployment, spreads and VIX up, GDP,
+  HPI and equities down), so the default rate rises whichever pair was drawn. Anchoring
+  the TARGET rather than an increment is what a supervisory scenario does: the Fed
+  specifies that unemployment reaches a level, and how severe that is relative to recent
+  history depends on where the starting point happens to be. Severity therefore still
+  varies across instances, and some scenarios are mild, which is a property of scenarios
+  and not a defect: CCAR runs a baseline alongside its adverse ones. Realized severity is
+  recorded per instance in the truth metadata so a result can be conditioned on it. Unlike the transient crisis, this is a real deterioration
   and the default responds. A model that attenuated its sensitivity to fit the COVID
   quarter, or flipped a sign under collinearity, will misproject here and pay for it
   in Winkler regret.
@@ -134,6 +142,19 @@ DGP_RANGES = {
 # times three families is twenty-seven distinct laws, none of them in this file.
 DRIVERS_UP = ("unemployment", "bbb_spread", "vix")
 DRIVERS_DOWN = ("hpi", "gdp", "nasdaq")
+
+# Scenario severity is a designed factor, not a residual. CCAR runs a baseline alongside
+# its adverse and severely adverse scenarios, and a loss model has to be accurate across
+# all of them: over-predicting losses in benign conditions is an error, not a safe choice,
+# because conservatism is not a substitute for accuracy. Severity scales how far the
+# drivers ramp, in marginal-sd units, so `baseline` leaves them at their unconditional
+# means and `severe` drives them well past.
+#
+# This is what makes over-prediction detectable. A model that always projects a deep
+# downturn scores well on `severe` and badly on `baseline`, and only a model that tracks
+# the scenario scores well on both.
+SCENARIOS = {"baseline": (0.0, 0.3), "adverse": (0.8, 1.2), "severe": (1.4, 1.8)}
+SCENARIO_NAMES = tuple(SCENARIOS)
 
 # Response families. All three keep the probit link and the systematic factor, so
 # rho and the interval math are recoverable in every one; what rotates is the shape
@@ -240,7 +261,8 @@ def _default_rate(dgp, fund_levels, pre_stress, rng):
     return norm.cdf(z)
 
 
-def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None) -> dict:
+def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None,
+              scenario: str | None) -> dict:
     ss = np.random.SeedSequence(seed)
     rng_struct, rng_default, rng_oracle = (np.random.default_rng(s) for s in ss.spawn(3))
 
@@ -273,7 +295,11 @@ def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None) -> di
     # its own in-time mean. Fundamental deterioration, so the default responds.
     stress = slice(_WARMUP + n_intime, total)
     last = _WARMUP + n_intime - 1
-    severity = _uni(rng_struct, 1.0, 1.8)
+    scen = scenario if scenario is not None else \
+        SCENARIO_NAMES[int(rng_struct.integers(len(SCENARIO_NAMES)))]
+    if scen not in SCENARIOS:
+        raise ValueError(f"unknown scenario {scen!r}, expected one of {SCENARIO_NAMES}")
+    severity = _uni(rng_struct, *SCENARIOS[scen])
     ramp = np.arange(1, N_STRESS + 1) / N_STRESS
     level_target = {"unemployment": 1.2, "bbb_spread": 1.5, "vix": 1.5}
     growth_shift = {"gdp": -1.5, "hpi": -1.5, "cpi": -0.8, "nasdaq": -1.0}
@@ -368,14 +394,15 @@ def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None) -> di
         "starts": starts,
         "seed": seed,
         "severity": severity,
+        "scenario": scen,
         "dgp": dgp,
     }
 
 
 def generate(seed: int, n_intime: int = 80, oracle_n: int = 2000,
-             family: str | None = None) -> dict:
-    """One instance. family=None draws one of FAMILIES from the seed."""
-    return _simulate(seed, n_intime, oracle_n, family)
+             family: str | None = None, scenario: str | None = None) -> dict:
+    """One instance. family/scenario default to a draw from the seed."""
+    return _simulate(seed, n_intime, oracle_n, family, scenario)
 
 
 # --- serialization ---------------------------------------------------------
@@ -401,9 +428,26 @@ def scenario_csv_text(bundle):
 
 
 def build_truth(bundle):
+    # Realized severity, so a published cell can be conditioned on how adverse its
+    # scenario actually was. `severity` is the drawn multiplier; these are what it came
+    # out as. Scenario severity varies by design and some scenarios are benign, exactly
+    # as CCAR runs a baseline alongside its adverse ones, so it is a factor to record
+    # rather than a defect to remove.
+    it, st = bundle["intime_slice"], bundle["stress_slice"]
+    excursion, left_range = {}, 0
+    for m in MACRO_COLUMNS:
+        lv = bundle["levels"][m]
+        ref = lv[it]
+        z = (lv[st] - ref.mean()) / (ref.std() or 1.0)
+        excursion[m] = round(float(np.max(np.abs(z))), 3)
+        if lv[st].max() > ref.max() or lv[st].min() < ref.min():
+            left_range += 1
     return {
         "meta": {"seed": bundle["seed"], "n_intime": bundle["n_intime"],
-                 "severity": bundle["severity"], "starts": bundle["starts"],
+                 "severity": bundle["severity"], "scenario": bundle["scenario"],
+                 "starts": bundle["starts"],
+                 "max_driver_excursion_sd": excursion,
+                 "n_macros_leaving_intime_range": left_range,
                  # Recorded so a published result is auditable after the fact. It
                  # never enters the agent's sandbox; only train.csv and scenario.csv do.
                  "dgp": bundle["dgp"]},

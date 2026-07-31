@@ -321,6 +321,52 @@ def test_linear_targets_still_swap_inverted_endpoints():
     assert localize_interval(1.0, 5.0, 0.0, None) == (1.0, 5.0)
 
 
+# --- 6. scenario severity as a designed factor ------------------------------
+
+def test_scenario_severity_orders_the_stress_path():
+    """baseline must be genuinely benign, not merely milder."""
+    peaks = {}
+    for scen in ccar_gen.SCENARIO_NAMES:
+        b = ccar_gen.generate(seed=5, scenario=scen, family="vasicek", oracle_n=20)
+        base = float(np.mean(b["default_rate"][b["intime_slice"]]))
+        peaks[scen] = max(p["true_mean"] for p in b["points"]) / base
+    assert peaks["baseline"] < 1.2 < peaks["adverse"] < peaks["severe"]
+
+
+def test_benign_scenarios_make_over_prediction_expensive():
+    """The point of keeping benign scenarios: a model that always leans adverse must pay
+    for it somewhere. Conservatism is not a substitute for accuracy."""
+    from scipy.stats import norm as _norm
+
+    def lean(text, bump):
+        import csv as _csv
+        import io as _io
+        rows = list(_csv.DictReader(_io.StringIO(text)))
+        out = ["quarter,y_pred,y_lower,y_upper"]
+        for r in rows:
+            f = lambda k: _norm.cdf(_norm.ppf(min(max(float(r[k]), 1e-9), 1 - 1e-9)) + bump)  # noqa: E731
+            out.append(f"{int(float(r['quarter']))},{f('y_pred')},{f('y_lower')},{f('y_upper')}")
+        return "\n".join(out) + "\n"
+
+    seeds = np.random.SeedSequence(21).generate_state(4, dtype=np.uint32)
+    honest, leaning = [], []
+    for s in seeds:
+        b = ccar_gen.generate(seed=int(s), scenario="baseline", oracle_n=300)
+        tr, sc = ccar_gen.train_csv_text(b), ccar_gen.scenario_csv_text(b)
+        pts = ccar_gen.truth_to_points(ccar_gen.build_truth(b))
+        base = _vasicek_fit_predict(tr, sc)
+        honest.append(score_points(pts, parse_predictions(base, ["quarter"]))["winkler_regret"])
+        leaning.append(score_points(pts, parse_predictions(lean(base, 0.5), ["quarter"]))["winkler_regret"])
+    assert np.mean(leaning) > 3.0 * np.mean(honest)
+
+
+def test_scenario_and_family_are_crossed_in_a_shipped_dataset():
+    from pereval.tasks.ccar.task import _samples
+    ids = [s.id for s in _samples(9, 1, 20, 80, "", "")]
+    combos = {(i.split("-")[2], i.split("-")[3]) for i in ids}
+    assert len(combos) == 9  # every family x scenario pair exactly once
+
+
 # --- 5. flyby selection on the reference's own success ----------------------
 
 @pytest.fixture(scope="module")
