@@ -65,7 +65,7 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | ling-3.0-flash:free | n/c⁴ | 43 | 1556 | n/c⁴ | 591 | 0.076⁵ | *not ranked* |
 | deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m³ | 0.17 | *not ranked* |
 
-¹ CCAR measures a **superseded variant**: its response law was fixed and published. The runs are valid, and no agent could have exploited the fixed drivers since none was told them. They are not comparable to current CCAR runs because the replacement also rescaled the scenario and made two of three instances nonlinear ([decomposition](docs/limitations.md#the-ccar-response-law-was-public)).
+¹ CCAR measures a **superseded variant**: its response law was fixed and published. The runs are valid, and no agent could have exploited the fixed drivers since none was told them. They are not comparable to current CCAR runs because the replacement also widened the parameter draws and made two of three instances nonlinear ([decomposition](docs/limitations.md#the-ccar-response-law-was-public)).
 
 ⁵ ling's 0.076 is the best model score in that column, but it is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimals, and the moment-matched logistic beats it on all three. The task's standing finding is that those naive families beat every literature construction here, and a model that lands on one inherits the result ([detail](docs/tasks/quantile.md)).
 
