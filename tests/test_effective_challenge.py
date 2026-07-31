@@ -218,9 +218,16 @@ def test_every_family_produces_a_rising_stress_path(family):
 
 def test_families_are_materially_different_on_the_same_seed():
     """Same macros, same severity, different law: the stressed paths must diverge, or
-    rotating the family would not be rotating anything."""
+    rotating the family would not be rotating anything.
+
+    Pinned to a severe scenario because the family factor is INERT under a benign one by
+    construction: a kink acts only above its threshold and a cross term only when both
+    drivers are far from their means, so under `baseline` all three families coincide
+    (measured: 11 of 12 seeds show both deviations below 0.01). That is the trap working
+    as intended, not a defect, and it is why family and scenario are crossed rather than
+    varied independently."""
     paths = {f: [p["true_mean"] for p in
-                 ccar_gen.generate(seed=13, family=f, oracle_n=20)["points"]]
+                 ccar_gen.generate(seed=13, family=f, scenario="severe", oracle_n=20)["points"]]
              for f in ccar_gen.FAMILIES}
     base = np.array(paths["vasicek"])
     for f in ("threshold", "interaction"):

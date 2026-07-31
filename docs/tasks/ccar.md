@@ -52,6 +52,8 @@ That is measurable rather than rhetorical. Taking the probit-linear reference an
 
 On severe scenarios leaning adverse *improves* regret by 2.9x, because a linear fit under-predicts a nonlinear response out of range and the bias partly cancels the misspecification. On benign scenarios the same habit costs 9.4x. A suite scored only on stress would read that first column as skill.
 
+The two factors interact, by construction rather than by accident. A kink acts only above its threshold and a cross term only when both drivers are far from their means, so under `baseline` all three families coincide: over twelve seeds, eleven show both nonlinear families deviating from `vasicek` by less than 0.01, against none under `severe`. That is the trap working. The nonlinearity is invisible in benign conditions and in sample, and decisive exactly where the projection is being relied on.
+
 **Pooling defeats it, which matters more than the table above.** Averaged over all three scenarios, raw regret is *minimised* by a bump of +0.30 (0.287 against 0.563 for the accurate fit), because severe instances carry far larger absolute regret and dominate the mean. Normalising each instance by its own degenerate anchor pulls the optimum back to +0.15 but does not reach zero. So the scenario factor makes conservatism detectable only if the results are read per scenario; a single pooled CCAR number still rewards leaning adverse, and should not be quoted on its own.
 
 ## Baselines and Anchors
