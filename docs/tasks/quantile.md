@@ -113,6 +113,7 @@ The four reference estimators are deterministic given the blocks, so their sprea
 | --- | --- | --- | --- |
 | `[logistic]` | 3 | 0.0775, 0.0881, 0.0617 | 0.076 ± 0.027 |
 | `[normal]` | 3 | 0.0796, 0.0907, 0.0638 | 0.078 ± 0.027 |
+| **ling-3.0-flash (free)** | 3 | 0.0756, 0.0699, 0.0632 | **0.070 ± 0.012** |
 | **nemotron-3-ultra-550b** | 3 | 0.0767, 0.0987, 0.0875 | **0.088 ± 0.022** |
 | Claude Haiku 4.5 | 3 | 0.0808, 0.0784, 0.1021 | 0.087 ± 0.026 |
 | nemotron-3-super-120b | 3 | 0.1024, 0.1182, 0.0983 | 0.106 ± 0.021 |
@@ -125,6 +126,8 @@ The four reference estimators are deterministic given the blocks, so their sprea
 | GLM-5.1 | 3 | 0.2456, 0.1486, 0.0760 | 0.157 ± 0.170 |
 
 **gpt-oss-20b is excluded, and the exclusion is the finding.** It produced valid output on only 2 of 6 attempts (seeds 1 and 2 succeeded at 0.122 and 0.118; seed 3 failed twice and seeds 4 and 5 once each, every failure running the full agent loop for 84 to 296 messages and then emitting no parseable predictions.csv). A ~67% rate of answering nothing is worse than an unstable answer, and it cannot meet the three-run bar, so no regret number is reported for it.
+
+**ling-3.0-flash is the first model to beat every reference estimator**, including the moment-matched logistic that leads them, and it does so on the mean (0.070 against 0.076) and on the conservative bound (0.082 against 0.103). Its ± 0.012 is also tighter than the deterministic baselines' own block-sampling spread of about ± 0.03, which means its run-to-run method variance is not detectable at three runs. Two caveats. It was measured after the estimand was corrected to the full population, which moves every score down by roughly 0.002, an order of magnitude below the block-sampling floor but not zero; adding it back still leaves ling first. And a tight band is a statement about the score, not the method, which the nemotron entry below explains.
 
 Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022) and nemotron-3-super (± 0.021) score as consistently as the deterministic baselines**, and nemotron-ultra is the only model that beats every reference estimator on the conservative bound (upper 0.110 vs wei8's 0.137), edged only by the naive normal.
 

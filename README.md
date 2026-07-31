@@ -62,9 +62,12 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | nemotron-3-super:free | 0.45 | 60 | 106 | 2744 | 918 | 0.12 | 4.75 |
 | laguna-m.1:free | 1.1 | 60 | 78 | 2067 | 1014 | 0.16 | 5.25 |
 | *Degenerate answer* | *0.57* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
+| ling-3.0-flash:free | n/c⁴ | 43 | 1556 | n/c⁴ | 591 | **0.076** | *not ranked* |
 | deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m³ | 0.17 | *not ranked* |
 
 ¹ CCAR measures a **superseded variant**: its response law was fixed and published, so it is valid but not comparable to future CCAR runs ([why kept, why not comparable](docs/tasks/ccar.md)).
+
+⁴ **`n/c` means not comparable, not missing.** ling was added after the CCAR generator and the circular scorer were corrected, so a run today measures the current task while those two columns hold values from the superseded ones. The cell cannot be filled without re-measuring the whole cast, which is why ling is unranked despite being the only model in the table whose every run finished cleanly, well inside its caps (17 to 82 messages), on all four columns it can occupy.
 
 ³ deepseek's Flyby runs were re-measured and remain unreported, for a different reason from the other two: two of the three terminated at the 2400 second time cap, so the cell is budget-limited rather than unattempted. The one run that finished clean scored **103.9 against a degenerate anchor of 112.1**, the only sign so far of any agent carrying more information than a constant on that task. At n=1 it is an observation, not a cell.
 
