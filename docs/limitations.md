@@ -98,6 +98,25 @@ A free tier cannot support the repeated-run standard. The quota that survived on
 
 And the one clean Flyby run is the most interesting number in the batch: 103.9 against a degenerate anchor of 112.1, the only case so far of an agent carrying more information than a constant on that task. At n=1 it is an observation, not a result, and it is recorded as one.
 
+## Re-Measuring Three-Body
+
+The circular scorer fix stranded that column: archived cells were produced by a rule that rewrote submitted intervals wider than half the circle, and `scripts/rescore_threebody.py` could identify only 13 of 21 archived runs, missing four of the six cell-defining maxima. The column has now been rebuilt by re-running six models, re-scoring Claude Haiku 4.5 (whose three runs all proved identifiable), and recomputing the naive baseline host-side, which returns 332 unchanged.
+
+The re-runs move cells hard, and mostly not because of the scorer:
+
+| Model | Archived | Re-measured |
+| --- | --- | --- |
+| nemotron-3-super | 2744 | **370** |
+| nemotron-3-ultra | 1579 | **817** |
+| Claude Haiku 4.5 | 575 | **1850** (re-scored, not re-run) |
+| GLM-5.1 | 321 | **436** |
+| mimo-v2.5 | 2438 | 2426 |
+| ling-3.0-flash | — | 3309 |
+
+nemotron-3-super improving 7.4x on byte-identical instances is not a scoring correction; it is the same run-to-run instability the reproducibility study measured, reappearing in the column that was supposed to be getting cleaner. Only Haiku's move is attributable to the scorer, because it was re-scored rather than re-run. The lesson is that re-running to fix a scoring defect also resamples the agent, so it cannot separate the two, and a column rebuilt this way inherits the instability along with the fix.
+
+Two rows could not be brought current. laguna keeps its archived value because `poolside/laguna-m.1` is no longer served in any form and only one of its three runs is identifiable, not the one that sets the cell. deepseek stays unmeasured. GLM-5.1 needed a second run at 400 messages after two of three hit the 150 default, which is the budget confound catching a paid model this time.
+
 ## Contamination
 
 The repo is public, so anything fixed in it can enter training corpora. The four generated tasks (CCAR, ballistic, orbital) therefore draw fresh instances per run from a seeded, public generator with per-run randomized parameters (orbital elements, ballistic loads, macro draws, and the CCAR response law including which macros drive it), so there are no fixed answers to memorize and every score is computed against freshly drawn ground truth. The residual exposure is structural: a model could learn the generator's functional form from the source. That is largely defanged by design, because knowing the form does not reveal an instance's parameters, which must still be estimated from the provided data, which is the task itself.

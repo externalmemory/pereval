@@ -54,28 +54,30 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | Model | CCAR | Ballistic | Two-body | Three-body¹ | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | 0.031 | — | 0.005 | 0.039 | 0.31 | — | *floor* |
-| GLM-5.1 | 0.055 | 12 | 0.092 | 321 | 899 | 0.25 | **2.25** |
-| mimo-v2.5-free | 0.57 | 12 | 0.19 | 2438 | 292 | 0.15 | 3.42 |
-| nemotron-3-ultra:free | 0.27 | 16 | 2429 | 1579 | 1356 | 0.099 | 3.83 |
-| Claude Haiku 4.5 | 0.37 | 83 | 105 | 575 | 1348 | 0.10 | 4.17 |
-| *Naive baseline* | 0.85 | 22 | 17 | 332 | 20037 | 0.14 | *4.33* |
-| nemotron-3-super:free | 0.45 | 60 | 106 | 2744 | 918 | 0.12 | 4.75 |
-| laguna-m.1:free | 1.1 | 60 | 78 | 2067 | 1014 | 0.16 | 5.25 |
+| GLM-5.1 | 0.055 | 12 | 0.092 | 436 | 899 | 0.25 | **2.92** |
+| mimo-v2.5-free | 0.57 | 12 | 0.19 | 2426 | 292 | 0.15 | 3.92 |
+| ling-3.0-flash:free | 0.193 | 43 | 1556 | 3309 | 591 | **0.076**³ | 4.17 |
+| nemotron-3-ultra:free | 0.27 | 16 | 2429 | 817 | 1356 | 0.099 | 4.50 |
+| nemotron-3-super:free | 0.45 | 60 | 106 | 370 | 918 | 0.12 | 4.58 |
+| *Naive baseline* | 0.85 | 22 | 17 | 332 | 20037 | 0.14 | *4.67* |
+| Claude Haiku 4.5 | 0.37 | 83 | 105 | 1850 | 1348 | 0.10 | 5.17 |
+| laguna-m.1:free | 1.1 | 60 | 78 | 2067² | 1014 | 0.16 | 6.08 |
 | *Degenerate answer* | *0.57* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
-| ling-3.0-flash:free | *not run* | 43 | 1556 | n/c¹ | 591 | 0.076² | *not ranked* |
-| deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m³ | 0.17 | *not ranked* |
+| deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m⁴ | 0.17 | *not ranked* |
 
-¹ Three-body was scored by a **superseded scorer**, which rewrote submitted intervals wider than half the circle. Re-scoring the archived predictions moves affected runs in both directions (Haiku 574.7 to 1849.8, laguna 889.1 to 802.2), and `scripts/rescore_threebody.py` can identify and re-score 13 of the 21 archived runs, but four of the six cell-defining maxima are among the eight it cannot pin down, so the column cannot be rebuilt without re-running. `n/c` means not comparable: a run today would be scored by the corrected rule and could not sit beside these.
+¹ Three-body has been **re-measured** under the corrected circular scorer. Six models were re-run (GLM-5.1 uncapped at 400 messages after two of three hit the 150 default), Claude Haiku 4.5 was re-scored from its archived predictions, which all three proved identifiable, and the naive baseline recomputed host-side to 332 unchanged. Re-running moved cells hard and in both directions on identical instances: nemotron-3-super 2744 to 370, nemotron-3-ultra 1579 to 817, Haiku 575 to 1850, mimo 2438 to 2426. Most of that is run-to-run instability rather than the scorer fix, which is the [reproducibility finding](docs/limitations.md#run-to-run-reproducibility) reappearing in the column meant to be getting cleaner.
 
-² ling's 0.076 is the best model score in that column, but it is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimals, and the moment-matched logistic beats it on all three. The task's standing finding is that those naive families beat every literature construction here, and a model that lands on one inherits the result ([detail](docs/tasks/quantile.md)).
+² laguna keeps its archived value, on the superseded scorer. `poolside/laguna-m.1` is no longer served in any form, so it cannot be re-run, and only one of its three archived runs is identifiable, not the one that sets the cell. Re-scoring moves runs both ways, so this could sit either side of the 3019 degenerate anchor; it does not change laguna's position, which is last on any reading.
 
-³ deepseek's Flyby runs were re-measured and remain unreported, for a different reason from the other two: two of the three terminated at the 2400 second time cap, so the cell is budget-limited rather than unattempted. The one run that finished clean scored **103.9 against a degenerate anchor of 112.1**, the only sign so far of any agent carrying more information than a constant on that task. At n=1 it is an observation, not a cell.
+³ ling's 0.076 is the best model score in that column, but it is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimals, and the moment-matched logistic beats it on all three. The task's standing finding is that those naive families beat every literature construction here, and a model that lands on one inherits the result ([detail](docs/tasks/quantile.md)).
+
+⁴ deepseek's Flyby runs were re-measured and remain unreported, for a different reason from the other two: two of the three terminated at the 2400 second time cap, so the cell is budget-limited rather than unattempted. The one run that finished clean scored **103.9 against a degenerate anchor of 112.1**, the only sign so far of any agent carrying more information than a constant on that task. At n=1 it is an observation, not a cell.
 
 **CCAR is no longer frozen.** Its response law had fixed, published coefficients, which made every instance solvable in closed form; the fix is that the law is now drawn per instance, including which two macros are non-zero. That is a change to the answer key, not to the question: no agent was ever told the drivers, so the problem an agent faces is the one it always faced, and the archived runs measure it. The parameter draws are centred tightly on the old calibration so the scale is preserved (oracle 0.082 against 0.070, overlapping across seed sets). The optional extras that would have broken comparability, rotating the functional form and splitting scenario severity, are off by default and available via `-T family=rotate` and `-T scenario=rotate`.
 
 - **`n/m`**: at least one run failed for reasons outside the agent's control, so the cell is unmeasured rather than scored. An agent that works inside its budget and still produces nothing usable is scored, at the degenerate answer. This cost deepseek-v4-flash-free its previously best-in-suite three-body and flyby figures, which were penalties from an upstream failure ([detail](docs/limitations.md#non-response-was-cheaper-than-failure)).
-- **Degenerate answer**: one constant point estimate, no interval. It reads differently by column, and that is the point of having it. On Flyby every model with a reportable cell is worse than a constant (292 to 20037 against 138), though see note 3; on two-body and three-body the reverse, by a wide margin. In the Quantile column it is the same estimator as the naive row, `np.percentile`.
-- **Mean rank**: GLM-5.1 leads and the naive baseline is fifth of seven. Permuting ranks within each column, the null of no cross-task skill, reproduces the observed spread at p = 0.30, so read this as a description of the table and not a separation of the models ([why the aggregate is weak](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
+- **Degenerate answer**: one constant point estimate, no interval. It reads differently by column, and that is the point of having it. Every one of the eight ranked rows is worse than a constant on Flyby, and ling is worse than one on three-body too (3309 against 3019) despite leading the quantile column. In the Quantile column it is the same estimator as the naive row, `np.percentile`.
+- **Mean rank**: GLM-5.1 leads and the naive baseline is sixth of eight. Permuting ranks within each column, the null of no cross-task skill, reproduces the observed spread at p = 0.57, so read this as a description of the table and not a separation of the models ([why the aggregate is weak](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
 - **Oracle**: the true generating model for CCAR and the orbital tasks. Ballistic and quantile have no true-model reference by design; ballistic is anchored by the naive parabola and quantile's floor is 0 by construction.
 
 ## Layout
