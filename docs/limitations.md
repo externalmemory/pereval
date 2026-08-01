@@ -131,6 +131,10 @@ The error was not in the arithmetic. Per-instance cost was treated as a property
 
 The cap was raised deliberately, to stop a binding limit forcing a paid re-run after GLM-5.1 had just cost $3.56 that way. That reasoning inverted: raising the ceiling to avoid paying twice instead paid four times, and on flyby bought nothing at all, because the runs then grew long enough to hit the wall-clock limit and be discarded as budget-limited anyway. Both limits have to move together or neither should.
 
+A second attempt with $15.90 applied those rules and still stopped short. At default limits Kimi K3 completed two-body ($1.10) and three-body ($7.38), then one quantile seed at $3.59 against a budget of $2 for it. The balance guard that was supposed to prevent this was set from the same discredited estimate as everything else, so it waved through a seed that could not be afforded, and stopping the run mid-seed cost $0.91 for nothing. Completing quantile needed $10.77 with $3.58 in hand. K3 finishes with four of six cells and the last $2.67 unspent, because spending it could not have produced a reportable cell.
+
+The three-body result makes the stranded budget worth recording rather than embarrassing: at a worst case of 3.3 against an oracle of 0.039 it is 130x ahead of the next model in that column. The one frontier model in the cast is the only one that comes close to solving the suite's hardest task, and the table cannot rank it, which is a sharper statement about this leaderboard's coverage than any of its mean ranks.
+
 Two rules follow for any future paid run. Estimate from a run under the **same** limits, not from the archives, and treat any estimate carried across a limit change as unusable. And check the remaining balance against the estimate before each task rather than only before the batch, since the failure mode is not overspending gradually but a mid-run 402 that discards work already paid for.
 
 ## Contamination
