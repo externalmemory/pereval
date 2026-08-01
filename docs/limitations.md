@@ -117,6 +117,22 @@ nemotron-3-super improving 7.4x on byte-identical instances is not a scoring cor
 
 Two rows could not be brought current. laguna keeps its archived value because `poolside/laguna-m.1` is no longer served in any form and only one of its three runs is identifiable, not the one that sets the cell. deepseek stays unmeasured. GLM-5.1 needed a second run at 400 messages after two of three hit the 150 default, which is the budget confound catching a paid model this time.
 
+## Cost Estimates Do Not Survive a Change of Limits
+
+Running Kimi K3 on three tasks was estimated at $8.46 from its own archived token counts. It spent **$17.87** and returned one usable cell.
+
+| Task | Estimated | Actual | Outcome |
+| --- | --- | --- | --- |
+| flyby | $2.40 | $9.98 | two of three hit the time cap, unmeasured |
+| ballistic | $4.08 | $3.46 | clean, max 13.991 |
+| three-body | $1.98 | $4.43 | died on HTTP 402, out of credit, nothing |
+
+The error was not in the arithmetic. Per-instance cost was treated as a property of the model and the task, and it is mostly a property of the **limits**. K3's archived flyby run used 52 messages and 55k input tokens under a 250-message cap. Re-run under a 400-message cap it used 92 to 126 messages and 980k input tokens, eighteen times the input for the same task and model.
+
+The cap was raised deliberately, to stop a binding limit forcing a paid re-run after GLM-5.1 had just cost $3.56 that way. That reasoning inverted: raising the ceiling to avoid paying twice instead paid four times, and on flyby bought nothing at all, because the runs then grew long enough to hit the wall-clock limit and be discarded as budget-limited anyway. Both limits have to move together or neither should.
+
+Two rules follow for any future paid run. Estimate from a run under the **same** limits, not from the archives, and treat any estimate carried across a limit change as unusable. And check the remaining balance against the estimate before each task rather than only before the batch, since the failure mode is not overspending gradually but a mid-run 402 that discards work already paid for.
+
 ## Contamination
 
 The repo is public, so anything fixed in it can enter training corpora. The four generated tasks (CCAR, ballistic, orbital) therefore draw fresh instances per run from a seeded, public generator with per-run randomized parameters (orbital elements, ballistic loads, macro draws, and the CCAR response law including which macros drive it), so there are no fixed answers to memorize and every score is computed against freshly drawn ground truth. The residual exposure is structural: a model could learn the generator's functional form from the source. That is largely defanged by design, because knowing the form does not reveal an instance's parameters, which must still be estimated from the provided data, which is the task itself.

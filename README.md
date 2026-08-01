@@ -63,6 +63,7 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | Claude Haiku 4.5 | 0.37 | 83 | 105 | 1850 | 1348 | 0.10 | 5.17 |
 | laguna-m.1:free | 1.1 | 60 | 78 | 2067² | 1014 | 0.16 | 6.08 |
 | *Degenerate answer* | *0.57* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
+| Kimi K3 (paid) | 0.12 | **14** | — | — | n/m⁵ | — | *not ranked* |
 | deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m⁴ | 0.17 | *not ranked* |
 
 ¹ Three-body has been **re-measured** under the corrected circular scorer. Six models were re-run (GLM-5.1 uncapped at 400 messages after two of three hit the 150 default), Claude Haiku 4.5 was re-scored from its archived predictions, which all three proved identifiable, and the naive baseline recomputed host-side to 332 unchanged. Re-running moved cells hard and in both directions on identical instances: nemotron-3-super 2744 to 370, nemotron-3-ultra 1579 to 817, Haiku 575 to 1850, mimo 2438 to 2426. Most of that is run-to-run instability rather than the scorer fix, which is the [reproducibility finding](docs/limitations.md#run-to-run-reproducibility) reappearing in the column meant to be getting cleaner.
@@ -70,6 +71,8 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 ² laguna keeps its archived value, on the superseded scorer. `poolside/laguna-m.1` is no longer served in any form, so it cannot be re-run, and only one of its three archived runs is identifiable, not the one that sets the cell. Re-scoring moves runs both ways, so this could sit either side of the 3019 degenerate anchor; it does not change laguna's position, which is last on any reading.
 
 ³ ling's 0.076 is the best model score in that column, but it is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimals, and the moment-matched logistic beats it on all three. The task's standing finding is that those naive families beat every literature construction here, and a model that lands on one inherits the result ([detail](docs/tasks/quantile.md)).
+
+⁵ Kimi K3 is the only paid non-frontier row and it is incomplete because the budget ran out. Ballistic (14) is its best cell and the second best in that column. Flyby is `n/m`: two of three runs hit the 5400 second time cap. Three-body produced nothing, the eval dying on an HTTP 402 mid-run. Two-body and quantile were never attempted. The cost post-mortem is in [docs/limitations.md](docs/limitations.md#cost-estimates-do-not-survive-a-change-of-limits).
 
 ⁴ deepseek's Flyby runs were re-measured and remain unreported, for a different reason from the other two: two of the three terminated at the 2400 second time cap, so the cell is budget-limited rather than unattempted. The one run that finished clean scored **103.9 against a degenerate anchor of 112.1**, the only sign so far of any agent carrying more information than a constant on that task. At n=1 it is an observation, not a cell.
 
