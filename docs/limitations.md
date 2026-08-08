@@ -137,6 +137,16 @@ The orbital results make the stranded budget worth recording rather than embarra
 
 Two rules follow for any future paid run. Estimate from a run under the **same** limits, not from the archives, and treat any estimate carried across a limit change as unusable. And check the remaining balance against the estimate before each task rather than only before the batch, since the failure mode is not overspending gradually but a mid-run 402 that discards work already paid for.
 
+## What Completing One Row Did to the Aggregate
+
+Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. With K3 complete it is p = 0.037 on the spread and p = 0.013 on the range.
+
+That is not the aggregate becoming trustworthy. It is one row carrying the entire signal. K3 ranks 1st, 1st, 2nd, 2nd, 2nd, 3rd; remove it and the other eight rows are as unordered as before. The permutation test was right both times, and what it was detecting is now a single model that is genuinely different rather than a leaderboard that has resolved.
+
+Where the difference lives is more interesting than the rank. On the two hardest orbital tasks K3 is one to two orders of magnitude ahead of everything else, at 3.3 on three-body against a next-best of 436, and 50 on flyby against 292, beating the degenerate answer on every one of its flyby runs where no other model manages it once. On the two statistical tasks it is unremarkable: CCAR 0.12 and quantile 0.077 sit inside the pack, and its quantile score is level with ling's 0.076 at a resolution neither the block-sampling floor nor three runs can separate.
+
+So the separation the suite detects is not "frontier beats cheap" in general. It is specific to geometric reconstruction from noisy angles, and it is absent exactly where the domain claim lives. The one row that makes the aggregate significant is also the row that shows the aggregate is measuring the physics tasks.
+
 ## Contamination
 
 The repo is public, so anything fixed in it can enter training corpora. The four generated tasks (CCAR, ballistic, orbital) therefore draw fresh instances per run from a seeded, public generator with per-run randomized parameters (orbital elements, ballistic loads, macro draws, and the CCAR response law including which macros drive it), so there are no fixed answers to memorize and every score is computed against freshly drawn ground truth. The residual exposure is structural: a model could learn the generator's functional form from the source. That is largely defanged by design, because knowing the form does not reveal an instance's parameters, which must still be estimated from the provided data, which is the task itself.

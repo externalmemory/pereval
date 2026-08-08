@@ -56,16 +56,16 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | Model | CCAR | Ballistic | Two-body | Three-body¹ | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | 0.031 | — | 0.005 | 0.039 | 0.31 | — | *floor* |
-| GLM-5.1 | 0.055 | 12 | 0.092 | 436 | 899 | 0.25 | **2.92** |
-| mimo-v2.5-free | 0.57 | 12 | 0.19 | 2426 | 292 | 0.15 | 3.92 |
-| ling-3.0-flash:free | 0.193 | 43 | 1556 | 3309 | 591 | **0.076**³ | 4.17 |
-| nemotron-3-ultra:free | 0.27 | 16 | 2429 | 817 | 1356 | 0.099 | 4.50 |
-| nemotron-3-super:free | 0.45 | 60 | 106 | 370 | 918 | 0.12 | 4.58 |
-| *Naive baseline* | 0.85 | 22 | 17 | 332 | 20037 | 0.14 | *4.67* |
-| Claude Haiku 4.5 | 0.37 | 83 | 105 | 1850 | 1348 | 0.10 | 5.17 |
-| laguna-m.1:free | 1.1 | 60 | 78 | 2067² | 1014 | 0.16 | 6.08 |
+| Kimi K3⁴ | 0.12 | 14 | 0.094 | **3.3** | **50** | 0.077 | **1.83** |
+| GLM-5.1 | 0.055 | 12 | 0.092 | 436 | 899 | 0.25 | 3.42 |
+| mimo-v2.5-free | 0.57 | 12 | 0.19 | 2426 | 292 | 0.15 | 4.75 |
+| ling-3.0-flash:free | 0.193 | 43 | 1556 | 3309 | 591 | 0.076³ | 5.00 |
+| nemotron-3-ultra:free | 0.27 | 16 | 2429 | 817 | 1356 | 0.099 | 5.50 |
+| nemotron-3-super:free | 0.45 | 60 | 106 | 370 | 918 | 0.12 | 5.58 |
+| *Naive baseline* | 0.85 | 22 | 17 | 332 | 20037 | 0.14 | *5.67* |
+| Claude Haiku 4.5 | 0.37 | 83 | 105 | 1850 | 1348 | 0.10 | 6.17 |
+| laguna-m.1:free | 1.1 | 60 | 78 | 2067 | 1014 | 0.16 | 7.08 |
 | *Degenerate answer* | *0.57* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
-| Kimi K3 | 0.12 | 14 | 0.094 | **3.3** | **50** | n=2⁴ | *not ranked* |
 | deepseek-v4-flash-free | 0.14 | 75 | n/m | n/m | n/m⁵ | 0.17 | *not ranked* |
 
 ¹ Three-body has been **re-measured** under the corrected circular scorer. Six models were re-run (GLM-5.1 uncapped at 400 messages after two of three hit the 150 default), Claude Haiku 4.5 was re-scored from its archived predictions, which all three proved identifiable, and the naive baseline recomputed host-side to 332 unchanged. Re-running moved cells hard and in both directions on identical instances: nemotron-3-super 2744 to 370, nemotron-3-ultra 1579 to 817, Haiku 575 to 1850, mimo 2438 to 2426. Most of that is run-to-run instability rather than the scorer fix, which is the [reproducibility finding](docs/limitations.md#run-to-run-reproducibility) reappearing in the column meant to be getting cleaner.
@@ -78,7 +78,7 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 
 Its cells come from two serving paths. CCAR, ballistic, two-body and three-body ran on OpenRouter's paid endpoint; flyby and quantile ran on tokenrouter's free `kimi-k3-free`, after the paid budget was exhausted. The two were checked against each other on one matched instance, two-body instance-0, scoring 0.023 free against 0.024 paid, so they appear to serve the same model; that is one comparison, not a proof.
 
-Quantile is **n=2**, not a cell. Two seeds returned 0.0773 and 0.0604, and the third hit the 300-message cap, which makes it unmeasured under the rule in [task-design.md](docs/task-design.md#anchoring-and-non-response) whatever it scored. Two-body (0.094) is level with GLM's 0.092. The cost post-mortem for the paid half is in [docs/limitations.md](docs/limitations.md#cost-estimates-do-not-survive-a-change-of-limits).
+Quantile is now a complete cell at **0.077** (0.0773, 0.0604, 0.0568). The third seed first ran to the 300-message cap and was discarded; re-run under the raised 600 ceiling it finished in **39 messages** and scored better, so the message count on this task is dominated by which path a run happens to take, not by the ceiling. Two-body (0.094) is level with GLM's 0.092, and quantile is level with ling's 0.076: neither gap is resolvable. The cost post-mortem for the paid half is in [docs/limitations.md](docs/limitations.md#cost-estimates-do-not-survive-a-change-of-limits).
 
 ⁵ deepseek's Flyby runs were re-measured and remain unreported, for a different reason from the other two: two of the three terminated at the 2400 second time cap, so the cell is budget-limited rather than unattempted. The one run that finished clean scored **103.9 against a degenerate anchor of 112.1**, the only sign so far of any agent carrying more information than a constant on that task. At n=1 it is an observation, not a cell.
 
@@ -86,7 +86,7 @@ Quantile is **n=2**, not a cell. Two seeds returned 0.0773 and 0.0604, and the t
 
 - **`n/m`**: at least one run failed for reasons outside the agent's control, so the cell is unmeasured rather than scored. An agent that works inside its budget and still produces nothing usable is scored, at the degenerate answer. This cost deepseek-v4-flash-free its previously best-in-suite three-body and flyby figures, which were penalties from an upstream failure ([detail](docs/limitations.md#non-response-was-cheaper-than-failure)).
 - **Degenerate answer**: one constant point estimate, no interval. It reads differently by column, and that is the point of having it. Every one of the eight ranked rows is worse than a constant on Flyby, and ling is worse than one on three-body too (3309 against 3019) despite posting the lowest quantile score. The single exception anywhere in the Flyby column is Kimi K3, whose three runs beat their instances' anchors by 2.8x, 10.8x and 6.1x. In the Quantile column it is the same estimator as the naive row, `np.percentile`.
-- **Mean rank**: GLM-5.1 leads and the naive baseline is sixth of eight. Permuting ranks within each column, the null of no cross-task skill, reproduces the observed spread at p = 0.57, so read this as a description of the table and not a separation of the models ([why the aggregate is weak](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
+- **Mean rank**: Kimi K3 leads at 1.83 and the naive baseline is seventh of nine. This is the first version of the table where the aggregate is distinguishable from chance: permuting ranks within each column, the null of no cross-task skill, reproduces the observed spread at p = 0.037 and the observed range at p = 0.013. That is down from p = 0.57 before K3's row was complete, and it is one model doing the work, so read it as a description of the table rather than a separation of the eight rows beneath it ([why the aggregate is weak](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
 - **Oracle**: the true generating model for CCAR and the orbital tasks. Ballistic and quantile have no true-model reference by design; ballistic is anchored by the naive parabola and quantile's floor is 0 by construction.
 
 ## Layout
