@@ -139,7 +139,7 @@ def twobody(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 150,
+    message_limit: int = 500,
     baseline: str = "",
     repeats: int = 1,
 ) -> Task:
@@ -156,7 +156,7 @@ def threebody(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 150,
+    message_limit: int = 500,
     baseline: str = "",
     repeats: int = 1,
 ) -> Task:
@@ -204,7 +204,7 @@ def hyperbolic(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 250,
+    message_limit: int = 600,
     baseline: str = "",
     repeats: int = 1,
     filter_reference: bool = True,

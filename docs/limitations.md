@@ -175,6 +175,25 @@ A tight message or time limit silently truncates slow or verbose models and prod
 
 Limits are therefore set generously by default, actual message counts are recorded, and any row near its cap is treated as unmeasured rather than as a score.
 
+"Generously" was aspirational until it was measured. The original defaults (150 for ballistic, two-body, three-body and CCAR, 250 for flyby, 300 for quantile) bound on five separate occasions: deepseek on two-body, GLM-5.1 on three-body, deepseek on CCAR, and Kimi K3 on both flyby and quantile. Three of those wasted paid API credit on runs that were then discarded and had to be bought again.
+
+The defaults are now set from the observed distribution rather than guessed, at roughly three to four times the p90 of every run archived here:
+
+| Task | median | p90 | max | old default | new |
+| --- | --- | --- | --- | --- | --- |
+| ballistic | 43 | 124 | 136 | 150 | 500 |
+| two-body | 49 | 119 | 150 | 150 | 500 |
+| three-body | 72 | 144 | 188 | 150 | 500 |
+| flyby | 86 | 148 | 194 | 250 | 600 |
+| quantile | 68 | 241 | 300 | 300 | 800 |
+| CCAR | 58 | 141 | 189 | 150 | 500 |
+
+The maxima at exactly 150 and 300 are cap-hits, not natural stopping points.
+
+The asymmetry is what makes this close to free. A ceiling costs nothing for a model that stops on its own, which is most of them: raising it does not make a 43-message ballistic run any longer. It only binds on the runs that would otherwise be truncated, and a truncated run costs nearly as much as a completed one while yielding nothing at all. Running long is a wall-clock problem; hitting a cap is a wasted measurement.
+
+Two riders. The wall-clock limit has to move with the message limit or the failure simply relocates, which is exactly what happened when K3's flyby ceiling went to 400 without touching the clock and two of three runs were then discarded on time instead. And archived rows whose runs came close to their old caps, notably GLM-5.1's three-body at 140 of 150, may improve under the new ceiling for budget reasons rather than capability ones; message counts are recorded per run so that can be checked rather than assumed.
+
 ## Metric Choice Is Not Neutral
 
 The quantile task makes this explicit: four defensible criteria (point accuracy, point centring, interval coverage, interval score) rank the same five reference estimators in incompatible orders. A single headline number always encodes a choice about what matters. Where that choice is contestable, the alternatives are reported alongside rather than buried.

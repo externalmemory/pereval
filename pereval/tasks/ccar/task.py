@@ -122,7 +122,7 @@ def ccar(
     seed: int | None = None,
     oracle_n: int = 2000,
     n_intime: int = 80,
-    message_limit: int = 150,
+    message_limit: int = 500,
     baseline: str = "",
     family: str = "",
     scenario: str = "",

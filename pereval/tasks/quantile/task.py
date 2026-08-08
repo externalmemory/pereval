@@ -150,7 +150,7 @@ def quantile_scorer():
 
 @task
 def quantile(n_instances: int = 8, seed: int | None = 1,
-             n_blocks: int = N_BLOCKS, message_limit: int = 300,
+             n_blocks: int = N_BLOCKS, message_limit: int = 800,
              baseline: str = "", disclose_metric: bool = True,
              repeats: int = 1):
     """Small-sample population tail quantile estimation from FRED YoY data.

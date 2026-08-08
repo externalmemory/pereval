@@ -120,7 +120,7 @@ def ballistic(
     n_instances: int = 5,
     seed: int | None = None,
     oracle_n: int = 2000,
-    message_limit: int = 150,
+    message_limit: int = 500,
     baseline: bool = False,
     repeats: int = 1,
 ) -> Task:
