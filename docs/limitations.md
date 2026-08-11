@@ -127,6 +127,8 @@ Running Kimi K3 on three tasks was estimated at $8.46 from its own archived toke
 | ballistic | $4.08 | $3.46 | clean, max 13.991 |
 | three-body | $1.98 | $4.43 | died on HTTP 402, out of credit, nothing |
 
+The correction was applied on the next paid row and worked. deepseek-v4-flash-0731 was run across all six tasks against a $2.67 balance with a guard that re-derived cost per message from **measured** spend after each task rather than from an up-front estimate, and stopped the batch if the balance fell below 1.6x the next task's projection. It never had to fire: the row cost **$1.28** against a $1.30 to $3.50 estimate. The measured rate varied from $0.00023 to $0.00124 per message across the six tasks, a 5x range within one model, which is the spread an up-front per-message estimate cannot capture and the reason the guard has to recalibrate rather than project.
+
 The error was not in the arithmetic. Per-instance cost was treated as a property of the model and the task, and it is mostly a property of the **limits**. K3's archived flyby run used 52 messages and 55k input tokens under a 250-message cap. Re-run under a 400-message cap it used 92 to 126 messages and 980k input tokens, eighteen times the input for the same task and model.
 
 The cap was raised deliberately, to stop a binding limit forcing a paid re-run after GLM-5.1 had just cost $3.56 that way. That reasoning inverted: raising the ceiling to avoid paying twice instead paid four times, and on flyby bought nothing at all, because the runs then grew long enough to hit the wall-clock limit and be discarded as budget-limited anyway. Both limits have to move together or neither should.
@@ -139,13 +141,28 @@ Two rules follow for any future paid run. Estimate from a run under the **same**
 
 ## What Completing One Row Did to the Aggregate
 
-Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. With K3 complete it is p = 0.037 on the spread and p = 0.013 on the range.
+Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. Completing K3 took it to p = 0.037, and adding a complete deepseek-v4-flash-0731 row took it to **p = 0.004 on the spread and p = 0.007 on the range** over ten ranked rows.
 
-That is not the aggregate becoming trustworthy. It is one row carrying the entire signal. K3 ranks 1st, 1st, 2nd, 2nd, 2nd, 3rd; remove it and the other eight rows are as unordered as before. The permutation test was right both times, and what it now detects is a single model that is genuinely different, not a leaderboard that has resolved. Read as a ranking of the eight rows beneath K3, the column is still noise.
+That is not the aggregate becoming trustworthy. Dropping rows one at a time shows where the signal lives:
+
+| Rows tested | p (spread) |
+| --- | --- |
+| all ten | 0.004 |
+| without deepseek-0731 | 0.037 |
+| without Kimi K3 | 0.090 |
+| without both | 0.561 |
+
+K3 alone still carries a detectable signal; deepseek alone does not quite reach one; without both, the remaining eight rows are as unordered as they were at the start. So the column detects that the top one or two models are genuinely different, not that anything below them is ranked. Read as a ranking of the eight rows beneath them, it is still noise.
 
 The positive finding is that the suite has resolving power at the top of the range, which was not previously demonstrable. Every model measured before this clustered within a factor of a few on the orbital tasks and none beat the degenerate answer on flyby. K3 is 3.3 on three-body against a next-best of 436, and 50 on flyby against 292, beating the degenerate answer on all three of its flyby runs. Those are gaps this suite can resolve, and until now nothing had produced one.
 
 That the same model is unremarkable on CCAR and quantile is not a limitation and not news. CCAR was built tractable on purpose, "included deliberately as a contrast to three-body", and the per-task doc has recorded since the first cast that "CCAR is tractable even for cheap models". A frontier model failing to separate on a task designed to be solvable by cheap ones is the difficulty gradient working as intended. The genuine caveat about the aggregate leaning on the physics tasks is a property of the task mix, and is covered under [The Overall Rank Depends on the Task Mix](#the-overall-rank-depends-on-the-task-mix).
+
+## Serving Provenance Is Not Controlled
+
+A model id is not a guarantee of which weights answered. Kimi K3's row was measured across two serving paths: CCAR, ballistic, two-body and three-body on OpenRouter's paid endpoint, and flyby and quantile on tokenrouter's free `kimi-k3-free`, after the paid budget ran out. The two were compared on one matched instance, two-body instance-0, scoring 0.023 free against 0.024 paid, which is consistent with the same model but is a single comparison rather than a proof.
+
+Nothing in the harness detects a provider silently substituting a quantized or distilled variant, changing a default sampling parameter, or routing to a different build under the same name. Cells assembled from more than one endpoint are therefore weaker evidence than cells from one, and the split is recorded per row rather than averaged away. This is a general property of evaluating through aggregators, not a defect of any particular one.
 
 ## Contamination
 
@@ -157,7 +174,7 @@ The quantile task is the exception and needs its own argument, because its data 
 
 ## Sample Size
 
-Every score table reports at least three runs per model as mean ± 2 SD, after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3, and the aggregate rank is not resolved at six tasks either: an independent permutation test puts the observed spread of mean ranks at p = 0.25 against the null of no cross-task skill. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
+Every score table reports at least three runs per model as mean ± 2 SD, after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p = 0.004 on the spread of mean ranks), but only because the top one or two rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What Completing One Row Did to the Aggregate](#what-completing-one-row-did-to-the-aggregate) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
 
 ## Run-to-Run Reproducibility
 
@@ -189,18 +206,18 @@ Limits are therefore set generously by default, actual message counts are record
 
 The raised defaults then bound once more, which is the useful part of the story. deepseek-v4-flash-0731 hit the new 500-message three-body ceiling on one instance of three. Re-run at 1200 the same model on the same instance finished in **190 messages**, well under even the old 500, and scored 269 rather than the truncated 340. So the cap was not binding on the work the task requires; it was binding on one run that had gone into a loop, and the re-run did not go into it. That is the same pattern as Kimi K3's quantile seed, which finished in 39 messages under a raised ceiling after hitting 300 under the old one. The lesson is not that these tasks need ever larger budgets. It is that message count is dominated by which path a run happens to take, so a cap set near the typical run silently converts a bad draw into a bad score, and a cap set far above it costs nothing on the runs that never approach it.
 
-The defaults are now set from the observed distribution rather than guessed, at roughly three to four times the p90 of every run archived here:
+The defaults are set from the observed distribution rather than guessed, at between three and nine times the p90. The table counts only **natural stopping points**: runs that ended on their own, excluding runs that hit a message or wall-clock limit, whose message count measures the limit rather than the work, and excluding upstream non-responses of two messages or fewer. The recipe is stated explicitly because an earlier version of this table could not be reproduced from the archive, and a figure nobody can recompute is not evidence.
 
-| Task | median | p90 | max | old default | new |
+| Task | runs | median | p90 | max | new default |
 | --- | --- | --- | --- | --- | --- |
-| ballistic | 43 | 124 | 136 | 150 | 500 |
-| two-body | 49 | 119 | 150 | 150 | 500 |
-| three-body | 72 | 144 | 190 | 150 | 500 |
-| flyby | 86 | 148 | 194 | 250 | 600 |
-| quantile | 68 | 241 | 300 | 300 | 800 |
-| CCAR | 58 | 141 | 189 | 150 | 500 |
+| ballistic | 66 | 31 | 54 | 114 | 500 |
+| two-body | 59 | 32 | 56 | 76 | 500 |
+| three-body | 34 | 72 | 130 | 190 | 500 |
+| flyby | 13 | 64 | 171 | 194 | 600 |
+| quantile | 10 | 42 | 110 | 250 | 800 |
+| CCAR | 59 | 42 | 145 | 189 | 500 |
 
-The maxima at exactly 150 and 300 are cap-hits, not natural stopping points, as is the one three-body run that stopped at exactly 500 under the raised ceiling. The 190 in the three-body row is that instance re-run without a binding cap, and it is the largest natural stopping point recorded on any task.
+The excluded population is the more informative one. 23 of 57 three-body runs and 22 of 88 ballistic runs ended at a limit, most of them at the low experimental ceilings used early on, and a further 16 ballistic and 19 two-body samples were upstream non-responses that never produced a message count at all. The largest natural stopping point anywhere in the archive is the 190-message three-body run described above, which is why 500 is not a tight ceiling on any task.
 
 The asymmetry is what makes this close to free. A ceiling costs nothing for a model that stops on its own, which is most of them: raising it does not make a 43-message ballistic run any longer. It only binds on the runs that would otherwise be truncated, and a truncated run costs nearly as much as a completed one while yielding nothing at all. Running long is a wall-clock problem; hitting a cap is a wasted measurement.
 
@@ -214,12 +231,12 @@ The quantile task makes this explicit: four defensible criteria (point accuracy,
 
 The README's mean-rank column is a Borda count over the six tasks currently in the suite: four physics/mechanism tasks (ballistic, two-body, three-body, flyby) and two statistical-modelling tasks (CCAR, quantile). That is not a neutral portfolio: the physics axis carries two thirds of the votes, so the aggregate tilts toward physics-capable models.
 
-Before reading anything into the ordering, note how little of it is resolved. Permuting the ranks within each column independently, which is the null of no cross-task skill whatsoever, reproduces the observed dispersion of mean ranks at p = 0.25 (spread) and p = 0.22 (range) over 200,000 draws. That is not significant at any conventional bar. Two structural reasons compound it. Six columns is very few votes: dropping one, as happened while the CCAR column was briefly withheld, weakens the same test to p = 0.41 and p = 0.58. And the six are not six independent axes anyway, since the rank-correlation matrix across tasks has a participation ratio of 3.1 effective dimensions, with two-body against quantile at -0.86. The fix for a weak aggregate is more tasks, not more interpretation of this one.
+Permuting the ranks within each column independently, the null of no cross-task skill, now reproduces the observed dispersion at p = 0.004 (spread) and p = 0.007 (range). That clears a conventional bar, but it establishes only that the top of the column is real. Six columns remains very few votes, and the six are not six independent axes: the rank-correlation matrix has a participation ratio of 3.5 effective dimensions. The fix for a weak aggregate is more tasks, not more interpretation of this one.
 
-The tilt is also large enough to change who leads. GLM-5.1 tops the all-six ranking, but that is partly an artifact of the mix:
+The tilt no longer changes who leads, which is itself a change: Kimi K3 is first on all six, first on the two statistical tasks and first on the four physics tasks, so its position does not depend on the mix. Below it the mix reorders the field substantially:
 
-- **On the two statistical tasks alone, nemotron-3-ultra ranks first and GLM-5.1 falls out of the top four.**
-- On the four physics tasks alone, GLM-5.1 leads and nemotron-3-ultra sinks near the bottom.
-- Weighting the two axes equally (average the statistical-task ranks and the physics-task ranks, then average those) still puts GLM-5.1 first but lifts nemotron-3-ultra from fourth to third.
+- **ling-3.0-flash is 2nd of ten on the statistical tasks and 8th on the physics tasks.** nemotron-3-ultra shows the same split, 4th against 9th.
+- mimo-v2.5 runs the other way, 4th on physics and 8th on statistical, as does GLM-5.1, 2nd against 5th.
+- Weighting the two axes equally rather than by column count moves GLM-5.1 from 3rd to 3rd but lifts ling from 5th to 4th and drops mimo from 4th to 6th.
 
-So the overall rank is a property of the task portfolio, not of the models in isolation. It is meaningful only relative to the stated task set, and this suite makes no claim that its mix is canonical or balanced; it is simply the tasks that exist so far. A different or larger mix would reorder the field, and the more honest reading of the matrix is the per-axis story (who is good at statistical modelling, who at physics reconstruction) rather than the single aggregate, which the mean-rank column exposes precisely by ranking three models at or below the naive baseline.
+So the overall rank is a property of the task portfolio, not of the models in isolation. It is meaningful only relative to the stated task set, and this suite makes no claim that its mix is canonical or balanced; it is simply the tasks that exist so far. A different or larger mix would reorder the field, and the more honest reading of the matrix is the per-axis story (who is good at statistical modelling, who at physics reconstruction) rather than the single aggregate, which the mean-rank column exposes precisely by ranking two models below the naive baseline.

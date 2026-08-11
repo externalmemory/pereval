@@ -118,6 +118,7 @@ The four reference estimators are deterministic given the blocks, so their sprea
 
 | Row | runs | per-run regret | mean ± 2 SD |
 | --- | --- | --- | --- |
+| deepseek-v4-flash-0731 | 3 | 0.0658, 0.0670, 0.0612 | 0.065 ± 0.006 |
 | `[logistic]` | 3 | 0.0775, 0.0881, 0.0617 | 0.076 ± 0.027 |
 | `[normal]` | 3 | 0.0796, 0.0907, 0.0638 | 0.078 ± 0.027 |
 | **ling-3.0-flash (free)** | 3 | 0.0756, 0.0699, 0.0632 | **0.070 ± 0.012** |
@@ -147,6 +148,19 @@ The transcripts confirm what the scores imply. On seeds 2 and 3 it fits a moment
 So the result belongs to the task, not the model. This task's standing finding is that moment-matched families beat every literature construction on it, by margins of 0.03 to 0.05, and a model that lands on one of them inherits that. Its ± 0.012 band, tighter than the deterministic baselines' own block-sampling spread, has the same explanation: this is the deterministic-method collapse described under [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility), and quantile is the one task where collapsing to the naive method is the right move rather than the failure the other tasks are built to expose.
 
 The claim first published here, that ling beat every reference estimator, was wrong. It compared ling's scores against baseline figures computed under the superseded estimand instead of recomputing them, and the ~0.002 correction it ignored ran the wrong way against a gap of ~0.003.
+
+**deepseek-v4-flash-0731 posts the lowest mean in the table, and unlike ling it did not get there by reproducing a baseline.** Recomputed on its own three instances, it matches the best reference rather than beating it:
+
+| Instance | 0731 | `logistic` | `normal` |
+| --- | --- | --- | --- |
+| 1835504127 | **0.0658** | 0.0726 | 0.0765 |
+| 2834126987 | 0.0670 | 0.0672 | 0.0699 |
+| 1576890651 | 0.0612 | **0.0602** | 0.0632 |
+| mean | 0.0647 | 0.0667 | 0.0699 |
+
+It wins one instance by 0.0068, ties one to 0.0002 and loses one by 0.0010, for a mean edge of 0.0020. That is inside the block-sampling floor and inside the ~0.005 resolution this page already warns about, so the correct reading is a tie with `logistic`, not a win over it.
+
+What is different is the construction. The transcripts show it running its own Monte Carlo study over candidate truth families (t2 through t5, normal, Johnson SU skew, a GPD upper tail) scored by simulated pinball loss, and submitting a **predictive t with df = 5**, having tested and rejected a skew-t fit. That is not any of the estimators in the reference set: the plug-in `t6` row scores 0.119, so the predictive shift rather than the t family is what puts it level with `logistic`. So the task's standing finding survives in a sharper form. The naive moment-matched families are not merely hard to beat by search; a model that searches carefully arrives back at their performance level by a different route, which is what a genuine frontier looks like rather than a scoring artefact.
 
 Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022) and nemotron-3-super (± 0.021) score as consistently as the deterministic baselines**, and nemotron-ultra beats the extrapolating rules on the conservative bound (upper 0.110 against wei8's 0.149 recomputed), but is edged by both moment-matched rules, whose upper bounds are 0.083 for `normal` and 0.079 for `logistic`.
 

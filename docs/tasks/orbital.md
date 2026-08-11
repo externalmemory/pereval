@@ -56,54 +56,55 @@ Draw unfiltered with `-T filter_reference=False` to measure into that tail. Each
 
 Three instances per task (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across the runs, ordered by the upper end mean + 2 SD, paired on the same three instances. Lower Winkler regret is better; coverage targets 0.95. The reference and naive rows (`-T baseline=kepler|harmonic` for two/three-body, `od|poly` for the flyby) are solvers, not models.
 
-> **These tables are an earlier snapshot and several rows are superseded.** They predate two corrections: the circular-scorer fix, which moved 121 scored rows and changed the Haiku and nemotron figures substantially, and the re-measurement that reclassified deepseek-v4-flash-free's three-body and flyby cells as unmeasured. Where they disagree with the summary table in the [README](../../README.md), the README is current. They are kept because the per-run spread and coverage detail below is not reproduced there, not because the levels are still accurate.
+Every row below was recomputed from the archived `.eval` logs under the corrected circular scorer. The baseline and reference rows were re-run host-side and reproduce their previously published values exactly, which is the check that the scorer correction did not move the anchors. Rows whose logs are not in `logs/` could not be recomputed and are listed under each table rather than carried at their superseded values.
 
 **Two-body** (the easy task):
 
 | Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
 | --- | --- | --- | --- |
 | Kepler reference | 3 | 0.004 ± 0.002 | 0.95 |
-| GLM-5.1 | 3 | 0.040 ± 0.092 | 0.96 |
-| mimo-v2.5 (free) | 3 | 0.074 ± 0.206 | 0.95 |
-| deepseek-v4-flash (free) | 3 | 3.53 ± 6.06 | 0.63 |
+| Kimi K3 | 3 | 0.044 ± 0.087 | 0.96 |
+| deepseek-v4-flash-0731 | 3 | 0.112 ± 0.328 | 0.94 |
 | Harmonic baseline (naive) | 3 | 9.86 ± 16.26 | 0.78 |
-| laguna-m.1 (free) | 3 | 33.5 ± 80.3 | 0.96 |
-| Claude Haiku 4.5 | 3 | 81.2 ± 45.6 | 1.00 |
-| nemotron-3-super (free) | 3 | 75.8 ± 51.8 | 0.97 |
-| nemotron-3-ultra (free) | 3 | 653.5 ± 1568 | 0.08 |
+| ling-3.0-flash (free) | 3 | 524 ± 1787 | 0.72 |
+| nemotron-3-ultra (free) | 3 | 906 ± 2639 | 0.47 |
+
+Not recomputable, worst-case cells from the [README](../../README.md): GLM-5.1 0.092, mimo-v2.5 0.19, laguna-m.1 78, Claude Haiku 4.5 105, nemotron-3-super 106.
 
 **Three-body** (the hard leap):
 
 | Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
 | --- | --- | --- | --- |
 | Kepler reference | 3 | 0.018 ± 0.037 | 0.95 |
-| deepseek-v4-flash (free) | 3 | 9.63 ± 9.16 | 0.00 |
-| Harmonic baseline (naive) | 3 | 139.8 ± 336.2 | 0.78 |
-| GLM-5.1 | 3 | 194.6 ± 342.0 | 0.64 |
-| Claude Haiku 4.5 | 3 | 370.3 ± 384.3 | 0.73 |
-| nemotron-3-ultra (free) | 3 | 877.6 ± 1428 | 0.37 |
-| nemotron-3-super (free) | 3 | 1029 ± 2976 | 0.60 |
-| laguna-m.1 (free) | 3 | 1239 ± 1439 | 0.43 |
-| mimo-v2.5 (free) | 3 | 1150 ± 2445 | 0.33 |
+| Kimi K3 | 3 | 1.12 ± 3.81 | 0.89 |
+| deepseek-v4-flash-0731 | 3 | 116 ± 273 | 0.72 |
+| Harmonic baseline (naive) | 3 | 140 ± 336 | 0.78 |
+| nemotron-3-super (free) | 3 | 276 ± 251 | 0.90 |
+| GLM-5.1 | 3 | 183 ± 451 | 0.72 |
+| nemotron-3-ultra (free) | 3 | 416 ± 788 | 0.49 |
+| mimo-v2.5 (free) | 3 | 904 ± 2640 | 0.60 |
+| ling-3.0-flash (free) | 3 | 2005 ± 2341 | 0.20 |
+
+Not recomputable, worst-case cells from the README: Claude Haiku 4.5 1850 (re-scored from archived predictions, not re-run), laguna-m.1 2067 (archived on the superseded scorer; the model is no longer served).
 
 **Hyperbolic flyby** (most structurally complex):
 
 | Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
 | --- | --- | --- | --- |
 | OD reference | 3 | 0.175 ± 0.308 | 0.94 |
-| deepseek-v4-flash (free) | 3 | 13.6 ± 11.0 | 0.00 |
-| mimo-v2.5 (free) | 3 | 170.8 ± 214.8 | 0.57 |
-| GLM-5.1 | 3 | 421.1 ± 888.7 | 0.39 |
-| nemotron-3-super (free) | 3 | 522.1 ± 808.5 | 0.27 |
-| laguna-m.1 (free) | 3 | 783.3 ± 399.4 | 0.15 |
-| nemotron-3-ultra (free) | 3 | 894.6 ± 934.9 | 0.04 |
-| Claude Haiku 4.5 | 3 | 500.7 ± 1469 | 0.46 |
+| Kimi K3 | 3 | 26.4 ± 41.1 | 0.95 |
+| ling-3.0-flash (free) | 3 | 291 ± 550 | 0.53 |
+| deepseek-v4-flash-0731 | 3 | 340 ± 536 | 0.43 |
 | Polynomial baseline (naive) | 3 | 9571 ± 18872 | 0.15 |
 
-Two-body separates the cast cleanly. GLM-5.1 (0.04) and **mimo-v2.5 (0.07) both solve it at near-reference level**, and everything else fails, most strikingly **nemotron-3-ultra at 653 with coverage 0.08**, the *best* model on the quantile task and nearly the worst here. (The deepseek row is withdrawn; see below.)
+Not recomputable, worst-case cells from the README: mimo-v2.5 292, GLM-5.1 899, nemotron-3-super 918, laguna-m.1 1014, Claude Haiku 4.5 1348, nemotron-3-ultra 1356.
 
-The three deepseek-v4-flash figures above (3.5 on two-body, 9.6 on three-body, 13.6 on the flyby) are **withdrawn**, and the reading originally built on them, that deepseek was the best non-baseline on both hard tasks by an order of magnitude, was wrong. Coverage 0.00 was the tell and it was misread as overconfidence: the runs produced no intervals because they produced nothing. Two of the three cells were upstream non-response scored under the old rule that priced a missing point below a bad one, and the two-body runs terminated at their message cap. All three are `n/m` in the README now. The episode is the origin of both the [non-response penalty floor](../limitations.md#non-response-was-cheaper-than-failure) and the rule that a capped run is not a measurement, and it is worth stating plainly that the defect was flattering a model rather than only inflating a baseline. **GLM-5.1 is bimodal on three-body**: its three runs were [0.0, 263, 321]: one instance hit the reference exactly (it made the retrograde leap), two failed completely, giving a 194.6 mean that understates both what it can do and how often it doesn't. That confirms its earlier lone 1.92 was real capability, not a fluke, and that the leap is available to it only intermittently. No model comes near solving either hard task consistently.
+Two-body is solved. Kimi K3 (0.044) and deepseek-0731 (0.112) sit within two orders of magnitude of the Kepler reference and roughly a hundred times better than the naive harmonic fit, and the archived GLM-5.1 and mimo cells are in the same band. The task's job is to be the easy end of the gradient and it does that: what it separates is the models that recover a periodic signal at all from those that do not, and the failures are total rather than marginal, ling and nemotron-3-ultra landing in the hundreds.
 
-Haiku's two-body failure has a specific signature: coverage 1.00 at regret 81 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit, the fast-model reflex of buying coverage with sharpness.
+The two hard tasks are where the suite still has headroom. **Kimi K3 is the only row that makes the three-body leap**, at 1.12 ± 3.81 against a Kepler reference of 0.018, and the next row is two orders of magnitude behind it. deepseek-0731 at 116 is second and is the only other model to beat the naive harmonic baseline's 140, which most of the cast does not. Everything from nemotron-3-super down is at or beyond the naive fit, and ling at 2005 is worse than answering with a constant.
+
+On the flyby only Kimi K3 (26.4) clears the degenerate answer as a cell. deepseek-0731's 340 mean hides the spread that matters: its three runs were 31.9, 464 and 522, so it beat its instance's constant anchor once and lost to it badly twice. The OD reference reaches 0.175, so the gap between the best agent and a competent solver is about 150x here against about 60x on three-body. This remains the task no model solves.
 
 The baselines behave as designed: the OD and Kepler references reach the oracle, and the naive polynomial flyby fit is astronomically bad (9571 ± 18872, its ± 2 SD exceeding its own mean in the heavy-tailed-regret pattern), confirming a flyby is nothing like a polynomial.
+
+Haiku's two-body failure has a specific signature: coverage 1.00 at a worst case of 105 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit, the fast-model reflex of buying coverage with sharpness. That row is one of the archived ones, so the signature is recorded here but not reproducible from the logs.

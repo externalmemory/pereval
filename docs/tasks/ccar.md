@@ -99,15 +99,16 @@ Means over eight generated instances, reported as **mean ± 2 SD** (2× the samp
 | Vasicek reference (true model) | 0.013 ± 0.022 | 0.93 | closed-form extended Vasicek |
 | GLM-5.1 | 0.029 ± 0.035 | 0.92 | best model, near the reference; tightest band of any model |
 | Kimi K3 | 0.033 ± 0.082 | 0.90 | frontier (not free) |
-| deepseek-v4-flash-free | 0.043 ± 0.102 | 0.89 | message limit 300 (at 120 it left 18 points unpredicted and scored 0.084) |
+| deepseek-v4-flash-free | 0.043 ± 0.102 | 0.89 | superseded version; message limit 300 (at 120 it left 18 points unpredicted and scored 0.084) |
 | nemotron-3-ultra (free) | 0.085 ± 0.161 | 0.76 | best of the newly-added free models |
+| deepseek-v4-flash-0731 | 0.078 ± 0.189 | 0.90 | one instance at 0.303 sets its band and its summary cell |
 | Claude Haiku 4.5 | 0.137 ± 0.274 | 0.74 | strong here despite failing every orbital task |
 | nemotron-3-super (free) | 0.136 ± 0.303 | 0.73 | |
 | mimo-v2.5 (free) | 0.131 ± 0.371 | 0.79 | one scenario at 0.567 dominates its spread |
 | Naive OLS baseline | 0.200 ± 0.544 | 0.63 | OLS on all nine levels |
 | laguna-m.1 (free) | 0.216 ± 0.694 | 0.67 | the only model worse than the naive baseline |
 
-Seven of eight models beat the naive OLS baseline, and the best of them approach the near-oracle Vasicek reference, so CCAR is tractable even for cheap models. The task still discriminates the right way, with the fragile linear-on-levels approach near the bottom and the physics-informed reference at the top. The one model that lands *below* the naive baseline is laguna (0.216 vs 0.200), and by the upper-bound ordering it ranks last. The naive regression is a real floor that a weak enough model can fall through.
+Eight of nine models beat the naive OLS baseline, and the best of them approach the near-oracle Vasicek reference, so CCAR is tractable even for cheap models. The task still discriminates the right way, with the fragile linear-on-levels approach near the bottom and the physics-informed reference at the top. The one model that lands *below* the naive baseline is laguna (0.216 vs 0.200), and by the upper-bound ordering it ranks last. The naive regression is a real floor that a weak enough model can fall through.
 
 nemotron-3-ultra is the best of the free models here (0.085), consistent with it being the strongest free model on the quantile task too, though on the orbital tasks it was among the worst, so CCAR and quantile (both statistical-modelling tasks) track together while the physics tasks do not.
 

@@ -28,15 +28,16 @@ Three instances (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across t
 | Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
 | --- | --- | --- | --- |
 | mimo-v2.5 (free) | 3 | 10.5 ± 4.0 | 0.39 |
+| deepseek-v4-flash-0731 | 3 | 8.7 ± 11.3 | 0.47 |
 | GLM-5.1 | 3 | 8.0 ± 12.8 | 0.56 |
 | nemotron-3-ultra (free) | 3 | 11.0 ± 10.8 | 0.42 |
 | Parabola baseline (naive) | 3 | 17.2 ± 9.3 | 0.23 |
 | nemotron-3-super (free) | 3 | 59.1 ± 1.3 | 0.13 |
 | laguna-m.1 (free) | 3 | 59.1 ± 1.3 | 0.13 |
-| deepseek-v4-flash (free) | 3 | 30.5 ± 77.2 | 0.14 |
+| deepseek-v4-flash-free (superseded version) | 3 | 30.5 ± 77.2 | 0.14 |
 | Claude Haiku 4.5 | 3 | 37.8 ± 79.8 | 0.22 |
 
-Three rows clear the naive parabola baseline: mimo-v2.5, GLM-5.1 and nemotron-3-ultra (upper bounds 14.5, 20.8, 21.8 vs the baseline's 26.5). mimo is the tightest of them (± 4.0), which is why it leads on the upper-bound ordering despite not having the lowest mean.
+Four rows clear the naive parabola baseline: mimo-v2.5, deepseek-v4-flash-0731, GLM-5.1 and nemotron-3-ultra (upper bounds 14.5, 20.0, 20.8, 21.8 vs the baseline's 26.5). mimo is the tightest of them (± 4.0), which is why it leads on the upper-bound ordering despite not having the lowest mean. The four are separated by less than the width of any one of their bands, so the ordering among them is not a result; clearing the baseline is.
 
 The bottom of the table is more interesting than a mean ranking shows. **Claude Haiku 4.5's mean (37.8) is lower than laguna's and nemotron-3-super's (59.1), yet it ranks last**, because its ± 79.8 band (one instance blew out to 83) pushes its upper bound to 118 against their 60. Ordering by the worst case rewards the consistent-but-mediocre over the erratic, which is the intended behaviour.
 
