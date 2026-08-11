@@ -115,7 +115,7 @@ The re-runs move cells hard, and mostly not because of the scorer:
 
 nemotron-3-super improving 7.4x on byte-identical instances is not a scoring correction; it is the same run-to-run instability the reproducibility study measured, reappearing in the column that was supposed to be getting cleaner. Only Haiku's move is attributable to the scorer, because it was re-scored rather than re-run. The lesson is that re-running to fix a scoring defect also resamples the agent, so it cannot separate the two, and a column rebuilt this way inherits the instability along with the fix.
 
-Two rows could not be brought current. laguna keeps its archived value because `poolside/laguna-m.1` is no longer served in any form and only one of its three runs is identifiable, not the one that sets the cell. deepseek stays unmeasured. GLM-5.1 needed a second run at 400 messages after two of three hit the 150 default, which is the budget confound catching a paid model this time.
+Two rows could not be brought current. laguna keeps its archived value because `poolside/laguna-m.1` is no longer served in any form and only one of its three runs is identifiable, not the one that sets the cell. deepseek-v4-flash-free stayed unmeasured and its row has since been dropped from the summary table, replaced by a complete row for the later `deepseek-v4-flash-0731`. That replacement does not recover the missing measurements: it is a different model version, so the old row's failures are not repaired by it, only superseded. GLM-5.1 needed a second run at 400 messages after two of three hit the 150 default, which is the budget confound catching a paid model this time.
 
 ## Cost Estimates Do Not Survive a Change of Limits
 
@@ -187,18 +187,20 @@ Limits are therefore set generously by default, actual message counts are record
 
 "Generously" was aspirational until it was measured. The original defaults (150 for ballistic, two-body, three-body and CCAR, 250 for flyby, 300 for quantile) bound on five separate occasions: deepseek on two-body, GLM-5.1 on three-body, deepseek on CCAR, and Kimi K3 on both flyby and quantile. Three of those wasted paid API credit on runs that were then discarded and had to be bought again.
 
+The raised defaults then bound once more, which is the useful part of the story. deepseek-v4-flash-0731 hit the new 500-message three-body ceiling on one instance of three. Re-run at 1200 the same model on the same instance finished in **190 messages**, well under even the old 500, and scored 269 rather than the truncated 340. So the cap was not binding on the work the task requires; it was binding on one run that had gone into a loop, and the re-run did not go into it. That is the same pattern as Kimi K3's quantile seed, which finished in 39 messages under a raised ceiling after hitting 300 under the old one. The lesson is not that these tasks need ever larger budgets. It is that message count is dominated by which path a run happens to take, so a cap set near the typical run silently converts a bad draw into a bad score, and a cap set far above it costs nothing on the runs that never approach it.
+
 The defaults are now set from the observed distribution rather than guessed, at roughly three to four times the p90 of every run archived here:
 
 | Task | median | p90 | max | old default | new |
 | --- | --- | --- | --- | --- | --- |
 | ballistic | 43 | 124 | 136 | 150 | 500 |
 | two-body | 49 | 119 | 150 | 150 | 500 |
-| three-body | 72 | 144 | 188 | 150 | 500 |
+| three-body | 72 | 144 | 190 | 150 | 500 |
 | flyby | 86 | 148 | 194 | 250 | 600 |
 | quantile | 68 | 241 | 300 | 300 | 800 |
 | CCAR | 58 | 141 | 189 | 150 | 500 |
 
-The maxima at exactly 150 and 300 are cap-hits, not natural stopping points.
+The maxima at exactly 150 and 300 are cap-hits, not natural stopping points, as is the one three-body run that stopped at exactly 500 under the raised ceiling. The 190 in the three-body row is that instance re-run without a binding cap, and it is the largest natural stopping point recorded on any task.
 
 The asymmetry is what makes this close to free. A ceiling costs nothing for a model that stops on its own, which is most of them: raising it does not make a 43-message ballistic run any longer. It only binds on the runs that would otherwise be truncated, and a truncated run costs nearly as much as a completed one while yielding nothing at all. Running long is a wall-clock problem; hitting a cap is a wasted measurement.
 
