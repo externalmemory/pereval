@@ -37,11 +37,34 @@ For the three regional panels there is no equivalent check and their scale rests
 | --- | --- |
 | `data/sp2024_regional_counts.csv` | Reconstructed integer counts and cohort sizes, four regions, six rating rows |
 | `data/sp2024_regional_published_pct.csv` | The percentages exactly as printed, for round-trip validation |
-| `data/sp_global_average_1981_2024.csv` | Long-run global averages, one-year and three-year, mean and standard deviation |
+| `data/sp_global_average_1981_2024.csv` | Long-run global averages, one, three and five year, mean and standard deviation, AAA included |
 
 `reference.py` loads all three. Nothing in this package enters an agent sandbox; these are host-side calibration numbers.
 
 The global 2024 rated cohort totals 6,496 issuers across the six recoverable rows.
+
+## Default Risk at the Top of the Scale
+
+The point of a transition matrix is to estimate losses, and a bank with exposure to a AAA obligor still has to hold a reserve against it. A model that assigns zero default probability to its best grade implies zero expected loss and therefore zero allowance on a live exposure. That is a defect on its own terms, before any regulator is consulted.
+
+The published data invites exactly that defect. Global AAA to default over 1981 to 2024 is **0.00%** at one year. Taken at face value it says a AAA obligor cannot default. The same table refutes that two rows further down:
+
+| Grade | 1 year | 3 year | 5 year |
+| --- | ---: | ---: | ---: |
+| AAA | 0.00% | 0.13% | 0.34% |
+| AA | 0.02% | 0.11% | 0.28% |
+| A | 0.05% | 0.20% | 0.41% |
+| BBB | 0.14% | 0.67% | 1.42% |
+
+AAA default risk is positive at three and five years, and at five years it exceeds AA's. So the one-year 0.00% is an absence of observations across 44 static pools, not an absence of risk, and it should be read as a small-sample zero rather than a parameter.
+
+**The regulatory floor names a number for this.** For a US institution the operative one is 12 CFR 217.131(d)(2) (Regulation Q, advanced approaches), "Floor on PD assignment": the PD for each wholesale obligor or retail segment may not be less than **0.03 percent**. The exemptions are exposures to, or directly and unconditionally guaranteed by, a sovereign entity, the BIS, the IMF, the European Commission, the ECB, the ESM, the EFSF, or a multilateral development bank. The Basel Committee's consolidated framework sets a higher 0.05% at CRE32.4, in force 1 January 2023, for every asset class except sovereign; the US has not adopted that figure here, and the March 2026 US proposal would remove the internal-ratings stack rather than raise the floor. Both are recorded in `PD_FLOORS`, with the US value as operative.
+
+**The floor is not a rounding adjustment, it rewrites the top of the scale.** Two of the seven published grades sit strictly below the US floor, AAA at 0.00% and AA at 0.02%, and A sits at 0.05%. So an IRB-consistent model must override the observed rate for its two best grades rather than reproduce it, and flooring AAA at 0.03% puts it between the observed rates for AA and A. Any calibration built from this data has to make that override explicit, and any scoring of a candidate matrix should treat an exact zero in the default column as inadmissible rather than as a good fit.
+
+Extrapolating the top of the scale from grades where defaults are actually observed is the standard remedy, and it is worth recording what it does and does not fix. Fitting the log of the one-year default rate against grade over BBB, BB, B and CCC/C gives a good fit, R-squared 0.989 at 5.66 times per notch, and projecting upward yields 0.004% for AA and 0.001% for AAA. That removes the exact zero, which is the defect, but it lands an order of magnitude **below** the 0.03% floor, so the floor still binds and remains the operative constraint rather than a formality.
+
+The same fit also understates a grade where defaults are observed: it projects 0.020% for A against 0.050% actual. The reason is that the notch multiplier is not constant, it steepens down the scale, running roughly 2.8 times from A to BBB, 4.0 from BBB to BB, 5.2 from BB to B and 8.9 from B to CCC/C. A single log-linear slope fitted on speculative grades is therefore too steep to extrapolate into investment grade and will push the top of the scale too low. Any candidate method for the top grades has to be checked against both the floor and the observed A and BBB rates, not just fitted to the tail.
 
 ## The Data Rejects a Time-Homogeneous Markov Chain
 
@@ -60,7 +83,7 @@ The consequence for the task is that rooting an annual matrix is not merely nume
 
 ## Limitations of the Reference Data
 
-- **No AAA row.** The published AAA row is 100% on the diagonal in every 2024 panel, which carries no information about cohort size, so no count is recoverable. Any generator calibrated here has to source AAA behaviour elsewhere or start at AA.
+- **AAA has no recoverable 2024 count row**, because its published 2024 row is 100% on the diagonal, which fixes no cohort size. That is a gap in the counts only. AAA is in `RATINGS` and is present at all three horizons in the long-run averages, and it must stay in any state space; see Default Risk at the Top of the Scale below.
 - **The long-run averages do not invert.** They are averages over 44 annual static pools, so there is no single cohort size behind them. They are for calibrating a plausible range, not for reconstructing a cohort.
 - **2024 was a benign year for investment grade and a harsh one for CCC.** Global BBB to default was 1 of 1,848, or 0.05%, against a long-run mean of 0.14%, while CCC/C to default was 28.36% against a long-run 26.12%. A single year is not representative in either direction, which is why both the year and the long-run averages are stored.
 - **Withdrawals are a column, not a nuisance.** `NR` carries 3% to 19% of each cohort. How it is treated, absorbing, dropped and renormalised, or modelled as a competing risk, changes implied default probabilities materially, and the naive choice biases them. This is a modelling decision the task will have to take a position on.
