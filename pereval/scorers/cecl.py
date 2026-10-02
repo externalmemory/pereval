@@ -64,10 +64,28 @@ def score_predictions(truth: list[dict], text: str | None) -> dict[str, float]:
             portfolio_ecl=predicted_total,
             true_portfolio_ecl=true_total,
         )
-    if truth and "loss_samples" in truth[0]:
+    if truth and ("loss_samples" in truth[0] or "evaluation" in truth[0]):
         result.update(score_loss_intervals(truth, text))
-        result["regret_worst"] = result["winkler_regret"]
     return result
+
+
+def evaluation_losses(pool):
+    """Regenerate held-out losses from private metadata; accept older archives."""
+    if "loss_samples" in pool:
+        return np.asarray(pool["loss_samples"])
+    from pereval.tasks.cecl.generator import default_paths, path_losses
+
+    spec = pool["evaluation"]
+    rates = np.asarray(spec["rates"])
+    draws = default_paths(
+        rates[:, 0],
+        spec["n"],
+        np.random.default_rng(spec["seed"]),
+        rho=spec["rho"],
+        persistence=spec["persistence"],
+    )
+    term = pool["remaining_quarters"]
+    return path_losses(pool["balance"], rates[:term], draws[:, :term])
 
 
 def score_loss_intervals(truth, text):
@@ -87,16 +105,17 @@ def score_loss_intervals(truth, text):
         "interval_completion": 0.0,
     }
     total_balance = sum(p["balance"] for p in truth)
+    constant_rate = sum(p["ecl"] for p in truth) / total_balance
     for pool in truth:
         balance = pool["balance"]
         weight = balance / total_balance
-        samples = np.asarray(pool["loss_samples"]) / balance
+        samples = evaluation_losses(pool) / balance
         oracle = float(
             interval_score(
                 pool["lower"] / balance, pool["upper"] / balance, samples
             ).mean()
         )
-        degenerate = float(interval_score(0.0, 0.0, samples).mean())
+        degenerate = float(interval_score(constant_rate, constant_rate, samples).mean())
         try:
             row = rows[pool["pool_id"]]
             point, lo, hi = [
@@ -122,18 +141,19 @@ def score_loss_intervals(truth, text):
         totals["winkler_agent"] += weight * agent
         totals["winkler_oracle"] += weight * oracle
         totals["winkler_degenerate"] += weight * degenerate
-    totals["winkler_regret"] = totals["winkler_agent"] - totals["winkler_oracle"]
+    totals["winkler_regret_raw"] = totals["winkler_agent"] - totals["winkler_oracle"]
+    totals["winkler_regret"] = max(0.0, totals["winkler_regret_raw"])
     totals["degenerate_regret"] = (
         totals["winkler_degenerate"] - totals["winkler_oracle"]
     )
-    # Legacy completion is for the mean; overall completion requires both outputs.
+    # Completion always measures valid mean estimates, in either task mode.
     totals["point_completion"] = sum(
         1
         for p in truth
         if p["pool_id"] not in duplicates
         and _valid_mean(rows.get(p["pool_id"]), p["balance"])
     ) / len(truth)
-    totals["completion"] = totals["interval_completion"]
+    totals["submission_completion"] = totals["interval_completion"]
     return totals
 
 
@@ -152,11 +172,13 @@ def cecl_scorer(simulation: bool = False):
     @scorer(
         name="cecl",
         metrics={
-            **({"winkler_regret": [mean(), stderr()]} if simulation else {}),
             "ecl_regret": [mean(), stderr()],
+            **({"winkler_regret": [mean(), stderr()]} if simulation else {}),
             **{
                 key: [mean()]
                 for key in (
+                    "winkler_regret_raw",
+                    "submission_completion",
                     "winkler_agent",
                     "winkler_oracle",
                     "winkler_degenerate",

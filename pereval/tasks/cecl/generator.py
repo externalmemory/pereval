@@ -198,10 +198,14 @@ def generate(
                 reversion_quarters,
             )
             # Same-segment pools share shocks; independent streams across segments.
-            draws = [
-                default_paths(full_rates[:, 0], oracle_n, np.random.default_rng(stream))
-                for stream in oracle_streams[2 * segment_index : 2 * segment_index + 2]
-            ]
+            calibration_paths = default_paths(
+                full_rates[:, 0],
+                oracle_n,
+                np.random.default_rng(oracle_streams[2 * segment_index]),
+            )
+            evaluation_seed = (
+                oracle_streams[2 * segment_index + 1].generate_state(4).tolist()
+            )
         for j, term in enumerate((4, 12, 24, 40)):
             balance = float(rng.integers(1_000_000, 10_000_001))
             pool = {
@@ -219,15 +223,19 @@ def generate(
             )
             record = dict(**pool, ecl=lifetime_loss(balance, term, rates))
             if simulation:
-                calibration, evaluation = [
-                    path_losses(balance, rates, d[:, :term]) for d in draws
-                ]
+                calibration = path_losses(balance, rates, calibration_paths[:, :term])
                 record.update(
                     ecl=float(calibration.mean()),
                     ecl_mc_se=float(calibration.std(ddof=1) / np.sqrt(oracle_n)),
                     lower=float(np.quantile(calibration, 0.025)),
                     upper=float(np.quantile(calibration, 0.975)),
-                    loss_samples=evaluation.tolist(),
+                    evaluation={
+                        "seed": evaluation_seed,
+                        "n": oracle_n,
+                        "rates": full_rates.tolist(),
+                        "rho": 0.02,
+                        "persistence": 0.6,
+                    },
                 )
             truth.append(record)
     return {

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.special import ndtri
 
-from pereval.scorers.cecl import score_predictions
+from pereval.scorers.cecl import evaluation_losses, score_predictions
 from pereval.tasks.cecl.baselines import predict
 from pereval.tasks.cecl.generator import (
     csv_text,
@@ -64,7 +64,7 @@ def test_reproducible_independent_oracle_and_public_isolation():
     assert "loss_samples" not in text and "ecl_mc_se" not in text
     assert "aggregate_probit_ar1_v1" in text
     for p in b["truth"]:
-        draws = np.array(p["loss_samples"])
+        draws = evaluation_losses(p)
         assert 0 <= draws.min() <= draws.max() <= p["balance"]
         assert abs(draws.mean() - p["ecl"]) < 6 * p["ecl_mc_se"]
         assert 0.93 < np.mean((draws >= p["lower"]) & (draws <= p["upper"])) < 0.97
@@ -92,11 +92,12 @@ def test_interval_oracle_missing_and_invalid_submissions():
     assert missing["completion"] == 0
     for lo, hi in [(10, 1), (-1, 10), (0, float("inf")), (0, float("nan"))]:
         bad = [dict(r, ecl_lower=lo, ecl_upper=hi) for r in rows]
-        assert score_predictions(truth, csv_text(bad))["completion"] == 0
+        assert score_predictions(truth, csv_text(bad))["interval_completion"] == 0
     assert score_predictions(truth, csv_text(rows + rows))["completion"] == 0
     point_only = csv_text([{"pool_id": p["pool_id"], "ecl": p["ecl"]} for p in truth])
     score = score_predictions(truth, point_only)
-    assert score["point_completion"] == 1 and score["completion"] == 0
+    assert score["point_completion"] == 1 and score["completion"] == 1
+    assert score["submission_completion"] == 0
 
 
 @pytest.mark.parametrize("scenario", ["baseline", "adverse", "benign"])
@@ -113,7 +114,7 @@ def test_public_reference_and_task_wiring(scenario):
     task = cecl(
         n_instances=1, seed=3, simulation=True, baseline="cohort", oracle_n=1000
     )
-    assert "loss_samples" in task.dataset[0].metadata["truth"][0]
+    assert "evaluation" in task.dataset[0].metadata["truth"][0]
     assert "pool_id,ecl,ecl_lower,ecl_upper" in SIMULATION_INSTRUCTIONS
 
 
@@ -132,10 +133,63 @@ def test_default_task_requires_intervals_and_legacy_is_explicit():
 
     default = cecl(n_instances=1, seed=4, baseline="cohort", oracle_n=100)
     legacy = cecl(n_instances=1, seed=4, baseline="cohort", simulation=False)
-    assert "loss_samples" in default.dataset[0].metadata["truth"][0]
+    assert "evaluation" in default.dataset[0].metadata["truth"][0]
     assert "loss_samples" not in legacy.dataset[0].metadata["truth"][0]
     assert "95% prediction intervals" in default.dataset[0].input
-    assert "Primary score is balance-weighted Winkler" in SIMULATION_INSTRUCTIONS
-    assert next(iter(scorer_metrics(default.scorer[0]))) == "winkler_regret"
+    assert "weighted squared error" in SIMULATION_INSTRUCTIONS
+    assert next(iter(scorer_metrics(default.scorer[0]))) == "ecl_regret"
     assert next(iter(scorer_metrics(legacy.scorer[0]))) == "ecl_regret"
 
+
+def test_compact_metadata_matches_archived_samples_and_mean_constant_anchor():
+    import json
+
+    truth = generate(7, simulation=True)["truth"]
+    assert len(json.dumps(truth)) < 100_000
+    archived = [dict(p, loss_samples=evaluation_losses(p).tolist()) for p in truth]
+    assert score_predictions(truth, None) == score_predictions(archived, None)
+    constant_rate = sum(p["ecl"] for p in truth) / sum(p["balance"] for p in truth)
+    rows = [
+        {
+            "pool_id": p["pool_id"],
+            "ecl": p["ecl"],
+            "ecl_lower": constant_rate * p["balance"],
+            "ecl_upper": constant_rate * p["balance"],
+        }
+        for p in truth
+    ]
+    result = score_predictions(truth, csv_text(rows))
+    assert result["winkler_agent"] == pytest.approx(result["winkler_degenerate"])
+
+
+def test_repeated_runs_rank_mean_error_even_with_interval_diagnostics():
+    from inspect_ai.scorer import Score
+
+    from pereval.scorers.stability import stability
+
+    result = stability()(
+        [
+            Score(value={"ecl_regret": 0.1, "winkler_regret": 8.0}),
+            Score(value={"ecl_regret": 0.3, "winkler_regret": 1.0}),
+        ]
+    )
+    assert result.value["regret_worst"] == 0.3
+    assert result.value["regret_spread"] == pytest.approx(0.2)
+
+
+def test_negative_interval_difference_is_preserved_and_clipped():
+    truth = [
+        {
+            "pool_id": "a",
+            "balance": 100,
+            "ecl": 50,
+            "lower": 0,
+            "upper": 100,
+            "loss_samples": [50] * 100,
+        }
+    ]
+    rows = [{"pool_id": "a", "ecl": 50, "ecl_lower": 50, "ecl_upper": 50}]
+    result = score_predictions(truth, csv_text(rows))
+    assert result["winkler_regret_raw"] < 0
+    assert result["winkler_regret"] == 0
+    assert result["regret_worst"] == result["ecl_regret"] == 0

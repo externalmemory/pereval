@@ -41,7 +41,7 @@ import numpy as np
 from inspect_ai.scorer import Score, ScoreReducer, score_reducer
 
 # The primary regret key differs by scorer; check each supported task family.
-_REGRET_KEYS = ("winkler_regret", "pinball_regret", "ecl_regret")
+_REGRET_KEYS = ("ecl_regret", "winkler_regret", "pinball_regret")
 
 
 def _primary(value: dict) -> str | None:

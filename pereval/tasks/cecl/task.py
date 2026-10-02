@@ -58,9 +58,6 @@ Write a complete predictions.csv early and refine it before finishing.
 SIMULATION_INSTRUCTIONS = (
     INSTRUCTIONS.replace(
         "exactly pool_id,ecl,", "exactly pool_id,ecl,ecl_lower,ecl_upper,"
-    ).replace(
-        "Primary score is balance-\nweighted squared error in pool lifetime loss rates; zero is perfect.",
-        "Primary score is balance-weighted Winkler interval regret. Expected-loss squared error is reported separately.",
     )
     + """
 Simulation mode: also predict a central 95% interval for aggregate lifetime loss

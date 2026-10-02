@@ -101,8 +101,7 @@ def main():
         ax.grid(alpha=0.15)
     out = Path(__file__).resolve().parents[1] / "docs" / "images"
     out.mkdir(parents=True, exist_ok=True)
-    for extension in ("png", "svg"):
-        fig.savefig(out / f"cecl-functional-form.{extension}", dpi=180)
+    fig.savefig(out / "cecl-functional-form.png", dpi=180)
     plt.close(fig)
 
 
