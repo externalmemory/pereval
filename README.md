@@ -44,7 +44,7 @@ Use `-T n_instances=N` for many fresh instances with standard errors, and `-T re
 | [Ballistic extrapolation](docs/tasks/ballistic.md) | controlled mechanism | out-of-range extrapolation against velocity-dependent drag |
 | [Orbital: two-body, three-body, hyperbolic flyby](docs/tasks/orbital.md) | controlled mechanism | periodic signal recovery, coupled retrograde geometry, angles-only orbit determination |
 
-CCAR and quantile are the original realistic domain tasks. CECL adds a synthetic lifetime-credit-loss task; it has no measured agent results yet and is not included in the score table below. The mechanism tasks calibrate the harness across a difficulty gradient with exactly known ground truth.
+CCAR and quantile are the original realistic domain tasks. CECL adds a synthetic lifetime-credit-loss task with expected-loss regret as its headline and simulated intervals as diagnostics; it has no measured agent results yet and is not included in the score table below. The mechanism tasks calibrate the harness across a difficulty gradient with exactly known ground truth.
 
 ## Summary Scores
 
