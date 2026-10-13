@@ -115,7 +115,7 @@ The re-runs move cells hard, and mostly not because of the scorer:
 
 nemotron-3-super improving 7.4x on byte-identical instances is not a scoring correction; it is the same run-to-run instability the reproducibility study measured, reappearing in the column that was supposed to be getting cleaner. Only Haiku's move is attributable to the scorer, because it was re-scored rather than re-run. The lesson is that re-running to fix a scoring defect also resamples the agent, so it cannot separate the two, and a column rebuilt this way inherits the instability along with the fix.
 
-Two rows could not be brought current. laguna keeps its archived value because `poolside/laguna-m.1` is no longer served in any form and only one of its three runs is identifiable, not the one that sets the cell. deepseek-v4-flash-free stayed unmeasured and its row has since been dropped from the summary table, replaced by a complete row for the later `deepseek-v4-flash-0731`. That replacement does not recover the missing measurements: it is a different model version, so the old row's failures are not repaired by it, only superseded. GLM-5.1 needed a second run at 400 messages after two of three hit the 150 default, which is the budget confound catching a paid model this time.
+Two rows could not be brought current. laguna kept an archived value because `poolside/laguna-m.1` is no longer served in any form and only one of its three runs is identifiable, not the one that sets the cell; its row has since been dropped from the summary table, for the reason given under Dropping a Row Costs Aggregate Power below. deepseek-v4-flash-free stayed unmeasured and its row has since been dropped from the summary table, replaced by a complete row for the later `deepseek-v4-flash-0731`. That replacement does not recover the missing measurements: it is a different model version, so the old row's failures are not repaired by it, only superseded. GLM-5.1 needed a second run at 400 messages after two of three hit the 150 default, which is the budget confound catching a paid model this time.
 
 ## Cost Estimates Do Not Survive a Change of Limits
 
@@ -163,6 +163,23 @@ That the same model is unremarkable on CCAR and quantile is not a limitation and
 A model id is not a guarantee of which weights answered. Kimi K3's row was measured across two serving paths: CCAR, ballistic, two-body and three-body on OpenRouter's paid endpoint, and flyby and quantile on tokenrouter's free `kimi-k3-free`, after the paid budget ran out. The two were compared on one matched instance, two-body instance-0, scoring 0.023 free against 0.024 paid, which is consistent with the same model but is a single comparison rather than a proof.
 
 Nothing in the harness detects a provider silently substituting a quantized or distilled variant, changing a default sampling parameter, or routing to a different build under the same name. Cells assembled from more than one endpoint are therefore weaker evidence than cells from one, and the split is recorded per row rather than averaged away. This is a general property of evaluating through aggregators, not a defect of any particular one.
+
+## Dropping a Row Costs Aggregate Power
+
+laguna-m.1 was removed from the summary table when CECL was added as a seventh column. The reason is mechanical rather than editorial: the mean-rank column is a Borda count, which needs a value in every ranked row, and `poolside/laguna-m.1` is no longer listed by any provider, so its CECL cell can never be measured. The choice was between dropping the row and leaving a permanently unranked one, which removes it from the aggregate anyway.
+
+The removal is not free, and the direction is worth stating because it is the opposite of what tidying usually implies. laguna was the bottom anchor on five of six columns, so deleting it compresses the spread of mean ranks and weakens the permutation test:
+
+| Rows | p (spread) | p (range) |
+| --- | ---: | ---: |
+| ten, with laguna | 0.004 | 0.007 |
+| nine, without laguna | 0.014 | 0.055 |
+
+p on the range crosses from 0.007 to 0.055, so on that statistic the column is no longer distinguishable from chance at a conventional bar. The leave-one-out structure also shifts: on nine rows, dropping Kimi K3 gives p = 0.202 and dropping deepseek-0731 gives p = 0.079, against 0.090 and 0.037 before, so each of the top two now carries more of the remaining signal than it did.
+
+None of this is evidence about any model. It is a property of the estimator: a rank statistic computed over a hand-assembled roster is sensitive to which rows exist, and removing a row for an availability reason changes a number that reads like a result. That is the same weakness recorded under The Overall Rank Depends on the Task Mix, appearing on the row axis rather than the column axis, and it is the strongest argument for treating the aggregate as a detector of outliers rather than a ranking.
+
+The archived laguna measurements are kept in the per-task documents. Only its summary row is gone.
 
 ## Contamination
 

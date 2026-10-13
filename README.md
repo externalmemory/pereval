@@ -57,35 +57,32 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 | Model | CCAR | Ballistic | Two-body | Three-body¹ | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | 0.031 | — | 0.005 | 0.039 | 0.31 | — | *floor* |
-| Kimi K3⁴ | 0.12 | 14 | 0.094 | **3.3** | **50** | 0.077 | **2.00** |
-| deepseek-v4-flash-0731⁵ | 0.30 | 14 | 0.30 | 269 | 522 | 0.067 | 3.17 |
-| GLM-5.1 | 0.055 | 12 | 0.092 | 436 | 899 | 0.25 | 3.92 |
-| mimo-v2.5-free | 0.57 | 12 | 0.19 | 2426 | 292 | 0.15 | 5.25 |
-| ling-3.0-flash:free | 0.193 | 43 | 1556 | 3309 | 591 | 0.076³ | 5.83 |
-| nemotron-3-ultra:free | 0.27 | 16 | 2429 | 817 | 1356 | 0.099 | 6.33 |
-| nemotron-3-super:free | 0.45 | 60 | 106 | 370 | 918 | 0.12 | 6.58 |
-| *Naive baseline* | 0.85 | 22 | 17 | 332 | 20037 | 0.14 | *6.67* |
-| Claude Haiku 4.5 | 0.37 | 83 | 105 | 1850 | 1348 | 0.10 | 7.17 |
-| laguna-m.1:free | 1.1 | 60 | 78 | 2067² | 1014 | 0.16 | 8.08 |
+| Kimi K3³ | 0.12 | 14 | 0.094 | **3.3** | **50** | 0.077 | **2.00** |
+| deepseek-v4-flash-0731⁴ | 0.30 | 14 | 0.30 | 269 | 522 | 0.067 | 3.17 |
+| GLM-5.1 | 0.055 | 12 | 0.092 | 436 | 899 | 0.25 | 3.75 |
+| mimo-v2.5-free | 0.57 | 12 | 0.19 | 2426 | 292 | 0.15 | 5.08 |
+| ling-3.0-flash:free | 0.193 | 43 | 1556 | 3309 | 591 | 0.076² | 5.50 |
+| nemotron-3-ultra:free | 0.27 | 16 | 2429 | 817 | 1356 | 0.099 | 6.00 |
+| nemotron-3-super:free | 0.45 | 60 | 106 | 370 | 918 | 0.12 | 6.33 |
+| *Naive baseline* | 0.85 | 22 | 17 | 332 | 20037 | 0.14 | *6.50* |
+| Claude Haiku 4.5 | 0.37 | 83 | 105 | 1850 | 1348 | 0.10 | 6.67 |
 | *Degenerate answer* | *0.57* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
 
-**Two models separate from the field, and nothing below them is ordered.** Permuting ranks within each column reproduces the observed spread at p = 0.004, but removing Kimi K3 and deepseek-0731 takes it to p = 0.561, so the aggregate detects two genuinely different models rather than a resolved ranking ([detail](docs/limitations.md#what-completing-one-row-did-to-the-aggregate)).
+**Two models separate from the field, and nothing below them is ordered.** Permuting ranks within each column reproduces the observed spread at p = 0.014, but removing Kimi K3 and deepseek-0731 takes it to p = 0.808, so the aggregate detects two genuinely different models rather than a resolved ranking ([detail](docs/limitations.md#what-completing-one-row-did-to-the-aggregate)).
 
-**Three-body and the flyby are the tasks with headroom left.** On three-body, K3's 3.3 sits roughly two orders of magnitude clear of a next-best 269, and seven of the nine ranked models are worse than the naive harmonic fit. On the flyby, nine of the ten ranked rows are worse than the degenerate answer and K3 is the only one that beats it. Two-body and CCAR, by contrast, are solved by most of the cast, which is the difficulty gradient working as designed.
+**Three-body and the flyby are the tasks with headroom left.** On three-body, K3's 3.3 sits roughly two orders of magnitude clear of a next-best 269, and six of the eight ranked models are worse than the naive harmonic fit. On the flyby, eight of the nine ranked rows are worse than the degenerate answer and K3 is the only one that beats it. Two-body and CCAR, by contrast, are solved by most of the cast, which is the difficulty gradient working as designed.
 
-**The three reference rows are the point of the table.** The *oracle* is the true generating model, the floor a perfect answer reaches (ballistic and quantile have none by design). The *naive baseline* is the obvious wrong method, and two ranked models fall through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling posts the lowest quantile score in the table and is still worse than a constant on three-body.
+**The three reference rows are the point of the table.** The *oracle* is the true generating model, the floor a perfect answer reaches (ballistic and quantile have none by design). The *naive baseline* is the obvious wrong method, and Claude Haiku falls through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling posts the lowest quantile score in the table and is still worse than a constant on three-body.
 
 CCAR's response law is now drawn per instance rather than fixed and published. That changed the answer key, not the question, so archived runs stay in the column ([detail](docs/limitations.md#the-ccar-response-law-was-public)).
 
 ¹ Three-body was re-measured under the corrected circular scorer. Re-running moved cells hard and in both directions on identical instances, so the column inherits run-to-run instability along with the fix ([detail](docs/limitations.md#re-measuring-three-body)).
 
-² laguna keeps an archived value on the superseded scorer, because `poolside/laguna-m.1` is no longer served and cannot be re-run. It is last on any reading.
+² ling's 0.076 is the lowest model score in that column but is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimal places ([detail](docs/tasks/quantile.md)).
 
-³ ling's 0.076 is the lowest model score in that column but is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimal places ([detail](docs/tasks/quantile.md)).
+³ Kimi K3 is the only frontier model here and is not the only paid one (Claude Haiku 4.5 is also paid). Its cells come from two serving endpoints, compared on one matched instance ([detail](docs/limitations.md#serving-provenance-is-not-controlled)).
 
-⁴ Kimi K3 is the only frontier model here and is not the only paid one (Claude Haiku 4.5 is also paid). Its cells come from two serving endpoints, compared on one matched instance ([detail](docs/limitations.md#serving-provenance-is-not-controlled)).
-
-⁵ deepseek-v4-flash-0731 replaces deepseek-v4-flash-free, a different and now-superseded model version whose row had three unmeasured cells. It beats the degenerate constant on every run of every task except two of three on the flyby ([detail](docs/limitations.md#budget-confounds)).
+⁴ deepseek-v4-flash-0731 replaces deepseek-v4-flash-free, a different and now-superseded model version whose row had three unmeasured cells. It beats the degenerate constant on every run of every task except two of three on the flyby ([detail](docs/limitations.md#budget-confounds)).
 
 ## Layout
 
