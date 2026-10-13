@@ -246,7 +246,9 @@ The quantile task makes this explicit: four defensible criteria (point accuracy,
 
 ## The Overall Rank Depends on the Task Mix
 
-The README's mean-rank column is a Borda count over the six tasks currently in the suite: four physics/mechanism tasks (ballistic, two-body, three-body, flyby) and two statistical-modelling tasks (CCAR, quantile). That is not a neutral portfolio: the physics axis carries two thirds of the votes, so the aggregate tilts toward physics-capable models.
+The README's mean-rank column is a Borda count over the seven tasks currently in the suite: four physics/mechanism tasks (ballistic, two-body, three-body, flyby) and three statistical-modelling tasks (CCAR, quantile, CECL). That is not a neutral portfolio: the physics axis still carries the majority of the votes, so the aggregate tilts toward physics-capable models, though adding CECL moved the balance from four against two to four against three.
+Adding CECL as a seventh column also recovered the significance that dropping laguna cost, which is worth recording because the two changes landed together and could otherwise be confused. On six columns the nine remaining rows gave p = 0.014 on the spread and p = 0.055 on the range. On seven columns they give p = 0.001 and p = 0.016. So the column count and the row count both move this statistic materially, in opposite directions here, which is the same point as the section above: the number responds to the shape of the roster at least as much as to the models in it.
+
 
 Permuting the ranks within each column independently, the null of no cross-task skill, now reproduces the observed dispersion at p = 0.004 (spread) and p = 0.007 (range). That clears a conventional bar, but it establishes only that the top of the column is real. Six columns remains very few votes, and the six are not six independent axes: the rank-correlation matrix has a participation ratio of 3.5 effective dimensions. The fix for a weak aggregate is more tasks, not more interpretation of this one.
 
