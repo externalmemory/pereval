@@ -60,12 +60,19 @@ SIMULATION_INSTRUCTIONS = (
         "exactly pool_id,ecl,", "exactly pool_id,ecl,ecl_lower,ecl_upper,"
     )
     + """
-Simulation mode: also predict a central 95% interval for aggregate lifetime loss
-in dollars (ecl_lower, ecl_upper). Require 0 <= lower <= upper <= balance.
-This is a large homogeneous pool model: no finite-loan sampling noise.
+Simulation mode: for EACH pool, also predict a central 95% interval for THAT
+POOL'S OWN lifetime loss in dollars (ecl_lower, ecl_upper). Require
+0 <= lower <= upper <= balance. Every pool's interval is scored on its own
+against that pool's loss distribution, so do not build a single portfolio-wide
+interval and split it across pools: pool losses are correlated and do not
+diversify away, so an allocated portfolio interval is too narrow for each pool
+and will score badly. No portfolio-level interval is requested or scored.
+This is a large homogeneous pool model: no finite-loan sampling noise, so
+"aggregate" below means aggregated over the many loans inside one pool, never
+aggregated across pools.
 History measures conditional mean rates with observation noise, not the future
 systemic shocks. Fit those means as above. For each future quarter with mean PD m,
-realized aggregate PD = Phi((Phi_inverse(m)+sqrt(rho)*z)/sqrt(1-rho)).
+the pool's realized aggregate PD = Phi((Phi_inverse(m)+sqrt(rho)*z)/sqrt(1-rho)).
 Phi is the standard normal CDF. z starts N(0,1), independent of history;
 z_next = persistence*z + sqrt(1-persistence^2)*epsilon, epsilon iid N(0,1).
 Use rho and persistence from policy.json. This construction preserves marginal

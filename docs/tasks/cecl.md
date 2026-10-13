@@ -350,7 +350,7 @@ where:
 - $L$ denotes the simulated lifetime-loss distribution, and $Q_a(L)$ denotes its quantile at cumulative probability $a$.
 - $0.025$ and $0.975$ are the 2.5th and 97.5th percentiles. $\mathrm{PI}_{95\%}$ denotes the resulting central 95% prediction interval, with both endpoints in dollars.
 
-Submit `pool_id,ecl,ecl_lower,ecl_upper` in dollars. The bounds describe the central 95% distribution of future aggregate lifetime loss conditional on the supplied scenario, not a confidence interval for the estimated allowance. Bounds must satisfy:
+Submit `pool_id,ecl,ecl_lower,ecl_upper` in dollars. The bounds describe the central 95% distribution of **that pool's own** future lifetime loss conditional on the supplied scenario, not a confidence interval for the estimated allowance, and not a share of a portfolio-level band. Each pool's interval is scored against that pool's loss distribution. Bounds must satisfy:
 
 ```math
 0\le L_{\mathrm{lower}}\le L_{\mathrm{upper}}\le B.
@@ -380,6 +380,38 @@ Mean accuracy is reported as `ecl_regret` and loss-rate MAE. `completion` always
 4. **Lifetime loss combines risk and runoff.** The last panel applies the implemented accounting to 100,000 paths per setting, with 3% mean quarterly PD, 45% LGD, 2% conditional quarterly prepayment, and a 40-quarter term. All values are synthetic. The persistent case has a wider lifetime-loss distribution in this example; its mean can also change because high-default paths lose exposed principal earlier. This is why we average path losses rather than run the recursion once on average PDs.
 
 Reproduce the PNG with `python scripts/plot_cecl_functional_form.py` from the repository root, with Matplotlib installed alongside the project dependencies. The plot uses the actual `default_paths` and `path_losses` implementation. These figures illustrate the synthetic mechanism, not empirical calibration or measured AI performance.
+
+## A Smoke Run Found the Word "Aggregate" Ambiguous
+
+The first free-model run of the interval task produced a complete submission, implemented the disclosed shock law correctly, and still scored coverage 0.461 against a nominal 0.95. The cause was the prompt, not the model. It asked for "a central 95% interval for aggregate lifetime loss", and the model read "aggregate" as across pools rather than across the loans inside a pool. Its own reasoning records the choice: "It says aggregate lifetime loss in dollars. That suggests the interval is for the total loss across the portfolio." It then built one portfolio band and allocated it across pools in proportion to expected loss.
+
+That is too narrow per pool, because pool losses are driven by shared segment shocks and do not diversify away. Reproducing the reading on the same instance, with the same correct simulation and the same means so that only the bounded quantity differs:
+
+| Interpretation | Winkler regret | Coverage | Mean width |
+| --- | ---: | ---: | ---: |
+| Per pool, as intended | 0.0000 | 0.949 | 0.0312 |
+| Portfolio band allocated across pools | 0.0308 | 0.658 | 0.0174 |
+| Observed from the model | 0.1401 | 0.461 | 0.0166 |
+| Cohort reference | 0.0002 | 0.951 | 0.0313 |
+
+The allocated width of 0.0174 matches the model's 0.0166 to within five percent, so the wording accounts for the narrowness almost exactly. It accounts for about sixty percent of the coverage shortfall; the remainder comes from the model's mean being off, 96 bps of loss-rate error against the reference's 7.6, which mis-centres an interval of roughly the right width.
+
+The prompt now says "for EACH pool ... THAT POOL'S OWN lifetime loss", states that every interval is scored on its own, names the allocated-portfolio construction as the thing not to do, and defines "aggregate" where the response law needs the word. `tests/test_cecl_prompt.py` pins the wording and the measured gap between the two readings.
+
+Re-running the same model on the same instance with only the prompt changed confirms it:
+
+| Row | Messages | `ecl_regret` | Loss-rate MAE (bps) | Winkler regret | Coverage | Mean width |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Cohort reference | 1 | 8.4e-07 | 7.57 | 0.0002 | 0.951 | 0.0313 |
+| nemotron-3-super (free), before | 44 | 1.50e-04 | 96.12 | 0.1401 | 0.461 | 0.0166 |
+| nemotron-3-super (free), after | 48 | 1.63e-05 | 30.97 | 0.0052 | 0.918 | 0.0332 |
+| Naive reference | 1 | 7.06e-02 | 2105.13 | 8.3850 | 0.000 | 0.0000 |
+
+Coverage moves from 0.461 to 0.918 against a nominal 0.95, and the width from 0.0166 to 0.0332, which lands on the reference's 0.0313. That is the causal part, and it is now confirmed twice: the offline reconstruction predicted 0.0174 for the wrong reading, and the corrected run delivers a width matching the reference.
+
+The expected-loss metrics also improved, `ecl_regret` by about nine times and MAE from 96 to 31 bps, and that part is **not attributed**. The edit touched only interval wording, so either the clearer framing incidentally helped the mean fit or this is ordinary run-to-run variation on a resampled agent. One pair of runs cannot separate those, and the [reproducibility finding](../limitations.md#run-to-run-reproducibility) measured same-instance swings up to thirty times, which is far larger than this difference. It should not be read as evidence that prompt wording improves mean estimation.
+
+The general lesson is worth keeping separate from the fix. The scorer, the generator and this document were all unambiguous that no portfolio interval exists. The ambiguity lived only in the system prompt, which is the one artefact the agent sees, and a documented intention is worth nothing if the prompt contradicts it. A cell produced that way looks like a calibration failure and is mostly a specification failure.
 
 ## What The Task Does Not Test
 
