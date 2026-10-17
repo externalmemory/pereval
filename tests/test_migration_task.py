@@ -1,0 +1,283 @@
+"""Generator, scorer and reference invariants for the rating-migration task.
+
+Several of these pin measurements that drove design choices, so that a later
+change cannot quietly remove the property the choice was made for.
+"""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pytest
+from scipy.linalg import fractional_matrix_power
+
+from pereval.scorers.migration import (
+    ORDER,
+    ks_distance,
+    score_predictions,
+)
+from pereval.tasks.migration.baselines import predict
+from pereval.tasks.migration.generator import (
+    BASE_MIX,
+    CHECKPOINTS,
+    D,
+    LIVE,
+    N_OBLIGORS,
+    _withdrawal_adjusted_annual,
+    conditional_matrix,
+    expected_distributions,
+    generate,
+    holdout_mix,
+    public_files,
+    quarterly_base,
+)
+
+SEEDS = (1, 2, 3)
+SCEN = ("baseline", "adverse", "severe")
+
+
+@pytest.fixture(scope="module")
+def bundle():
+    return generate(1, n_years=20, scenario="adverse")
+
+
+def test_deterministic():
+    a = generate(3, n_years=12, scenario="adverse")
+    b = generate(3, n_years=12, scenario="adverse")
+    assert a["annual_counts"] == b["annual_counts"]
+    assert a["truth"] == b["truth"]
+
+
+def test_quarterly_base_is_stochastic_and_default_absorbing():
+    q = quarterly_base()
+    assert (q >= 0).all()
+    assert np.allclose(q.sum(axis=1), 1.0)
+    assert q[D, D] == 1.0 and q[D, :D].sum() == 0.0
+
+
+def test_portfolio_mix_carries_about_one_percent_annual_default():
+    """The calibration target: a large bank's wholesale book, not S&P's universe."""
+    pd_annual = _withdrawal_adjusted_annual()[:D, D]
+    assert float(BASE_MIX @ pd_annual) == pytest.approx(0.0099, abs=0.0015)
+    assert BASE_MIX.sum() == pytest.approx(1.0)
+
+
+def test_conditional_matrix_preserves_rows_and_monotonicity():
+    """A threshold shift cannot invert the rating ordering; a multiplier could."""
+    base = quarterly_base()
+    for z in (-2.0, -0.5, 0.0, 0.5, 2.0):
+        m = conditional_matrix(base, z, 0.15)
+        assert np.allclose(m.sum(axis=1), 1.0)
+        assert (m >= 0).all()
+        # default probability is monotone in the grade at every factor value
+        pd = m[:D, D]
+        assert np.all(np.diff(pd) >= -1e-12), (z, pd)
+
+
+def test_worse_factor_raises_default_probability_for_every_grade():
+    base = quarterly_base()
+    lo, hi = conditional_matrix(base, -1.0, 0.15), conditional_matrix(base, 1.0, 0.15)
+    # AAA's one-step default probability is zero to machine precision: the
+    # published annual entry is exactly zero and the quarterly base is a
+    # numerical matrix root, so it comes back at the 1e-16 level rather than 0.
+    assert hi[0, D] < 1e-12 and lo[0, D] < 1e-12
+    assert np.all(hi[1:D, D] > lo[1:D, D])
+
+
+def test_holdout_mix_is_shifted_toward_speculative_grade():
+    """Without a shifted mix an aggregate macro fit scores well with no migration
+    model, which would make the rating structure decoration."""
+    h = holdout_mix(0.3)
+    assert h.sum() == pytest.approx(1.0)
+    cum_base = np.cumsum(BASE_MIX)
+    cum_h = np.cumsum(h)
+    # the shifted cohort is stochastically worse: its CDF lies below at every grade
+    assert np.all(cum_h[:-1] <= cum_base[:-1] + 1e-12)
+    assert ks_distance(h, BASE_MIX) > 0.02
+
+
+def test_annual_counts_are_whole_cohorts_and_only_public_files_leak(bundle):
+    rows = bundle["annual_counts"]
+    years = {r["year"] for r in rows}
+    assert len(rows) == len(years) * len(LIVE)
+    files = public_files(bundle)
+    assert set(files) == {"data/transitions.csv", "data/macro_history.csv",
+                          "data/scenario.csv", "data/portfolio.csv",
+                          "data/policy.json"}
+    blob = "\n".join(files.values())
+    for key in ("driver_up", "driver_down", "weight_up", "rho", "mix_tilt"):
+        assert key not in blob
+    for value in (bundle["dgp"]["driver_up"], bundle["dgp"]["driver_down"]):
+        # driver NAMES are column headers, so only the drawn numbers must not leak
+        assert isinstance(value, str)
+    assert f"{bundle['dgp']['rho']:.6f}" not in blob
+    assert json.loads(files["data/policy.json"])["checkpoints"] == list(CHECKPOINTS)
+
+
+def test_truth_distributions_are_cohort_shares_including_default(bundle):
+    for q in CHECKPOINTS:
+        d = bundle["truth"]["rating_distribution"][str(q)]
+        assert set(d) == set(ORDER)
+        assert sum(d.values()) == pytest.approx(1.0, abs=1e-9)
+    early = bundle["truth"]["rating_distribution"][str(min(CHECKPOINTS))]
+    late = bundle["truth"]["rating_distribution"][str(max(CHECKPOINTS))]
+    # default is absorbing, so its share cannot fall between checkpoints
+    assert late["D"] >= early["D"]
+
+
+def test_default_is_visible_to_ks_only_in_the_cohort_view():
+    """The measurement behind the scored object.
+
+    Two submissions with identical live-grade shares but different default rates
+    are indistinguishable once the seven live grades are renormalised to one,
+    because the cumulative distribution then reaches one on both sides. With
+    default as a terminal bin the error appears directly, equal to the default
+    share that was omitted.
+    """
+    truth = np.array([0.002, 0.0134, 0.1063, 0.3153, 0.2617, 0.1865, 0.0385, 0.0763])
+    zero_default = np.concatenate([truth[:7] / truth[:7].sum(), [0.0]])
+
+    def live(v):
+        return v[:7] / v[:7].sum()
+
+    assert ks_distance(live(zero_default), live(truth)) == pytest.approx(0.0, abs=1e-12)
+    assert ks_distance(zero_default, truth) == pytest.approx(0.0763, abs=1e-6)
+
+
+def _oracle_csv(truth):
+    rows = ["quarter,state,share"]
+    for q in CHECKPOINTS:
+        for s in ORDER:
+            rows.append(f"{q},{s},{truth['rating_distribution'][str(q)][s]}")
+    return "\n".join(rows) + "\n"
+
+
+def test_oracle_scores_exactly_zero_and_missing_scores_one(bundle):
+    """The degenerate answer is 1.0 by construction, so the scale reads directly."""
+    truth = bundle["truth"]
+    perfect = score_predictions(truth, _oracle_csv(truth))
+    assert perfect["score"] == pytest.approx(0.0, abs=1e-12)
+    assert perfect["completion"] == 1.0
+    missing = score_predictions(truth, None)
+    assert missing["completion"] == 0.0
+    assert missing["score"] == pytest.approx(1.0)
+
+
+def test_each_component_is_a_fraction_of_the_degenerate(bundle):
+    """Equal weighting comes from the normalisation, not from chosen constants."""
+    truth = bundle["truth"]
+    perfect = score_predictions(truth, _oracle_csv(truth))
+    for k in ("ks_q4", "ks_q9", "default_q4", "default_q9"):
+        assert perfect[f"{k}_norm"] == pytest.approx(0.0, abs=1e-9)
+    missing = score_predictions(truth, None)
+    for k in ("ks_q4", "ks_q9", "default_q4", "default_q9"):
+        assert missing[f"{k}_norm"] == pytest.approx(1.0)
+
+
+def test_shape_and_default_are_scored_independently(bundle):
+    """Getting the grades right while claiming no defaults must not score well."""
+    truth = bundle["truth"]
+    rows = ["quarter,state,share"]
+    for q in CHECKPOINTS:
+        d = truth["rating_distribution"][str(q)]
+        live_total = sum(d[s] for s in ORDER[:-1])
+        for s in ORDER:
+            share = 0.0 if s == "D" else d[s] / live_total
+            rows.append(f"{q},{s},{share}")
+    r = score_predictions(truth, "\n".join(rows) + "\n")
+    # the live-grade shape is exact, so both KS components vanish
+    assert r["ks_q4_norm"] == pytest.approx(0.0, abs=1e-9)
+    assert r["ks_q9_norm"] == pytest.approx(0.0, abs=1e-9)
+    # but both default components are maximally wrong, pinning the score near 0.5
+    assert r["default_q4_norm"] == pytest.approx(1.0, rel=1e-6)
+    assert r["default_q9_norm"] == pytest.approx(1.0, rel=1e-6)
+    assert r["score"] == pytest.approx(0.5, abs=1e-6)
+
+
+@pytest.mark.parametrize("text", [
+    "quarter,state,share\n4,AAA,0.5\n",                       # incomplete states
+    "quarter,state,share\n4,AAA,-0.1\n" + "\n".join(
+        f"4,{s},0.2" for s in ORDER[1:]),                     # negative share
+    "quarter,state,share\n" + "\n".join(f"4,{s},50" for s in ORDER),  # percent, not share
+    "quarter,state,share\n" + "\n".join(f"4,{s},0.125" for s in ORDER) * 2,  # duplicates
+])
+def test_malformed_submissions_cannot_gain_credit(bundle, text):
+    r = score_predictions(bundle["truth"], text)
+    assert r["completion"] == 0.0
+    assert r["score"] == pytest.approx(1.0)
+
+
+def test_reference_beats_the_degenerate_by_a_wide_margin():
+    """The anchor that makes the column readable.
+
+    Measured at roughly 6.5x over nine instances. The bar here is deliberately
+    looser than the measurement so ordinary generator drift does not fail it,
+    but a change that collapses the separation will.
+    """
+    ref, deg = [], []
+    for scen in SCEN:
+        for seed in SEEDS:
+            b = generate(seed, n_years=20, scenario=scen)
+            f = public_files(b)
+            ref.append(score_predictions(b["truth"], predict(f, "onefactor"))["score"])
+            deg.append(score_predictions(b["truth"], predict(f, "no_migration"))["score"])
+    assert np.mean(ref) < 0.4 * np.mean(deg)
+    assert np.mean(ref) > 0.0          # the reference is not the oracle
+
+
+def test_no_migration_baseline_reproduces_the_anchor_exactly():
+    """The anchor must be reachable from the integer counts the agent can see."""
+    b = generate(2, n_years=20, scenario="adverse")
+    r = score_predictions(b["truth"], predict(public_files(b), "no_migration"))
+    assert r["score"] == pytest.approx(1.0, rel=1e-6)
+    assert r["completion"] == 1.0
+
+
+def test_annual_matrix_from_a_moving_factor_resists_a_stochastic_root():
+    """The trap the task turns on, measured rather than asserted.
+
+    A constant factor gives an annual matrix that is a fourth power, whose
+    principal fourth root is clean. A factor that moves within the year gives a
+    product of four different matrices, whose principal root is not stochastic.
+    """
+    base = quarterly_base()
+    constant = np.linalg.matrix_power(conditional_matrix(base, 0.5, 0.15), 4)
+    assert np.real(fractional_matrix_power(constant, 0.25)).min() > -1e-10
+
+    moving = np.eye(D + 1)
+    for z in (0.5, 1.0, 1.5, 2.0):
+        moving = moving @ conditional_matrix(base, z, 0.15)
+    assert np.real(fractional_matrix_power(moving, 0.25)).min() < -1e-7
+
+
+def test_finite_portfolio_sampling_dominates_the_non_embeddability():
+    """Why the trap is robust: the portfolio, not the macro path, drives it."""
+    rng = np.random.default_rng(0)
+    base = quarterly_base()
+    moving = np.eye(D + 1)
+    for z in (0.5, 1.0, 1.5, 2.0):
+        moving = moving @ conditional_matrix(base, z, 0.15)
+    start = np.round(BASE_MIX * N_OBLIGORS).astype(int)
+    emp = np.zeros((D + 1, D + 1))
+    for i in range(D):
+        emp[i] = rng.multinomial(int(start[i]), moving[i])
+    emp[:D] /= np.maximum(emp[:D].sum(axis=1, keepdims=True), 1)
+    emp[D, D] = 1.0
+    sampled_min = np.real(fractional_matrix_power(emp, 0.25)).min()
+    exact_min = np.real(fractional_matrix_power(moving, 0.25)).min()
+    assert sampled_min < exact_min      # sampling makes it worse, not better
+    assert sampled_min < -1e-4
+
+
+def test_expected_distributions_match_a_direct_propagation(bundle):
+    base = quarterly_base()
+    dgp = bundle["dgp"]
+    z = bundle["truth"]["z_scenario"]
+    mix = np.array([bundle["holdout_mix"][r] for r in LIVE])
+    got = expected_distributions(base, dgp, z, mix, CHECKPOINTS)
+    v = np.concatenate([mix, [0.0]])
+    for t in range(max(CHECKPOINTS)):
+        v = v @ conditional_matrix(base, float(z[t]), dgp["rho"])
+        if t + 1 in CHECKPOINTS:
+            assert np.allclose([got[t + 1][s] for s in ORDER], v)
