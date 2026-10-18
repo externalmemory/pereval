@@ -363,3 +363,62 @@ def test_missing_matrices_are_recorded_without_affecting_score():
     start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
     d = matrix_diagnostics(None, start, {}, [4, 9])
     assert d == {"matrix_provided": 0.0}
+
+
+def test_admissibility_is_immaterial_to_accuracy_so_it_breaks_ties_only():
+    """Pins the measurement behind keeping admissibility out of `score`.
+
+    Degrading only the reference's matrices, leaving exact zeros and letting the
+    default ordering invert, changes the score by a fraction of a percent. If a future change makes admissibility material, this
+    test fails and the tie-breaker treatment has to be revisited rather than
+    silently kept.
+    """
+    import numpy as np
+    from scipy.linalg import fractional_matrix_power
+
+    from pereval.scorers.migration import (
+        matrix_diagnostics,
+        parse_predictions,
+        score_predictions,
+    )
+    from pereval.tasks.migration import baselines as B
+
+    def raw_base(mats):
+        tot = sum(mats.values())
+        ann = np.zeros((D + 1, D + 1))
+        ann[:D] = tot / np.maximum(tot.sum(axis=1, keepdims=True), 1.0)
+        ann[D, D] = 1.0
+        q = np.clip(np.real(fractional_matrix_power(ann, 0.25)), 0.0, None)
+        q[D, :] = 0.0
+        q[D, D] = 1.0
+        q[:D] /= q[:D].sum(axis=1, keepdims=True)
+        return q
+
+    b = generate(1, n_years=20, scenario="adverse")
+    f, t = public_files(b), b["truth"]
+    start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
+    cps = [int(q) for q in t["rating_distribution"]]
+
+    good_preds, good_mats = predict(f, "onefactor")
+    original = B.pooled_quarterly_base
+    B.pooled_quarterly_base = raw_base
+    try:
+        bad_preds, bad_mats = predict(f, "onefactor")
+    finally:
+        B.pooled_quarterly_base = original
+
+    good = matrix_diagnostics(good_mats, start, parse_predictions(good_preds), cps)
+    bad = matrix_diagnostics(bad_mats, start, parse_predictions(bad_preds), cps)
+    assert good["matrix_admissible"] == 1.0
+    assert bad["matrix_admissible"] == 0.0
+    assert bad["matrix_zero_cells"] > 0
+
+    s_good = score_predictions(t, good_preds)["score"]
+    s_bad = score_predictions(t, bad_preds)["score"]
+    # Orthogonal: wholly different admissibility, indistinguishable accuracy.
+    # Measured at 0.45% of the score on this instance and under 0.01% averaged
+    # over twelve, where the per-instance differences cancel. The bound is 5%,
+    # which is still far inside the factor-of-a-few resolution this suite
+    # claims, so the test fails only if admissibility becomes genuinely
+    # material rather than on ordinary instance variation.
+    assert abs(s_bad - s_good) < 0.05 * s_good

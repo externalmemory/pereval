@@ -91,6 +91,30 @@ The consequence for the task is that rooting an annual matrix is not merely nume
 
 ESMA's CEREP publishes transition matrices as counts directly, including a withdrawals column, filterable by agency, asset class and region, with CSV export. That is the better source for published rather than reconstructed counts, and the route to a second agency for cross-checking. Its interface is a JSF application that is not practical to script, so anything from it would be pulled by hand.
 
+## Admissibility Is a Tie-Breaker, Not a Weight or a Gate
+
+The agent is asked for the quarterly transition matrices it used, in `matrices.csv`, and the prompt says only that this documents how the projection was produced. It does not say what is examined. The point of the silence is to test whether an agent raises, unprompted, the questions a review function would: that a transition matrix needs non-negative entries and rows summing to one, that default probability must not improve as credit quality worsens, and that the documented model must actually reproduce the reported projection. Telling the agent what is checked would turn that into a compliance exercise.
+
+Zero probabilities are the interesting case. A projection of exactly zero defaults allocates no reserve to a live exposure, which is imprudent whatever the long-run average works out to, and it cannot be revised by evidence. A portfolio of ten obligors at 1% should project 0.1 expected defaults, not 0, even though no one ever observes 0.1 defaults. This is a known weakness of the Kreinin and Sidelnikova style remedy for an invalid matrix root: clipping negatives to zero and renormalising produces exact zeros, which violates Cromwell's rule.
+
+The generator was guilty of it. The fourth root of the published annual average inherited four exact zeros, one of them AAA to default, because the published AAA one-year rate is 0.00% and a root of zero is still zero. The oracle would have failed the check the task poses. Every live cell is now floored at 1e-9 and the default column at the quarterly equivalent of the 0.03% annual minimum from 12 CFR 217.131(d)(2), with the default column held fixed while the rest of each row rescales.
+
+**How it affects the score: it does not.** Holding the generator fixed and degrading only the reference's own matrices:
+
+| Reference variant | Score | Exact zero cells | Ordering inversions |
+| --- | ---: | ---: | ---: |
+| floors and imposes ordering | 0.1585 | 0 | 0 |
+| leaves the fourth root's zeros | 0.1584 | 26.8 | 4.5 |
+| floors but leaves ordering to noise | 0.1584 | 0 | 4.5 |
+
+Twenty-seven exact zeros and four and a half ordering inversions per instance cost under half a percent of the score on a single instance and under a hundredth of a percent averaged over twelve, against the reference's own error of 0.158. The defect is orthogonal to accuracy rather than merely small.
+
+That rules out two treatments and leaves one. A weight would be fiat, because there is no accuracy cost to calibrate it against, and putting it in the number recreates the materiality argument inside the metric instead of avoiding it. A gate would disqualify a model whose accuracy is unaffected, which is not what a review function does: it assesses materiality, finds it small, issues a model limitation and approves. All models are wrong and some are useful, and here there are far larger error sources than a probability that is almost rather than exactly zero.
+
+So admissibility breaks ties. `matrix_admissible` is the single flag, set when rows sum to one, no cell is negative, no reachable cell is exactly zero and default is non-decreasing in grade. Where two cells sit within the resolution this suite claims, a factor of a few, prefer the admissible one. The component counts stay reported for diagnosis. `tests/test_migration_task.py` pins the immateriality measurement, so a later change that makes admissibility material fails the test rather than quietly surviving.
+
+One limit worth stating. A clean submitted matrix cannot distinguish an agent that reasoned about admissibility from one that clipped silently and got lucky. Both free models in the smoke runs found the negative entries and still called them numerical issues. That reasoning lives in the transcript, and grading it would need a judge, which this suite does not use.
+
 ## What Is Deliberately Absent
 
 No generator, no scorer, no task wrapper, no agent results. The open design questions, in the order they need answering:
