@@ -28,7 +28,14 @@ from scipy.linalg import fractional_matrix_power
 from scipy.optimize import minimize_scalar
 
 from pereval.scorers.migration import ORDER
-from pereval.tasks.migration.generator import D, LIVE, RHO_RANGE, conditional_matrix
+from pereval.tasks.migration.generator import (
+    CELL_FLOOR,
+    D,
+    LIVE,
+    PD_FLOOR_QUARTERLY,
+    RHO_RANGE,
+    conditional_matrix,
+)
 
 #: The reference does not know the drawn asset correlation and assumes the
 #: midpoint of the range. Seeds whose true value sits at an end of the range are
@@ -57,15 +64,33 @@ def _annual_matrices(text):
 
 
 def pooled_quarterly_base(mats):
-    """Unconditional quarterly matrix from the pooled counts."""
+    """Unconditional quarterly matrix from the pooled counts, made admissible.
+
+    Three corrections a competent modeller applies and the raw fourth root does
+    not. No cell is left at exactly zero, since a reachable transition assigned
+    zero probability can never be revised by evidence and allocates no reserve.
+    The default column is floored at the quarterly equivalent of the 0.03% annual
+    PD minimum. And the default column is forced non-decreasing across grades,
+    because thin counts in the top grades otherwise invert the ordering and leave
+    the model asserting that AAA is riskier than AA.
+
+    The last two interact: once AAA and AA are both floored they are equal in
+    truth, so sampling noise alone will invert their estimates about half the
+    time unless the ordering is imposed.
+    """
     tot = sum(mats.values())
     ann = np.zeros((D + 1, D + 1))
     ann[:D] = tot / np.maximum(tot.sum(axis=1, keepdims=True), 1.0)
     ann[D, D] = 1.0
-    q = np.clip(np.real(fractional_matrix_power(ann, 0.25)), 1e-12, None)
+    q = np.clip(np.real(fractional_matrix_power(ann, 0.25)), CELL_FLOOR, None)
     q[D, :] = 0.0
     q[D, D] = 1.0
-    q[:D] /= q[:D].sum(axis=1, keepdims=True)
+    live = q[:D]
+    pd = np.maximum(live[:, D], PD_FLOOR_QUARTERLY)
+    live[:, D] = np.maximum.accumulate(pd)        # non-decreasing in grade
+    rest = live[:, :D]
+    rest *= ((1.0 - live[:, D]) / rest.sum(axis=1))[:, None]
+    q[:D] = live
     return q
 
 

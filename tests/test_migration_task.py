@@ -78,11 +78,12 @@ def test_conditional_matrix_preserves_rows_and_monotonicity():
 def test_worse_factor_raises_default_probability_for_every_grade():
     base = quarterly_base()
     lo, hi = conditional_matrix(base, -1.0, 0.15), conditional_matrix(base, 1.0, 0.15)
-    # AAA's one-step default probability is zero to machine precision: the
-    # published annual entry is exactly zero and the quarterly base is a
-    # numerical matrix root, so it comes back at the 1e-16 level rather than 0.
-    assert hi[0, D] < 1e-12 and lo[0, D] < 1e-12
-    assert np.all(hi[1:D, D] > lo[1:D, D])
+    # AAA's default probability is no longer zero: the published annual entry is
+    # 0.00%, an absence of observations rather than of risk, so the base floors
+    # it at the regulatory minimum. It therefore responds to the factor like any
+    # other grade.
+    assert hi[0, D] > lo[0, D] > 0.0
+    assert np.all(hi[:D, D] > lo[:D, D])
 
 
 def test_holdout_mix_is_shifted_toward_speculative_grade():
@@ -248,7 +249,12 @@ def test_annual_matrix_from_a_moving_factor_resists_a_stochastic_root():
     moving = np.eye(D + 1)
     for z in (0.5, 1.0, 1.5, 2.0):
         moving = moving @ conditional_matrix(base, z, 0.15)
-    assert np.real(fractional_matrix_power(moving, 0.25)).min() < -1e-7
+    # Flooring the base's four exact zeros makes it marginally more embeddable,
+    # so this threshold is looser than it was: the exact-arithmetic pathology is
+    # now around -3e-08. It is immaterial, because finite-portfolio sampling
+    # contributes about -7e-03, five orders of magnitude more, as the next test
+    # measures.
+    assert np.real(fractional_matrix_power(moving, 0.25)).min() < -1e-9
 
 
 def test_finite_portfolio_sampling_dominates_the_non_embeddability():
@@ -284,7 +290,12 @@ def test_expected_distributions_match_a_direct_propagation(bundle):
 
 def test_matrix_diagnostics_are_clean_for_the_reference():
     """The competent reference produces admissible matrices, so a nonzero count
-    on an agent run means the agent's matrices, not the harness."""
+    on an agent run means the agent's matrices, not the harness.
+
+    This is the test that caught the reference asserting AAA riskier than AA,
+    once flooring made those two grades equal in truth and left their estimates
+    to sampling noise. The reference now imposes the ordering.
+    """
     import numpy as np
 
     from pereval.scorers.migration import (

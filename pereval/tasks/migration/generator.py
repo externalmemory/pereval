@@ -90,19 +90,44 @@ def _withdrawal_adjusted_annual() -> np.ndarray:
     return m
 
 
-def quarterly_base() -> np.ndarray:
-    """Unconditional quarterly matrix: the principal fourth root, made stochastic.
+#: Cromwell floor on any live transition: nothing physically reachable is
+#: assigned exactly zero. Immaterial in size, load-bearing in principle.
+CELL_FLOOR = 1e-9
 
-    The published annual average is itself embeddable enough that its fourth root
-    needs only clipping at the 1e-16 level. The non-embeddability this task turns
-    on arises later, from a factor that moves within the year and from finite
-    sampling, not from this base matrix.
+#: Floor on the default column, the quarterly equivalent of the 0.03% annual PD
+#: floor at 12 CFR 217.131(d)(2). Set here rather than left to the data because
+#: the published AAA default rate is 0.00%, an absence of observations in 44
+#: static pools rather than an absence of risk, and a fourth root of zero is
+#: still zero. A projection of exactly zero default allocates no reserve to a
+#: live exposure, which is imprudent whatever the long-run average works out to.
+PD_FLOOR_QUARTERLY = 1.0 - (1.0 - 0.0003) ** 0.25
+
+
+def quarterly_base() -> np.ndarray:
+    """Unconditional quarterly matrix: the principal fourth root, made admissible.
+
+    The fourth root of the published annual average needs clipping only at the
+    1e-16 level, but it inherits four exact zeros, one of them AAA to default.
+    Those are floored here so the generator obeys the rule it tests for: the
+    oracle has to be achievable by a model that assigns no impossible
+    certainties. The non-embeddability this task turns on arises later, from a
+    factor that moves within the year and from finite sampling, not here.
+
+    The default column is floored first and held fixed while the rest of each row
+    is rescaled, so renormalisation cannot push a default probability back under
+    the regulatory minimum.
     """
     q = np.real(fractional_matrix_power(_withdrawal_adjusted_annual(), 0.25))
-    q = np.clip(q, 0.0, None)
+    q = np.clip(q, CELL_FLOOR, None)
     q[D, :] = 0.0
     q[D, D] = 1.0
-    q[:D] /= q[:D].sum(axis=1, keepdims=True)
+    live = q[:D]
+    live[:, D] = np.maximum(live[:, D], PD_FLOOR_QUARTERLY)
+    # hold the default column, rescale the surviving states to close each row
+    rest = live[:, :D]
+    target = 1.0 - live[:, D]
+    rest *= (target / rest.sum(axis=1))[:, None]
+    q[:D] = live
     return q
 
 
@@ -366,7 +391,8 @@ def public_files(bundle: dict) -> dict[str, str]:
 
 __all__ = [
     "BASE_MIX", "D", "LIVE", "MACRO_COLUMNS", "N_OBLIGORS", "RHO_RANGE",
-    "CHECKPOINTS", "conditional_matrix", "draw_dgp", "expected_default_path",
+    "CELL_FLOOR", "CHECKPOINTS", "PD_FLOOR_QUARTERLY", "conditional_matrix",
+    "draw_dgp", "expected_default_path",
     "expected_distributions", "generate",
     "holdout_mix", "public_files", "quarterly_base", "simulate_history",
     "systematic_factor",
