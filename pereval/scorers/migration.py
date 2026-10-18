@@ -234,14 +234,29 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
         checks += len(pd) - 1
         violations += int((np.diff(pd) < -1e-12).sum())
 
-    admissible = (
-        row_err <= 1e-6
-        and negatives == 0
-        and zeros == 0
-        and violations == 0
-    )
+    # Three tiers, because the defects are not of one kind.
+    #
+    # HARD. Rows must sum to one. A matrix whose rows do not is not a collection
+    # of probability distributions, so it cannot be the model that produced the
+    # projection, and the failure is consequential rather than cosmetic:
+    # scaling every row to 1.2 drives the submission gap from 0.0000 to 2.5163,
+    # because mass non-conservation compounds over the horizon. This is a
+    # completeness failure, not an accuracy one.
+    #
+    # MIDDLE. Negative cells also mean the object is not a distribution, but
+    # clipping them to zero is a defensible remedy that the literature uses, and
+    # a single small negative is numerically near-harmless: the same gap moves
+    # only to 0.0001. So it is flagged, not failed.
+    #
+    # SOFT. Exact zeros and a non-monotone default ordering leave a valid
+    # distribution that is imprudent or odd. Tie-breaker territory.
+    rows_valid = row_err <= 1e-6
+    nonneg = negatives == 0
+    admissible = rows_valid and nonneg and zeros == 0 and violations == 0
     out = {
         "matrix_provided": 1.0,
+        "matrix_rows_valid": float(rows_valid),
+        "matrix_nonnegative": float(nonneg),
         "matrix_admissible": float(admissible),
         "matrix_quarters": float(len(quarters)),
         "matrix_row_sum_error": row_err,
@@ -275,8 +290,8 @@ def migration_scorer():
             "default_q9_norm", "default_rate_bias", "hosmer_lemeshow",
             "completion", "runs", "regret_worst", "regret_spread",
             # diagnostics only: deliberately excluded from `score`
-            "matrix_provided", "matrix_admissible", "matrix_row_sum_error",
-            "matrix_rows_off_one",
+            "matrix_provided", "matrix_rows_valid", "matrix_nonnegative",
+            "matrix_admissible", "matrix_row_sum_error", "matrix_rows_off_one",
             "matrix_negative_cells", "matrix_most_negative", "matrix_zero_cells",
             "matrix_smallest_positive", "matrix_default_monotonicity_violations",
             "matrix_submission_gap")

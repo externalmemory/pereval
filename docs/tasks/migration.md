@@ -117,7 +117,15 @@ Twenty-seven exact zeros and four and a half ordering inversions per instance co
 
 That rules out two treatments and leaves one. A weight would be fiat, because there is no accuracy cost to calibrate it against, and putting it in the number recreates the materiality argument inside the metric instead of avoiding it. A gate would disqualify a model whose accuracy is unaffected, which is not what a review function does: it assesses materiality, finds it small, issues a model limitation and approves. All models are wrong and some are useful, and here there are far larger error sources than a probability that is almost rather than exactly zero.
 
-So admissibility breaks ties. `matrix_admissible` is the single flag, set when rows sum to one, no cell is negative, no reachable cell is exactly zero and default is non-decreasing in grade. Where two cells sit within the resolution this suite claims, a factor of a few, prefer the admissible one. The component counts stay reported for diagnosis. `tests/test_migration_task.py` pins the immateriality measurement, so a later change that makes admissibility material fails the test rather than quietly surviving.
+So admissibility breaks ties. But the defects are not all of one kind, and the measurement separates them into three tiers rather than one flag.
+
+**Rows must sum to one. This is the hard one.** A matrix whose rows do not is not a collection of probability distributions, so it cannot be the model that produced the projection, and the breach is consequential rather than cosmetic. Scaling every row to 1.2 drives the gap between the submitted distribution and what the submitted matrices actually propagate to from 0.0000 to 2.5163, because mass non-conservation compounds over nine quarters. `matrix_rows_valid` records it, and a failure there is incomplete documentation rather than an accuracy penalty: the agent was asked to record its model and did not.
+
+**Negative cells sit in the middle.** They also mean the object is not a distribution, but clipping them to zero is a defensible remedy that Kreinin and Sidelnikova use, and a single small negative is numerically near-harmless: the same gap moves only to 0.0001, because mass is still conserved. `matrix_nonnegative` flags it rather than failing it.
+
+**Exact zeros and a non-monotone default ordering are soft.** They leave a perfectly valid distribution that is imprudent or odd, and they cost nothing measurable in accuracy. Tie-breaker only.
+
+`matrix_admissible` is the flag for the tie-break and requires all three tiers to be clean. Where two cells sit within the resolution this suite claims, a factor of a few, prefer the admissible one. The component counts stay reported for diagnosis. `tests/test_migration_task.py` pins both the immateriality measurement and the tier separation, so a later change that makes admissibility material, or that collapses the tiers, fails the test rather than quietly surviving.
 
 One limit worth stating. A clean submitted matrix cannot distinguish an agent that reasoned about admissibility from one that clipped silently and got lucky. Both free models in the smoke runs found the negative entries and still called them numerical issues. That reasoning lives in the transcript, and grading it would need a judge, which this suite does not use.
 

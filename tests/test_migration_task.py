@@ -422,3 +422,49 @@ def test_admissibility_is_immaterial_to_accuracy_so_it_breaks_ties_only():
     # claims, so the test fails only if admissibility becomes genuinely
     # material rather than on ordinary instance variation.
     assert abs(s_bad - s_good) < 0.05 * s_good
+
+
+def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
+    """The tiers, and the measurement that justifies separating them.
+
+    Rows not summing to one make the matrix unable to have produced the
+    projection, and the breach compounds: scaling every row to 1.2 drives the
+    submission gap from 0.0000 to above 2. A single small negative leaves mass
+    conserved and moves the gap by 1e-4, so clipping it is defensible and the
+    defect is flagged rather than failed.
+    """
+    import numpy as np
+
+    from pereval.scorers.migration import matrix_diagnostics, parse_predictions
+
+    b = generate(1, n_years=20, scenario="adverse")
+    f, t = public_files(b), b["truth"]
+    start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
+    cps = [int(q) for q in t["rating_distribution"]]
+    preds, mats = predict(f, "onefactor")
+    head, *body = mats.splitlines()
+
+    good = matrix_diagnostics(mats, start, parse_predictions(preds), cps)
+    assert good["matrix_rows_valid"] == 1.0
+    assert good["matrix_nonnegative"] == 1.0
+    assert good["matrix_admissible"] == 1.0
+
+    def scaled(line, k):
+        parts = line.split(",")
+        return ",".join(parts[:2] + [repr(float(x) * k) for x in parts[2:]])
+
+    off = matrix_diagnostics(head + "\n" + "\n".join(scaled(x, 1.2) for x in body),
+                             start, parse_predictions(preds), cps)
+    assert off["matrix_rows_valid"] == 0.0
+    assert off["matrix_row_sum_error"] == pytest.approx(0.2, abs=0.01)
+    assert off["matrix_submission_gap"] > 1.0      # mass loss compounds
+
+    parts = body[0].split(",")
+    parts[2] = repr(float(parts[2]) + 0.05)
+    parts[9] = repr(float(parts[9]) - 0.05)
+    neg = matrix_diagnostics(head + "\n" + "\n".join([",".join(parts)] + body[1:]),
+                             start, parse_predictions(preds), cps)
+    assert neg["matrix_rows_valid"] == 1.0         # mass still conserved
+    assert neg["matrix_nonnegative"] == 0.0
+    assert neg["matrix_admissible"] == 0.0
+    assert neg["matrix_submission_gap"] < 0.01     # and numerically near-harmless
