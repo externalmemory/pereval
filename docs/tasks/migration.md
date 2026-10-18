@@ -1,8 +1,14 @@
 # Rating Migration
 
-**Status: reference data only.** There is no generator, no scorer and no Inspect task in `pereval/tasks/migration/` yet, and this task does not appear in the README's task table or score table. What exists is measured input: real one-year rating transition counts with their cohort sizes, plus long-run average matrices for calibration. This page records where those numbers came from so they can be traced back to the source, and what is known to be wrong with them.
+**Status: built, not measured.** The generator, the four-component scorer, two reference solvers and the Inspect task exist. One smoke test has been run against free models; the task does not appear in the README's score table and will not until there is a cell for every ranked row.
 
-The planned task is annual-to-quarterly conversion of rating transition probabilities, conditioned on macroeconomic paths. The intended difficulty is that a quarterly matrix obtained by rooting an annual one can be inadmissible: negative or complex migration probabilities, and a non-monotonic relationship between rating and transition probability. That is the Markov embedding problem, and the standard references are Israel, Rosenthal and Wei (2001) on when a generator exists, Kreinin and Sidelnikova (2001) on regularising an invalid root, and Higham and Lin on pth roots of stochastic matrices.
+The task gives an agent forty years of annual rating transition counts for a 10,000-obligor portfolio, quarterly macroeconomic history, a nine-quarter supervisory scenario, and a holdout cohort whose rating mix differs from the historical one. It must project where that cohort stands at quarters 4 and 9, and separately record the quarterly transition matrices it used.
+
+The intended difficulty is annual-to-quarterly conversion. A quarterly matrix obtained by rooting an annual one can be inadmissible: negative or complex migration probabilities, and a non-monotonic relationship between rating and default probability. That is the Markov embedding problem, and the standard references are Israel, Rosenthal and Wei (2001) on when a generator exists, Kreinin and Sidelnikova (2001) on regularising an invalid root, and Higham and Lin on pth roots of stochastic matrices.
+
+The trap is real and it is not tuned. Because the systematic factor moves every quarter, the annual matrix for a year is a product of four different quarterly matrices rather than the fourth power of one, so no quarterly matrix reproduces it. Measured on the exact arithmetic the principal fourth root reaches about -3e-08; with the finite 10,000-obligor portfolio it reaches -7e-03, five orders of magnitude worse, which is what an agent actually meets. Both free models in the smoke test found the negative entries, called them numerical issues, and clipped them.
+
+Bracket: oracle 0.000, one-factor reference 0.158, degenerate 1.000.
 
 ## Provenance
 
