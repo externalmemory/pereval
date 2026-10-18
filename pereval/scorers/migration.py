@@ -159,13 +159,119 @@ def score_predictions(truth: dict, text: str | None) -> dict[str, float]:
     return result
 
 
+#: Column order of a submitted quarterly matrix, matching data/transitions.csv.
+MATRIX_COLS = tuple(f"to_{s.replace('/', '_')}" for s in ORDER)
+
+
+def parse_matrices(text: str | None) -> dict[int, np.ndarray]:
+    """quarter,from_rating,to_* rows into {quarter: 8x8}. Permissive on purpose.
+
+    This parser does NOT reject a matrix for being inadmissible. Negative mass,
+    rows that miss one, exact zeros and non-monotone default are exactly what the
+    diagnostics measure, so rejecting them here would destroy the measurement.
+    Only structurally unreadable input returns {}.
+    """
+    if not text:
+        return {}
+    raw: dict[int, dict[str, np.ndarray]] = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        try:
+            q = int(float(row["quarter"]))
+            frm = str(row["from_rating"]).strip()
+            vals = np.array([float(row[c]) for c in MATRIX_COLS], dtype=float)
+        except (KeyError, TypeError, ValueError):
+            return {}
+        if frm not in LIVE_STATES or not np.isfinite(vals).all():
+            return {}
+        raw.setdefault(q, {})[frm] = vals
+    out = {}
+    for q, rows in raw.items():
+        if set(rows) != set(LIVE_STATES):
+            continue
+        m = np.zeros((len(ORDER), len(ORDER)))
+        for i, st in enumerate(LIVE_STATES):
+            m[i] = rows[st]
+        m[D_INDEX, D_INDEX] = 1.0
+        out[q] = m
+    return out
+
+
+def matrix_diagnostics(text: str | None, start: np.ndarray,
+                       submitted: dict[int, np.ndarray],
+                       checkpoints) -> dict[str, float]:
+    """Admissibility of the submitted quarterly matrices, reported not scored.
+
+    The agent is asked for its matrices without being told what is examined. The
+    question is whether it volunteers, unprompted, the checks a risk function
+    would raise: that a transition matrix must have non-negative entries and rows
+    summing to one, that default probability must not improve as credit quality
+    worsens, and that the documented model must actually reproduce the reported
+    projection.
+
+    None of this enters `score`. It is measurement, pending a decision on whether
+    and how admissibility should affect the headline number.
+    """
+    mats = parse_matrices(text)
+    if not mats:
+        return {"matrix_provided": 0.0}
+    quarters = sorted(mats)
+    live = [mats[q][:D_INDEX] for q in quarters]
+    stacked = np.concatenate(live, axis=0)
+
+    row_err = float(np.max(np.abs(stacked.sum(axis=1) - 1.0)))
+    negatives = int((stacked < 0).sum())
+    most_negative = float(stacked.min())
+    # an exact zero anywhere off the AAA default cell is suspicious: under a
+    # threshold-shift law every other transition carries positive mass
+    zero_mask = stacked == 0.0
+    zeros = int(zero_mask.sum())
+    smallest_positive = float(stacked[stacked > 0].min()) if (stacked > 0).any() else 0.0
+
+    # default probability must not fall as credit quality worsens
+    violations, checks = 0, 0
+    for m in live:
+        pd = m[:, D_INDEX]
+        checks += len(pd) - 1
+        violations += int((np.diff(pd) < -1e-12).sum())
+
+    out = {
+        "matrix_provided": 1.0,
+        "matrix_quarters": float(len(quarters)),
+        "matrix_row_sum_error": row_err,
+        "matrix_rows_off_one": float(np.sum(np.abs(stacked.sum(axis=1) - 1.0) > 1e-6)),
+        "matrix_negative_cells": float(negatives),
+        "matrix_most_negative": most_negative,
+        "matrix_zero_cells": float(zeros),
+        "matrix_smallest_positive": smallest_positive,
+        "matrix_default_monotonicity_violations": float(violations),
+        "matrix_monotonicity_checks": float(checks),
+    }
+
+    # does the documented model reproduce the reported projection?
+    if submitted and len(quarters) >= max(checkpoints):
+        v = start.copy()
+        gaps = []
+        for t, q in enumerate(quarters, start=1):
+            v = v @ mats[q]
+            if t in checkpoints and t in submitted:
+                gaps.append(ks_distance(v, submitted[t]))
+        if gaps:
+            out["matrix_submission_gap"] = float(np.mean(gaps))
+    return out
+
+
 def migration_scorer():
     from inspect_ai.scorer import Score, mean, scorer, stderr
     from inspect_ai.util import sandbox
 
     keys = ("score_degenerate", "ks_q4_norm", "ks_q9_norm", "default_q4_norm",
             "default_q9_norm", "default_rate_bias", "hosmer_lemeshow",
-            "completion", "runs", "regret_worst", "regret_spread")
+            "completion", "runs", "regret_worst", "regret_spread",
+            # diagnostics only: deliberately excluded from `score`
+            "matrix_provided", "matrix_row_sum_error", "matrix_rows_off_one",
+            "matrix_negative_cells", "matrix_most_negative", "matrix_zero_cells",
+            "matrix_smallest_positive", "matrix_default_monotonicity_violations",
+            "matrix_submission_gap")
 
     @scorer(name="migration",
             metrics={"score": [mean(), stderr()], **{k: [mean()] for k in keys}})
@@ -175,7 +281,17 @@ def migration_scorer():
                 text = await sandbox().read_file("predictions.csv")
             except FileNotFoundError:
                 text = None
-            v = score_predictions(state.metadata["truth"], text)
+            try:
+                mtext = await sandbox().read_file("matrices.csv")
+            except FileNotFoundError:
+                mtext = None
+            truth = state.metadata["truth"]
+            v = score_predictions(truth, text)
+            start = np.array([truth["start_mix"].get(s_, 0.0) for s_ in ORDER],
+                             dtype=float)
+            v.update(matrix_diagnostics(
+                mtext, start, parse_predictions(text),
+                [int(q) for q in truth["rating_distribution"]]))
             bits = [f"score {v['score']:.4f} (1.0 = no migration)",
                     "components " + "/".join(
                         f"{v[f'{k}_norm']:.3f}" for k in

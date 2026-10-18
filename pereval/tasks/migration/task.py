@@ -84,6 +84,16 @@ means no better overall than assuming nothing happens, and below 1.0 means
 better. Getting the shape right while understating defaults, or the reverse,
 caps your score at about 0.5.
 
+Also write `matrices.csv` in the working directory, recording the quarterly
+transition matrices your model used for the nine scenario quarters, with columns
+exactly:
+
+    quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
+
+one row per scenario quarter and starting rating, so sixty-three rows, using the
+same column naming as data/transitions.csv. This records the model alongside its
+output, as documentation of how the projection was produced.
+
 Note that the transitions you observe are annual while the projection is
 quarterly, and the economy moves within each year as well as between years.
 
@@ -91,7 +101,8 @@ You have Python with numpy, pandas, scikit-learn, statsmodels and scipy. You do
 not have internet access. Each code execution runs in a FRESH interpreter, so
 write a single self-contained script and run it rather than relying on state
 carrying over. Produce a complete predictions.csv early, even from a rough
-model, and refine it after. Verify it has sixteen rows before submitting.
+model, and refine it after. Verify predictions.csv has sixteen rows before
+submitting.
 """
 
 SAMPLE_INPUT = ("Project the cohort in data/portfolio.csv over the scenario and write "

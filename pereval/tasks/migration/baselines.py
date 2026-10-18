@@ -105,6 +105,21 @@ def _macro_features(history, scenario, n_years):
             np.column_stack([np.ones(n_scen)] + scen))
 
 
+def matrices_csv(mats: dict[int, np.ndarray]) -> str:
+    """The quarterly matrices the solver actually used, in the requested layout."""
+    cols = ["quarter", "from_rating"] + [f"to_{s.replace('/', '_')}" for s in ORDER]
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols)
+    w.writeheader()
+    for q in sorted(mats):
+        for i, frm in enumerate(LIVE):
+            row = {"quarter": q, "from_rating": frm}
+            for j, s in enumerate(ORDER):
+                row[f"to_{s.replace('/', '_')}"] = float(mats[q][i, j])
+            w.writerow(row)
+    return buf.getvalue()
+
+
 def predict(files: dict[str, str], method: str = "onefactor") -> str:
     if method not in ("onefactor", "no_migration"):
         raise ValueError("method must be 'onefactor' or 'no_migration'")
@@ -113,8 +128,12 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
     mix = counts / counts.sum()
     checkpoints = json.loads(files["data/policy.json"])["checkpoints"]
 
+    quarterlies: dict[int, np.ndarray] = {}
     if method == "no_migration":
         dists = {q: np.concatenate([mix, [0.0]]) for q in checkpoints}
+        # the model is that nothing happens, so the matrices are the identity
+        for q in range(1, max(checkpoints) + 1):
+            quarterlies[q] = np.eye(len(ORDER))
     else:
         mats = _annual_matrices(files["data/transitions.csv"])
         base = pooled_quarterly_base(mats)
@@ -127,7 +146,9 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         v = np.concatenate([mix, [0.0]])
         dists = {}
         for t in range(max(checkpoints)):
-            v = v @ conditional_matrix(base, float(z[t]), RHO_ASSUMED)
+            m = conditional_matrix(base, float(z[t]), RHO_ASSUMED)
+            quarterlies[t + 1] = m
+            v = v @ m
             if t + 1 in checkpoints:
                 dists[t + 1] = v.copy()
 
@@ -137,7 +158,7 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
     w = csv.DictWriter(buf, fieldnames=["quarter", "state", "share"])
     w.writeheader()
     w.writerows(out)
-    return buf.getvalue()
+    return buf.getvalue(), matrices_csv(quarterlies)
 
 
 def reference_solver(method: str):
@@ -152,7 +173,9 @@ def reference_solver(method: str):
                 for n in ("transitions.csv", "macro_history.csv",
                           "scenario.csv", "portfolio.csv", "policy.json")
             }
-            await sandbox().write_file("predictions.csv", predict(files, method))
+            preds, mats = predict(files, method)
+            await sandbox().write_file("predictions.csv", preds)
+            await sandbox().write_file("matrices.csv", mats)
             return state
 
         return solve

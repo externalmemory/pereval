@@ -220,8 +220,8 @@ def test_reference_beats_the_degenerate_by_a_wide_margin():
         for seed in SEEDS:
             b = generate(seed, n_years=20, scenario=scen)
             f = public_files(b)
-            ref.append(score_predictions(b["truth"], predict(f, "onefactor"))["score"])
-            deg.append(score_predictions(b["truth"], predict(f, "no_migration"))["score"])
+            ref.append(score_predictions(b["truth"], predict(f, "onefactor")[0])["score"])
+            deg.append(score_predictions(b["truth"], predict(f, "no_migration")[0])["score"])
     assert np.mean(ref) < 0.4 * np.mean(deg)
     assert np.mean(ref) > 0.0          # the reference is not the oracle
 
@@ -229,7 +229,7 @@ def test_reference_beats_the_degenerate_by_a_wide_margin():
 def test_no_migration_baseline_reproduces_the_anchor_exactly():
     """The anchor must be reachable from the integer counts the agent can see."""
     b = generate(2, n_years=20, scenario="adverse")
-    r = score_predictions(b["truth"], predict(public_files(b), "no_migration"))
+    r = score_predictions(b["truth"], predict(public_files(b), "no_migration")[0])
     assert r["score"] == pytest.approx(1.0, rel=1e-6)
     assert r["completion"] == 1.0
 
@@ -281,3 +281,74 @@ def test_expected_distributions_match_a_direct_propagation(bundle):
         v = v @ conditional_matrix(base, float(z[t]), dgp["rho"])
         if t + 1 in CHECKPOINTS:
             assert np.allclose([got[t + 1][s] for s in ORDER], v)
+
+def test_matrix_diagnostics_are_clean_for_the_reference():
+    """The competent reference produces admissible matrices, so a nonzero count
+    on an agent run means the agent's matrices, not the harness."""
+    import numpy as np
+
+    from pereval.scorers.migration import (
+        matrix_diagnostics,
+        parse_predictions,
+    )
+
+    b = generate(1, n_years=20, scenario="adverse")
+    f = public_files(b)
+    preds, mats = predict(f, "onefactor")
+    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+    cps = [int(q) for q in b["truth"]["rating_distribution"]]
+    d = matrix_diagnostics(mats, start, parse_predictions(preds), cps)
+    assert d["matrix_provided"] == 1.0
+    assert d["matrix_rows_off_one"] == 0.0
+    assert d["matrix_negative_cells"] == 0.0
+    assert d["matrix_zero_cells"] == 0.0
+    assert d["matrix_default_monotonicity_violations"] == 0.0
+    # the documented model reproduces the reported projection
+    assert d["matrix_submission_gap"] < 1e-9
+
+
+def test_matrix_diagnostics_detect_each_pathology():
+    """An inadmissible matrix is measured, not rejected, and never changes `score`."""
+    import numpy as np
+
+    from pereval.scorers.migration import (
+        matrix_diagnostics,
+        parse_matrices,
+        score_predictions,
+    )
+
+    b = generate(1, n_years=20, scenario="adverse")
+    preds, mats = predict(public_files(b), "onefactor")
+    rows = mats.splitlines()
+    header, body = rows[0], rows[1:]
+    # break the first live row: negative mass, rows off one, and a default
+    # probability that improves as credit quality worsens
+    broken = header + "\n" + "\n".join(
+        ["1,AAA," + ",".join(["0.5", "0.6", "-0.2", "0.0", "0.0", "0.0", "0.0", "0.9"]),
+         "1,AA," + ",".join(["0.0"] * 7 + ["0.1"])] + body[2:])
+    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+    cps = [int(q) for q in b["truth"]["rating_distribution"]]
+    d = matrix_diagnostics(broken, start, {}, cps)
+    assert parse_matrices(broken)          # parsed, not rejected
+    assert d["matrix_negative_cells"] >= 1
+    assert d["matrix_most_negative"] < 0
+    assert d["matrix_rows_off_one"] >= 1
+    assert d["matrix_zero_cells"] >= 1
+    # AAA default 0.9 against AA default 0.1 is the ordering inversion
+    assert d["matrix_default_monotonicity_violations"] >= 1
+    # and none of it touched the headline score
+    clean = score_predictions(b["truth"], preds)
+    assert "matrix_negative_cells" not in clean
+    assert clean["score"] == pytest.approx(
+        score_predictions(b["truth"], preds)["score"])
+
+
+def test_missing_matrices_are_recorded_without_affecting_score():
+    import numpy as np
+
+    from pereval.scorers.migration import matrix_diagnostics
+
+    b = generate(1, n_years=20, scenario="adverse")
+    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+    d = matrix_diagnostics(None, start, {}, [4, 9])
+    assert d == {"matrix_provided": 0.0}
