@@ -153,6 +153,84 @@ def conditional_matrix(base: np.ndarray, z: float, rho: float) -> np.ndarray:
     return out
 
 
+#: How long conditions deteriorate before recovery begins, in quarters, by
+#: scenario. Published supervisory scenarios deteriorate for a few quarters and
+#: then recover; they do not worsen monotonically for the whole horizon. Two to
+#: six quarters covers the range, with severe stress lasting longer.
+STRESS_QUARTERS = {"baseline": (2, 3), "adverse": (3, 5), "severe": (4, 6)}
+
+#: Fraction of the peak stress still present at the end of the horizon. Recovery
+#: is partial: nine quarters is not long enough to return to normal after a
+#: severe downturn.
+RECOVERY_FRACTION = {"baseline": (0.0, 0.3), "adverse": (0.2, 0.45),
+                     "severe": (0.35, 0.6)}
+
+#: Series that trend, so their stressed path is reshaped through the growth rate
+#: rather than the level. sp500 and djia are derived from nasdaq and share its
+#: kind.
+_TRENDING = {"gdp", "hpi", "cpi", "nasdaq", "sp500", "djia"}
+_LOG_LEVEL = {"unemployment", "vix"}
+
+
+def hump_shape(n: int, peak: int, recovery: float) -> np.ndarray:
+    """Severity weights over the horizon: rise to 1.0 at `peak`, then partially back.
+
+    Quarter indices are 1-based in the description and 0-based here. The weight
+    reaches its maximum at the peak quarter and decays linearly to `recovery` by
+    the final quarter, so the path deteriorates, turns, and improves without
+    returning to normal.
+    """
+    if not 1 <= peak <= n:
+        raise ValueError("peak must fall inside the horizon")
+    if not 0.0 <= recovery <= 1.0:
+        raise ValueError("recovery fraction must be in [0, 1]")
+    w = np.empty(n)
+    w[:peak] = np.linspace(1.0 / peak, 1.0, peak)
+    if peak < n:
+        w[peak:] = np.linspace(1.0, recovery, n - peak + 1)[1:]
+    return w
+
+
+def reshape_scenario(levels: dict, intime: slice, stress: slice,
+                     w: np.ndarray) -> dict:
+    """Replace the inherited monotone ramp over the horizon with a hump.
+
+    The CCAR overlay ramps level series linearly to a target and holds growth
+    series at a constant stressed rate, so every published series is monotone
+    across the horizon. That is not what a supervisory scenario looks like. The
+    reshaping is applied here rather than in the CCAR generator so that task's
+    archived measurements are untouched.
+
+    Each series is reshaped in the space its overlay acts on: the level for a
+    level series, the log level for a log-level series, and the quarter-on-quarter
+    growth rate for a trending one, which is then recumulated from the last
+    historical value.
+    """
+    out = {n: np.asarray(v, dtype=float).copy() for n, v in levels.items()}
+    last = stress.start - 1
+    n_h = stress.stop - stress.start
+    if len(w) != n_h:
+        raise ValueError("weight vector must match the horizon length")
+    for name, x in out.items():
+        if name in _TRENDING:
+            g = np.diff(np.log(x[last:stress.stop]))
+            base = float(np.diff(np.log(x[intime]))[-8:].mean())
+            dev = float(g[0]) - base
+            lvl = x[last]
+            for k in range(n_h):
+                lvl *= np.exp(base + dev * w[k])
+                x[stress.start + k] = lvl
+        elif name in _LOG_LEVEL:
+            lx = np.log(x)
+            a, b = lx[last], lx[stress.stop - 1]
+            lx[stress] = a + (b - a) * w
+            x[:] = np.exp(lx)
+        else:
+            a, b = x[last], x[stress.stop - 1]
+            x[stress] = a + (b - a) * w
+    return out
+
+
 def draw_dgp(rng: np.random.Generator) -> dict:
     """The per-instance response law. Nothing about it is in any public file."""
     return {
@@ -327,13 +405,25 @@ def generate(seed: int = 1, n_years: int = 40, scenario: str = "adverse") -> dic
     rng_law, rng_port = (np.random.default_rng(s) for s in ss.spawn(2))
     dgp = draw_dgp(rng_law)
     macros = _ccar_macros(seed, n_intime, 50, None, scenario)
-    levels, calib = macros["levels"], macros["intime_slice"]
+    calib, stress = macros["intime_slice"], macros["stress_slice"]
+    # Give the horizon a realistic shape: deteriorate for a few quarters, turn,
+    # then recover partly. The inherited overlay is monotone across all nine.
+    peak = int(rng_law.integers(*STRESS_QUARTERS[macros["scenario"]], endpoint=True))
+    recovery = float(rng_law.uniform(*RECOVERY_FRACTION[macros["scenario"]]))
+    dgp["peak_quarter"], dgp["recovery_fraction"] = peak, recovery
+    levels = reshape_scenario(macros["levels"], calib, stress,
+                              hump_shape(stress.stop - stress.start, peak, recovery))
+    scenario_rows = [
+        {"quarter": n_intime + 1 + k,
+         **{n: round(float(levels[n][stress.start + k]), 4) for n in MACRO_COLUMNS}}
+        for k in range(stress.stop - stress.start)
+    ]
     z = systematic_factor(dgp, levels, calib)
     base = quarterly_base()
 
     annual, _ = simulate_history(base, dgp, z[calib], n_years, rng_port)
     mix = holdout_mix(dgp["mix_tilt"])
-    z_scen = z[macros["stress_slice"]]
+    z_scen = z[stress]
     counts = {r: int(v) for r, v in
               zip(LIVE, np.round(mix * N_OBLIGORS).astype(int))}
     per_rating, total = expected_default_path(base, dgp, z_scen, mix)
@@ -345,7 +435,7 @@ def generate(seed: int = 1, n_years: int = 40, scenario: str = "adverse") -> dic
         "dgp": dgp,
         "annual_counts": annual_counts_rows(annual),
         "history_rows": macros["train_rows"],
-        "scenario_rows": macros["scenario_rows"],
+        "scenario_rows": scenario_rows,
         "holdout_mix": {r: float(v) for r, v in zip(LIVE, mix)},
         "holdout_counts": counts,
         "truth": {
@@ -391,7 +481,8 @@ def public_files(bundle: dict) -> dict[str, str]:
 
 __all__ = [
     "BASE_MIX", "D", "LIVE", "MACRO_COLUMNS", "N_OBLIGORS", "RHO_RANGE",
-    "CELL_FLOOR", "CHECKPOINTS", "PD_FLOOR_QUARTERLY", "conditional_matrix",
+    "CELL_FLOOR", "CHECKPOINTS", "PD_FLOOR_QUARTERLY", "RECOVERY_FRACTION",
+    "STRESS_QUARTERS", "conditional_matrix", "hump_shape", "reshape_scenario",
     "draw_dgp", "expected_default_path",
     "expected_distributions", "generate",
     "holdout_mix", "public_files", "quarterly_base", "simulate_history",

@@ -129,6 +129,34 @@ So admissibility breaks ties. But the defects are not all of one kind, and the m
 
 One limit worth stating. A clean submitted matrix cannot distinguish an agent that reasoned about admissibility from one that clipped silently and got lucky. Both free models in the smoke runs found the negative entries and still called them numerical issues. That reasoning lives in the transcript, and grading it would need a judge, which this suite does not use.
 
+## The Scenario Has a Trough, Which Cost Something
+
+The horizon was initially monotone. Every macro series deteriorated for all nine quarters without turning, because the inherited CCAR overlay ramps level series linearly to a target and holds growth series at a constant stressed rate, and neither construction can reverse. In `severe` unemployment ran from -0.22 to +1.24 standard deviations in a straight line.
+
+Published supervisory scenarios are not shaped like that. They deteriorate for a few quarters, turn, and recover partly; the stress phase typically lasts two to six quarters rather than the whole horizon. The horizon is now reshaped accordingly, in this generator rather than CCAR's so that task's archived measurements are untouched. A severity weight rises to its peak at a drawn quarter and decays linearly to a drawn residual, with the peak quarter and residual both scenario-dependent: two to three quarters and up to 30% residual for `baseline`, three to five and 20 to 45% for `adverse`, four to six and 35 to 60% for `severe`.
+
+The systematic factor peaks one to two quarters after the macro path does, which is not a defect: credit deteriorates after the economy does.
+
+| Scenario | 9-quarter portfolio default | Annualised |
+| --- | ---: | ---: |
+| baseline | 2.66% (1.43 to 5.42) | 1.19% |
+| adverse | 7.22% (3.14 to 12.24) | 3.29% |
+| severe | 17.22% (6.13 to 31.16) | 8.20% |
+
+Baseline annualises to 1.19% against the 0.99% the portfolio mix was calibrated for, which is the holdout cohort being deliberately riskier than the history.
+
+**Two things the change cost, recorded because one of them contradicts a prediction made before it.**
+
+The trap is unaffected, and the reasoning that suggested it would improve was wrong. A realistic hump makes the annual matrix MORE embeddable, not less: the principal fourth root reaches -3.5e-09 under a trough against -1.0e-07 under the monotone ramp. Only a violent reversal, a factor swinging plus and minus two within a year, strengthens it, by a factor of five thousand. All of it is immaterial anyway, because finite-portfolio sampling contributes about -7e-03, four to six orders of magnitude more, and that is what an agent actually meets.
+
+The checkpoints became less independent, not more. The expectation was that a turn between quarter 4 and quarter 9 would make them distinct tests. The opposite happened: correlation between the two shape components rose from 0.59 to 0.65 and between the two default components from 0.64 to 0.78, taking the four-component score from 2.74 to 2.44 effective dimensions. The reason is that the default target is cumulative and absorbing, so quarter 9 contains quarter 4. Front-loading the stress means most defaults have already occurred by the first checkpoint and the second adds only a thinning tail. A monotone ramp puts the heaviest stress last, so its second checkpoint carries proportionally more new information.
+
+Realism and checkpoint independence pull in opposite directions here. Realism won, because the task's claim is to resemble a supervisory exercise and a one-way ramp does not.
+
+The bracket moved slightly: reference 0.179, degenerate 1.000, separation 5.6x, against 0.158 and 6.3x under the monotone ramp.
+
+**The reference needs the full forty years of history.** At twenty years its factor regression fits seven parameters to twenty annual observations and fails outright on some draws, scoring 1.18 against the degenerate's 1.00 on one seed across all three scenarios. The task ships `n_years=40` and the tests exercise that rather than a shorter history.
+
 ## What the Silent Check Measured
 
 The first run under the prompt that asks for `matrices.csv`, two free models over the same three instances, with both reference solvers for comparison.

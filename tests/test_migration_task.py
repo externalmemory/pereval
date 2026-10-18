@@ -212,14 +212,21 @@ def test_malformed_submissions_cannot_gain_credit(bundle, text):
 def test_reference_beats_the_degenerate_by_a_wide_margin():
     """The anchor that makes the column readable.
 
-    Measured at roughly 6.5x over nine instances. The bar here is deliberately
-    looser than the measurement so ordinary generator drift does not fail it,
-    but a change that collapses the separation will.
+    Measured at roughly 5.6x over eighteen instances at the task's default
+    forty years of history. The bar here is deliberately looser than the
+    measurement so ordinary generator drift does not fail it, but a change that
+    collapses the separation will.
+
+    This runs at n_years=40 rather than a shorter history on purpose. The
+    reference needs that much: at twenty years its factor regression has seven
+    parameters against twenty annual observations, and on some draws it fails
+    outright, scoring 1.18 against the degenerate's 1.00. Testing at twenty
+    would have been testing a configuration the task does not ship.
     """
     ref, deg = [], []
     for scen in SCEN:
         for seed in SEEDS:
-            b = generate(seed, n_years=20, scenario=scen)
+            b = generate(seed, n_years=40, scenario=scen)
             f = public_files(b)
             ref.append(score_predictions(b["truth"], predict(f, "onefactor")[0])["score"])
             deg.append(score_predictions(b["truth"], predict(f, "no_migration")[0])["score"])
