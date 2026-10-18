@@ -129,6 +129,29 @@ So admissibility breaks ties. But the defects are not all of one kind, and the m
 
 One limit worth stating. A clean submitted matrix cannot distinguish an agent that reasoned about admissibility from one that clipped silently and got lucky. Both free models in the smoke runs found the negative entries and still called them numerical issues. That reasoning lives in the transcript, and grading it would need a judge, which this suite does not use.
 
+## What the Silent Check Measured
+
+The first run under the prompt that asks for `matrices.csv`, two free models over the same three instances, with both reference solvers for comparison.
+
+| Row | Mean score | Worst | Rows sum to one | Negative cells | Submission gap | Monotonicity violations |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| one-factor reference | 0.302 | 0.436 | 5 of 5 | 0 | 0.0000 | 0 |
+| nemotron-3-super (free) | 0.629 | 0.965 | 2 of 2 supplied | 0 | 0.0000 | 9, 0 |
+| nemotron-3-ultra (free) | 0.772 | 1.215 | 3 of 3 | 0 | 0.0000 | 10, 18, 26 |
+| degenerate | 1.000 | 1.000 | — | — | — | 0 |
+
+Ultra's severe instance at 1.215 is the first model result on this task worse than predicting that nothing happens.
+
+**The hard constraint was respected without being asked for.** Every supplied matrix has rows summing to one, no negative cell survived, and the submission gap is 0.0000 in every case, so each agent's documented matrices reproduce its own reported projection exactly. The matrices are genuinely the models used, not decoration.
+
+**The judgment-dependent constraint was not noticed at all.** Default monotonicity is violated 9, 0, 10, 18 and 26 times against 54 adjacent-pair checks per instance. Ultra's severe matrix inverts 48% of adjacent pairs: it asserts that better-rated obligors default more often. Across six transcripts, "rows sum", "sum to one" and "renormalise" appear between 5 and 19 times each, while "monotonic" appears once, referring to a bisection converging in a scalar rather than to the rating ordering, and "prudent", "reserve" and "implausible" appear not at all.
+
+The split is explained by whether the constraint is self-enforcing. Rows summing to one has a mechanical consequence: mass leaks and the projection misbehaves, and scaling rows to 1.2 drives the submission gap from 0.0000 to 2.5163. An agent is dragged to it by the arithmetic. Monotonicity has no mechanical consequence and costs under half a percent of the score, so it matters only to someone who already knows a transition matrix should have it. That is the domain judgment a review function supplies, and neither model supplied it.
+
+This is also the evidence for the tie-breaker treatment rather than a gate. Gating on monotonicity would have disqualified both models for a defect costing nothing measurable, which is the over-reaction the materiality argument rules out. Reporting it lets the defect be seen without pretending it drove the score.
+
+One operational gap. nemotron-3-super produced no parseable `matrices.csv` on one of three instances, which is also its worst-scoring one, so `matrix_provided` is 0.67 for that row and the other diagnostics are absent rather than zero for that sample. Aggregating a row whose matrix is sometimes missing needs a convention before this becomes a reported column.
+
 ## What Is Deliberately Absent
 
 No generator, no scorer, no task wrapper, no agent results. The open design questions, in the order they need answering:
