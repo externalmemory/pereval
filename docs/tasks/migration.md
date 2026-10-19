@@ -2,7 +2,7 @@
 
 **Status: built, not measured.** The generator, the four-component scorer, two reference solvers and the Inspect task exist. One smoke test has been run against free models; the task does not appear in the README's score table and will not until there is a cell for every ranked row.
 
-The task gives an agent twenty years of annual rating transition counts for a 10,000-obligor portfolio, quarterly macroeconomic history, a nine-quarter supervisory scenario, and a holdout cohort whose rating mix differs from the historical one. It must project where that cohort stands at quarters 4 and 9, and separately record the quarterly transition matrices it used.
+The task gives an agent twenty years of annual rating transition counts for a 10,000-obligor portfolio, quarterly macroeconomic history, a nine-quarter supervisory scenario, and a holdout cohort whose rating mix differs from the historical one. It must project where that cohort stands at quarters 4 and 9, record the quarterly transition matrices it used, and report the annual default rate its model projects for each historical year.
 
 The intended difficulty is annual-to-quarterly conversion. A quarterly matrix obtained by rooting an annual one can be inadmissible: negative or complex migration probabilities, and a non-monotonic relationship between rating and default probability. That is the Markov embedding problem, and the standard references are Israel, Rosenthal and Wei (2001) on when a generator exists, Kreinin and Sidelnikova (2001) on regularising an invalid root, and Higham and Lin on pth roots of stochastic matrices.
 
@@ -214,6 +214,79 @@ Bracket at the shipped settings: reference 0.287 over twenty-four instances, 0.3
 
 Nothing in the prompt mentions sample size or overfitting. Recognising that twenty annual observations will not support an unshrunk macro regression is part of what the task measures.
 
+## Backtesting Against the Stressed Years
+
+The task asks for a third file, `backtest.csv`: the annual default rate the model projects for each HISTORICAL year, against the portfolio that year actually started with. That is the backtest a developer draws before anyone else sees the model, and it is the one output here that is asked for because a reviewer would ask for it rather than because the scorer needs it.
+
+Three design choices, all measured.
+
+**One-sided.** A stress test is asked one question: how large are losses under a given scenario. Understating them is the failure that matters, because a bank survives its benign years whatever the model says about them, and overstating them is conservative rather than wrong. So every statistic is a ratio of projected to observed, only values below one are findings, and there is no upper limit and no two-sided test.
+
+**No confidence interval is requested.** An actual stress test requires point estimates of expected losses under given scenarios; the interval is an implementation detail left to the developer. The reference computes one anyway, in `backtest_diagnostics`, because the chart a reviewer reads has a band on it, but nothing asks the agent for one and nothing scores one.
+
+**The projections are asked for rather than reverse engineered.** An earlier design tried to infer the historical fit from the submitted scenario matrices. There is nothing to infer it from, and asking is what a reviewer does.
+
+### What the Statistic Detects
+
+Scaling the reference's macro response by a factor k, holding the mean factor level fixed, over twenty-four instances:
+
+| k | 0.00 | 0.25 | 0.50 | 0.75 | 1.00 | 1.50 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| projected / observed, stressed years | 0.26 | 0.32 | 0.40 | 0.51 | 0.66 | 1.07 |
+| band's upper edge misses the peak | 75% | 75% | 50% | 50% | 25% | 12% |
+
+The ratio is monotone over a factor of four and needs no interval construction at all. The band is for the chart; the ratio carries the signal. A model with half the right macro sensitivity under-projects the nine-quarter loss by 32%, and one with none under-projects by 60%.
+
+The contrast between the stressed years and all years is itself informative: the shipped reference reads 0.69 over the stressed quarter of its history against 0.84 over all of it, so the under-prediction is concentrated exactly where it matters.
+
+### The Upper Bound Is at the 97.5th Percentile
+
+The residual is `logit(observed) - logit(fitted)`, assumed logistic and moment-matched, divided by `n` minus the effective degrees of freedom rather than by `n`, which widens it about thirteen percent for free. Three candidate bounds, by the fraction of instances where the band misses the observed peak:
+
+| Upper bound | k = 0, no macro response | k = 1, correct | k = 1.5 |
+| --- | ---: | ---: | ---: |
+| 95th percentile, 1.623 SD | 88% | 50% | 12% |
+| 97.5th percentile, 2.020 SD | 75% | 25% | 12% |
+| 99th percentile, 2.533 SD | 12% | 25% | 0% |
+
+The 95th flags half of all correctly specified models. The 99th inverts: an insensitive model's residuals are so large that its own band swallows the peak and discrimination dies. Only the 97.5th both fires on under-sensitivity and mostly spares a correct fit. Going one-sided does not license a tighter bound; it relabels a two-sided 95% interval as the one-sided 97.5% bound it already was.
+
+The logistic assumption is not load-bearing. A normal's 1.960 standard deviations against the logistic's 2.019 is three percent, and forward coverage came out identical at 91.7% either way. The quantile task's finding that a moment-matched logistic beats a moment-matched normal is located at tau = 0.99; at 0.975 the families are indistinguishable.
+
+### What It Cannot Do, Measured
+
+The band is computed from the residuals of the fit it is drawn around, so it shrinks as the fit tightens and **cannot detect overfitting**. The unshrunk reference covers the observed peak on every instance, covers its stressed years at 97.5% against the shrunk fit's 85.0%, and draws a band thirty percent tighter, while its actual forward coverage is 75% against a nominal 95%. On the chart the overfit model looks better calibrated than the correct one.
+
+Leave-one-out residuals move it the right way and not far enough: the overfit model's forward coverage rises to 83.3%, and it still reports the narrower band, 0.443 against the shrunk fit's 0.561, so the chart still prefers it. Jackknife+ and conformal guarantees hold under exchangeability, and a severely adverse scenario denies exchangeability by construction, which is the same blindness that disqualified cross-validation for the ridge penalty.
+
+Detecting underfitting is what this is for, and at that it works.
+
+"Did the band cover the peak" also must not be read as a pass/fail test. A perfectly calibrated pointwise 95% band excludes the largest of twenty draws with probability `1 - 0.975**20 = 40%`, and the correct model measures 25% here. The continuous ratio is the statistic; the binary version is noise.
+
+### The Reference Fails Its Own Check
+
+| | projected / observed, stressed years | factor swing retained | under-projects forward |
+| --- | ---: | ---: | ---: |
+| shrunk, shipped | **0.66** | 73% | 33% of instances |
+| unshrunk | 1.02 | 97% | 4% of instances |
+
+**The shrinkage that stops the reference blowing out on the projection also damps its macro response, so it under-fits the stressed years by about a third.** Ridge shrinks coefficient magnitude, and coefficient magnitude is the macro response. There is no reparameterisation out of it. Variance matching, rescaling the fitted deviation so its spread matches the annual factor estimates, restores the sensitivity exactly and brings the blow-ups back worse than before:
+
+| | Score | Max | Loses to degenerate | Projected / observed, stressed years |
+| --- | ---: | ---: | ---: | ---: |
+| unshrunk | 0.453 | 1.479 | 5 of 24 | 1.02 |
+| shrunk, shipped | 0.287 | 0.662 | 0 of 24 | 0.66 |
+| variance-matched | 0.705 | 2.002 | 5 of 24 | 1.01 |
+| half-matched | 0.430 | 1.232 | 3 of 24 | 0.81 |
+
+The damping and the stability are the same quantity. The score, being an accuracy measure, rewards the damping; a stress reviewer would reject it and issue a finding for insufficient macro sensitivity.
+
+This is recorded rather than fixed, and it sharpens what the task measures. The anchor is competent and challengeable rather than a target: an agent that beats 0.287 while keeping its stress ratio near one is doing something the score alone cannot see.
+
+### Diagnostics Reported
+
+From `backtest.csv`, against the observed annual rates: `fit_stress_mean_ratio` over the worst quartile of years, `fit_peak_ratio` at the single worst year, `fit_all_years_ratio` for the contrast, and `fit_peak_lag` for timing, suppressed when the projected series is flat and so has no peak. From `matrices.csv` and the truth: `stress_mean_ratio` and `stress_peak_ratio` on the nine-quarter loss path, `stress_peak_lag`, and `default_ratio_q4` and `default_ratio_q9`. None of it enters `score`.
+
 ## What the Silent Check Measured
 
 The first run under the prompt that asks for `matrices.csv`, two free models over the same three instances, with both reference solvers for comparison.
@@ -239,11 +312,23 @@ This is also the evidence for the tie-breaker treatment rather than a gate. Gati
 
 One operational gap. nemotron-3-super produced no parseable `matrices.csv` on one of three instances, which is also its worst-scoring one, so `matrix_provided` is 0.67 for that row and the other diagnostics are absent rather than zero for that sample. Aggregating a row whose matrix is sometimes missing needs a convention before this becomes a reported column.
 
-## What Is Deliberately Absent
+## How the Open Design Questions Were Resolved
 
-No generator, no scorer, no task wrapper, no agent results. The open design questions, in the order they need answering:
+These were the questions this page listed while nothing was built. They are kept because the answers are the design, and because two of them were answered differently from the way they were posed.
 
 1. **Where the oracle comes from.** Handing an agent a real published annual matrix and asking for the quarterly one has no verifiable answer, because a stochastic root need not be unique and most empirical annual matrices are not embeddable at all. The target has to be something generated forward from a hidden quarterly law, or a downstream economic quantity, rather than the matrix itself.
+
+   *Resolved as posed.* The oracle is the exact expected cohort distribution under the hidden quarterly law, propagated deterministically, so it is exactly zero and carries no Monte Carlo error.
 2. **What is scored.** Scoring a matrix entrywise forces arbitrary choices of norm and of how to weight the default column against the diagonal. A scalar economic output, such as cumulative default probability by initial rating over a horizon, fits the rest of this suite better and makes an inadmissible intermediate matrix show up as a bad score rather than being the scored object.
+
+   *Resolved as posed, then split.* One scalar was not enough: the nine-quarter default rate alone leaves the rating distribution untested. The score is four components, a Kolmogorov-Smirnov distance on the seven live grades and the cumulative default share, at quarters 4 and 9, each divided by what the degenerate scores on it so the four are commensurable.
 3. **Admissibility as a separate diagnostic.** Negative entries, rows not summing to one, and violations of rating monotonicity belong alongside the regret, in the way `completion` sits alongside the CECL score, rather than inside it.
+
+   *Resolved differently.* Reporting alongside was right, but one tier was not enough. Rows summing to one is a hard validity condition a scorer may penalise; negative cells clipped to zero are defensible, as Kreinin and Sidelnikova do; and exact zeros and non-monotone default columns are soft tie-breakers, because materiality is small and model risk management issues a limitation rather than a rejection. Three tiers, not one, and none of them a gate.
 4. **How macros enter.** The conventional form is a systematic credit-cycle factor shifting ordered-probit thresholds, which would give a per-instance hidden response law of the kind the CCAR generator now draws.
+
+   *Resolved as posed, with one correction.* The factor shifts cumulated thresholds, which preserves row sums and monotonicity by construction. The correction was that recession-down drivers must enter as year-over-year change rather than as levels: standardised against their own trending history, a stressed scenario otherwise sits two standard deviations on the wrong side of it.
+
+5. **What the scenario path looks like.** Not on the original list, and it should have been. The inherited overlay deteriorated monotonically across all nine quarters, which no published supervisory scenario does. It now has a trough.
+
+6. **Whether the model's response to macros is strong enough.** Also not on the original list. The score is an accuracy measure and cannot see the difference between a model that is right on average and one that is too insensitive to stress, which is the direction that under-reserves. That is what `backtest.csv` and the one-sided ratios are for, and the shipped reference fails them.

@@ -358,6 +358,24 @@ def expected_distributions(base, dgp, z, mix, checkpoints=CHECKPOINTS):
     return out
 
 
+def expected_default_increments(base, dgp, z, mix):
+    """Marginal cohort default fraction in each scenario quarter.
+
+    The cohort convention, matching the scored object: default absorbing, no
+    replacement. This is the loss path a stress reviewer reads off a chart, and
+    what the one-sided stress diagnostics compare against. The peak and the mean
+    over the stressed quarters are the part that matters, since a bank survives
+    benign quarters whatever the model says about them.
+    """
+    v = np.concatenate([mix, [0.0]])
+    prev, out = 0.0, []
+    for t in range(len(z)):
+        v = v @ conditional_matrix(base, float(z[t]), dgp["rho"])
+        out.append(float(v[D]) - prev)
+        prev = float(v[D])
+    return out
+
+
 def expected_default_path(base, dgp, z, mix):
     """Exact expected cumulative default fraction by rating over the horizon.
 
@@ -447,6 +465,13 @@ def generate(seed: int = 1, n_years: int = 40, scenario: str = "adverse") -> dic
             # from public data, and integer counts are all the agent can see.
             "start_mix": {**{r: float(n) / sum(counts.values())
                              for r, n in counts.items()}, "D": 0.0},
+            "default_increments": expected_default_increments(
+                base, dgp, z_scen, mix),
+            # public information, derived from data/transitions.csv, carried here
+            # so the scorer can compare the agent's own historical fit to it
+            "observed_annual_default_rate": [
+                float(c[:, D].sum() / c.sum()) for c in annual
+            ],
             "checkpoints": list(CHECKPOINTS),
             "horizon_quarters": N_STRESS,
             "z_scenario": [float(v) for v in z_scen],

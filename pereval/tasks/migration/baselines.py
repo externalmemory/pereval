@@ -30,6 +30,7 @@ import json
 
 import numpy as np
 from scipy.linalg import fractional_matrix_power
+from scipy.special import expit, logit
 from scipy.optimize import brentq, minimize_scalar
 
 from pereval.scorers.migration import ORDER
@@ -57,6 +58,14 @@ FEATURES = (("unemployment", False), ("bbb_spread", False), ("vix", False),
 #: twenty years, 6.0 at forty. A rule, not a constant, so a shorter history
 #: shrinks harder on its own.
 DF_DIVISOR = 8.0
+
+#: The 97.5th percentile of a logistic, in units of its standard deviation.
+#: The band is drawn two-sided for the chart but only its upper edge is
+#: tested, so this doubles as a one-sided 97.5% bound. The 95th, at 1.623,
+#: flags half of correctly specified models; the 99th, at 2.533, is wide
+#: enough that an insensitive model's own inflated residuals swallow the peak
+#: and discrimination dies. Measured, both.
+UPPER_SD = float(np.log(39.0) * np.sqrt(3.0) / np.pi)
 
 
 def _rows(text):
@@ -119,6 +128,13 @@ def _ridge(X, y, lam):
     n, p = X.shape
     pen = lam * n * np.diag([0.0] + [1.0] * (p - 1))
     return np.linalg.solve(X.T @ X + pen, X.T @ y)
+
+
+def _effective_df(X, lam):
+    """Trace of the hat matrix, the dimension the penalised fit actually spends."""
+    n, p = X.shape
+    pen = lam * n * np.diag([0.0] + [1.0] * (p - 1))
+    return float(np.trace(X @ np.linalg.solve(X.T @ X + pen, X.T)))
 
 
 def _lambda_for_df(X, target):
@@ -237,6 +253,33 @@ def matrices_csv(mats: dict[int, np.ndarray]) -> str:
     return buf.getvalue()
 
 
+def _backtest_csv(years, fitted) -> str:
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=["year", "default_rate"])
+    w.writeheader()
+    for y, v in zip(years, fitted):
+        w.writerow({"year": int(y), "default_rate": float(v)})
+    return buf.getvalue()
+
+
+def _fitted_annual_rates(mats, base, zfit):
+    """The model's own annual default rate for each historical year.
+
+    Each year starts from the portfolio that year actually began with, taken
+    from the row sums of its counts, so the series is comparable to the observed
+    one without any reweighting.
+    """
+    out = []
+    for y, z in zip(sorted(mats), zfit):
+        start = mats[y].sum(axis=1)
+        v = np.concatenate([start / start.sum(), [0.0]])
+        m = conditional_matrix(base, float(z), RHO_ASSUMED)
+        for _ in range(4):
+            v = v @ m
+        out.append(float(v[D]))
+    return out
+
+
 def predict(files: dict[str, str], method: str = "onefactor") -> str:
     if method not in ("onefactor", "no_migration"):
         raise ValueError("method must be 'onefactor' or 'no_migration'")
@@ -251,6 +294,8 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         # the model is that nothing happens, so the matrices are the identity
         for q in range(1, max(checkpoints) + 1):
             quarterlies[q] = np.eye(len(ORDER))
+        hist_years = sorted(_annual_matrices(files["data/transitions.csv"]))
+        backtest = _backtest_csv(hist_years, [0.0] * len(hist_years))
     else:
         mats = _annual_matrices(files["data/transitions.csv"])
         base = pooled_quarterly_base(mats)
@@ -260,6 +305,9 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         scenario = _rows(files["data/scenario.csv"])
         X, Xs = _macro_features(history, scenario, len(years))
         z = project_factor(X, Xs, zhat)
+        lam = _lambda_for_df(X, 1.0 + X.shape[0] / DF_DIVISOR)
+        backtest = _backtest_csv(
+            years, _fitted_annual_rates(mats, base, X @ _ridge(X, zhat, lam)))
         v = np.concatenate([mix, [0.0]])
         dists = {}
         for t in range(max(checkpoints)):
@@ -275,7 +323,75 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
     w = csv.DictWriter(buf, fieldnames=["quarter", "state", "share"])
     w.writeheader()
     w.writerows(out)
-    return buf.getvalue(), matrices_csv(quarterlies)
+    return buf.getvalue(), matrices_csv(quarterlies), backtest
+
+
+def backtest_diagnostics(files: dict[str, str]) -> dict:
+    """The backtest a model developer draws before anyone else sees the model.
+
+    Observed annual default rate against the model's fitted rate, year by year,
+    with an upper bound from the quantiles of the residuals in logit space. The
+    residual is logit(observed) minus logit(fitted); it is assumed logistic and
+    moment-matched, which is a convenience rather than a finding, since the
+    normal's 1.960 standard deviations against the logistic's 2.019 moves the
+    bound by three percent and changed nothing measurable here. Residuals are
+    divided by n minus the effective degrees of freedom rather than by n, which
+    widens the bound by about thirteen percent and costs nothing.
+
+    Read one-sided. Understating stress losses is the failure that matters; a
+    model that overstates them is conservative, and a bank survives benign years
+    whatever the model says about those. So `stress_mean_ratio` and
+    `peak_over_bound` are the statistics, and only underestimation counts.
+
+    The construction has a known limit, measured rather than assumed. The band
+    is computed from the residuals of the same fit it is drawn around, so it
+    shrinks when the fit tightens and cannot detect overfitting: an unshrunk fit
+    covers the observed peak on every instance while its forward coverage is
+    75 percent against a nominal 95. Leave-one-out residuals move that the right
+    way but not far enough, because the dominant error under a stress scenario
+    is extrapolation and conformal guarantees need exchangeability, which a
+    severely adverse scenario denies by construction. Detecting underfitting is
+    what this is for, and at that it works.
+    """
+    mats = _annual_matrices(files["data/transitions.csv"])
+    base = pooled_quarterly_base(mats)
+    years = sorted(mats)
+    zhat = np.array([factor_mle(mats[y], base) for y in years])
+    X, _ = _macro_features(_rows(files["data/macro_history.csv"]),
+                           _rows(files["data/scenario.csv"]), len(years))
+    n = X.shape[0]
+    lam = _lambda_for_df(X, 1.0 + n / DF_DIVISOR)
+    dof = _effective_df(X, lam)
+    zfit = X @ _ridge(X, zhat, lam)
+
+    observed = np.array([float(mats[y][:, D].sum() / mats[y].sum())
+                         for y in years])
+    fitted = np.array(_fitted_annual_rates(mats, base, zfit))
+
+    resid = logit(np.clip(observed, 1e-9, 1 - 1e-9)) - logit(fitted)
+    sd = float(np.sqrt(resid @ resid / max(n - dof, 1.0)))
+    centre = logit(fitted) + resid.mean()
+    upper = expit(centre + UPPER_SD * sd)
+    lower = expit(centre - UPPER_SD * sd)
+
+    stressed = observed >= np.quantile(observed, 0.75)
+    peak = int(np.argmax(observed))
+    return {
+        "years": list(years),
+        "observed": observed.tolist(),
+        "fitted": fitted.tolist(),
+        "lower": lower.tolist(),
+        "upper": upper.tolist(),
+        "residual_sd": sd,
+        "effective_df": float(dof),
+        # one-sided: below one is the finding
+        "stress_mean_ratio": float(fitted[stressed].mean() / observed[stressed].mean()),
+        "peak_over_bound": float(observed[peak] / upper[peak]),
+        "peak_year": int(years[peak]),
+        "stress_exceedances": float(np.mean(observed[stressed] > upper[stressed])),
+        "factor_swing_retained": float((zfit.max() - zfit.min())
+                                       / (zhat.max() - zhat.min())),
+    }
 
 
 def reference_solver(method: str):
@@ -290,9 +406,10 @@ def reference_solver(method: str):
                 for n in ("transitions.csv", "macro_history.csv",
                           "scenario.csv", "portfolio.csv", "policy.json")
             }
-            preds, mats = predict(files, method)
+            preds, mats, backtest = predict(files, method)
             await sandbox().write_file("predictions.csv", preds)
             await sandbox().write_file("matrices.csv", mats)
+            await sandbox().write_file("backtest.csv", backtest)
             return state
 
         return solve

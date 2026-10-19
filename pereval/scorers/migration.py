@@ -282,6 +282,128 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
     return out
 
 
+def parse_backtest(text: str | None) -> dict[int, float]:
+    """`backtest.csv`: the model's own fitted annual default rate, by year."""
+    if not text:
+        return {}
+    out: dict[int, float] = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        try:
+            out[int(float(row["year"]))] = float(row["default_rate"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
+    """One-sided check on the model's fit to the stressed part of its own history.
+
+    This is the backtest a developer draws before anyone else sees the model:
+    observed annual default rate against the rate the model says those years
+    should have had. The agent reports its own fitted rates, so nothing is
+    reverse engineered from its projection.
+
+    Read one-sided, on the stressed quarter of the historical years. Understating
+    losses in the bad years is the failure that matters; overstating them is
+    conservative, and a bank survives its benign years whatever the model claims
+    about them. So a ratio below one is a finding and a ratio above one is not.
+
+    On a sensitivity sweep of the reference, scaling its macro response by 0,
+    0.25, 0.5, 0.75, 1.0 and 1.5, `fit_stress_mean_ratio` runs 0.26, 0.32, 0.40,
+    0.51, 0.66 and 1.07. Monotone, a factor of four across the sweep, and it
+    requires no interval. The shipped reference itself reads 0.66, because the
+    shrinkage that stops it blowing out on the projection also damps its macro
+    response; that is a real limitation of the anchor rather than a scoring
+    artefact, which is the clearest evidence that this diagnostic bites.
+
+    It cannot detect the opposite failure. The fit is in sample, so a model that
+    overfits history scores well here. That is deliberate: this is a check for
+    insufficient macro sensitivity, and the forward statistics in
+    `stress_diagnostics` cover the other direction.
+    """
+    obs = np.asarray(list(observed), dtype=float)
+    fit = parse_backtest(text)
+    if obs.size == 0 or not fit:
+        return {"fit_provided": 0.0}
+    years = sorted(fit)
+    pred = np.array([fit[y] for y in years], dtype=float)
+    out = {"fit_provided": 1.0, "fit_years": float(len(years))}
+    if pred.size != obs.size:
+        return out                      # wrong length: nothing comparable
+    stressed = obs >= np.quantile(obs, 0.75)
+    if obs[stressed].mean() > 0.0:
+        out["fit_stress_mean_ratio"] = float(pred[stressed].mean()
+                                             / obs[stressed].mean())
+    if obs.max() > 0.0:
+        out["fit_peak_ratio"] = float(pred[int(np.argmax(obs))] / obs.max())
+    if obs.mean() > 0.0:
+        out["fit_all_years_ratio"] = float(pred.mean() / obs.mean())
+    if float(np.ptp(pred)) > 0.0:        # a flat series has no peak to be early or late
+        out["fit_peak_lag"] = float(int(np.argmax(pred)) - int(np.argmax(obs)))
+    return out
+
+
+def stress_diagnostics(text: str | None, start: np.ndarray,
+                       submitted: dict[int, np.ndarray],
+                       truth: dict) -> dict[str, float]:
+    """One-sided check on the model's response under stress, reported not scored.
+
+    A stress test is asked one question: how large are losses under a given
+    scenario. Understating them is the failure that matters, because a bank
+    survives benign quarters whatever the model says about them and an
+    overstatement is conservative rather than wrong. So every statistic here is
+    a ratio of submitted to true, and only values below one are findings. There
+    is no upper limit and no two-sided band.
+
+    The headline is `stress_mean_ratio`, the submitted mean quarterly loss over
+    the stressed half of the horizon divided by the true mean over those same
+    quarters. On a sensitivity sweep of the reference, scaling its macro
+    response from zero to one and a half, this ratio runs 0.26, 0.32, 0.40,
+    0.51, 0.66, 1.07. It is monotone, it spans a factor of four, and it needs no
+    interval construction.
+
+    `stress_peak_ratio` compares the peaks, and `stress_peak_lag` the timing: a
+    model may get the level right and put the peak in the wrong quarter, which a
+    reviewer reads off the chart immediately and no distance metric at a
+    checkpoint can see.
+
+    The checkpoint ratios come from `predictions.csv` alone, so they survive a
+    submission that omits the matrices.
+    """
+    out: dict[str, float] = {}
+    true_cum = {int(q): float(v["D"]) for q, v in truth["rating_distribution"].items()}
+    for q, cum in sorted(true_cum.items()):
+        if q in submitted and cum > 0.0:
+            out[f"default_ratio_q{q}"] = float(submitted[q][D_INDEX] / cum)
+
+    inc_true = np.asarray(truth.get("default_increments", ()), dtype=float)
+    mats = parse_matrices(text)
+    if inc_true.size == 0 or not mats or len(mats) < inc_true.size:
+        return out
+
+    v, inc_sub = start.copy(), []
+    prev = float(start[D_INDEX])
+    for q in sorted(mats)[:inc_true.size]:
+        v = v @ mats[q]
+        inc_sub.append(float(v[D_INDEX]) - prev)
+        prev = float(v[D_INDEX])
+    inc_sub = np.asarray(inc_sub, dtype=float)
+
+    # the stressed half of the horizon, chosen on the truth so that a model
+    # cannot define its own stress window
+    stressed = inc_true >= np.median(inc_true)
+    denom_mean = float(inc_true[stressed].mean())
+    denom_peak = float(inc_true.max())
+    if denom_mean > 0.0:
+        out["stress_mean_ratio"] = float(inc_sub[stressed].mean() / denom_mean)
+    if denom_peak > 0.0:
+        out["stress_peak_ratio"] = float(inc_sub.max() / denom_peak)
+    if float(np.ptp(inc_sub)) > 0.0:     # a flat path has no peak to be early or late
+        out["stress_peak_lag"] = float(
+            int(np.argmax(inc_sub)) - int(np.argmax(inc_true)))
+    return out
+
+
 def migration_scorer():
     from inspect_ai.scorer import Score, mean, scorer, stderr
     from inspect_ai.util import sandbox
@@ -294,7 +416,12 @@ def migration_scorer():
             "matrix_admissible", "matrix_row_sum_error", "matrix_rows_off_one",
             "matrix_negative_cells", "matrix_most_negative", "matrix_zero_cells",
             "matrix_smallest_positive", "matrix_default_monotonicity_violations",
-            "matrix_submission_gap")
+            "matrix_submission_gap",
+            # one-sided stress response, also diagnostics only
+            "default_ratio_q4", "default_ratio_q9", "stress_mean_ratio",
+            "stress_peak_ratio", "stress_peak_lag",
+            "fit_provided", "fit_years", "fit_stress_mean_ratio",
+            "fit_peak_ratio", "fit_all_years_ratio", "fit_peak_lag")
 
     @scorer(name="migration",
             metrics={"score": [mean(), stderr()], **{k: [mean()] for k in keys}})
@@ -308,13 +435,21 @@ def migration_scorer():
                 mtext = await sandbox().read_file("matrices.csv")
             except FileNotFoundError:
                 mtext = None
+            try:
+                btext = await sandbox().read_file("backtest.csv")
+            except FileNotFoundError:
+                btext = None
             truth = state.metadata["truth"]
             v = score_predictions(truth, text)
             start = np.array([truth["start_mix"].get(s_, 0.0) for s_ in ORDER],
                              dtype=float)
+            submitted = parse_predictions(text)
             v.update(matrix_diagnostics(
-                mtext, start, parse_predictions(text),
+                mtext, start, submitted,
                 [int(q) for q in truth["rating_distribution"]]))
+            v.update(stress_diagnostics(mtext, start, submitted, truth))
+            v.update(fit_diagnostics(
+                btext, truth.get("observed_annual_default_rate", ())))
             bits = [f"score {v['score']:.4f} (1.0 = no migration)",
                     "components " + "/".join(
                         f"{v[f'{k}_norm']:.3f}" for k in
@@ -322,6 +457,10 @@ def migration_scorer():
                     f"completion {v['completion']:.0%}"]
             if "default_rate_bias" in v:
                 bits.append(f"default bias {v['default_rate_bias']:+.3%}")
+            if "stress_mean_ratio" in v:
+                bits.append(f"stress response {v['stress_mean_ratio']:.2f}x")
+            if "fit_stress_mean_ratio" in v:
+                bits.append(f"backtest stress {v['fit_stress_mean_ratio']:.2f}x")
             return Score(value=v, explanation="; ".join(bits))
 
         return score

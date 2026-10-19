@@ -366,7 +366,7 @@ def test_matrix_diagnostics_are_clean_for_the_reference():
 
     b = generate(1, n_years=20, scenario="adverse")
     f = public_files(b)
-    preds, mats = predict(f, "onefactor")
+    preds, mats, _ = predict(f, "onefactor")
     start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
     cps = [int(q) for q in b["truth"]["rating_distribution"]]
     d = matrix_diagnostics(mats, start, parse_predictions(preds), cps)
@@ -390,7 +390,7 @@ def test_matrix_diagnostics_detect_each_pathology():
     )
 
     b = generate(1, n_years=20, scenario="adverse")
-    preds, mats = predict(public_files(b), "onefactor")
+    preds, mats, _ = predict(public_files(b), "onefactor")
     rows = mats.splitlines()
     header, body = rows[0], rows[1:]
     # break the first live row: negative mass, rows off one, and a default
@@ -460,11 +460,11 @@ def test_admissibility_is_immaterial_to_accuracy_so_it_breaks_ties_only():
     start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
     cps = [int(q) for q in t["rating_distribution"]]
 
-    good_preds, good_mats = predict(f, "onefactor")
+    good_preds, good_mats, _ = predict(f, "onefactor")
     original = B.pooled_quarterly_base
     B.pooled_quarterly_base = raw_base
     try:
-        bad_preds, bad_mats = predict(f, "onefactor")
+        bad_preds, bad_mats, _ = predict(f, "onefactor")
     finally:
         B.pooled_quarterly_base = original
 
@@ -502,7 +502,7 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
     f, t = public_files(b), b["truth"]
     start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
     cps = [int(q) for q in t["rating_distribution"]]
-    preds, mats = predict(f, "onefactor")
+    preds, mats, _ = predict(f, "onefactor")
     head, *body = mats.splitlines()
 
     good = matrix_diagnostics(mats, start, parse_predictions(preds), cps)
@@ -529,3 +529,88 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
     assert neg["matrix_nonnegative"] == 0.0
     assert neg["matrix_admissible"] == 0.0
     assert neg["matrix_submission_gap"] < 0.01     # and numerically near-harmless
+
+
+def test_backtest_diagnostics_detect_insufficient_macro_sensitivity():
+    """The one-sided check, measured against a sensitivity sweep.
+
+    Scaling the reference's macro response down must drive the stress-year fit
+    ratio down monotonically, because that is the whole purpose: a model too
+    insensitive to macros understates losses in the bad years and so
+    under-reserves. Nothing here is two-sided; a ratio above one is conservative
+    rather than wrong.
+    """
+    import csv as _csv
+    import io as _io
+
+
+    from pereval.scorers.migration import fit_diagnostics
+    from pereval.tasks.migration import baselines as _B
+
+    b = generate(1, n_years=20, scenario="severe")
+    f = public_files(b)
+    mats = _B._annual_matrices(f["data/transitions.csv"])
+    base = _B.pooled_quarterly_base(mats)
+    years = sorted(mats)
+    zhat = np.array([_B.factor_mle(mats[y], base) for y in years])
+    X, _ = _B._macro_features(_B._rows(f["data/macro_history.csv"]),
+                              _B._rows(f["data/scenario.csv"]), len(years))
+    lam = _B._lambda_for_df(X, 1.0 + X.shape[0] / _B.DF_DIVISOR)
+    zfit = X @ _B._ridge(X, zhat, lam)
+    level = zfit.mean()
+
+    ratios = []
+    for k in (0.0, 0.5, 1.0):
+        rates = _B._fitted_annual_rates(mats, base, level + k * (zfit - level))
+        buf = _io.StringIO()
+        w = _csv.DictWriter(buf, fieldnames=["year", "default_rate"])
+        w.writeheader()
+        for y, v in zip(years, rates):
+            w.writerow({"year": y, "default_rate": v})
+        d = fit_diagnostics(buf.getvalue(), b["truth"]["observed_annual_default_rate"])
+        ratios.append(d["fit_stress_mean_ratio"])
+    assert ratios[0] < ratios[1] < ratios[2]
+
+
+def test_shipped_reference_is_flagged_for_damped_macro_response():
+    """The anchor fails its own stress check, and that is recorded not hidden.
+
+    The shrinkage that stops the reference blowing out on the projection also
+    damps its macro response, so it under-fits the stressed years by about a
+    third. An agent that beats 0.287 while keeping this ratio near one is doing
+    something the score alone cannot see.
+    """
+    from pereval.tasks.migration.baselines import backtest_diagnostics
+
+    d = backtest_diagnostics(public_files(generate(1, n_years=20, scenario="severe")))
+    assert 0.5 < d["stress_mean_ratio"] < 0.85
+    assert d["factor_swing_retained"] < 0.9
+    # the band still clears the worst observed year for a correctly specified fit
+    assert d["peak_over_bound"] < 1.0
+
+
+def test_degenerate_floors_every_one_sided_statistic():
+    """No migration means no defaults, so every stress ratio must read zero."""
+    from pereval.scorers.migration import (
+        fit_diagnostics, parse_predictions, stress_diagnostics,
+    )
+
+    b = generate(2, n_years=20, scenario="adverse")
+    f, t = public_files(b), b["truth"]
+    preds, mats, back = predict(f, "no_migration")
+    start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
+    s = stress_diagnostics(mats, start, parse_predictions(preds), t)
+    d = fit_diagnostics(back, t["observed_annual_default_rate"])
+    assert s["stress_mean_ratio"] == 0.0
+    assert s["stress_peak_ratio"] == 0.0
+    assert d["fit_stress_mean_ratio"] == 0.0
+    assert "fit_peak_lag" not in d          # a flat series has no peak
+
+
+def test_true_loss_path_reconciles_with_the_scored_checkpoint():
+    """The quarterly increments must sum to the cohort default share at quarter 9."""
+    b = generate(1, n_years=20, scenario="severe")
+    t = b["truth"]
+    assert sum(t["default_increments"]) == pytest.approx(
+        t["rating_distribution"]["9"]["D"], abs=1e-9)
+    assert len(t["observed_annual_default_rate"]) == 20
