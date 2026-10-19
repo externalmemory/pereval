@@ -64,13 +64,29 @@ The published data invites exactly that defect. Global AAA to default over 1981 
 
 AAA default risk is positive at three and five years, and at five years it exceeds AA's. So the one-year 0.00% is an absence of observations across 44 static pools, not an absence of risk, and it should be read as a small-sample zero rather than a parameter.
 
-**The regulatory floor names a number for this.** For a US institution the operative one is 12 CFR 217.131(d)(2) (Regulation Q, advanced approaches), "Floor on PD assignment": the PD for each wholesale obligor or retail segment may not be less than **0.03 percent**. The exemptions are exposures to, or directly and unconditionally guaranteed by, a sovereign entity, the BIS, the IMF, the European Commission, the ECB, the ESM, the EFSF, or a multilateral development bank. The Basel Committee's consolidated framework sets a higher 0.05% at CRE32.4, in force 1 January 2023, for every asset class except sovereign; the US has not adopted that figure here, and the March 2026 US proposal would remove the internal-ratings stack rather than raise the floor. Both are recorded in `PD_FLOORS`, with the US value as operative.
+**A regulatory floor names a number, and it is the wrong number for this task.** For a US institution the operative floor is 12 CFR 217.131(d)(2) (Regulation Q, advanced approaches), "Floor on PD assignment": the PD for each wholesale obligor or retail segment may not be less than **0.03 percent**. The exemptions are exposures to, or directly and unconditionally guaranteed by, a sovereign entity, the BIS, the IMF, the European Commission, the ECB, the ESM, the EFSF, or a multilateral development bank. The Basel Committee's consolidated framework sets a higher 0.05% at CRE32.4, in force 1 January 2023, for every asset class except sovereign; the US has not adopted that figure here, and the March 2026 US proposal would remove the internal-ratings stack rather than raise the floor. Both are recorded in `PD_FLOORS` as reference facts and **neither is applied** to the generator or the solvers.
 
-**The floor is not a rounding adjustment, it rewrites the top of the scale.** Two of the seven published grades sit strictly below the US floor, AAA at 0.00% and AA at 0.02%, and A sits at 0.05%. So an IRB-consistent model must override the observed rate for its two best grades rather than reproduce it, and flooring AAA at 0.03% puts it between the observed rates for AA and A. Any calibration built from this data has to make that override explicit, and any scoring of a candidate matrix should treat an exact zero in the default column as inadmissible rather than as a good fit.
+**Why not.** A capital floor constrains a regulatory PD estimate, which is a long-run through-the-cycle average and so insensitive to the macroeconomy by construction. What this task produces is the opposite object: point-in-time, macro-conditional quarterly transition probabilities for a stress projection, the CCAR and CECL regime rather than the Basel one. A conditional PD in a benign quarter can legitimately sit far below a through-the-cycle floor, and that is not a modelling error to be corrected. Worse, a top grade pinned at a floor has no macro sensitivity left in it at all, which is precisely the defect the rest of this document is built to detect.
 
-Extrapolating the top of the scale from grades where defaults are actually observed is the standard remedy, and it is worth recording what it does and does not fix. Fitting the log of the one-year default rate against grade over BBB, BB, B and CCC/C gives a good fit, R-squared 0.989 at 5.66 times per notch, and projecting upward yields 0.004% for AA and 0.001% for AAA. That removes the exact zero, which is the defect, but it lands an order of magnitude **below** the 0.03% floor, so the floor still binds and remains the operative constraint rather than a formality.
+**The floor did real damage before it was removed.** Annualised, 0.03% becomes 7.500844e-05 a quarter, and that value bound not one grade but two. It pinned AAA and AA to the identical number and overwrote AA's own rooted value of 3.939e-05 upward by about a factor of two, so the generator's hidden truth asserted that its two best grades carried exactly equal risk. A tie is a weaker defect than an inversion and easier to miss, since no ordering check fires on it, but a truth that says AAA and AA are equally risky is still wrong about the portfolio the task is built on.
 
-The same fit also understates a grade where defaults are observed: it projects 0.020% for A against 0.050% actual. The reason is that the notch multiplier is not constant, it steepens down the scale, running roughly 2.8 times from A to BBB, 4.0 from BBB to BB, 5.2 from BB to B and 8.9 from B to CCC/C. A single log-linear slope fitted on speculative grades is therefore too steep to extrapolate into investment grade and will push the top of the scale too low. Any candidate method for the top grades has to be checked against both the floor and the observed A and BBB rates, not just fitted to the tail.
+**What replaces it is an estimate, not an imposition.** The one-year AAA rate needs replacing for a reason that has nothing to do with capital: it is 0.00%, the fourth root of zero is still zero, and a grade assigned zero default probability carries zero allowance on a live exposure and can never be revised by evidence. So `top_of_scale_annual` extends the notch ratio from the top of the scale where defaults **are** observed. A over AA is 0.05% over 0.02%, a factor of 2.50, and one more notch up gives AAA **0.008%** annual, 2.0e-05 a quarter. Only AAA is replaced; every other grade keeps what the root gives it.
+
+| grade | before, with the floor | after |
+| --- | ---: | ---: |
+| AAA | 0.0300% | **0.0080%** |
+| AA | 0.0300% | **0.0158%** |
+| A | 0.0483% | 0.0483% |
+
+The ordering of the top two grades now comes out of the data instead of out of a constant, which is the whole point.
+
+**Why that estimate and not the obvious alternative.** Fitting the log of the one-year rate against grade over BBB, BB, B and CCC/C fits well, R-squared 0.989 at 5.66 times per notch, and extrapolates to 0.004% for AA and 0.001% for AAA. It is rejected because the notch multiplier is not constant, it steepens down the scale, running roughly 2.8 times from A to BBB, 4.0 from BBB to BB, 5.2 from BB to B and 8.9 from B to CCC/C. A slope fitted on speculative grades is too steep for investment grade, and the test is that it understates a grade where defaults **are** observed: it projects 0.020% for A against 0.050% actual, wrong by a factor of 2.4. The single-notch extension uses only the ratio adjacent to the grade it is estimating, so it is not exposed to that curvature.
+
+The result also sits inside the bounds available. Below AA's observed 0.02%, so the top-two ordering is data. Above zero. And below the loosest upper bounds, the constant-hazard reads of the three and five year AAA rates at 0.043% and 0.068% per year, which overstate the first year because a cumulative multi-year figure counts obligors downgraded before defaulting.
+
+One caveat recorded rather than smoothed over: at three and five years the published AAA rate **exceeds** AA's, 0.13% against 0.11% and 0.34% against 0.28%. That inversion is a small-sample artefact of thin AAA pools. It is evidence that AAA risk is positive, which is the thing being relied on, and not evidence about its ordering against AA.
+
+**What the correction cost.** Nothing measurable, which is the right outcome for a fix to the two grades that contribute least to a cohort default rate. On the pinned three-instance set the reference moved 0.3581 to 0.3596, 0.3840 to 0.3688 and 0.4998 to 0.4999, and the degenerate stayed at exactly 1.000 since identity matrices cannot be floored. Over the twenty-four instance bracket the reference went from 0.287 to 0.292 mean, 0.256 to 0.276 median, 0.662 to 0.632 max, with 0 of 24 losses to the degenerate either way and separation 3.5x to 3.4x. The task did not get easier or harder; the hidden truth got correct.
 
 ## The Data Rejects a Time-Homogeneous Markov Chain
 
@@ -103,17 +119,19 @@ The agent is asked for the quarterly transition matrices it used, in `matrices.c
 
 Zero probabilities are the interesting case. A projection of exactly zero defaults allocates no reserve to a live exposure, which is imprudent whatever the long-run average works out to, and it cannot be revised by evidence. A portfolio of ten obligors at 1% should project 0.1 expected defaults, not 0, even though no one ever observes 0.1 defaults. This is a known weakness of the Kreinin and Sidelnikova style remedy for an invalid matrix root: clipping negatives to zero and renormalising produces exact zeros, which violates Cromwell's rule.
 
-The generator was guilty of it. The fourth root of the published annual average inherited four exact zeros, one of them AAA to default, because the published AAA one-year rate is 0.00% and a root of zero is still zero. The oracle would have failed the check the task poses. Every live cell is now floored at 1e-9 and the default column at the quarterly equivalent of the 0.03% annual minimum from 12 CFR 217.131(d)(2), with the default column held fixed while the rest of each row rescales.
+The generator was guilty of it. The fourth root of the published annual average inherited four exact zeros, one of them AAA to default, because the published AAA one-year rate is 0.00% and a root of zero is still zero. The oracle would have failed the check the task poses. Every live cell is now floored at 1e-9, and the AAA default probability alone is replaced by the estimate in `top_of_scale_annual`, held fixed while the rest of its row rescales. No capital floor is applied, for the reasons given under Default Risk at the Top of the Scale.
 
 **How it affects the score: it does not.** Holding the generator fixed and degrading only the reference's own matrices:
 
 | Reference variant | Score | Exact zero cells | Ordering inversions |
 | --- | ---: | ---: | ---: |
-| floors and imposes ordering | 0.1585 | 0 | 0 |
-| leaves the fourth root's zeros | 0.1584 | 26.8 | 4.5 |
-| floors but leaves ordering to noise | 0.1584 | 0 | 4.5 |
+| replaces zeros and imposes ordering | 0.2920 | 0.1 | 0.0 |
+| leaves the fourth root's zeros | 0.2919 | 42.8 | 2.2 |
+| replaces zeros, leaves ordering to noise | 0.2919 | 0.1 | 2.2 |
 
-Twenty-seven exact zeros and four and a half ordering inversions per instance cost under half a percent of the score on a single instance and under a hundredth of a percent averaged over twelve, against the reference's own error of 0.158. The defect is orthogonal to accuracy rather than merely small.
+Forty-three exact zeros and two and a bit ordering inversions per submission cost a third of a basis point of score, against the reference's own error of 0.292. The defect is orthogonal to accuracy rather than merely small. The inversion count is across the whole nine-quarter submission, so it is roughly a quarter of a violation per matrix.
+
+**Every one of those inversions is AAA against AA, and removing the capital floor did not change the count.** That is worth stating because the opposite is easy to assume. While the floor was in place it pinned AAA and AA to the identical value, and identical values do not invert, so the floor did not create inversions; it created ties, and the tie was the defect, since the truth then asserted that the two best grades carried equal risk. With the floor gone the two differ by a factor of two in the base matrix, and AAA's rooted value still lands above AA's on six of twenty-four instances because AAA holds too few obligors to pin down. So the imposed ordering is doing what it was always for, correcting a thin-count artefact at the top of the scale, and it was never a workaround for the floor.
 
 That rules out two treatments and leaves one. A weight would be fiat, because there is no accuracy cost to calibrate it against, and putting it in the number recreates the materiality argument inside the metric instead of avoiding it. A gate would disqualify a model whose accuracy is unaffected, which is not what a review function does: it assesses materiality, finds it small, issues a model limitation and approves. All models are wrong and some are useful, and here there are far larger error sources than a probability that is almost rather than exactly zero.
 
@@ -261,6 +279,18 @@ Leave-one-out residuals move it the right way and not far enough: the overfit mo
 
 Detecting underfitting is what this is for, and at that it works.
 
+**There is a second blind spot, and an agent found it before I did.** A backtest has no power at all against a model that interpolates its history and cannot extrapolate past it, because that model's only defect lies outside the period the backtest covers. Asked for a scenario whose peak volatility exceeded anything in its sample, `nemotron-3-ultra-550b` submitted a nearest-neighbour model and scored `fit_stress_mean_ratio` 1.0004, `fit_peak_ratio` 1.0003 and `fit_all_years_ratio` 1.0005, a backtest correct to five parts in ten thousand, while projecting 13.3% of the true stress response and 18.7% of the true quarter-nine default share. Its own reasoning named the defect and submitted anyway:
+
+> The backtest shows nearly perfect fit because the KNN is essentially interpolating within the training data. [...] The scenario VIX goes up to 41, while historical max is 34. [...] So the model might underestimate the severity.
+
+This is the same blindness that disqualified cross-validation for the ridge penalty, arriving by a different route: every year a backtest scores lies inside the historical range, and the scenario does not.
+
+**No truth-free check for it was found.** The obvious candidate is internal consistency: a severely adverse scenario that projects no worse than the model's own worst fitted year is contradicting itself, and that comparison needs no answer key. Measured over twenty-four instances it does not separate. Pushing the historical average mix through the submitted first four quarterly matrices, the nearest-neighbour model reads below one on 21 of 24 against the reference's 17 of 24; restricting to the severe scenario and taking the worst rolling four-quarter window instead improves it to 6 of 8 against 3 of 8, with a spread of plus or minus 6.3 on the reference side. Directional and useless as a flag. It is recorded as a negative result rather than shipped.
+
+What works is reading the two families together. `fit_*` and `stress_mean_ratio` are a pair, and their **disagreement** is the diagnosis: both low is a model with too little macro sensitivity, high in the backtest and low forward is a model that cannot leave its own sample. Neither statistic alone distinguishes those, and a reviewer handed only one of them would misattribute the failure.
+
+**The flat-model case, for contrast, is caught cleanly.** `nemotron-3-super-120b` returned `fit_all_years_ratio` of 0.996, 1.015 and 0.861 across three instances with `fit_stress_mean_ratio` of 0.527, 0.454 and 0.329 and `fit_peak_ratio` of 0.229, 0.148 and 0.214. Its unconditional level is right and its macro response is a third to a half of what it should be, which is exactly the target failure, and the all-years ratio is the control that rules out the alternative reading that its level is simply too low. Where its forward path was measurable it projected 4.3% of the true stress response.
+
 "Did the band cover the peak" also must not be read as a pass/fail test. A perfectly calibrated pointwise 95% band excludes the largest of twenty draws with probability `1 - 0.975**20 = 40%`, and the correct model measures 25% here. The continuous ratio is the statistic; the binary version is noise.
 
 ### The Reference Fails Its Own Check
@@ -270,7 +300,9 @@ Detecting underfitting is what this is for, and at that it works.
 | shrunk, shipped | **0.66** | 73% | 33% of instances |
 | unshrunk | 1.02 | 97% | 4% of instances |
 
-**The shrinkage that stops the reference blowing out on the projection also damps its macro response, so it under-fits the stressed years by about a third.** Ridge shrinks coefficient magnitude, and coefficient magnitude is the macro response. There is no reparameterisation out of it. Variance matching, rescaling the fitted deviation so its spread matches the annual factor estimates, restores the sensitivity exactly and brings the blow-ups back worse than before:
+**The shrinkage that stops the reference blowing out on the projection also damps its macro response, so it under-fits the stressed years by about a third.** Ridge shrinks coefficient magnitude, and coefficient magnitude is the macro response. There is no reparameterisation out of it.
+
+Two alternative explanations were ruled out rather than argued away. It is not the annual-constant-factor approximation: substituting the per-year maximum-likelihood factor, which keeps one constant factor per year but removes all regression and shrinkage error, takes the stressed-year ratio to 1.03 to 1.10 across twelve instances. So within-year variation is not what the backtest is detecting. And the observed peak is real signal rather than sampling noise in a 10,000-obligor portfolio: it sits within 1.1 to 3.5 binomial standard errors of that maximum-likelihood fit, so a model is not being penalised for declining to chase noise. What the statistic measures is the macro regression, both the part of the factor it cannot explain and the part the penalty damps. Variance matching, rescaling the fitted deviation so its spread matches the annual factor estimates, restores the sensitivity exactly and brings the blow-ups back worse than before:
 
 | | Score | Max | Loses to degenerate | Projected / observed, stressed years |
 | --- | ---: | ---: | ---: | ---: |
@@ -285,28 +317,62 @@ This is recorded rather than fixed, and it sharpens what the task measures. The 
 
 ### Diagnostics Reported
 
-From `backtest.csv`, against the observed annual rates: `fit_stress_mean_ratio` over the worst quartile of years, `fit_peak_ratio` at the single worst year, `fit_all_years_ratio` for the contrast, and `fit_peak_lag` for timing, suppressed when the projected series is flat and so has no peak. From `matrices.csv` and the truth: `stress_mean_ratio` and `stress_peak_ratio` on the nine-quarter loss path, `stress_peak_lag`, and `default_ratio_q4` and `default_ratio_q9`. None of it enters `score`.
+From `backtest.csv`, against the observed annual rates: `fit_stress_mean_ratio` over the worst quartile of years, `fit_peak_ratio` at the single worst year, `fit_all_years_ratio` for the contrast, `fit_peak_prominence` for whether there is a peak at all, and `fit_peak_lag` for its timing. From `matrices.csv` and the truth: `stress_mean_ratio` and `stress_peak_ratio` on the nine-quarter loss path, `stress_peak_lag`, and `default_ratio_q4` and `default_ratio_q9`. None of it enters `score`.
+
+**`fit_peak_lag` shipped before it was checked and it was nearly worthless.** It read nine years on one instance and minus sixteen on another, because a damped fitted series is almost flat and the argmax of an almost flat series lands anywhere. Over the sensitivity sweep its absolute value runs 2.88, 3.00, 2.38, 2.12, 2.00, 0.75, non-monotone with a spread of plus or minus 10.8, which is no information.
+
+The fix is a companion measure of whether the series has a peak to time, `(fitted peak - fitted median) / (observed peak - observed median)`:
+
+| macro response | `fit_stress_mean_ratio` | `fit_peak_prominence` |
+| ---: | ---: | ---: |
+| 0.00 | 0.263 +- 0.088 | 0.092 +- 0.103 |
+| 0.25 | 0.323 +- 0.103 | 0.123 +- 0.144 |
+| 0.50 | 0.403 +- 0.119 | 0.194 +- 0.181 |
+| 0.75 | 0.510 +- 0.138 | 0.319 +- 0.227 |
+| 1.00 | 0.655 +- 0.173 | 0.514 +- 0.334 |
+| 1.50 | 1.104 +- 0.392 | 1.171 +- 0.818 |
+
+Prominence spans a factor of thirteen against the stress ratio's four, and at zero macro response it reads 0.09 rather than leaving a reviewer to infer flatness from a missing value. The lag is kept, because mistiming a peak is a real finding that no checkpoint distance can see, but it is now withheld below a prominence of 0.25. That threshold is not a guess: at the shipped fit, of twenty-four instances exactly one fell below it, at 0.17, and that one reported a lag of sixteen years, while the other twenty-three all sat above 0.39 and reported a lag of exactly zero.
+
+**One bug worth recording, because it failed a whole run.** Inspect aggregates a keyed metric by pulling that key from every sample's score dictionary: an absent key raises, a NaN is skipped. Every diagnostic here is conditional on something, the matrices being submitted, the backtest having the right length, a denominator being positive, so a submission without `matrices.csv` left `matrix_rows_valid` out and ended a completed three-sample run with a TypeError after all the scoring work was done. The keys are now one module-level tuple, `REPORTED_KEYS`, and `score_value` fills anything inapplicable with NaN, which is the sentinel Inspect already understands. A test pins the contract over four submission shapes.
 
 ## What the Silent Check Measured
 
-The first run under the prompt that asks for `matrices.csv`, two free models over the same three instances, with both reference solvers for comparison.
-
-**These scores are stale.** They were produced before the scenario was given a trough and before the history was shortened to twenty years, so the numbers below do not describe instances the task now generates. What survives is the qualitative finding in the last column, since the prompt and the diagnostics did not change. The run has to be repeated before migration can become a reported column.
+Two free models and both reference solvers over the same three instances, pinned with `-T seed=1` so the rows are comparable. This replaces an earlier run made before the scenario had a trough and before the history was shortened, and it is the first on the configuration the task now generates.
 
 | Row | Mean score | Worst | Rows sum to one | Negative cells | Submission gap | Monotonicity violations |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| one-factor reference | 0.302 | 0.436 | 5 of 5 | 0 | 0.0000 | 0 |
-| nemotron-3-super (free) | 0.629 | 0.965 | 2 of 2 supplied | 0 | 0.0000 | 9, 0 |
-| nemotron-3-ultra (free) | 0.772 | 1.215 | 3 of 3 | 0 | 0.0000 | 10, 18, 26 |
-| degenerate | 1.000 | 1.000 | — | — | — | 0 |
+| one-factor reference | 0.409 | 0.500 | 3 of 3 | 0 | 0.0000 | 0 |
+| nemotron-3-super (free) | 0.527 | 0.873 | 3 of 3 | 0 | 0.0000 | 0, 0, 9 |
+| nemotron-3-ultra (free) | 0.897 | 1.055 | 2 of 2 supplied | 0 | 0.0000 | 0, 16 |
+| degenerate | 1.000 | 1.000 | n/a | n/a | n/a | 0 |
 
-Ultra's severe instance at 1.215 is the first model result on this task worse than predicting that nothing happens.
+Ultra's adverse instance at 1.055 is worse than predicting that nothing happens, and it omitted `matrices.csv` entirely on the baseline instance.
+
+**These three instances are harder than average.** The reference reads 0.409 on them against 0.292 over the twenty-four instance bracket, so the model rows should be read against 0.409 rather than against the bracket.
+
+**The free-model rows cannot be compared across runs, and the measurement says so.** Rerunning both models on the same pinned instances with byte-identical data moved ultra's mean from 0.617 to 0.897, with one instance moving 0.758, while the deterministic reference moved at most 0.015 on the same instances. Sampling variation is fifty times the size of a real change to the generator. Any free-model number here is one draw, not an estimate.
+
+### The Backtest Separates Two Failures the Score Cannot
+
+| Row | `fit_all_years_ratio` | `fit_stress_mean_ratio` | `fit_peak_prominence` | forward stress ratio |
+| --- | ---: | ---: | ---: | ---: |
+| one-factor reference | 0.81, 0.74, 0.82 | 0.64, 0.56, 0.63 | 0.38, 0.42, 0.62 | 0.73, 1.18, 0.41 |
+| nemotron-3-super | 0.99, 1.00, 1.00 | 0.54, 0.45, 0.41 | 0.14, 0.09, 0.14 | 0.72, 1.04, 0.04 |
+| nemotron-3-ultra | 0.99, 0.98, 0.96 | 0.98, 0.80, 0.54 | 1.80, 0.63, 0.89 | n/a, 1.58, 0.06 |
+| degenerate | 0.00 | 0.00 | 0.00 | 0.00 |
+
+Super and the reference score 0.527 against 0.409, close enough that the score alone says only that one is somewhat better. The backtest says they fail in different ways. The reference under-predicts its whole history, all-years 0.74 to 0.82, because ridge shrinkage damps the level along with the response. Super gets the unconditional level exactly right, all-years 0.99 to 1.00, and has almost no macro response at all: prominence 0.09 to 0.14 means its fitted series is nearly flat, and all three instances fall below the 0.25 threshold at which a peak can be timed. That is the pure form of the failure this diagnostic was built for, and it is invisible in the score.
+
+The prominence column separates them by a factor of four where the score separates them by 1.3. Forward confirms it: super's severe instance projects 4% of the true stress response.
+
+Ultra fails a third way. A near-perfect backtest on the first two instances, all-years 0.99 and 0.98 with prominence 1.80 and 0.63, beside a forward response of 0.06 on the third. It is the interpolation failure described above, and only the pair of columns identifies it.
 
 **The hard constraint was respected without being asked for.** Every supplied matrix has rows summing to one, no negative cell survived, and the submission gap is 0.0000 in every case, so each agent's documented matrices reproduce its own reported projection exactly. The matrices are genuinely the models used, not decoration.
 
-**The judgment-dependent constraint was not noticed at all.** Default monotonicity is violated 9, 0, 10, 18 and 26 times against 54 adjacent-pair checks per instance. Ultra's severe matrix inverts 48% of adjacent pairs: it asserts that better-rated obligors default more often. Across six transcripts, "rows sum", "sum to one" and "renormalise" appear between 5 and 19 times each, while "monotonic" appears once, referring to a bisection converging in a scalar rather than to the rating ordering, and "prudent", "reserve" and "implausible" appear not at all.
+**The judgment-dependent constraint was not noticed at all.** Default monotonicity is violated 0, 0 and 9 times by super and 0 and 16 times by ultra, against 54 adjacent-pair checks per instance, nine quarters by six notches. Ultra's severe matrix inverts 30% of adjacent pairs and super's 17%: they assert that better-rated obligors default more often. Across the six transcripts, excluding the prompt itself, "rows sum" and "renormalise" appear one to six times each, while "monotonic", "prudent", "reserve" and "implausible" appear **not once**. The earlier run on the previous configuration found the same thing, with "monotonic" appearing a single time and referring to a bisection converging in a scalar rather than to the rating ordering.
 
-The split is explained by whether the constraint is self-enforcing. Rows summing to one has a mechanical consequence: mass leaks and the projection misbehaves, and scaling rows to 1.2 drives the submission gap from 0.0000 to 2.5163. An agent is dragged to it by the arithmetic. Monotonicity has no mechanical consequence and costs under half a percent of the score, so it matters only to someone who already knows a transition matrix should have it. That is the domain judgment a review function supplies, and neither model supplied it.
+The split is explained by whether the constraint is self-enforcing. Rows summing to one has a mechanical consequence: mass leaks and the projection misbehaves, and scaling rows to 1.2 drives the submission gap from 0.0000 to 2.5163. An agent is dragged to it by the arithmetic. Monotonicity has no mechanical consequence and costs a third of a basis point of score, so it matters only to someone who already knows a transition matrix should have it. That is the domain judgment a review function supplies, and neither model supplied it.
 
 This is also the evidence for the tie-breaker treatment rather than a gate. Gating on monotonicity would have disqualified both models for a defect costing nothing measurable, which is the over-reaction the materiality argument rules out. Reporting it lets the defect be seen without pretending it drove the score.
 

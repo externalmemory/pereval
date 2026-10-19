@@ -38,7 +38,7 @@ from pereval.tasks.migration.generator import (
     CELL_FLOOR,
     D,
     LIVE,
-    PD_FLOOR_QUARTERLY,
+    TOP_OF_SCALE_QUARTERLY,
     RHO_RANGE,
     conditional_matrix,
 )
@@ -89,14 +89,19 @@ def pooled_quarterly_base(mats):
     Three corrections a competent modeller applies and the raw fourth root does
     not. No cell is left at exactly zero, since a reachable transition assigned
     zero probability can never be revised by evidence and allocates no reserve.
-    The default column is floored at the quarterly equivalent of the 0.03% annual
-    PD minimum. And the default column is forced non-decreasing across grades,
-    because thin counts in the top grades otherwise invert the ordering and leave
-    the model asserting that AAA is riskier than AA.
+    The AAA default probability is replaced by the estimate in
+    `reference.top_of_scale_annual`, because AAA has no observed defaults to root
+    and a root of zero is still zero. And the default column is forced
+    non-decreasing across grades, because twenty years of a ten-thousand-obligor
+    portfolio gives the top grades counts thin enough to invert the ordering and
+    leave the model asserting that AAA is riskier than AA.
 
-    The last two interact: once AAA and AA are both floored they are equal in
-    truth, so sampling noise alone will invert their estimates about half the
-    time unless the ordering is imposed.
+    No capital floor is applied. Those are long-run through-the-cycle figures and
+    this is a macro-conditional quarterly matrix; imposing one pinned AAA and AA
+    to the same number and so asserted that the two best grades carry equal
+    risk. Removing it did not change the inversion count, which runs at six of
+    twenty-four instances either way and is a thin-count artefact in AAA rather
+    than anything the floor caused.
     """
     tot = sum(mats.values())
     ann = np.zeros((D + 1, D + 1))
@@ -106,8 +111,9 @@ def pooled_quarterly_base(mats):
     q[D, :] = 0.0
     q[D, D] = 1.0
     live = q[:D]
-    pd = np.maximum(live[:, D], PD_FLOOR_QUARTERLY)
-    live[:, D] = np.maximum.accumulate(pd)        # non-decreasing in grade
+    pd = live[:, D].copy()
+    pd[0] = max(pd[0], TOP_OF_SCALE_QUARTERLY)    # AAA: nothing to root
+    live[:, D] = np.maximum.accumulate(np.maximum(pd, CELL_FLOOR))
     rest = live[:, :D]
     rest *= ((1.0 - live[:, D]) / rest.sum(axis=1))[:, None]
     q[:D] = live

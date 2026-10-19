@@ -52,6 +52,49 @@ HORIZONS = ("1y", "3y", "5y")
 #: which is a modelling defect independent of any regulatory requirement.
 PD_FLOORS = {"us": 0.0003, "basel": 0.0005}
 
+#: Those floors apply to REGULATORY CAPITAL PD estimates, which are long-run
+#: through-the-cycle averages and so insensitive to the macroeconomy by
+#: construction. This task produces point-in-time, macro-conditional quarterly
+#: transition probabilities for a stress projection. A conditional PD in a
+#: benign quarter can legitimately sit far below a capital floor, and a model
+#: whose top grade is pinned at one has no macro sensitivity left up there. So
+#: the floors are recorded as reference facts and are NOT applied to the
+#: generator or the solvers; see top_of_scale_annual.
+
+
+def top_of_scale_annual() -> float:
+    """A positive one-year AAA default rate, estimated rather than imposed.
+
+    The published one-year AAA rate is 0.00%, an absence of observations across
+    44 static pools rather than an absence of risk, and the fourth root of zero
+    is still zero. Something has to replace it, because a grade assigned zero
+    default probability carries zero allowance on a live exposure and can never
+    be revised by evidence.
+
+    The replacement extends the notch ratio from the top of the scale where
+    defaults ARE observed: A over AA is 0.05% over 0.02%, a factor of 2.50, and
+    one more notch up gives 0.008%. That is preferred to a log-linear fit on the
+    speculative grades, which has an excellent R-squared of 0.989 at 5.66 times
+    per notch but is far too steep for investment grade; it understates the
+    observed A rate by a factor of 2.4, and extrapolated two notches further it
+    puts AAA at 0.0006%.
+
+    The result sits where it should. Below AA's observed 0.02%, so the ordering
+    of the top two grades comes out of the data rather than being imposed. Above
+    zero. And below the loosest upper bounds available, the constant-hazard reads
+    of the three and five year AAA rates at 0.043% and 0.068% per year, which
+    overstate the first year because a cumulative multi-year figure counts
+    obligors that were downgraded before defaulting.
+
+    One caveat recorded rather than smoothed over: at three and five years the
+    published AAA rate EXCEEDS AA's, 0.13% against 0.11% and 0.34% against
+    0.28%. That inversion is itself a small-sample artefact of thin AAA pools,
+    so it is evidence that AAA risk is positive and not evidence about its
+    ordering against AA.
+    """
+    r = default_rates()["1y"]
+    return r["AA"] ** 2 / r["A"]
+
 _COUNT_COLS = ("to_AAA", "to_AA", "to_A", "to_BBB", "to_BB", "to_B",
                "to_CCC_C", "to_D", "to_NR")
 _PCT_COLS = ("AAA", "AA", "A", "BBB", "BB", "B", "CCC_C", "D", "NR")

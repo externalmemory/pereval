@@ -58,6 +58,11 @@ D_INDEX = len(LIVE_STATES)
 #: still score far worse than the degenerate, as elsewhere in the suite.
 COMPONENT_CAP = 10.0
 
+#: Least peak height, as a fraction of the observed peak's height above the
+#: observed median, at which `fit_peak_lag` is worth reporting. Measured in
+#: `fit_diagnostics`: the one instance below it read a lag of sixteen years.
+PROMINENCE_FLOOR = 0.25
+
 #: Floor on a degenerate value before dividing, for instances where the
 #: uninformative answer happens to be nearly right on one component.
 DEGENERATE_FLOOR = 1e-4
@@ -320,6 +325,26 @@ def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
     overfits history scores well here. That is deliberate: this is a check for
     insufficient macro sensitivity, and the forward statistics in
     `stress_diagnostics` cover the other direction.
+
+    One blind spot is worth naming precisely, because an agent walked into it.
+    A backtest has no power at all against a model that interpolates history and
+    cannot extrapolate past it, since that model's only defect lies outside the
+    period the backtest covers. Asked for nine quarters whose peak volatility
+    exceeded anything in its sample, a nearest-neighbour submission scored
+    `fit_stress_mean_ratio` 1.0004 and `fit_peak_ratio` 1.0003 here while
+    projecting 13% of the true stress response forward. So these statistics are
+    read as a pair with `stress_mean_ratio`, and their disagreement is itself the
+    diagnosis: both low is a weak model, high here and low forward is a model
+    that cannot leave its own sample.
+
+    `fit_peak_prominence` is the statistic to read rather than `fit_peak_lag`.
+    Over the same sweep it runs 0.09, 0.12, 0.19, 0.32, 0.51, 1.17, a span of
+    thirteen against the stress ratio's four, and at zero sensitivity it reads
+    0.09 instead of leaving the reviewer to infer flatness. The lag is kept
+    because mistiming a peak is a real finding, but it is suppressed below a
+    prominence of 0.25: of twenty-four instances the one with prominence 0.17
+    reported a lag of sixteen years, and the other twenty-three, all above 0.39,
+    reported exactly zero. A series with no peak has no peak to time.
     """
     obs = np.asarray(list(observed), dtype=float)
     fit = parse_backtest(text)
@@ -338,8 +363,12 @@ def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
         out["fit_peak_ratio"] = float(pred[int(np.argmax(obs))] / obs.max())
     if obs.mean() > 0.0:
         out["fit_all_years_ratio"] = float(pred.mean() / obs.mean())
-    if float(np.ptp(pred)) > 0.0:        # a flat series has no peak to be early or late
-        out["fit_peak_lag"] = float(int(np.argmax(pred)) - int(np.argmax(obs)))
+    spread = obs.max() - float(np.median(obs))
+    if spread > 0.0:
+        prom = (pred.max() - float(np.median(pred))) / spread
+        out["fit_peak_prominence"] = float(prom)
+        if prom >= PROMINENCE_FLOOR:     # below this there is no peak to time
+            out["fit_peak_lag"] = float(int(np.argmax(pred)) - int(np.argmax(obs)))
     return out
 
 
@@ -404,64 +433,80 @@ def stress_diagnostics(text: str | None, start: np.ndarray,
     return out
 
 
+#: Every key reported for this task, which is the contract with aggregation.
+#: Inspect averages a keyed metric by pulling the key from each sample's score
+#: value: absent raises, NaN is skipped. Since every diagnostic is conditional
+#: on something, `score_value` fills what does not apply with NaN.
+REPORTED_KEYS = (
+    "score_degenerate", "ks_q4_norm", "ks_q9_norm", "default_q4_norm",
+    "default_q9_norm", "default_rate_bias", "hosmer_lemeshow",
+    "completion", "runs", "regret_worst", "regret_spread",
+    # diagnostics only: deliberately excluded from `score`
+    "matrix_provided", "matrix_rows_valid", "matrix_nonnegative",
+    "matrix_admissible", "matrix_row_sum_error", "matrix_rows_off_one",
+    "matrix_negative_cells", "matrix_most_negative", "matrix_zero_cells",
+    "matrix_smallest_positive", "matrix_default_monotonicity_violations",
+    "matrix_submission_gap",
+    # one-sided stress response, also diagnostics only
+    "default_ratio_q4", "default_ratio_q9", "stress_mean_ratio",
+    "stress_peak_ratio", "stress_peak_lag",
+    "fit_provided", "fit_years", "fit_stress_mean_ratio", "fit_peak_ratio",
+    "fit_all_years_ratio", "fit_peak_prominence", "fit_peak_lag",
+)
+
+
+def score_value(truth: dict, text: str | None, mtext: str | None,
+                btext: str | None) -> dict[str, float]:
+    """The whole score dictionary, so it can be built without a sandbox."""
+    v = score_predictions(truth, text)
+    start = np.array([truth["start_mix"].get(s, 0.0) for s in ORDER], dtype=float)
+    submitted = parse_predictions(text)
+    v.update(matrix_diagnostics(mtext, start, submitted,
+                                [int(q) for q in truth["rating_distribution"]]))
+    v.update(stress_diagnostics(mtext, start, submitted, truth))
+    v.update(fit_diagnostics(btext, truth.get("observed_annual_default_rate", ())))
+    for k in REPORTED_KEYS:
+        v.setdefault(k, float("nan"))
+    return v
+
+
+def explain(v: dict[str, float]) -> str:
+    """The one line a reader sees per sample, skipping what did not apply."""
+    import math
+
+    bits = [f"score {v['score']:.4f} (1.0 = no migration)",
+            "components " + "/".join(
+                f"{v[f'{k}_norm']:.3f}" for k in
+                ("ks_q4", "ks_q9", "default_q4", "default_q9")),
+            f"completion {v['completion']:.0%}"]
+    for key, label, fmt in (("default_rate_bias", "default bias", "+.3%"),
+                            ("stress_mean_ratio", "stress response", ".2f"),
+                            ("fit_stress_mean_ratio", "backtest stress", ".2f")):
+        x = v.get(key, float("nan"))
+        if not math.isnan(x):
+            suffix = "x" if fmt == ".2f" else ""
+            bits.append(f"{label} {x:{fmt}}{suffix}")
+    return "; ".join(bits)
+
+
 def migration_scorer():
     from inspect_ai.scorer import Score, mean, scorer, stderr
     from inspect_ai.util import sandbox
 
-    keys = ("score_degenerate", "ks_q4_norm", "ks_q9_norm", "default_q4_norm",
-            "default_q9_norm", "default_rate_bias", "hosmer_lemeshow",
-            "completion", "runs", "regret_worst", "regret_spread",
-            # diagnostics only: deliberately excluded from `score`
-            "matrix_provided", "matrix_rows_valid", "matrix_nonnegative",
-            "matrix_admissible", "matrix_row_sum_error", "matrix_rows_off_one",
-            "matrix_negative_cells", "matrix_most_negative", "matrix_zero_cells",
-            "matrix_smallest_positive", "matrix_default_monotonicity_violations",
-            "matrix_submission_gap",
-            # one-sided stress response, also diagnostics only
-            "default_ratio_q4", "default_ratio_q9", "stress_mean_ratio",
-            "stress_peak_ratio", "stress_peak_lag",
-            "fit_provided", "fit_years", "fit_stress_mean_ratio",
-            "fit_peak_ratio", "fit_all_years_ratio", "fit_peak_lag")
-
     @scorer(name="migration",
-            metrics={"score": [mean(), stderr()], **{k: [mean()] for k in keys}})
+            metrics={"score": [mean(), stderr()],
+                     **{k: [mean()] for k in REPORTED_KEYS}})
     def factory():
         async def score(state, target):
-            try:
-                text = await sandbox().read_file("predictions.csv")
-            except FileNotFoundError:
-                text = None
-            try:
-                mtext = await sandbox().read_file("matrices.csv")
-            except FileNotFoundError:
-                mtext = None
-            try:
-                btext = await sandbox().read_file("backtest.csv")
-            except FileNotFoundError:
-                btext = None
-            truth = state.metadata["truth"]
-            v = score_predictions(truth, text)
-            start = np.array([truth["start_mix"].get(s_, 0.0) for s_ in ORDER],
-                             dtype=float)
-            submitted = parse_predictions(text)
-            v.update(matrix_diagnostics(
-                mtext, start, submitted,
-                [int(q) for q in truth["rating_distribution"]]))
-            v.update(stress_diagnostics(mtext, start, submitted, truth))
-            v.update(fit_diagnostics(
-                btext, truth.get("observed_annual_default_rate", ())))
-            bits = [f"score {v['score']:.4f} (1.0 = no migration)",
-                    "components " + "/".join(
-                        f"{v[f'{k}_norm']:.3f}" for k in
-                        ("ks_q4", "ks_q9", "default_q4", "default_q9")),
-                    f"completion {v['completion']:.0%}"]
-            if "default_rate_bias" in v:
-                bits.append(f"default bias {v['default_rate_bias']:+.3%}")
-            if "stress_mean_ratio" in v:
-                bits.append(f"stress response {v['stress_mean_ratio']:.2f}x")
-            if "fit_stress_mean_ratio" in v:
-                bits.append(f"backtest stress {v['fit_stress_mean_ratio']:.2f}x")
-            return Score(value=v, explanation="; ".join(bits))
+            files = {}
+            for name in ("predictions.csv", "matrices.csv", "backtest.csv"):
+                try:
+                    files[name] = await sandbox().read_file(name)
+                except FileNotFoundError:
+                    files[name] = None
+            v = score_value(state.metadata["truth"], files["predictions.csv"],
+                            files["matrices.csv"], files["backtest.csv"])
+            return Score(value=v, explanation=explain(v))
 
         return score
 

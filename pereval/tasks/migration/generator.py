@@ -44,7 +44,12 @@ from scipy.stats import norm
 
 from pereval.tasks.ccar.generator import MACRO_COLUMNS, N_STRESS
 from pereval.tasks.ccar.generator import _simulate as _ccar_macros
-from pereval.tasks.migration.reference import RATINGS, STATES, global_average
+from pereval.tasks.migration.reference import (
+    RATINGS,
+    STATES,
+    global_average,
+    top_of_scale_annual,
+)
 
 #: Rating states plus default. Withdrawals are dropped; see the module docstring.
 LIVE = tuple(RATINGS)                       # 7 rating grades, best to worst
@@ -94,13 +99,16 @@ def _withdrawal_adjusted_annual() -> np.ndarray:
 #: assigned exactly zero. Immaterial in size, load-bearing in principle.
 CELL_FLOOR = 1e-9
 
-#: Floor on the default column, the quarterly equivalent of the 0.03% annual PD
-#: floor at 12 CFR 217.131(d)(2). Set here rather than left to the data because
-#: the published AAA default rate is 0.00%, an absence of observations in 44
-#: static pools rather than an absence of risk, and a fourth root of zero is
-#: still zero. A projection of exactly zero default allocates no reserve to a
-#: live exposure, which is imprudent whatever the long-run average works out to.
-PD_FLOOR_QUARTERLY = 1.0 - (1.0 - 0.0003) ** 0.25
+#: Quarterly default probability for AAA, whose published one-year rate is
+#: 0.00% and whose fourth root is therefore zero or slightly negative. It is an
+#: estimate extended from the notch ratio where defaults are observed, not a
+#: regulatory floor; see reference.top_of_scale_annual for why a capital floor
+#: has no business here. Only AAA needs it. Every other grade has observed
+#: defaults and keeps the value the root gives it, which is what makes the
+#: ordering of the top two grades come out of the data: AAA lands at 2.0e-05
+#: against AA's 3.9e-05, where the old 0.03% floor pinned BOTH to 7.5e-05 and
+#: left them exactly equal.
+TOP_OF_SCALE_QUARTERLY = 1.0 - (1.0 - top_of_scale_annual()) ** 0.25
 
 
 def quarterly_base() -> np.ndarray:
@@ -113,16 +121,16 @@ def quarterly_base() -> np.ndarray:
     certainties. The non-embeddability this task turns on arises later, from a
     factor that moves within the year and from finite sampling, not here.
 
-    The default column is floored first and held fixed while the rest of each row
-    is rescaled, so renormalisation cannot push a default probability back under
-    the regulatory minimum.
+    Only the AAA entry is replaced, because only AAA has no observed defaults to
+    root. It is held fixed while the rest of its row is rescaled, so closing the
+    row cannot push it back to zero.
     """
     q = np.real(fractional_matrix_power(_withdrawal_adjusted_annual(), 0.25))
     q = np.clip(q, CELL_FLOOR, None)
     q[D, :] = 0.0
     q[D, D] = 1.0
     live = q[:D]
-    live[:, D] = np.maximum(live[:, D], PD_FLOOR_QUARTERLY)
+    live[0, D] = TOP_OF_SCALE_QUARTERLY          # AAA only: nothing to root
     # hold the default column, rescale the surviving states to close each row
     rest = live[:, :D]
     target = 1.0 - live[:, D]
@@ -506,7 +514,8 @@ def public_files(bundle: dict) -> dict[str, str]:
 
 __all__ = [
     "BASE_MIX", "D", "LIVE", "MACRO_COLUMNS", "N_OBLIGORS", "RHO_RANGE",
-    "CELL_FLOOR", "CHECKPOINTS", "PD_FLOOR_QUARTERLY", "RECOVERY_FRACTION",
+    "CELL_FLOOR", "CHECKPOINTS", "RECOVERY_FRACTION",
+    "TOP_OF_SCALE_QUARTERLY",
     "STRESS_QUARTERS", "conditional_matrix", "hump_shape", "reshape_scenario",
     "draw_dgp", "expected_default_path",
     "expected_distributions", "generate",

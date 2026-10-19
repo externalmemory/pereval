@@ -614,3 +614,82 @@ def test_true_loss_path_reconciles_with_the_scored_checkpoint():
     assert sum(t["default_increments"]) == pytest.approx(
         t["rating_distribution"]["9"]["D"], abs=1e-9)
     assert len(t["observed_annual_default_rate"]) == 20
+
+
+def test_top_of_scale_is_estimated_and_leaves_the_grades_ordered():
+    """The capital floor used to pin AAA and AA to one number. It is gone.
+
+    A 0.03% annual PD floor annualises to 7.5e-05 a quarter, which bound both of
+    the top two grades and made them exactly equal in the generator's own truth,
+    overwriting AA's observed value upward by about a factor of two. Capital
+    floors are long-run through-the-cycle figures; these are point-in-time
+    macro-conditional probabilities, so no floor belongs here at all.
+    """
+    from pereval.tasks.migration.generator import (
+        TOP_OF_SCALE_QUARTERLY, quarterly_base,
+    )
+    from pereval.tasks.migration.reference import PD_FLOORS, top_of_scale_annual
+
+    col = quarterly_base()[:len(LIVE), D]
+    assert np.all(np.diff(col) > 0.0), "the default column must be strictly ordered"
+    assert col[0] > 0.0, "AAA must carry positive risk, Cromwell's rule"
+    assert col[0] == pytest.approx(TOP_OF_SCALE_QUARTERLY)
+    # and it sits below the floors that used to be imposed, which is the point
+    for floor in PD_FLOORS.values():
+        assert top_of_scale_annual() < floor
+    # AA keeps the value its own observed defaults imply, not a floored one
+    assert col[1] > col[0]
+
+
+def test_peak_prominence_beats_the_lag_and_suppresses_it_when_flat():
+    """A flat fitted series has no peak, so its argmax is noise.
+
+    Measured over twenty-four instances at the shipped fit, the one instance
+    with prominence 0.17 reported a sixteen year lag while the other
+    twenty-three, all above 0.39, reported exactly zero. So the lag is withheld
+    below the prominence floor rather than published as a finding.
+    """
+    from pereval.scorers.migration import PROMINENCE_FLOOR, fit_diagnostics
+    from pereval.tasks.migration.baselines import _backtest_csv
+
+    obs = [0.004, 0.005, 0.004, 0.030, 0.012, 0.005, 0.004, 0.006]
+    flat = _backtest_csv(range(2000, 2008), [0.007] * 8)
+    d = fit_diagnostics(flat, obs)
+    assert d["fit_peak_prominence"] == pytest.approx(0.0)
+    assert "fit_peak_lag" not in d
+
+    # a series that tracks the observed peak is prominent and correctly timed
+    sharp = _backtest_csv(range(2000, 2008), obs)
+    d = fit_diagnostics(sharp, obs)
+    assert d["fit_peak_prominence"] == pytest.approx(1.0)
+    assert d["fit_peak_prominence"] >= PROMINENCE_FLOOR
+    assert d["fit_peak_lag"] == 0.0
+
+
+def test_every_reported_key_survives_aggregation():
+    """A key left out of one sample's dict fails the eval after all the scoring.
+
+    Inspect averages a keyed metric by pulling that key from every sample's
+    score value, raising if it is absent and skipping it if it is NaN. Every
+    diagnostic here is conditional on something, so the scorer fills what does
+    not apply with NaN. This pins that contract, which was found the hard way:
+    one submission without `matrices.csv` failed a whole run at aggregation.
+    """
+    import math
+
+    from pereval.scorers.migration import REPORTED_KEYS, score_value
+
+    b = generate(1, n_years=20, scenario="severe")
+    t = b["truth"]
+    preds, mats, back = predict(public_files(b), "onefactor")
+    cases = {
+        "nothing submitted": (None, None, None),
+        "predictions only": (preds, None, None),   # the shape that crashed a run
+        "no backtest": (preds, mats, None),
+        "everything": (preds, mats, back),
+    }
+    for label, (text, m, bk) in cases.items():
+        v = score_value(t, text, m, bk)
+        missing = [k for k in REPORTED_KEYS if k not in v]
+        assert not missing, f"{label}: absent at aggregation: {missing}"
+        assert not math.isnan(v["score"]), f"{label}: the score itself is never NaN"
