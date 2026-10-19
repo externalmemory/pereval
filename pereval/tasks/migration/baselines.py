@@ -13,6 +13,11 @@ matrices. Those three approximations are precisely the annual-to-quarterly
 problem the task poses, so this solver lands near the target without reaching
 it, which is what an anchor is for.
 
+The factor regression is shrunk, because the task ships twenty annual
+observations against seven parameters, which is the data sparsity a real
+portfolio has. It is not bounded: a stress model has to answer scenarios more
+severe than its own history. See `project_factor`.
+
 `no_migration` submits the starting cohort unchanged. It is the degenerate
 answer the scorer computes anyway, provided here so a run can produce it.
 """
@@ -25,7 +30,7 @@ import json
 
 import numpy as np
 from scipy.linalg import fractional_matrix_power
-from scipy.optimize import minimize_scalar
+from scipy.optimize import brentq, minimize_scalar
 
 from pereval.scorers.migration import ORDER
 from pereval.tasks.migration.generator import (
@@ -46,6 +51,12 @@ RHO_ASSUMED = float(np.mean(RHO_RANGE))
 #: recession-down candidates, because the latter are trending series.
 FEATURES = (("unemployment", False), ("bbb_spread", False), ("vix", False),
             ("gdp", True), ("hpi", True), ("nasdaq", True))
+
+#: The ridge penalty is set so the factor regression spends an effective
+#: dimension of 1 + n / DF_DIVISOR on n annual observations: 3.5 at the shipped
+#: twenty years, 6.0 at forty. A rule, not a constant, so a shorter history
+#: shrinks harder on its own.
+DF_DIVISOR = 8.0
 
 
 def _rows(text):
@@ -101,6 +112,87 @@ def factor_mle(counts, base, rho=RHO_ASSUMED):
         return -float((counts * np.log(np.clip(ann[:D], 1e-12, 1.0))).sum())
 
     return float(minimize_scalar(negll, bounds=(-4.0, 4.0), method="bounded").x)
+
+
+def _ridge(X, y, lam):
+    """Penalised least squares, intercept left unpenalised, features standardised."""
+    n, p = X.shape
+    pen = lam * n * np.diag([0.0] + [1.0] * (p - 1))
+    return np.linalg.solve(X.T @ X + pen, X.T @ y)
+
+
+def _lambda_for_df(X, target):
+    """The penalty whose hat matrix has the target effective dimension."""
+    n, p = X.shape
+    pen = np.diag([0.0] + [1.0] * (p - 1))
+
+    def df(log_lam):
+        a = X.T @ X + float(np.exp(log_lam)) * n * pen
+        return float(np.trace(X @ np.linalg.solve(a, X.T)))
+
+    if df(-14.0) <= target:                 # already below target unpenalised
+        return 0.0
+    return float(np.exp(brentq(lambda L: df(L) - target, -14.0, 8.0, xtol=1e-4)))
+
+
+def project_factor(X, Xs, zhat):
+    """The scenario factor path, from a shrunk regression and nothing else.
+
+    Twenty annual observations against seven parameters overfits, and the
+    symptom is a projection of +6.4 where the truth is +3.4. The cause is
+    coefficient inflation across six collinear drivers when the data-generating
+    process uses two: the loadings offset each other inside the historical
+    range and stop offsetting once the scenario moves the drivers differently.
+    So the penalty comes from the sample-size rule in DF_DIVISOR.
+
+    What is deliberately NOT here is any bound on how far the projection may go.
+    A stress model must answer a scenario more severe than anything observed;
+    that is the only reason it exists. The Federal Reserve's own scenario design
+    framework specifies a severely adverse unemployment path that exceeds most
+    of the historical record by construction, and the generator's
+    `systematic_factor` says the same thing from the other side: the scenario
+    window is where the factor is supposed to go out of range. Clipping the
+    projection to the estimated range was tried and scores slightly better, and
+    it is still wrong, because it makes the model structurally incapable of the
+    one question it is asked. The correct review of extreme inputs is whether
+    the response stays monotone and finite out there, which is what
+    `factor_response_diagnostics` reports.
+
+    Two other fixes were tried and do not work. Leave-one-out cross-validation
+    picks almost no penalty, because every held-out year lies inside the
+    historical range while the scenario lies outside it, so in-time validation
+    is blind to extrapolation error by construction. Economic sign constraints
+    on the loadings, a standard review checklist item, leave the failure rate
+    unchanged: the blow-up draws have correctly signed loadings that are simply
+    too large.
+    """
+    lam = _lambda_for_df(X, 1.0 + X.shape[0] / DF_DIVISOR)
+    return Xs @ _ridge(X, zhat, lam)
+
+
+def factor_response_diagnostics(X, Xs, zhat, multiples=(1.0, 1.5, 2.0, 3.0)):
+    """How the projection behaves as the scenario is pushed past the record.
+
+    The review question about extreme macro inputs is not whether the model
+    refuses them but whether its response is well behaved: monotone in severity,
+    finite, and with no sign reversal. Severity is scaled in standardised
+    feature space, where zero is the historical mean, so a multiple of three is
+    a scenario three times as far from normal as the one supplied.
+    """
+    lam = _lambda_for_df(X, 1.0 + X.shape[0] / DF_DIVISOR)
+    coef = _ridge(X, zhat, lam)
+    out = {}
+    for m in multiples:
+        scaled = Xs.copy()
+        scaled[:, 1:] *= m
+        out[m] = float(np.max(scaled @ coef))
+    peaks = [out[m] for m in multiples]
+    return {
+        "peak_by_multiple": out,
+        "monotone_in_severity": all(b >= a - 1e-9 for a, b in zip(peaks, peaks[1:])),
+        "finite": bool(np.all(np.isfinite(peaks))),
+        "exceeds_history_at_1x": bool(peaks[0] > zhat.max()),
+    }
 
 
 def _macro_features(history, scenario, n_years):
@@ -167,7 +259,7 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         history = _rows(files["data/macro_history.csv"])
         scenario = _rows(files["data/scenario.csv"])
         X, Xs = _macro_features(history, scenario, len(years))
-        z = Xs @ np.linalg.lstsq(X, zhat, rcond=None)[0]
+        z = project_factor(X, Xs, zhat)
         v = np.concatenate([mix, [0.0]])
         dists = {}
         for t in range(max(checkpoints)):

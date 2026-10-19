@@ -131,7 +131,7 @@ def _samples(n_instances, seed, n_years, scenario):
 def migration(
     n_instances: int = 3,
     seed: int | None = None,
-    n_years: int = 40,
+    n_years: int = 20,
     scenario: str = "rotate",
     baseline: str = "",
     repeats: int = 1,
@@ -143,6 +143,10 @@ def migration(
     "no_migration" submits the starting mix, which is the degenerate answer.
     scenario: "rotate" cycles baseline, adverse and severe across instances, or
     pin one of those three.
+    n_years: twenty by default, which is the history a bank plausibly has for a
+    portfolio under its current rating scale. Working out that twenty annual
+    observations will not support an unshrunk macro regression is part of the
+    task, so nothing in the prompt says so.
     repeats>1 measures same-instance stability; see pereval.scorers.stability.
     """
     if n_instances < 1 or repeats < 1:

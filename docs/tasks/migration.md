@@ -2,13 +2,13 @@
 
 **Status: built, not measured.** The generator, the four-component scorer, two reference solvers and the Inspect task exist. One smoke test has been run against free models; the task does not appear in the README's score table and will not until there is a cell for every ranked row.
 
-The task gives an agent forty years of annual rating transition counts for a 10,000-obligor portfolio, quarterly macroeconomic history, a nine-quarter supervisory scenario, and a holdout cohort whose rating mix differs from the historical one. It must project where that cohort stands at quarters 4 and 9, and separately record the quarterly transition matrices it used.
+The task gives an agent twenty years of annual rating transition counts for a 10,000-obligor portfolio, quarterly macroeconomic history, a nine-quarter supervisory scenario, and a holdout cohort whose rating mix differs from the historical one. It must project where that cohort stands at quarters 4 and 9, and separately record the quarterly transition matrices it used.
 
 The intended difficulty is annual-to-quarterly conversion. A quarterly matrix obtained by rooting an annual one can be inadmissible: negative or complex migration probabilities, and a non-monotonic relationship between rating and default probability. That is the Markov embedding problem, and the standard references are Israel, Rosenthal and Wei (2001) on when a generator exists, Kreinin and Sidelnikova (2001) on regularising an invalid root, and Higham and Lin on pth roots of stochastic matrices.
 
 The trap is real and it is not tuned. Because the systematic factor moves every quarter, the annual matrix for a year is a product of four different quarterly matrices rather than the fourth power of one, so no quarterly matrix reproduces it. Measured on the exact arithmetic the principal fourth root reaches about -3e-08; with the finite 10,000-obligor portfolio it reaches -7e-03, five orders of magnitude worse, which is what an agent actually meets. Both free models in the smoke test found the negative entries, called them numerical issues, and clipped them.
 
-Bracket: oracle 0.000, one-factor reference 0.158, degenerate 1.000.
+Bracket: oracle 0.000, one-factor reference 0.287, degenerate 1.000, measured over twenty-four instances at the shipped settings.
 
 ## Provenance
 
@@ -155,11 +155,70 @@ Realism and checkpoint independence pull in opposite directions here. Realism wo
 
 The bracket moved slightly: reference 0.179, degenerate 1.000, separation 5.6x, against 0.158 and 6.3x under the monotone ramp.
 
-**The reference needs the full forty years of history.** At twenty years its factor regression fits seven parameters to twenty annual observations and fails outright on some draws, scoring 1.18 against the degenerate's 1.00 on one seed across all three scenarios. The task ships `n_years=40` and the tests exercise that rather than a shorter history.
+## Twenty Years of History, Not Forty
+
+The task ships `n_years=20`. The choice is about what a bank actually has, and it turned out to sharpen the trap as well.
+
+Calibration data for a stress model has to span benign and stressed conditions and has to be relevant to the portfolio. Twenty years covers two downturns, 2008 and 2020. Going further back buys observations from a different policy regime: NBER peaks from 1948 to 1982 come one every 4.3 years, since 1982 one every 11, and the variance break is conventionally dated to 1984Q1 (McConnell and Perez-Quiros, *American Economic Review* 2000; Kim and Nelson, *Journal of Business & Economic Statistics* 1999). Rating transition data itself goes back to 1981, so availability is not the binding constraint; portfolio relevance is. A bank's own rating scale rarely survives forty years intact through scale redefinitions, model replacements and acquired books. Twenty years is still four times the five-year minimum for wholesale PD estimation in 12 CFR 217.122.
+
+Shortening the history strengthens the embedding problem, because the pooled counts halve and the principal fourth root of a noisier annual matrix is further from admissible.
+
+| | Most negative root entry | Mean over instances | Count cells with no observations |
+| --- | ---: | ---: | ---: |
+| twenty years | -1.38e-04 | -7.63e-05 | 5.4 of 56 |
+| forty years | -6.28e-05 | -2.23e-05 | 3.5 of 56 |
+
+Two to three times stronger, and half again as many cells where a transition was never observed, which is the Cromwell's-rule problem arriving on its own rather than by construction.
+
+### It Broke the Reference, Which Had to Be Fixed Rather Than Avoided
+
+The reference's factor regression has seven parameters. On forty annual observations that is fine. On twenty it overfits badly: over eight seeds and three scenarios it loses to the degenerate on five of twenty-four draws and reaches 1.479.
+
+| | Mean | Median | Max | Loses to degenerate |
+| --- | ---: | ---: | ---: | ---: |
+| twenty years, unshrunk | 0.453 | 0.194 | 1.479 | 5 of 24 |
+| forty years, unshrunk | 0.210 | 0.193 | 0.393 | 0 of 24 |
+
+The identical medians say this is not a uniform loss of information but a tail of blow-ups. The symptom is a projection of +6.40 where the truth is +3.44 and the worst year in the estimation sample was +2.70. The cause is coefficient inflation across six collinear drivers when the data-generating process uses two: at twenty years the loadings on the failing draws sum to 2.18 in absolute value against 1.48 at forty. They offset each other inside the historical range and stop offsetting once the scenario moves the drivers differently.
+
+### What Does Not Fix It
+
+**Bounding the projection is not available, even though it works.** Clipping the projected factor to the range of the estimated annual factors scores 0.246 against 0.287 and never fails. It is still wrong. A stress model exists to answer scenarios more severe than anything observed. The Federal Reserve's scenario design framework for the severely adverse scenario specifies an unemployment path that rises by three to five percentage points or to ten percent, whichever is higher, without reference to whether that has happened before, and this generator's `systematic_factor` says the same thing from the other side: the scenario window is where the factor is supposed to go out of range. A model that cannot go there fails the only question it is asked, and handling of extreme macro inputs is a review checklist item about whether the response stays monotone and finite out there, not about refusing to compute it. The reference therefore projects without a bound and reports `factor_response_diagnostics` instead, which pushes the scenario to three times its distance from the historical mean and checks monotonicity and finiteness. It still projects past its own historical maximum on eight of twenty-four draws, which is the behaviour being preserved.
+
+**Dropping features is worse than shrinking them.** Cutting to the three recession-up levels, four parameters instead of seven, gives 0.565 against 0.453 and still fails five of twenty-four. Collapsing all six drivers into one signed composite index gives 0.652, and fails three of twenty-four even at forty years. The drivers carry separate signal, so the problem is the size of the coefficients and not their number.
+
+**Selecting one driver of each sign by BIC trades the mean for a tail.** It gives the best median of any variant, 0.144, and still fails two of twenty-four, because when the selection picks the wrong pair it is badly wrong with no shrinkage left to absorb it.
+
+**Economic sign constraints are a no-op here.** Requiring unemployment, the BBB spread and the VIX to load non-negatively on stress and GDP, HPI and NASDAQ growth to load non-positively is a standard review checklist item, and it changes nothing: 0.286 against 0.287, same failures. The blow-up draws have correctly signed loadings that are simply too large. Worth recording as a negative result, since the intuitive diagnosis is wrong.
+
+**Leave-one-out cross-validation does not work**, and this is the finding worth keeping. It picks a penalty of 0 to 0.3 and still fails three of twenty-four. Every held-out year lies inside the historical range while the scenario lies outside it, so in-time validation is blind to extrapolation error by construction. That is not an artefact of this generator; it is why stress projections get bounded by judgment in practice rather than validated in sample.
+
+### What Ships
+
+Shrinkage alone, with the penalty from a sample-size rule.
+
+| Twenty years | Mean | Median | Max | Loses to degenerate | Penalty | Projects past history |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| unshrunk | 0.453 | 0.194 | 1.479 | 5 of 24 | 0 | 10 of 24 |
+| sign constraints only | 0.442 | 0.287 | 1.168 | 5 of 24 | 0 | 10 of 24 |
+| BIC-selected pair | 0.298 | 0.144 | 1.047 | 2 of 24 | 0 | 10 of 24 |
+| **shrinkage, shipped** | **0.287** | 0.256 | 0.662 | 0 of 24 | 0.847 | 8 of 24 |
+| shrinkage and sign constraints | 0.286 | 0.256 | 0.662 | 0 of 24 | 0.847 | 9 of 24 |
+| clipped to history, rejected | 0.246 | 0.243 | 0.517 | 0 of 24 | 0.847 | 0 of 24 |
+
+The penalty is set so the regression spends an effective dimension of `1 + n/8`: 0.847 at twenty annual observations and 0.104 at forty. It is a rule rather than a tuned constant, so a shorter history shrinks harder without anyone retuning it. Tuning the penalty directly against the score wanted 1.0; that the rule independently lands at 0.847 is the reassurance that the rule is not arbitrary, and the tuned value is not what ships because it was chosen by looking at the target.
+
+At forty years the same rule picks a light penalty and still helps, 0.190 against 0.210, so nothing here is specific to the short history.
+
+Bracket at the shipped settings: reference 0.287 over twenty-four instances, 0.303 over the eighteen the test uses, degenerate 1.000, separation 3.5x and 3.3x, against 4.8x at forty years unshrunk. Refusing the clip costs 0.041 of that, which is the price of a reference that can answer the question the task asks.
+
+Nothing in the prompt mentions sample size or overfitting. Recognising that twenty annual observations will not support an unshrunk macro regression is part of what the task measures.
 
 ## What the Silent Check Measured
 
 The first run under the prompt that asks for `matrices.csv`, two free models over the same three instances, with both reference solvers for comparison.
+
+**These scores are stale.** They were produced before the scenario was given a trough and before the history was shortened to twenty years, so the numbers below do not describe instances the task now generates. What survives is the qualitative finding in the last column, since the prompt and the diagnostics did not change. The run has to be repeated before migration can become a reported column.
 
 | Row | Mean score | Worst | Rows sum to one | Negative cells | Submission gap | Monotonicity violations |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
