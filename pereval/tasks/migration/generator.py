@@ -415,6 +415,32 @@ def expected_default_path(base, dgp, z, mix):
     return per_rating, cumulative
 
 
+def _true_annual_rates(base, dgp, z_hist, annual):
+    """Expected annual default fraction per historical year under the true law.
+
+    Mirrors how a submission is asked to report its own historical fit, and how
+    `baselines._fitted_annual_rates` computes one: four quarterly steps at that
+    year's factor, from the portfolio the year actually began with, taken from
+    the row sums of its counts. The only difference is that the factor and the
+    correlation are the true ones rather than estimates, so this is the series a
+    perfectly specified model would report.
+    """
+    z = np.asarray(z_hist, dtype=float)
+    out, q = [], 0
+    for counts in annual:
+        start = counts.sum(axis=1)
+        v = np.concatenate([start / start.sum(), [0.0]])
+        # the four quarters of the year carry four different factors, exactly as
+        # `simulate_history` steps them, so they are applied in sequence rather
+        # than averaged: averaging the factor averages away the convexity that
+        # makes a bad quarter cost more than a good one saves
+        for _ in range(4):
+            v = v @ conditional_matrix(base, float(z[q]), dgp["rho"])
+            q += 1
+        out.append(float(v[D]))
+    return out
+
+
 def annual_counts_rows(annual):
     """Long-format annual transition counts, the agent's main observation."""
     rows = []
@@ -547,6 +573,18 @@ def generate(seed: int = 1, n_years: int = 40,
             # One history, so one backtest, shared by all three scenarios.
             "observed_annual_default_rate": [
                 float(c[:, D].sum() / c.sum()) for c in annual
+            ],
+            # The TRUE quarterly factor over the history window, and the true
+            # expected annual default rate it implies for each historical year,
+            # each year starting from the portfolio that year actually began
+            # with. The agent never sees either. They exist so that a backtest
+            # check can be tested against a model that is right by construction:
+            # a statistic the true model fails is a bad statistic, and without
+            # this there is no way to tell that from a bad submission. Observed
+            # is this series plus one portfolio's worth of sampling noise.
+            "z_history": [float(x) for x in z_hist],
+            "expected_annual_default_rate": [
+                float(x) for x in _true_annual_rates(base, dgp, z_hist, annual)
             ],
             "checkpoints": list(CHECKPOINTS),
             "horizon_quarters": N_STRESS,

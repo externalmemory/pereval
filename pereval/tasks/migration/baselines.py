@@ -269,12 +269,23 @@ def matrices_csv(mats: dict[str, dict[int, np.ndarray]]) -> str:
     return buf.getvalue()
 
 
-def _backtest_csv(years, fitted) -> str:
+def _backtest_csv(years, fitted, scenarios) -> str:
+    """The fitted historical series, written once per scenario.
+
+    The reference estimates `base`, the annual factors and the ridge
+    coefficients from the history alone, outside the scenario loop, so the
+    series it writes under each scenario is the same series. That is not a
+    formatting convenience: writing it three times is what a model estimated
+    once has to produce, and `historical_fit_identical_across_scenarios` reads
+    exactly that.
+    """
     buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=["year", "default_rate"])
+    w = csv.DictWriter(buf, fieldnames=["scenario", "year", "default_rate"])
     w.writeheader()
-    for y, v in zip(years, fitted):
-        w.writerow({"year": int(y), "default_rate": float(v)})
+    for scen in scenarios:
+        for y, v in zip(years, fitted):
+            w.writerow({"scenario": scen, "year": int(y),
+                        "default_rate": float(v)})
     return buf.getvalue()
 
 
@@ -303,8 +314,8 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
     the ridge coefficients are computed once, outside the scenario loop, and the
     loop only pushes a different `Xs` through them. So the reference satisfies
     the one-model instruction by construction rather than by discipline, which is
-    what makes it usable as the anchor that `matrix_one_model_discordance` is
-    read against.
+    what lets it pass `historical_fit_identical_across_scenarios`: the fitted
+    historical series it writes under each scenario is literally the same series.
     """
     if method not in ("onefactor", "no_migration"):
         raise ValueError("method must be 'onefactor' or 'no_migration'")
@@ -323,7 +334,8 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
             quarterlies[scen] = {q: np.eye(len(ORDER))
                                  for q in range(1, max(checkpoints) + 1)}
         hist_years = sorted(_annual_matrices(files["data/transitions.csv"]))
-        backtest = _backtest_csv(hist_years, [0.0] * len(hist_years))
+        backtest = _backtest_csv(hist_years, [0.0] * len(hist_years),
+                                 list(groups))
     else:
         mats = _annual_matrices(files["data/transitions.csv"])
         base = pooled_quarterly_base(mats)
@@ -333,7 +345,8 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         X = _macro_features(history, next(iter(groups.values())), len(years))[0]
         lam = _lambda_for_df(X, 1.0 + X.shape[0] / DF_DIVISOR)
         beta = _ridge(X, zhat, lam)
-        backtest = _backtest_csv(years, _fitted_annual_rates(mats, base, X @ beta))
+        backtest = _backtest_csv(years, _fitted_annual_rates(mats, base, X @ beta),
+                                  list(groups))
         for scen, rows in groups.items():
             _, Xs = _macro_features(history, rows, len(years))
             z = Xs @ beta

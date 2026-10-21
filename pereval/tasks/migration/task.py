@@ -108,16 +108,17 @@ least six decimal places: the cells far from the diagonal are small, and three
 decimals is not enough to record them. This records the model alongside its
 output, as documentation of how the projection was produced.
 
-Also write `backtest.csv` in the working directory, giving the annual default
-rate your model projects for each HISTORICAL year, with columns exactly:
+Also write `backtest.csv` in the working directory, giving, under each
+scenario, the annual default rate your model projects for each HISTORICAL year,
+with columns exactly:
 
-    year,default_rate
+    scenario,year,default_rate
 
-one row per year in data/transitions.csv. There is one history, so there is one
-backtest, not three. For each year, use the portfolio that year actually started
-with, taken from the row sums of that year's counts, and report the fraction of
-it your model says defaults during that year. This is the model's fit to the
-period it was estimated on, alongside its projection.
+one row per scenario and year in data/transitions.csv, so sixty rows. For each
+year, use the portfolio that year actually started with, taken from the row sums
+of that year's counts, and report the fraction of it your model says defaults
+during that year. This is the model's fit to the period it was estimated on,
+alongside its projection.
 
 Note that the transitions you observe are annual while the projection is
 quarterly, and the economy moves within each year as well as between years.

@@ -149,9 +149,59 @@ So admissibility breaks ties. But the defects are not all of one kind, and the m
 
 One limit worth stating. A clean submitted matrix cannot distinguish an agent that reasoned about admissibility from one that clipped silently and got lucky. Both free models in the smoke runs found the negative entries and still called them numerical issues. That reasoning lives in the transcript, and grading it would need a judge, which this suite does not use.
 
+## Fifteen Checks a Reviewer Would Actually Make
+
+The numeric diagnostics below answer "how far from the oracle", and nothing about a continuous distance tells a reviewer whether to send the model back. No reviewer reads "severe stress response 0.41x" and reaches a verdict. So the primary diagnostic layer is fifteen binary checks, each reported as `fail_<name>` equal to one when it fails, plus `checks_failed` and `checks_total`. Averaged over samples, each key reads as the share of submissions carrying that finding, and the count is the number of findings a reviewer would write up.
+
+Three rules govern what is allowed in.
+
+**It must be defensible without the answer key.** A statistic measured against the oracle cannot be a check, because its cut has to be calibrated against the spread of a competent estimate, and that spread is wide: the shipped reference's far-corner ratio runs 0.354 to 5.079 over the instances this task draws, so no threshold on it separates a thinned submission from an honest one. The same defect stated as "the model gives a three-notch downgrade zero probability" needs neither the oracle nor a threshold.
+
+**It must be computable on every submission.** A ratio whose denominator can vanish, or a rank correlation whose comparable pairs can all be ties, returns NaN, and NaN is neither a pass nor a fail. Where a measured diagnostic produced one, the check is restated as an ordering, which always exists. A NaN *in the submission* is the opposite case: it is a hard, counted failure, not a missing measurement.
+
+**An absent or unreadable artefact fails every check that reads it.** A model nobody can inspect has demonstrated none of these properties, and excusing it would let a missing file outrank a bad answer. The count stays monotone in how much is wrong.
+
+### The Fifteen
+
+**Integrity, seven.** `matrices_readable` and `predictions_readable` (both files parse, and all three scenarios are present); `matrix_cells_finite` and `prediction_shares_finite`; `matrix_cells_are_probabilities` (every cell in [0, 1]); `matrix_rows_sum_to_one` and `prediction_shares_sum_to_one`, to 1e-4. Nothing is repaired before these run, which is the point: the parser used by the score coerces and fills, so a NaN there becomes a number, while these read the raw blocks and count it.
+
+**Shape, four.** `pd_rises_as_rating_falls`: a lower-rated obligor's default probability is not below a higher-rated one's. `stay_is_the_most_likely_outcome`: over one quarter a grade is likelier to persist than to land in any one other live grade. `near_downgrade_exceeds_far`: the adjacent downgrade carries at least as much mass as the whole three-or-worse band behind it. `multinotch_downgrade_possible`: the three-or-worse band is not identically zero, because zero is not an estimate, it is an assertion that the move cannot happen.
+
+**Macro response, three.** `downgrades_rise_with_severity`: portfolio-weighted downgrade mass is strictly higher under the worst scenario than the mildest. `pd_rises_with_severity`: the projected default share rises strictly with severity at every checkpoint. `pd_rises_with_horizon`: in the absorbing cohort the default share rises strictly with the horizon. All three are read off the scored artefact rather than the matrices, so a projection contradicting its own matrices is caught by whichever of the two is wrong.
+
+**One model, one.** `historical_fit_identical_across_scenarios`, described under One History, Three Scenarios.
+
+### It Separates, and Nothing Is Marginal
+
+Twelve instances, one line per known submission shape, count of instances on which each check fails:
+
+| Submission | `checks_failed` of 180 | Which checks |
+| --- | ---: | --- |
+| oracle (true model) | 0 | none |
+| one-factor reference | 0 | none |
+| oracle with the far band thinned to zero | 12 | `multinotch_downgrade_possible` 12 |
+| oracle with the migration body frozen | 12 | `downgrades_rise_with_severity` 12 |
+| oracle refitted per scenario | 12 | `historical_fit_identical_across_scenarios` 12 |
+| degenerate (no migration) | 48 | `multinotch_downgrade_possible`, `downgrades_rise_with_severity`, `pd_rises_with_severity`, `pd_rises_with_horizon`, 12 each |
+| nothing submitted | 180 | all fifteen, 12 each |
+
+Every cell is 0 or 12. No check is near its boundary on any instance, which is what makes the binary form honest rather than a threshold in disguise: a defect either is or is not present, on all twelve draws.
+
+**The oracle and the reference fail nothing, and that is a requirement rather than a result.** A check the true generating model trips is a bug in the check. Finding one was not hypothetical. The unrestricted form of `stay_is_the_most_likely_outcome`, which included default among the destinations, failed the oracle on three of twelve instances: nine violations on one of them, reaching stay 0.283 against default 0.717, because a CCC/C obligor in a severe quarter really is likelier to default than to stay CCC/C. The destination set now stops at the live grades and the default column is left to `pd_rises_as_rating_falls`. Two measured numeric diagnostics were removed under the same rule, recorded under The One-Model Instruction and Diagnostics Reported.
+
+### The Strict Inequalities Are Affordable, and the Data Supports Them
+
+Three checks are strict rather than weak, and each has a measured margin.
+
+`pd_rises_with_severity`: the oracle's smallest gap between adjacent severities over twelve instances is 0.0089 and the reference's is 0.0046, against a tie tolerance of 1e-9. Weak inequalities would pass a submission predicting the same loss under every scenario, and would pass the degenerate, whose cohort default share is exactly zero everywhere and therefore satisfies every weak ordering there is. `pd_rises_with_horizon`: the oracle's smallest step is 0.011. `downgrades_rise_with_severity`: equality *is* the frozen body, which is the defect being looked for.
+
+**None of this asks for anything the agent cannot see in its own data.** In `data/transitions.csv`, annual downgrade frequency correlates +0.971 to +0.996 with the annual default rate over the twenty published years, and downgrades are 3.6 to 7.3 times more frequent in the stressed quarter of years, on all twelve instances and from every starting grade with room to fall: 4.5x from AAA, 4.9x from AA, 5.7x from A, 6.1x from BBB, 4.3x from BB, 3.2x from B. Upgrades move the other way, 0.14x to 0.59x. The three-or-worse band is the most macro-sensitive region of the matrix, 24.4x between the stressed and benign quarters of years (range 6.8 to 56.1) against 4.5x for the adjacent notch, so a model that zeroes it is discarding its most responsive evidence. A submission that trips a response check contradicts its own history.
+
+**The checks do not enter `score`.** The score stayed bit-identical through the whole of this work, so archived cells remain comparable.
+
 ## The Far Downgrade Corner and the Macro Response
 
-Two diagnostics measure the shape of the submitted matrices rather than their admissibility. Both are reported and neither is scored, for the same reason as the admissibility tiers: they are orthogonal to accuracy as the score defines it, and the measurement below is what establishes that.
+Two diagnostics measure the shape of the submitted matrices rather than their admissibility. These are oracle-relative magnitudes, so they are measurements and not verdicts: the verdict form of the same two defects is `multinotch_downgrade_possible` and `downgrades_rise_with_severity` in the check layer above, which is what a reviewer is handed. Both groups here are reported and neither is scored, for the same reason as the admissibility tiers: they are orthogonal to accuracy as the score defines it, and the measurement below is what establishes that.
 
 The question they answer is whether the matrix moves for the right reason. Getting the quarterly scale right is a time-scaling problem and the literature hands an agent the tools for it. Getting the matrix to respond to a macro path is a conditioning problem, and the two are separable in a way that the score cannot see.
 
@@ -176,7 +226,7 @@ Rows are weighted by the published cohort mix throughout, because the question i
 
 **`matrix_down3_ratio`** is the submitted three-notch-or-worse downgrade mass over the oracle's, pooled over every scenario and quarter. Summing the two totals rather than averaging their ratios means the stressed quarters dominate the denominator, so no stress window has to be chosen. **`matrix_down1_ratio`** is the same ratio on the adjacent-grade band over the same four rows and serves as the control, since a model that is uniformly too mild reads low on both. **`matrix_down3_shape`** divides the first by the second and is therefore blind to a uniform error of level.
 
-**`matrix_downgrade_concordance`** is the fraction of matrix pairs, ordered by the true factor, whose submitted downgrade mass moves the same way as the factor. A near-tie counts as discordant, which is the reverse of the convention in `one_model_discordance` and is deliberate: a frozen body is the failure being looked for, so it has to read zero rather than drop out for want of comparable pairs. **`matrix_downgrade_slope`** separates a flat body from a perverse one, since both read zero on concordance, and is reported beside the oracle's own slope for scale.
+**`matrix_downgrade_concordance`** is the fraction of matrix pairs, ordered by the true factor, whose submitted downgrade mass moves the same way as the factor. A near-tie counts as discordant, which is deliberate: a frozen body is the failure being looked for, so it has to read zero rather than drop out for want of comparable pairs. **`matrix_downgrade_slope`** separates a flat body from a perverse one, since both read zero on concordance, and is reported beside the oracle's own slope for scale.
 
 The oracle is rebuilt in the scorer from `quarterly_base`, the factor path and the drawn correlation, which is why `rho` now travels in `truth`. It never reaches a public file.
 
@@ -223,7 +273,7 @@ The scale is seven rating categories, not twenty notches, so a two-grade move is
 
 The evidence available to an agent for those ten cells is thin but not absent. Pooled over the twenty published years on the first instance, the three-notch-or-worse counts are 7 from AAA, 32 from AA, 120 from A and 107 from BBB, with one empty cell in the AAA row, and the observed shares run 1.5 to 2.4 times the unconditional annual matrix because the history contains stressed years. So an agent estimating cell by cell gets a noisy and upward-biased far corner rather than a set of sampling zeros. Thin counts are a reason the reference scatters; they are not the mechanism behind a frozen body.
 
-Every figure in this section is measured over `generate(seed=k)` for k from one to twelve, the convention the rest of this document and the tests use. The task itself draws its instance seeds differently, from `SeedSequence(base).generate_state(n_instances)`, and that set is harsher on the anchor: over its first twelve instances the reference's far ratio runs 0.354 to 5.079 with median 1.043, and falls below 0.5 on one of the twelve. So the one-sided reading above is calibrated on a seed set that is not the one an agent is served, and on the served set it would record a finding against the reference itself about eight percent of the time. The diagnostic is reported rather than scored, so this costs nothing beyond knowing it; it is a reason not to promote the far ratio to a gate without recalibrating on the served draw.
+Every figure in this section is measured over `generate(seed=k)` for k from one to twelve, the convention the rest of this document and the tests use. The task itself draws its instance seeds differently, from `SeedSequence(base).generate_state(n_instances)`, and that set is harsher on the anchor: over its first twelve instances the reference's far ratio runs 0.354 to 5.079 with median 1.043, and falls below 0.5 on one of the twelve. So the one-sided reading above is calibrated on a seed set that is not the one an agent is served, and on the served set it would record a finding against the reference itself about eight percent of the time. The diagnostic is reported rather than scored, so this costs nothing beyond knowing it. It was not promoted to a gate, and this scatter is why: `multinotch_downgrade_possible` asks instead whether the far band is identically zero, which needs no calibration and reads 0 on the reference across both seed conventions.
 
 The far ratio needs the oracle, so it is not a statistic an agent could compute for itself, and it is not a candidate for the score for that reason among others. It also needs the submission written to enough precision. Rounding the oracle's own matrices and re-measuring, the far ratio reads 1.0000 at eight decimals, 0.9999 at six, 1.0035 at four and 0.6393 at three. The instructions now ask for at least six decimal places, because at three the statistic would convict a correct submission of a 36% thinning that is entirely formatting.
 
@@ -245,13 +295,17 @@ It also costs nothing in sample count and buys a gradient. Three projections fro
 
 `_simulate` now takes `sibling_ref`, and migration passes `pre_stress`. The default stays at the whole-path behaviour, because changing it moves two published columns on every archived CCAR instance for no benefit to that task. Standardising on a window that includes the future was a lookahead defect either way; it is fixed where it mattered and recorded where it did not.
 
-### The One-Model Instruction Is Checked, Weakly
+### The One-Model Instruction Was Checked Weakly, and Is Now Checked Exactly
 
-`matrix_one_model_discordance` asks whether the submitted matrices could have come from a single one-factor model. Under any threshold-shift law the whole matrix is a monotone function of one scalar, so if one quarter is worse than another for the portfolio it is worse for every grade at once and the grades cannot cross. Ordering the submitted matrices by their portfolio-weighted default probability and checking each grade against that order is model-free and costs nothing.
+**`matrix_one_model_discordance` has been removed, and what replaced it is `historical_fit_identical_across_scenarios`.** The history does not depend on which future scenario is being run, so a model estimated once implies one fitted historical series and writes it three times, and a model refitted per scenario writes three different ones. `backtest.csv` now carries a `scenario` column for that reason, and the prompt no longer says there is one history so there is one backtest, which was handing over the answer. The comparison is an exact equality to the precision a CSV carries: no threshold, no denominator that can vanish, and nothing taken from the answer key. It catches a per-scenario difference of a hundredth of a percent and passes a floating point difference of 1e-7.
+
+The rest of this section records what the removed statistic did and why it was not enough, because the blind spot it had is the reason the replacement exists.
+
+`matrix_one_model_discordance` asked whether the submitted matrices could have come from a single one-factor model. Under any threshold-shift law the whole matrix is a monotone function of one scalar, so if one quarter is worse than another for the portfolio it is worse for every grade at once and the grades cannot cross. Ordering the submitted matrices by their portfolio-weighted default probability and checking each grade against that order is model-free and costs nothing.
 
 Read as zero against non-zero rather than as a magnitude. The reference reads exactly 0.0 over 2,457 comparable pairs, so any violation is a finding, and the magnitudes are small: re-estimating the base matrix on the severe scenario alone reads 0.77%, an overlay applied to the speculative grades 0.81%, a flat one point add-on 0.12%.
 
-**The blind spot is the likeliest case, and it is not fixable this way.** A model re-estimated per scenario that stays inside the same one-factor family, so that only the macro coefficients and hence the factor path differ, reads exactly 0.00%. Scaling the severe path's factor by 0.6 leaves every grade's ordering intact, because the family is comonotone whatever the factor does. So the statistic detects a change of form, not a change of fit, and a submission reading zero has not been shown to use one model. It is reported as a diagnostic and does not enter the score.
+**The blind spot is the likeliest case, and it is not fixable this way.** A model re-estimated per scenario that stays inside the same one-factor family, so that only the macro coefficients and hence the factor path differ, reads exactly 0.00%. Scaling the severe path's factor by 0.6 leaves every grade's ordering intact, because the family is comonotone whatever the factor does. So the statistic detected a change of form, not a change of fit, and a submission reading zero had not been shown to use one model. It was also NaN on a submission whose three scenarios were identical, because identical matrices leave no comparable pairs, which is precisely the submission most in need of a verdict. The historical-fit equality has neither weakness: a refit inside the one-factor family still has to produce a different historical fit, because it is a different fit.
 
 ### A Severe Draw Can Still Wipe Out the Book
 
@@ -395,7 +449,7 @@ Leave-one-out residuals move it the right way and not far enough: the overfit mo
 
 Detecting underfitting is what this is for, and at that it works.
 
-**There is a second blind spot, and an agent found it before I did.** A backtest has no power at all against a model that interpolates its history and cannot extrapolate past it, because that model's only defect lies outside the period the backtest covers. Asked for a scenario whose peak volatility exceeded anything in its sample, `nemotron-3-ultra-550b` submitted a nearest-neighbour model and scored `fit_stress_mean_ratio` 1.0004, `fit_peak_ratio` 1.0003 and `fit_all_years_ratio` 1.0005, a backtest correct to five parts in ten thousand, while projecting 13.3% of the true stress response and 18.7% of the true quarter-nine default share. Its own reasoning named the defect and submitted anyway:
+**There is a second blind spot, and an agent found it before I did.** A backtest has no power at all against a model that interpolates its history and cannot extrapolate past it, because that model's only defect lies outside the period the backtest covers. Asked for a scenario whose peak volatility exceeded anything in its sample, `nemotron-3-ultra-550b` submitted a nearest-neighbour model and scored `fit_stress_mean_ratio` 1.0004 (a statistic since removed, see Diagnostics Reported), `fit_peak_ratio` 1.0003 and `fit_all_years_ratio` 1.0005, a backtest correct to five parts in ten thousand, while projecting 13.3% of the true stress response and 18.7% of the true quarter-nine default share. Its own reasoning named the defect and submitted anyway:
 
 > The backtest shows nearly perfect fit because the KNN is essentially interpolating within the training data. [...] The scenario VIX goes up to 41, while historical max is 34. [...] So the model might underestimate the severity.
 
@@ -405,7 +459,7 @@ This is the same blindness that disqualified cross-validation for the ridge pena
 
 What works is reading the two families together. `fit_*` and `stress_mean_ratio` are a pair, and their **disagreement** is the diagnosis: both low is a model with too little macro sensitivity, high in the backtest and low forward is a model that cannot leave its own sample. Neither statistic alone distinguishes those, and a reviewer handed only one of them would misattribute the failure.
 
-**The flat-model case, for contrast, is caught cleanly.** `nemotron-3-super-120b` returned `fit_all_years_ratio` of 0.996, 1.015 and 0.861 across three instances with `fit_stress_mean_ratio` of 0.527, 0.454 and 0.329 and `fit_peak_ratio` of 0.229, 0.148 and 0.214. Its unconditional level is right and its macro response is a third to a half of what it should be, which is exactly the target failure, and the all-years ratio is the control that rules out the alternative reading that its level is simply too low. Where its forward path was measurable it projected 4.3% of the true stress response.
+**The flat-model case, for contrast, is caught cleanly.** `nemotron-3-super-120b` returned `fit_all_years_ratio` of 0.996, 1.015 and 0.861 across three instances with `fit_stress_mean_ratio`, since removed, of 0.527, 0.454 and 0.329 and `fit_peak_ratio` of 0.229, 0.148 and 0.214. Its unconditional level is right and its macro response is a third to a half of what it should be, which is exactly the target failure, and the all-years ratio is the control that rules out the alternative reading that its level is simply too low. Where its forward path was measurable it projected 4.3% of the true stress response.
 
 "Did the band cover the peak" also must not be read as a pass/fail test. A perfectly calibrated pointwise 95% band excludes the largest of twenty draws with probability `1 - 0.975**20 = 40%`, and the correct model measures 25% here. The continuous ratio is the statistic; the binary version is noise.
 
@@ -433,13 +487,15 @@ This is recorded rather than fixed, and it sharpens what the task measures. The 
 
 ### Diagnostics Reported
 
-From `backtest.csv`, against the observed annual rates: `fit_stress_mean_ratio` over the worst quartile of years, `fit_peak_ratio` at the single worst year, `fit_all_years_ratio` for the contrast, `fit_peak_prominence` for whether there is a peak at all, and `fit_peak_lag` for its timing. From `matrices.csv` and the truth: `stress_mean_ratio` and `stress_peak_ratio` on the nine-quarter loss path, `stress_peak_lag`, and `default_ratio_q4` and `default_ratio_q9`. From `matrices.csv` against the rebuilt oracle: `matrix_down3_ratio`, `matrix_down1_ratio` and `matrix_down3_shape` on the far downgrade corner, and `matrix_downgrade_concordance`, `matrix_downgrade_slope` and `matrix_downgrade_response` on whether the migration body answers the macro path, all described under The Far Downgrade Corner and the Macro Response. None of it enters `score`.
+From `backtest.csv`, against the observed annual rates: `fit_peak_ratio` at the single worst year, `fit_all_years_ratio` for the contrast, `fit_peak_prominence` for whether there is a peak at all, and `fit_peak_lag` for its timing. From `matrices.csv` and the truth: `stress_mean_ratio` and `stress_peak_ratio` on the nine-quarter loss path, `stress_peak_lag`, and `default_ratio_q4` and `default_ratio_q9`. From `matrices.csv` against the rebuilt oracle: `matrix_down3_ratio`, `matrix_down1_ratio` and `matrix_down3_shape` on the far downgrade corner, and `matrix_downgrade_concordance`, `matrix_downgrade_slope` and `matrix_downgrade_response` on whether the migration body answers the macro path, all described under The Far Downgrade Corner and the Macro Response. None of it enters `score`.
+
+**`fit_stress_mean_ratio` was removed, and figures for it survive in the tables below as the record of what was measured.** It was the mean fitted rate over the worst quartile of observed years divided by the mean observed rate over the same years. The statistic was sound: built from the true factor path and the true correlation, a perfectly specified model reads 0.966 to 1.029 over twelve instances, mean 0.992, so selecting on the observed outcome biases it by about one percent. The shipped reference reads 0.480 to 0.781, mean 0.637, with no overlap. That is what disqualified it rather than what saved it. A diagnostic has to be one a competent estimate can clear, or it reports the bias-variance trade every estimator on twenty years of history must make as though it were a defect, and the one-sided reading below one needs a threshold nobody can defend. A denominator-free restatement does not help: counting the stressed years in which the fit falls below observed convicts the reference on six of twelve instances and the true model on none.
 
 **`fit_peak_lag` shipped before it was checked and it was nearly worthless.** It read nine years on one instance and minus sixteen on another, because a damped fitted series is almost flat and the argmax of an almost flat series lands anywhere. Over the sensitivity sweep its absolute value runs 2.88, 3.00, 2.38, 2.12, 2.00, 0.75, non-monotone with a spread of plus or minus 10.8, which is no information.
 
 The fix is a companion measure of whether the series has a peak to time, `(fitted peak - fitted median) / (observed peak - observed median)`:
 
-| macro response | `fit_stress_mean_ratio` | `fit_peak_prominence` |
+| macro response | `fit_stress_mean_ratio` (removed) | `fit_peak_prominence` |
 | ---: | ---: | ---: |
 | 0.00 | 0.263 +- 0.088 | 0.092 +- 0.103 |
 | 0.25 | 0.323 +- 0.103 | 0.123 +- 0.144 |
@@ -476,7 +532,7 @@ Ultra's adverse instance at 1.055 is worse than predicting that nothing happens,
 
 ### The Backtest Separates Two Failures the Score Cannot
 
-| Row | `fit_all_years_ratio` | `fit_stress_mean_ratio` | `fit_peak_prominence` | forward stress ratio |
+| Row | `fit_all_years_ratio` | `fit_stress_mean_ratio` (removed) | `fit_peak_prominence` | forward stress ratio |
 | --- | ---: | ---: | ---: | ---: |
 | one-factor reference | 0.81, 0.74, 0.82 | 0.64, 0.56, 0.63 | 0.38, 0.42, 0.62 | 0.73, 1.18, 0.41 |
 | minimax-m3.1-flash | 1.00, 1.00, 1.00 | 0.80, 0.97, 0.85 | 0.94, 1.02, 1.19 | 0.63, 0.86, 0.28 |

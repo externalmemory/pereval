@@ -13,8 +13,10 @@ import pytest
 from scipy.linalg import fractional_matrix_power
 
 from pereval.scorers.migration import (
+    CHECK_KEYS,
     ORDER,
     ks_distance,
+    model_checks,
     score_predictions,
 )
 from pereval.tasks.migration.baselines import predict
@@ -608,7 +610,12 @@ def test_backtest_diagnostics_detect_insufficient_macro_sensitivity():
         for y, v in zip(years, rates):
             w.writerow({"year": y, "default_rate": v})
         d = fit_diagnostics(buf.getvalue(), b["truth"]["observed_annual_default_rate"])
-        ratios.append(d["fit_stress_mean_ratio"])
+        ratios.append(d["fit_peak_prominence"])
+    # retargeted from fit_stress_mean_ratio, which was removed: a statistic the
+    # shipped reference cannot clear reports the bias-variance trade every
+    # estimator on twenty years has to make as though it were a defect. Peak
+    # prominence is monotone in macro response over the same sweep and spans
+    # 0.09 to 1.17 against the removed ratio's 0.26 to 1.07.
     assert ratios[0] < ratios[1] < ratios[2]
 
 
@@ -644,7 +651,7 @@ def test_degenerate_floors_every_one_sided_statistic():
     d = fit_diagnostics(back, t["observed_annual_default_rate"])
     assert s["stress_mean_ratio"] == 0.0
     assert s["stress_peak_ratio"] == 0.0
-    assert d["fit_stress_mean_ratio"] == 0.0
+    assert d["fit_peak_ratio"] == 0.0
     assert "fit_peak_lag" not in d          # a flat series has no peak
 
 
@@ -696,13 +703,13 @@ def test_peak_prominence_beats_the_lag_and_suppresses_it_when_flat():
     from pereval.tasks.migration.baselines import _backtest_csv
 
     obs = [0.004, 0.005, 0.004, 0.030, 0.012, 0.005, 0.004, 0.006]
-    flat = _backtest_csv(range(2000, 2008), [0.007] * 8)
+    flat = _backtest_csv(range(2000, 2008), [0.007] * 8, ["baseline"])
     d = fit_diagnostics(flat, obs)
     assert d["fit_peak_prominence"] == pytest.approx(0.0)
     assert "fit_peak_lag" not in d
 
     # a series that tracks the observed peak is prominent and correctly timed
-    sharp = _backtest_csv(range(2000, 2008), obs)
+    sharp = _backtest_csv(range(2000, 2008), obs, ["baseline"])
     d = fit_diagnostics(sharp, obs)
     assert d["fit_peak_prominence"] == pytest.approx(1.0)
     assert d["fit_peak_prominence"] >= PROMINENCE_FLOOR
@@ -853,77 +860,6 @@ def test_rating_monotonicity_is_checked_inside_each_scenario():
         rows("baseline", swapped) + rows("severe", severe))
     d = matrix_diagnostics(text, start, {}, list(CHECKPOINTS))
     assert d["matrix_default_monotonicity_violations"] == 1.0
-
-
-def test_a_change_of_model_form_per_scenario_shows_but_a_refit_does_not():
-    """What the one-model diagnostic can and cannot see, measured both ways.
-
-    The reference estimates once and projects three times, so it reads exactly
-    zero and any violation is a finding. Re-estimating the base matrix on the
-    severe scenario alone shows up. Re-estimating only the macro coefficients
-    does NOT, because the one-factor family is comonotone whatever the factor
-    path does, and that blind spot covers the likeliest form of a per-scenario
-    refit. The statistic detects a change of form, not a change of fit.
-    """
-    from scipy.optimize import brentq
-
-    from pereval.scorers.migration import one_model_discordance, parse_matrices
-    from pereval.tasks.migration import baselines as _B
-
-    b = generate(1, n_years=20)
-    f = public_files(b)
-    mats = parse_matrices(_B.predict(f, "onefactor")[1])
-    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
-    base = _B.pooled_quarterly_base(_B._annual_matrices(f["data/transitions.csv"]))
-
-    clean, pairs = one_model_discordance(mats, start)
-    assert clean == 0.0 and pairs > 1000
-
-    def implied_z(m):
-        return brentq(lambda z: conditional_matrix(
-            base, z, _B.RHO_ASSUMED)[3, D] - m[3, D], -8.0, 8.0)
-
-    # a different base matrix on severe only: a change of form, so it shows
-    steeper = base.copy()
-    steeper[:D, D] *= np.array([3.0, 2.5, 2.0, 1.5, 1.2, 1.1, 1.0])
-    steeper[:D, :D] *= ((1 - steeper[:D, D])
-                        / steeper[:D, :D].sum(axis=1))[:, None]
-    reformed = {s: dict(v) for s, v in mats.items()}
-    for q, m in mats["severe"].items():
-        reformed["severe"][q] = conditional_matrix(steeper, implied_z(m),
-                                                  _B.RHO_ASSUMED)
-    assert one_model_discordance(reformed, start)[0] > 0.0
-
-    # the same family with a rescaled factor: invisible, and that is the limit
-    refit = {s: dict(v) for s, v in mats.items()}
-    for q, m in mats["severe"].items():
-        refit["severe"][q] = conditional_matrix(base, implied_z(m) * 0.6,
-                                                _B.RHO_ASSUMED)
-    assert one_model_discordance(refit, start)[0] == 0.0
-
-
-def test_the_one_model_check_survives_a_rounded_submission():
-    """An agent writes its matrices at whatever precision it likes.
-
-    Six decimals on a default probability of a tenth of a percent leaves
-    adjacent quarters separated by the rounding step, so without a relative
-    near-tie tolerance a compliant submission would read a non-zero discordance
-    from rounding alone.
-    """
-    from pereval.scorers.migration import one_model_discordance, parse_matrices
-    from pereval.tasks.migration.baselines import predict as _predict
-
-    b = generate(1, n_years=20)
-    mats = _predict(public_files(b), "onefactor")[1]
-    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
-    head, *body = mats.splitlines()
-    for places in (4, 6, 8):
-        rounded = [",".join(p[:3] + [f"{float(x):.{places}f}" for x in p[3:]])
-                   for p in (line.split(",") for line in body)]
-        d, pairs = one_model_discordance(
-            parse_matrices(head + "\n" + "\n".join(rounded)), start)
-        assert d == 0.0, f"{places} dp invented {d:.2%} discordance"
-        assert pairs > 1000
 
 
 def _matrices_text(by_scen: dict[str, dict[int, np.ndarray]]) -> str:
@@ -1125,3 +1061,295 @@ def test_the_shape_diagnostics_survive_a_rounded_submission():
         d = notch_diagnostics(_matrices_text(rounded), start, b["truth"])
         assert d["matrix_down3_ratio"] == pytest.approx(1.0, abs=0.02)
         assert d["matrix_downgrade_concordance"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# The binary checks
+# ---------------------------------------------------------------------------
+
+
+def _start_vec(bundle) -> np.ndarray:
+    return np.array([bundle["truth"]["start_mix"].get(s, 0.0) for s in ORDER],
+                    dtype=float)
+
+
+def _preds_text(mats, bundle) -> str:
+    """predictions.csv propagated from the given matrices, cohort convention."""
+    t = bundle["truth"]
+    mix = np.array([t["start_mix"].get(s, 0.0) for s in LIVE], dtype=float)
+    cps = sorted(int(q) for q in t["scenarios"][t["scenario_names"][0]]
+                 ["rating_distribution"])
+    rows = ["scenario,quarter,state,share"]
+    for scen in sorted(mats):
+        v = np.concatenate([mix, [0.0]])
+        for k in range(max(cps)):
+            v = v @ mats[scen][k + 1]
+            if k + 1 in cps:
+                for st, x in zip(ORDER, v):
+                    rows.append(f"{scen},{k + 1},{st},{float(x)!r}")
+    return "\n".join(rows) + "\n"
+
+
+def _one_model_backtest(bundle) -> str:
+    """A compliant backtest: one estimated series, written under each scenario.
+
+    This is what a model estimated once produces, so it is the right default for
+    a test about some other property. `historical_fit_identical_across_scenarios`
+    has its own test and passes its own inputs.
+    """
+    t = bundle["truth"]
+    years = range(2005, 2005 + len(t["observed_annual_default_rate"]))
+    return "scenario,year,default_rate\n" + "".join(
+        f"{scen},{y},{v!r}\n" for scen in t["scenario_names"]
+        for y, v in zip(years, t["expected_annual_default_rate"]))
+
+
+_COMPLIANT = "__compliant__"
+
+
+def _checks(mtext, ptext, bundle, btext=_COMPLIANT) -> dict[str, float]:
+    if btext == _COMPLIANT:
+        btext = _one_model_backtest(bundle)
+    return model_checks(mtext, ptext, btext, _start_vec(bundle), bundle["truth"])
+
+
+def test_the_answer_key_and_the_reference_fail_no_check():
+    """The property that makes every threshold here defensible.
+
+    A check that the true generating model trips is not a statement about the
+    submission, it is a bug in the check. Finding one is not hypothetical: the
+    unrestricted form of `stay_is_the_most_likely_outcome` failed the oracle on
+    three of these twelve instances, because a CCC/C obligor in a severe quarter
+    is genuinely likelier to default than to stay CCC/C, and the rule had to be
+    narrowed to live destinations. The shipped reference passing too is the
+    second half of it: a competent estimate must be able to clear every bar,
+    or the count measures distance from the oracle rather than defect.
+    """
+    for seed in range(1, 13):
+        b = generate(seed, n_years=20)
+        orc = _oracle_matrices(b)
+        assert _checks(_matrices_text(orc), _preds_text(orc, b), b)[
+            "checks_failed"] == 0.0, f"oracle failed a check on seed {seed}"
+        files = public_files(b)
+        p, m, _ = predict(files, "onefactor")
+        assert _checks(m, p, b)["checks_failed"] == 0.0, (
+            f"reference failed a check on seed {seed}")
+
+
+def test_each_known_defect_trips_exactly_its_own_check():
+    """Separation, and the absence of collateral failures.
+
+    A thinned far corner and a frozen migration body are different modelling
+    errors and each trips one check and only one, so the count says which. Both
+    were invisible to the composite score: collapsing the far corner moves it by
+    about fifteen thousandths against a reference of 0.285.
+    """
+    base = quarterly_base()
+    for seed in range(1, 13):
+        b = generate(seed, n_years=20)
+        orc = _oracle_matrices(b)
+        thin = {k: {q: _thin_far(m, 0.0) for q, m in v.items()}
+                for k, v in orc.items()}
+        froz = {k: {q: _freeze_body(m, base) for q, m in v.items()}
+                for k, v in orc.items()}
+
+        t = _checks(_matrices_text(thin), _preds_text(thin, b), b)
+        assert t["fail_multinotch_downgrade_possible"] == 1.0
+        assert t["checks_failed"] == 1.0
+
+        f = _checks(_matrices_text(froz), _preds_text(froz, b), b)
+        assert f["fail_downgrades_rise_with_severity"] == 1.0
+        assert f["checks_failed"] == 1.0
+
+
+def test_a_nan_where_a_probability_belongs_is_a_counted_failure():
+    """NaN is a hard failure, not a missing value.
+
+    `parse_matrices` discards a whole file holding one non-finite cell, which
+    makes "wrote NaN" indistinguishable from "wrote nothing" to everything
+    downstream. The checks read the raw cells so that the finiteness failure is
+    counted once, as itself, rather than silently becoming an absent file.
+    """
+    b = generate(1, n_years=20)
+    orc = _oracle_matrices(b)
+    text = _matrices_text(orc)
+    preds = _preds_text(orc, b)
+    assert _checks(text, preds, b)["checks_failed"] == 0.0
+
+    broken = text.replace(text.split("\n")[1].split(",")[3], "nan", 1)
+    v = _checks(broken, preds, b)
+    assert v["fail_matrix_cells_finite"] == 1.0
+    assert v["fail_matrices_readable"] == 0.0, "a NaN is not an unreadable file"
+
+
+def test_nothing_submitted_fails_every_check():
+    """An artefact nobody can inspect has demonstrated no property at all.
+
+    Excusing it would let a missing file outrank a bad answer on the count,
+    which is backwards. This also pins the no-not-applicable rule: there is no
+    third state, so the count stays monotone in how much is wrong.
+    """
+    b = generate(1, n_years=20)
+    v = _checks(None, None, b, btext=None)
+    assert v["checks_failed"] == float(len(CHECK_KEYS))
+    assert all(v[f"fail_{k}"] == 1.0 for k in CHECK_KEYS)
+
+
+def test_no_check_can_return_nan():
+    """A ratio with a zero denominator is a badly designed diagnostic.
+
+    Every check is an ordering or a count, never a quotient, so there is no
+    submission on which one of them is undefined. This test is the guard on
+    that: it sweeps the submissions that broke the old ratio diagnostics, the
+    degenerate among them, on which the removed `matrix_one_model_discordance`
+    returned NaN because identical matrices leave no comparable pairs.
+    """
+    base = quarterly_base()
+    for seed in (1, 2, 3):
+        b = generate(seed, n_years=20)
+        files = public_files(b)
+        orc = _oracle_matrices(b)
+        cases = [(None, None),
+                 ("", ""),
+                 ("scenario,quarter,from_rating\n", "scenario,quarter,state,share\n"),
+                 predict(files, "no_migration")[:2][::-1],
+                 predict(files, "onefactor")[:2][::-1],
+                 (_matrices_text({k: {q: _freeze_body(m, base) for q, m in v.items()}
+                                  for k, v in orc.items()}), None)]
+        for mtext, ptext in cases:
+            v = _checks(mtext, ptext, b)
+            for k in CHECK_KEYS:
+                x = v[f"fail_{k}"]
+                assert x in (0.0, 1.0), f"{k} returned {x}"
+            assert not np.isnan(v["checks_failed"])
+
+
+def test_refitting_per_scenario_shows_up_in_the_historical_fit():
+    """One model is testable where refitting cannot hide it.
+
+    The history does not depend on which future scenario is being run, so a
+    model estimated once implies one fitted historical series and writes it
+    three times. A model refitted per scenario writes three different ones. The
+    comparison is an exact equality to CSV precision: no threshold to calibrate,
+    no denominator to go to zero, and nothing taken from the answer key.
+
+    This replaces `matrix_one_model_discordance`, now removed, which tried to do
+    the same job from the matrices alone. That statistic returned NaN on a
+    submission whose scenarios are identical, because identical matrices leave
+    no comparable pairs, which is precisely the submission it most needed a
+    verdict on, and it was blind to a per-scenario refit that stayed inside the
+    one-factor family, which is the likeliest form such a refit takes.
+
+    The prompt no longer says there is one history so there is one backtest.
+    That sentence handed over the answer; the file is now asked for per scenario
+    with no explanation of why the three should agree.
+    """
+    key = "fail_historical_fit_identical_across_scenarios"
+    for seed in (1, 2, 3):
+        b = generate(seed, n_years=20)
+        files = public_files(b)
+        p, m, refb = predict(files, "onefactor")
+
+        assert _checks(m, p, b, btext=refb)[key] == 0.0, "reference refit?"
+        assert _checks(m, p, b, btext=_one_model_backtest(b))[key] == 0.0
+
+        rows = refb.strip().split("\n")
+        bumped = [rows[0]]
+        for r in rows[1:]:
+            scen, year, val = r.split(",")
+            mult = {"baseline": 1.0, "adverse": 1.01, "severe": 1.02}[scen]
+            bumped.append(f"{scen},{year},{float(val) * mult!r}")
+        assert _checks(m, p, b, btext="\n".join(bumped) + "\n")[key] == 1.0
+
+        # a floating point difference is not a refit
+        jitter = [rows[0]]
+        for r in rows[1:]:
+            scen, year, val = r.split(",")
+            jitter.append(f"{scen},{year},{float(val) * (1 + 1e-9)!r}")
+        assert _checks(m, p, b, btext="\n".join(jitter) + "\n")[key] == 0.0
+
+        # one shared series is the correct answer, not a format failure
+        one = "year,default_rate\n" + "\n".join(
+            ",".join(r.split(",")[1:]) for r in rows[1:21]) + "\n"
+        assert _checks(m, p, b, btext=one)[key] == 0.0
+
+
+def test_the_degenerate_answer_trips_the_ordering_checks():
+    """Predicting no defaults at all has to be a finding, which needs strictness.
+
+    The degenerate submits the starting cohort unchanged, so its cohort default
+    share is exactly zero under every scenario at every checkpoint. Weak
+    orderings pass it: zero does not rise with severity, but neither does it
+    fall. Strictness is what makes "losses are higher in stress" say anything,
+    and the margin shows it costs nothing. Over twelve instances the oracle's
+    smallest gap between adjacent severities is 0.0089 and the reference's is
+    0.0046, against a tie tolerance of 1e-9.
+    """
+    for seed in (1, 2, 3):
+        b = generate(seed, n_years=20)
+        p, m, bt = predict(public_files(b), "no_migration")
+        v = _checks(m, p, b, btext=bt)
+        for k in ("pd_rises_with_severity", "pd_rises_with_horizon",
+                  "downgrades_rise_with_severity", "multinotch_downgrade_possible"):
+            assert v[f"fail_{k}"] == 1.0, k
+        assert v["checks_failed"] == 4.0
+        # and it is still a readable, well formed submission
+        for k in ("matrices_readable", "matrix_rows_sum_to_one",
+                  "prediction_shares_sum_to_one", "pd_rises_as_rating_falls",
+                  "historical_fit_identical_across_scenarios"):
+            assert v[f"fail_{k}"] == 0.0, k
+
+
+def test_the_published_history_shows_downgrades_rising_in_stress():
+    """The evidence `downgrades_rise_with_severity` stands on.
+
+    The check asserts a property of a submitted model. It is only defensible if
+    the data the agent was given shows that property, otherwise it convicts an
+    agent for fitting what it was handed. Read from data/transitions.csv alone,
+    with no access to the latent factor.
+
+    Measured over twelve instances: the annual downgrade frequency correlates
+    +0.971 to +0.996 with the annual default rate, and downgrades are 3.6 to 7.3
+    times more frequent in the stressed quarter of years. It holds from every
+    grade with room to fall, 4.5x from AAA through 6.1x from BBB to 3.2x from B,
+    and it is not thin: one instance carries about 3,400 BBB downgrades.
+
+    The far corner carries it most. The three-or-worse band is 24.4x more
+    frequent in stressed years against 4.5x for the adjacent notch, which is why
+    `multinotch_downgrade_possible` is a check about discarded evidence rather
+    than a quibble about a structural zero.
+
+    This test exists so that a change to the generating law cannot silently
+    remove the ground the checks stand on.
+    """
+    import csv as _csv
+    import io as _io
+
+    cols = [f"to_{s.replace('/', '_')}" for s in LIVE] + ["to_D"]
+    lifts, corrs, far_lifts = [], [], []
+    for seed in range(1, 13):
+        b = generate(seed, n_years=20)
+        by: dict[int, np.ndarray] = {}
+        for row in _csv.DictReader(_io.StringIO(
+                public_files(b)["data/transitions.csv"])):
+            y = int(row["year"])
+            by.setdefault(y, np.zeros((D, D + 1)))[LIVE.index(row["from_rating"])] = \
+                [float(row[c]) for c in cols]
+        years = sorted(by)
+        tot = np.array([by[y].sum() for y in years])
+        dflt = np.array([by[y][:, D].sum() for y in years]) / tot
+        down = np.array([by[y][:, :D][np.triu_indices(D, 1)].sum()
+                         for y in years]) / tot
+        far = np.array([sum(by[y][i, i + 3:D].sum() for i in range(D - 3))
+                        for y in years]) / tot
+        stressed = dflt >= np.quantile(dflt, 0.75)
+
+        corrs.append(float(np.corrcoef(dflt, down)[0, 1]))
+        lifts.append(float(down[stressed].mean() / down[~stressed].mean()))
+        far_lifts.append(float(far[stressed].mean() / far[~stressed].mean()))
+
+    assert min(corrs) > 0.9, f"weakest correlation {min(corrs):.3f}"
+    assert min(lifts) > 2.0, f"weakest downgrade lift {min(lifts):.2f}x"
+    assert min(far_lifts) > min(lifts), (
+        "the far band should be the more stress-sensitive one: "
+        f"far {min(far_lifts):.2f}x vs all {min(lifts):.2f}x")

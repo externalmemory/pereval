@@ -91,7 +91,7 @@ DEGENERATE_FLOOR = 1e-4
 #: precision it chooses, and six decimals on a default probability of 1e-3
 #: leaves differences between adjacent quarters at the rounding step. Without a
 #: relative floor those rounded ties flip at random and a compliant submission
-#: reads a non-zero discordance.
+#: is credited with distinctions it never made.
 TIE_TOL_REL = 1e-6
 TIE_TOL_ABS = 1e-9
 
@@ -290,64 +290,6 @@ def parse_matrices(text: str | None) -> dict[str, dict[int, np.ndarray]]:
     return out
 
 
-def one_model_discordance(mats: dict[str, dict[int, np.ndarray]],
-                          weights: np.ndarray) -> tuple[float, int]:
-    """Fraction of rating-pair orderings that no single-factor model could produce.
-
-    The instructions ask for one model estimated on one history, applied to three
-    scenario paths. Nothing in the submitted matrices says which model produced
-    them, so compliance has to be inferred from a property the asked-for model
-    has and some departures from it do not.
-
-    That property is comonotonicity. Under any one-factor threshold-shift law the
-    whole matrix is a monotone function of a single scalar, so if one quarter is
-    worse than another for the portfolio as a whole it is worse for EVERY rating
-    at once; the grades cannot cross. Order the submitted matrices by their
-    portfolio-weighted default probability and the per-rating default
-    probabilities must agree with that order.
-
-    Read as zero against non-zero, not as a magnitude. The one-factor reference
-    reads exactly 0.0 over 2457 comparable pairs, so any violation at all is a
-    finding, and the measured magnitudes are small: re-estimating the base matrix
-    on the severe scenario alone reads 0.77%, a scenario-specific overlay applied
-    to the speculative grades 0.81%, a flat one point add-on 0.12%.
-
-    The blind spot is the important part, and it is the commonest case. A model
-    re-estimated per scenario that stays inside the same one-factor family, so
-    that only the macro coefficients and hence z differ, reads exactly 0.00%:
-    scaling the severe path's factor by 0.6 leaves every grade's ordering intact
-    because the family is comonotone whatever z does. So this statistic detects a
-    change of FORM, not a change of fit. It cannot certify compliance, and a
-    submission reading zero has not been shown to use one model.
-
-    Returned as the fraction of comparable pairs that are discordant, with the
-    number of pairs, so a reader can tell a clean submission from one with too
-    few matrices to judge. It is a diagnostic and does not enter `score`.
-    """
-    flat = [m for scen in sorted(mats) for _, m in sorted(mats[scen].items())]
-    if len(flat) < 2:
-        return float("nan"), 0
-    w = weights[:D_INDEX]
-    w = w / w.sum() if w.sum() > 0 else np.full(D_INDEX, 1.0 / D_INDEX)
-    pds = np.array([m[:D_INDEX, D_INDEX] for m in flat], dtype=float)
-    ref = pds @ w
-    tied = _tied
-
-    discordant = pairs = 0
-    for i in range(len(flat)):
-        for j in range(i + 1, len(flat)):
-            if tied(ref[i], ref[j]):
-                continue
-            sign = np.sign(ref[i] - ref[j])
-            for r in range(D_INDEX):
-                if tied(pds[i, r], pds[j, r]):
-                    continue
-                pairs += 1
-                discordant += int(np.sign(pds[i, r] - pds[j, r]) != sign)
-    if not pairs:
-        return float("nan"), 0
-    return discordant / pairs, pairs
-
 
 def matrix_diagnostics(text: str | None, start: np.ndarray,
                        submitted: dict[str, dict[int, np.ndarray]],
@@ -431,9 +373,6 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
         "matrix_default_monotonicity_violations": float(violations),
         "matrix_monotonicity_checks": float(checks),
     }
-    discord, pairs = one_model_discordance(mats, start)
-    out["matrix_one_model_discordance"] = discord
-    out["matrix_one_model_pairs"] = float(pairs)
 
     # does the documented model reproduce the reported projection?
     gaps = []
@@ -556,10 +495,9 @@ def notch_diagnostics(text: str | None, start: np.ndarray,
 
     `matrix_downgrade_concordance` is the fraction of matrix pairs, ordered by
     the true factor, whose submitted downgrade mass moves the same way as the
-    factor. A near-tie counts as DISCORDANT here, which is the opposite of the
-    convention in `one_model_discordance` and is the point: a frozen body is the
-    failure being looked for, so it has to read zero rather than drop out for
-    want of comparable pairs. `matrix_downgrade_slope` separates a flat body from
+    factor. A near-tie counts as DISCORDANT here, which is
+    deliberate: a frozen body is the failure being looked for, so it has to read
+    zero rather than drop out for want of comparable pairs. `matrix_downgrade_slope` separates a flat body from
     a perverse one, since both read zero on concordance; it is the slope of log
     downgrade mass on the factor, an elasticity, with the oracle's slope reported
     beside it for scale. `matrix_downgrade_response` is the cruder version a
@@ -677,17 +615,40 @@ def _log_slope(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.dot(xc, ly - ly.mean()) / np.dot(xc, xc))
 
 
-def parse_backtest(text: str | None) -> dict[int, float]:
-    """`backtest.csv`: the model's own fitted annual default rate, by year."""
+def parse_backtest_by_scenario(text: str | None) -> dict[str, dict[int, float]]:
+    """`backtest.csv` keyed by scenario, then year.
+
+    The file carries a `scenario` column so that the three historical fits can
+    be compared with each other. A file written without one is read as a single
+    series under the key "", which is what archived submissions look like.
+    """
     if not text:
         return {}
-    out: dict[int, float] = {}
+    out: dict[str, dict[int, float]] = {}
     for row in csv.DictReader(io.StringIO(text)):
         try:
-            out[int(float(row["year"]))] = float(row["default_rate"])
+            year = int(float(row["year"]))
+            rate = float(row["default_rate"])
         except (KeyError, TypeError, ValueError):
             continue
+        scen = str(row.get("scenario") or "").strip()
+        out.setdefault(scen, {})[year] = rate
     return out
+
+
+def parse_backtest(text: str | None) -> dict[int, float]:
+    """`backtest.csv` as one series, for the statistics that need only one.
+
+    When the file carries three scenarios they should be identical, and whether
+    they are is the whole point of `historical_fit_identical_across_scenarios`.
+    This returns the first by name so that the fit statistics read a definite
+    series rather than an average of three disagreeing ones, which would hide
+    the disagreement in exactly the statistic least able to show it.
+    """
+    by_scen = parse_backtest_by_scenario(text)
+    if not by_scen:
+        return {}
+    return by_scen[sorted(by_scen)[0]]
 
 
 def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
@@ -698,18 +659,27 @@ def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
     should have had. The agent reports its own fitted rates, so nothing is
     reverse engineered from its projection.
 
-    Read one-sided, on the stressed quarter of the historical years. Understating
-    losses in the bad years is the failure that matters; overstating them is
-    conservative, and a bank survives its benign years whatever the model claims
-    about them. So a ratio below one is a finding and a ratio above one is not.
+    `fit_stress_mean_ratio` was reported here and has been REMOVED. It was the
+    mean fitted rate over the worst quartile of observed years divided by the
+    mean observed rate over the same years, read one-sided, and it was dropped
+    for a reason worth recording rather than a doubt about whether it measured
+    something.
 
-    On a sensitivity sweep of the reference, scaling its macro response by 0,
-    0.25, 0.5, 0.75, 1.0 and 1.5, `fit_stress_mean_ratio` runs 0.26, 0.32, 0.40,
-    0.51, 0.66 and 1.07. Monotone, a factor of four across the sweep, and it
-    requires no interval. The shipped reference itself reads 0.66, because the
-    shrinkage that stops it blowing out on the projection also damps its macro
-    response; that is a real limitation of the anchor rather than a scoring
-    artefact, which is the clearest evidence that this diagnostic bites.
+    The statistic was sound. Built from the true factor path and the true
+    correlation, a perfectly specified model reads 0.966 to 1.029 over twelve
+    instances, mean 0.992, so selecting the worst quartile of observed years
+    biases it by about one percent and no more. The shipped reference reads 0.480
+    to 0.781, mean 0.637, with no overlap: the shrinkage that stops it blowing
+    out on the projection is the same parameter that damps its macro response.
+
+    That is what made it unusable as a check rather than what saved it. A
+    diagnostic has to be one a competent estimate can clear, or it reports the
+    bias-variance trade every estimator on twenty years of history has to make
+    as though it were a defect. Reading it one-sided below one needs a threshold
+    nobody can defend, and a denominator-free restatement does not help: the
+    number of stressed years in which the fit falls below observed convicts the
+    reference on six of twelve instances and the true model on none. The
+    `fail_*` checks cover what remains testable here without a threshold.
 
     It cannot detect the opposite failure. The fit is in sample, so a model that
     overfits history scores well here. That is deliberate: this is a check for
@@ -721,7 +691,7 @@ def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
     cannot extrapolate past it, since that model's only defect lies outside the
     period the backtest covers. Asked for nine quarters whose peak volatility
     exceeded anything in its sample, a nearest-neighbour submission scored
-    `fit_stress_mean_ratio` 1.0004 and `fit_peak_ratio` 1.0003 here while
+    `fit_all_years_ratio` 1.0004 and `fit_peak_ratio` 1.0003 here while
     projecting 13% of the true stress response forward. So these statistics are
     read as a pair with `stress_mean_ratio`, and their disagreement is itself the
     diagnosis: both low is a weak model, high here and low forward is a model
@@ -745,10 +715,6 @@ def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
     out = {"fit_provided": 1.0, "fit_years": float(len(years))}
     if pred.size != obs.size:
         return out                      # wrong length: nothing comparable
-    stressed = obs >= np.quantile(obs, 0.75)
-    if obs[stressed].mean() > 0.0:
-        out["fit_stress_mean_ratio"] = float(pred[stressed].mean()
-                                             / obs[stressed].mean())
     if obs.max() > 0.0:
         out["fit_peak_ratio"] = float(pred[int(np.argmax(obs))] / obs.max())
     if obs.mean() > 0.0:
@@ -844,6 +810,281 @@ def stress_diagnostics(text: str | None, start: np.ndarray,
     return out
 
 
+#: Tolerance on an identity a submission must satisfy exactly in principle: a
+#: row of probabilities summing to one, a set of shares summing to one. The task
+#: asks for at least six decimal places, so a row inside this is a rounded
+#: correct answer and a row outside it is a real error rather than formatting.
+IDENTITY_TOL = 1e-4
+
+#: Every check, in report order. Each is a property a credit risk reviewer would
+#: assert without argument, and the value reported for it is one when it FAILS,
+#: so the mean over samples is the fraction of submissions carrying that finding.
+#:
+#: Three rules govern what is allowed to be a check.
+#:
+#: It must be defensible without the answer key. A statistic measured against
+#: the oracle cannot be a check, because its threshold would have to be
+#: calibrated against the spread of a competent estimate, and that spread is
+#: wide: the shipped reference's far-corner ratio runs 0.354 to 5.079 across the
+#: instances the task draws, so no cut on it separates a thinned submission from
+#: an honest one. The same failure stated as "the model gives a three notch
+#: downgrade zero probability" needs neither the oracle nor a threshold.
+#:
+#: It must be computable on every submission. A ratio whose denominator can be
+#: zero, or a rank correlation whose comparable pairs can all be ties, returns
+#: NaN, and NaN is neither a pass nor a fail. Where the measured diagnostics
+#: produced one, the check is restated as an ordering, which always exists.
+#:
+#: An absent or unreadable artefact fails every check that reads it rather than
+#: being excused from it. A model nobody can inspect has demonstrated none of
+#: these properties, and excusing it would let a missing file outrank a bad
+#: answer. The count is then monotone in how much is wrong.
+CHECK_KEYS = (
+    "matrices_readable",
+    "matrix_cells_finite",
+    "matrix_cells_are_probabilities",
+    "matrix_rows_sum_to_one",
+    "predictions_readable",
+    "prediction_shares_finite",
+    "prediction_shares_sum_to_one",
+    "pd_rises_as_rating_falls",
+    "stay_is_the_most_likely_outcome",
+    "near_downgrade_exceeds_far",
+    "multinotch_downgrade_possible",
+    "downgrades_rise_with_severity",
+    "pd_rises_with_severity",
+    "pd_rises_with_horizon",
+    "historical_fit_identical_across_scenarios",
+)
+
+
+def _raw_matrix_blocks(text: str | None) -> dict[str, dict[int, np.ndarray]]:
+    """Submitted matrix cells with nothing repaired.
+
+    `parse_matrices` discards a whole file that holds one non-finite cell, which
+    makes "wrote NaN where a probability belongs" indistinguishable from "wrote
+    no file at all". A NaN is a hard failure and has to be counted as one, so
+    this keeps the values exactly as submitted and leaves judging them to the
+    checks. Returns {} only when the CSV cannot be read as the requested shape.
+    """
+    if not text:
+        return {}
+    raw: dict[tuple[str, int], dict[str, np.ndarray]] = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        try:
+            scen = str(row["scenario"]).strip()
+            q = int(float(row["quarter"]))
+            frm = str(row["from_rating"]).strip()
+            vals = np.array([float(row[c]) for c in MATRIX_COLS], dtype=float)
+        except (KeyError, TypeError, ValueError):
+            return {}
+        if frm not in LIVE_STATES:
+            return {}
+        raw.setdefault((scen, q), {})[frm] = vals
+    out: dict[str, dict[int, np.ndarray]] = {}
+    for (scen, q), rows in raw.items():
+        if set(rows) != set(LIVE_STATES):
+            return {}
+        m = np.zeros((len(ORDER), len(ORDER)))
+        for i, st in enumerate(LIVE_STATES):
+            m[i] = rows[st]
+        m[D_INDEX, D_INDEX] = 1.0
+        out.setdefault(scen, {})[q] = m
+    return out
+
+
+def _raw_prediction_blocks(text: str | None) -> dict[str, dict[int, np.ndarray]]:
+    """Submitted shares with nothing repaired, for the same reason.
+
+    `parse_predictions` renormalises a block that sums to anything between 0.5
+    and 1.5, which is right for scoring and wrong for checking, since it hides
+    the very error `prediction_shares_sum_to_one` exists to find.
+    """
+    if not text:
+        return {}
+    raw: dict[tuple[str, int], dict[str, float]] = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        try:
+            scen = str(row["scenario"]).strip()
+            q = int(float(row["quarter"]))
+            state = str(row["state"]).strip()
+            share = float(row["share"])
+        except (KeyError, TypeError, ValueError):
+            return {}
+        if state not in ORDER:
+            return {}
+        raw.setdefault((scen, q), {})[state] = share
+    out: dict[str, dict[int, np.ndarray]] = {}
+    for (scen, q), d in raw.items():
+        if set(d) != set(ORDER):
+            return {}
+        out.setdefault(scen, {})[q] = np.array([d[st] for st in ORDER], dtype=float)
+    return out
+
+
+
+def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
+                 start: np.ndarray, truth: dict) -> dict[str, float]:
+    """One pass or fail per check, plus the count of failures.
+
+    Reported as `fail_<name>` equal to one when the check fails, so that
+    Inspect's mean over samples reads as the share of submissions carrying that
+    finding, and `checks_failed` is how many of the fifteen this submission
+    tripped.
+    """
+    names = list(truth.get("scenario_names") or truth.get("scenarios") or ())
+    order = [n for n in SCENARIO_KEYS if n in names] or names
+    mats = _raw_matrix_blocks(mtext)
+    preds = _raw_prediction_blocks(ptext)
+    w = _row_weights(start)
+    checkpoints = sorted(int(q) for q in
+                         (truth["scenarios"][names[0]]["rating_distribution"]
+                          if names else {}))
+
+    m_all = [m for scen in mats.values() for m in scen.values()]
+    fail: dict[str, bool] = {}
+
+    # Artefact integrity. Each of these is a hard failure: the submission is not
+    # a set of probabilities, so nothing downstream of it can be believed.
+    fail["matrices_readable"] = not mats or len(mats) < len(order)
+    fail["matrix_cells_finite"] = (not m_all
+                                   or not all(np.isfinite(m).all() for m in m_all))
+    fail["matrix_cells_are_probabilities"] = (
+        not m_all or not all(np.all((np.nan_to_num(m, nan=-1.0) >= 0.0)
+                                    & (np.nan_to_num(m, nan=2.0) <= 1.0))
+                             for m in m_all))
+    fail["matrix_rows_sum_to_one"] = (
+        not m_all or not all(abs(m[i].sum() - 1.0) <= IDENTITY_TOL
+                             for m in m_all for i in range(D_INDEX)))
+
+    p_all = [v for scen in preds.values() for v in scen.values()]
+    fail["predictions_readable"] = not preds or len(preds) < len(order)
+    fail["prediction_shares_finite"] = (not p_all
+                                        or not all(np.isfinite(v).all() for v in p_all))
+    fail["prediction_shares_sum_to_one"] = (
+        not p_all or not all(abs(np.nansum(v) - 1.0) <= IDENTITY_TOL
+                             and np.all(np.nan_to_num(v, nan=-1.0) >= 0.0)
+                             for v in p_all))
+
+    # A lower rated obligor defaults more often. Weak, because two adjacent
+    # grades carrying the same estimated probability is not a modelling error.
+    fail["pd_rises_as_rating_falls"] = not m_all or any(
+        m[i + 1, D_INDEX] < m[i, D_INDEX] - TIE_TOL_ABS
+        for m in m_all for i in range(D_INDEX - 1))
+
+    # Over one quarter a grade is likelier to persist than to migrate to any one
+    # other grade. Default is excluded, and not for convenience: the oracle
+    # itself breaks dominance there, because a CCC/C obligor in a severe quarter
+    # really is likelier to default than to stay CCC/C. Measured on the true
+    # generating model, the only violations of the unrestricted rule are CCC/C
+    # into default, nine of them on one instance, reaching stay 0.283 against
+    # default 0.717. A rule the answer key breaks is not a defensible rule, so
+    # the destination set stops at the live grades and the default column is
+    # left to `pd_rises_as_rating_falls`.
+    fail["stay_is_the_most_likely_outcome"] = not m_all or any(
+        m[i, i] < m[i, j] - TIE_TOL_ABS
+        for m in m_all for i in range(D_INDEX) for j in range(D_INDEX) if j != i)
+
+    # Migration probability decays away from the diagonal, so the adjacent
+    # downgrade is at least the whole three-or-worse band behind it.
+    fail["near_downgrade_exceeds_far"] = not m_all or any(
+        m[i, i + NEAR_NOTCHES] < m[i, i + FAR_NOTCHES:D_INDEX].sum() - TIE_TOL_ABS
+        for m in m_all for i in range(D_INDEX - FAR_NOTCHES))
+
+    # Zero is not an estimate, it is an assertion that a three notch downgrade
+    # cannot happen. This is the failure a tridiagonal or diffusion construction
+    # produces, and it needs no oracle to state.
+    #
+    # The published history is not quiet about these cells. Measured on
+    # data/transitions.csv over twelve instances, the three-or-worse band is
+    # 24.4x more frequent in the stressed quarter of years than the benign ones
+    # (range 6.8 to 56.1, on all twelve), against 4.5x for the adjacent notch.
+    # The far corner is the MOST macro-sensitive region of the matrix, not a
+    # structural detail the data is silent about, so a model that sets it to zero
+    # is discarding its most responsive evidence.
+    fail["multinotch_downgrade_possible"] = not m_all or any(
+        m[i, i + FAR_NOTCHES:D_INDEX].sum() <= 0.0
+        for m in m_all for i in range(D_INDEX - FAR_NOTCHES))
+
+    # Stress makes downgrades more likely, default excluded so that a default
+    # column fitted on its own cannot carry a frozen migration body. Strict,
+    # because equality IS the frozen body.
+    #
+    # This asks for nothing the agent cannot see. In data/transitions.csv the
+    # annual downgrade frequency correlates +0.971 to +0.996 with the annual
+    # default rate over the twenty published years, and downgrades are 3.6 to
+    # 7.3 times more frequent in the stressed quarter of years, on every one of
+    # twelve instances and from every starting grade that has room to fall:
+    # 4.5x from AAA, 4.9x from AA, 5.7x from A, 6.1x from BBB, 4.3x from BB and
+    # 3.2x from B. Upgrades move the other way, to 0.14 to 0.59x. A submission
+    # that trips this check contradicts its own history.
+    if len(order) >= 2 and all(n in mats for n in (order[0], order[-1])):
+        mild, worst = mats[order[0]], mats[order[-1]]
+        quarters = sorted(set(mild) & set(worst))
+        d_mild = sum(_downgrade_mass(mild[q], w) for q in quarters)
+        d_worst = sum(_downgrade_mass(worst[q], w) for q in quarters)
+        fail["downgrades_rise_with_severity"] = not (
+            d_worst > d_mild + TIE_TOL_ABS)
+    else:
+        fail["downgrades_rise_with_severity"] = True
+
+    # Stress raises losses. Read off the scored artefact rather than the
+    # matrices, so a model whose projection contradicts its own matrices is
+    # caught by whichever of the two is wrong.
+    def _pd(scen, q):
+        v = preds.get(scen, {}).get(q)
+        return None if v is None else float(v[D_INDEX])
+
+    # Strict, and the margin says it is affordable: the oracle's smallest gap
+    # between adjacent severities over twelve instances is 0.0089 and the
+    # reference's is 0.0046, against a tie tolerance of 1e-9. Weak inequalities
+    # would pass a submission that predicts the same loss under every scenario,
+    # and would pass the degenerate, whose cohort default share is exactly zero
+    # everywhere and so satisfies every weak ordering that exists.
+    pairs = [(a, b) for a, b in zip(order, order[1:])]
+    vals = [(_pd(a, q), _pd(b, q)) for a, b in pairs for q in checkpoints]
+    fail["pd_rises_with_severity"] = (
+        not vals or any(x is None or y is None or _tied(x, y) or y < x
+                        for x, y in vals))
+
+    # Default is absorbing in the scored cohort, so its share cannot fall as the
+    # horizon lengthens, and over five further quarters it cannot stand still
+    # either unless the model predicts no defaults at all. Strict for the same
+    # reason and with the same margin: the oracle's smallest step is 0.011.
+    steps = [(_pd(n, a), _pd(n, b)) for n in order
+             for a, b in zip(checkpoints, checkpoints[1:])]
+    fail["pd_rises_with_horizon"] = (
+        not steps or any(x is None or y is None or _tied(x, y) or y < x
+                         for x, y in steps))
+
+    # One model, tested where refitting cannot hide. The history does not depend
+    # on which future scenario is being run, so a model estimated once implies
+    # ONE fitted historical series and writes it three times. A model refitted
+    # per scenario writes three different ones, and the difference is exact
+    # rather than a matter of degree: no threshold, no denominator, and nothing
+    # from the answer key. A submission that reports a single shared series
+    # passes, because a single shared series is the correct answer.
+    hist = parse_backtest_by_scenario(btext)
+    series = [hist[k] for k in sorted(hist)]
+    if len(series) < 2:
+        fail["historical_fit_identical_across_scenarios"] = not series
+    else:
+        first = series[0]
+        # `_tied` rather than IDENTITY_TOL: the question is whether two numbers
+        # are the same to the precision a rounded CSV can carry, which is what
+        # `_tied` already answers everywhere else in this module. IDENTITY_TOL is
+        # an absolute 1e-4, and against an annual default rate of 0.017 that
+        # would let a sixth of a percent of drift through as identical.
+        fail["historical_fit_identical_across_scenarios"] = any(
+            set(s) != set(first) or any(not _tied(s[y], first[y]) for y in first)
+            for s in series[1:])
+
+    out = {f"fail_{k}": float(bool(fail[k])) for k in CHECK_KEYS}
+    out["checks_failed"] = float(sum(bool(fail[k]) for k in CHECK_KEYS))
+    out["checks_total"] = float(len(CHECK_KEYS))
+    return out
+
+
 #: Every key reported for this task, which is the contract with aggregation.
 #: Inspect averages a keyed metric by pulling the key from each sample's score
 #: value: absent raises, NaN is skipped. Since every diagnostic is conditional
@@ -861,7 +1102,7 @@ REPORTED_KEYS = (
     "matrix_rows_off_one", "matrix_negative_cells", "matrix_most_negative",
     "matrix_zero_cells", "matrix_smallest_positive",
     "matrix_default_monotonicity_violations",
-    "matrix_one_model_discordance", "matrix_submission_gap",
+    "matrix_submission_gap",
     # shape of the matrices: the far downgrade corner, and whether the
     # migration body responds to the macro path at all
     "matrix_down3_mass", "matrix_down3_mass_oracle",
@@ -873,8 +1114,12 @@ REPORTED_KEYS = (
     "default_ratio_q4", "default_ratio_q9", "stress_mean_ratio",
     *(f"stress_mean_ratio_{n}" for n in SCENARIO_KEYS),
     "stress_peak_ratio", "stress_peak_lag",
-    "fit_provided", "fit_years", "fit_stress_mean_ratio", "fit_peak_ratio",
+    "fit_provided", "fit_years", "fit_peak_ratio",
     "fit_all_years_ratio", "fit_peak_prominence", "fit_peak_lag",
+    # binary checks: one per defensible property, one when it FAILS, and the
+    # count of failures. See CHECK_KEYS for what may be a check here.
+    "checks_failed", "checks_total",
+    *(f"fail_{k}" for k in CHECK_KEYS),
 )
 
 
@@ -891,6 +1136,7 @@ def score_value(truth: dict, text: str | None, mtext: str | None,
     v.update(notch_diagnostics(mtext, start, truth))
     v.update(stress_diagnostics(mtext, start, submitted, truth))
     v.update(fit_diagnostics(btext, truth.get("observed_annual_default_rate", ())))
+    v.update(model_checks(mtext, text, btext, start, truth))
     for k in REPORTED_KEYS:
         v.setdefault(k, float("nan"))
     return v
@@ -900,22 +1146,24 @@ def explain(v: dict[str, float]) -> str:
     """The one line a reader sees per sample, skipping what did not apply."""
     import math
 
-    bits = [f"score {v['score']:.4f} (1.0 = no migration)",
+    nfail = v.get("checks_failed", float("nan"))
+    failed = [k for k in CHECK_KEYS if v.get(f"fail_{k}", 0.0) >= 1.0]
+    bits = [f"score {v['score']:.4f} (1.0 = no migration)"]
+    if not math.isnan(nfail):
+        bits.append(f"{int(nfail)}/{int(v['checks_total'])} checks failed"
+                    + (": " + ", ".join(failed) if failed else ""))
+    bits += [
             "by scenario " + "/".join(
                 f"{v[f'score_{n}']:.3f}" for n in SCENARIO_KEYS
                 if f"score_{n}" in v),
             f"completion {v['completion']:.0%}"]
-    for key, label, fmt in (("matrix_down3_shape", "far-corner shape", ".2f"),
-                            ("matrix_downgrade_concordance", "macro response", ".1%"),
-                            ("default_rate_bias", "default bias", "+.3%"),
-                            ("stress_mean_ratio", "severe stress response", ".2f"),
-                            ("fit_stress_mean_ratio", "backtest stress", ".2f"),
-                            ("matrix_one_model_discordance", "cross-scenario discordance",
-                             ".1%")):
-        x = v.get(key, float("nan"))
-        if not math.isnan(x):
-            suffix = "x" if fmt == ".2f" else ""
-            bits.append(f"{label} {x:{fmt}}{suffix}")
+    # No ratios are stated here any more. A line reading "far-corner shape 1.07x"
+    # or "severe stress response 0.41x" asks the reader to decide whether a
+    # number is a problem, and there is no reader of this line who can: these are
+    # agent submissions in an eval, not models going to a review committee. What
+    # replaced them is a count and the names of the properties that failed, which
+    # is a finding rather than a measurement. The ratios stay in the score dict
+    # as the evidence behind a flag, and `REPORTED_KEYS` still carries them.
     return "; ".join(bits)
 
 
@@ -936,7 +1184,14 @@ def migration_scorer():
                     files[name] = None
             v = score_value(state.metadata["truth"], files["predictions.csv"],
                             files["matrices.csv"], files["backtest.csv"])
-            return Score(value=v, explanation=explain(v))
+            # The submitted artefacts are kept on the Score, not just the numbers
+            # computed from them. Every diagnostic added after a run was scored
+            # has so far required re-running the model, because the submission
+            # existed only in the sandbox and the sandbox is gone: the binary
+            # checks could not be applied to the runs already in logs/. About
+            # 25 KB a sample buys the ability to answer the next question of this
+            # shape off the archive instead of off the budget.
+            return Score(value=v, explanation=explain(v), metadata=files)
 
         return score
 
