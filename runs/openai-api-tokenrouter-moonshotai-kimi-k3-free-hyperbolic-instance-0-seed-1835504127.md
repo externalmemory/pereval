@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -30 data/train.csv && wc -l data/train.csv data/test.csv && head -20 data/test.csv
 ```
 
 ## [3] tool
@@ -118,6 +118,23 @@ t
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd
+df = pd.read_csv('train.csv')
+print(df.describe())
+print()
+print('gamma non-null:', df.gamma.notna().sum(), 'null:', df.gamma.isna().sum())
+print('beta non-null:', df.beta.notna().sum())
+# rows where gamma present
+g = df[df.gamma.notna()]
+print('gamma present t range:', g.t.min(), g.t.max())
+n = df[df.gamma.isna()]
+print('gamma absent t range:', n.t.min(), n.t.max(), 'count:', len(n))
+# check gaps
+import numpy as np
+t = np.sort(g.t.values)
+print('gamma t diffs:', np.diff(t)[:20], '... max gap', np.diff(t).max())
+"
 
 ```
 
@@ -163,6 +180,23 @@ gamma t diffs: [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1] ... max gap 1
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+# check alpha monotonic, beta wraps
+a = df.alpha.values; b = df.beta.values; g = df.gamma.values; t = df.t.values
+print('alpha diffs min/max:', np.diff(a).min(), np.diff(a).max())
+print('beta diffs min/max:', np.diff(b).min(), np.diff(b).max())
+# where big negative beta diffs (wrap down) or positive wrap
+print('beta wrap indices (diff<-180):', np.where(np.diff(b)<-180)[0][:20])
+print('beta wrap indices (diff>180):', np.where(np.diff(b)>180)[0][:20])
+print('alpha rate overall:', (a[-1]-a[0])/ (t[-1]-t[0]))
+# unwrap beta
+bu = np.rad2deg(np.unwrap(np.deg2rad(b)))
+print('beta unwrapped start/end:', bu[0], bu[-1], 'rate:', (bu[-1]-bu[0])/(t[-1]-t[0]))
+print('gamma first few, mid, last:')
+print(df.iloc[[0,100,200,300,400,516]][['t','alpha','beta','gamma']])
+"
 
 ```
 
@@ -203,6 +237,25 @@ Full daily record for t = 0..516; test extends to t=809 (well beyond). Alpha and
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values; a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+au=np.rad2deg(np.unwrap(a)); bu=np.rad2deg(np.unwrap(b))
+# local linear rates
+print('alpha unwrapped range:', au[0], au[-1])
+print('beta unwrapped range:', bu[0], bu[-1])
+# fit linear to see residual wiggle amplitude
+for name,u in [('alpha',au),('beta',bu)]:
+    p=np.polyfit(t,u,1); r=u-np.polyval(p,t)
+    print(name,'rate',p[0],'resid std',r.std(),'resid min/max',r.min(),r.max())
+# gamma autocorrelation of diff
+print('gamma diff std', np.diff(g).std(), 'gamma std', g.std())
+# quick check: corr of gamma with sin/cos of alpha/beta of various harmonics
+for h in [1,2,3]:
+    ca=np.cos(h*a); sa=np.sin(h*a)
+    print('h',h,'corr gamma cos(alpha)',np.corrcoef(g,ca)[0,1].round(3),'corr gamma cos(beta)',np.corrcoef(g,np.cos(h*b))[0,1].round(3))
+"
 
 ```
 
@@ -243,6 +296,21 @@ h 3 corr gamma cos(alpha) 0.004 corr gamma cos(beta) 0.484
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+au=np.unwrap(a); bu=np.unwrap(b)
+N=len(t); dt=1.0
+# remove linear trend first
+detrend = lambda u: u - np.polyval(np.polyfit(t,u,1),t)
+for name,u in [('alpha',au),('beta',bu),('gamma',g)]:
+    r=detrend(u)
+    F=np.fft.rfft(r); fr=np.fft.rfftfreq(N,dt)
+    mag=np.abs(F)
+    idx=np.argsort(mag)[::-1][:8]
+    print(name, 'top periods(days):', sorted((1/fr[idx]).round(1)), 'mags', mag[idx].round(1))
+"
 
 ```
 
@@ -272,7 +340,33 @@ Gamma has several strong periodic components. Let me do a high-resolution sinuso
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore1.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+au=np.unwrap(a); bu=np.unwrap(b)
 
+# Fine periodogram: least squares projection onto [1, t, cos(wt), sin(wt)]
+def ls_power(y, freqs):
+    ps=[]
+    n=len(y)
+    N=n//2
+    for f in freqs:
+        w=2*np.pi*f
+        X=np.column_stack([np.ones(n), t-np.mean(t), np.cos(w*t), np.sin(w*t)])
+        coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        pred=X@coef
+        ps.append(np.sum((pred-y.mean())**2)/np.sum((y-y.mean())**2))
+    return np.array(ps)
+
+freqs=np.linspace(0,0.5,20001)
+p=ls_power(g,freqs)
+order=np.argsort(p)[::-1][:15]
+print('gamma R2 top freqs (period):')
+for i in order:
+    print(f'  period={1/freqs[i]:8.3f} d  R2={p[i]:.4f}')
+EOF
+python3 /tmp/explore1.py
 ```
 
 ## [13] tool
@@ -310,7 +404,42 @@ gamma R2 top freqs (period):
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore2.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
 
+def fit(X,y,name):
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    r=y-X@coef
+    print(f'{name:40s} R2={1-r.var()/y.var():.5f} resid std={r.std():.4f}')
+    return r
+
+n=len(t)
+Xb1=np.column_stack([np.ones(n),np.cos(b),np.sin(b)])
+r1=fit(Xb1,g,'const + cos/sin(beta) h1')
+Xb2=np.column_stack([Xb1,np.cos(2*b),np.sin(2*b)])
+r2=fit(Xb2,g,'+ h2')
+Xb3=np.column_stack([Xb2,np.cos(3*b),np.sin(3*b)])
+r3=fit(Xb3,g,'+ h3')
+Xb4=np.column_stack([Xb3,np.cos(4*b),np.sin(4*b)])
+r4=fit(Xb4,g,'+ h4')
+# add alpha harmonics
+Xba=np.column_stack([Xb4,np.cos(a),np.sin(a),np.cos(2*a),np.sin(2*a)])
+r5=fit(Xba,g,'+ alpha h1,h2')
+# add t trend to beta model
+Xbt=np.column_stack([Xb1,t,t**2])
+r6=fit(Xbt,g,'beta h1 + t + t^2')
+Xbt3=np.column_stack([Xb2,t,t**2])
+r7=fit(Xbt3,g,'beta h1,h2 + t + t^2')
+
+# residual autocorrelation for r4
+for name,r in [('r4',r4),('r2',r2),('r7',r7)]:
+    d=r-r.mean()
+    c=np.correlate(d,d,'full')[len(d)-1:]/np.dot(d,d)
+    print(name,'acf lags1-5:',c[1:6].round(3))
+EOF
+python3 /tmp/explore2.py
 ```
 
 ## [15] tool
@@ -335,7 +464,34 @@ Excellent — residuals drop to 0.44 deg (noise level) when combining beta harmo
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore3.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
 
+# Full combined model: beta harmonics 1..H, alpha harmonics 1..H
+for H in [2,3,4,5,6]:
+    cols=[np.ones(n)]
+    for h in range(1,H+1):
+        cols += [np.cos(h*b),np.sin(h*b),np.cos(h*a),np.sin(h*a)]
+    X=np.column_stack(cols)
+    coef,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+    r=g-X@coef
+    print(f'H={H}: resid std={r.std():.4f}  acf1={np.corrcoef(r[1:],r[:-1])[0,1]:.3f}')
+
+# Model the angles themselves: harmonic-fit the unwrapped angles with t-features using sin/cos of the other angle?
+# Try: alpha as func of beta harmonics
+for H in [1,2,3,4,5,6]:
+    cols=[np.ones(n),t]
+    for h in range(1,H+1):
+        cols += [np.cos(h*b),np.sin(h*b)]
+    X=np.column_stack(cols)
+    coef,_,_,_=np.linalg.lstsq(X,a,rcond=None)
+    r=a-X@coef
+    print(f'alpha ~ t + beta H={H}: resid std deg={np.degrees(r.std()):.3f} acf1={np.corrcoef(r[1:],r[:-1])[0,1]:.3f}')
+EOF
+python3 /tmp/explore3.py
 ```
 
 ## [17] tool
@@ -358,7 +514,47 @@ alpha ~ t + beta H=6: resid std deg=39.283 acf1=0.914
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore4.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
+au=np.unwrap(a); bu=np.unwrap(b)
 
+# Phase-drift analysis: fit linear trend, look at residual structure
+for name,u in [('alpha',au),('beta',bu)]:
+    r = u - np.polyval(np.polyfit(t,u,1),t)
+    F=np.fft.rfft(r); fr=np.fft.rfftfreq(n,1.0)
+    mag=np.abs(F)
+    idx=np.argsort(mag)[::-1][:6]
+    print(name,'detrended top periods:', sorted((1/fr[idx]).round(1)))
+
+# Fit beta unwrapped with harmonics of a *known* frequency? First look at gamma dominant period after removing beta-linear? 
+# Let's try: gamma as f(beta-only harmonics 1..4) then look at residual as function of alpha.
+H=4
+cols=[np.ones(n)]
+for h in range(1,H+1):
+    cols += [np.cos(h*b),np.sin(h*b)]
+X=np.column_stack(cols)
+rb=g-X@np.linalg.lstsq(X,g,rcond=None)[0]
+print('gamma ~ beta harm4 resid std', rb.std())
+# correlate residual with cos/sin(alpha*h)
+for h in [1,2,3]:
+    cc=np.corrcoef(rb, np.cos(h*a))[0,1]; cs=np.corrcoef(rb,np.sin(h*a))[0,1]
+    print(f'corr resid cos({h}a)={cc:.3f} sin={cs:.3f}')
+# Fit gamma ~ (cos b, sin b, cos2b, sin2b)*only h1..4 alpha-free?  Check exact low-harmonic structure: maybe gamma = f(phi) where phi = beta or alpha+beta combos
+# Try interaction terms cos(b)*cos(a) etc.
+net=0
+Xa=np.column_stack([np.ones(n),np.cos(b - a), np.sin(b-a), np.cos(2*(b-a)), np.sin(2*(b-a))])
+c= np.linalg.lstsq(Xa,g,rcond=None)[0]; print('gamma ~ harm(b-a): resid std', (g-Xa@c).std())
+Xa2=np.column_stack([np.ones(n),np.cos(b + a), np.sin(b+a), np.cos(2*(b+a)), np.sin(2*(b+a))])
+c=np.linalg.lstsq(Xa2,g,rcond=None)[0]; print('gamma ~ harm(b+a): resid std', (g-Xa2@c).std())
+for p,q in [(1,1),(1,-1),(2,1),(1,2),(2,-1),(1,-2),(3,-2),(2,-3),(3,1),(1,3),(2,2),(3,3),(5,-3),(3,-5)]:
+    Xc=np.column_stack([np.ones(n),np.cos(p*b+q*a), np.sin(p*b+q*a), np.cos(2*(p*b+q*a)), np.sin(2*(p*b+q*a))])
+    c=np.linalg.lstsq(Xc,g,rcond=None)[0]
+    print(f'gamma ~ harm({p}b+{q}a): resid std {(g-Xc@c).std():.3f}')
+EOF
+python3 /tmp/explore4.py
 ```
 
 ## [19] tool
@@ -392,7 +588,30 @@ gamma ~ harm(3b+-5a): resid std 16.548
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore5.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
+au=np.unwrap(a); bu=np.unwrap(b)
 
+def ls_power(t, y, freqs):
+    ps=[]
+    tc=t-t.mean()
+    for f in freqs:
+        w=2*np.pi*f
+        X=np.column_stack([np.ones(len(y)), tc, np.cos(w*t), np.sin(w*t)])
+        coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        ps.append(np.sum((X@coef-y.mean())**2)/np.sum((y-y.mean())**2))
+    return np.array(ps)
+
+freqs=np.linspace(0.0005,0.08,8001)
+for name,u in [('alpha_unwrapped',au),('beta_unwrapped',bu),('gamma',g)]:
+    p=ls_power(t,u,freqs)
+    idx=np.argsort(p)[::-1][:6]
+    print(name,'top periods:', sorted((1/freqs[idx]).round(2)))
+EOF
+python3 /tmp/explore5.py
 ```
 
 ## [21] tool
@@ -407,7 +626,71 @@ gamma top periods: [np.float64(564.33), np.float64(567.52), np.float64(570.74), 
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore6.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+def topk(t,y,k=None):
+    yd = y - np.polyval(np.polyfit(t,y,1),t)
+    F=np.fft.rfft(yd * np.hanning(len(y)))
+    fr=np.fft.rfftfreq(len(y),1.0)
+    mag=np.abs(F)
+    k=np.argsort(mag)[::-1][:12]
+    peaks=sorted(set((1/fr[k]).round(1)))
+    return [(round(1/fr[i],1), round(mag[i])) for i in np.argsort(mag)[::-1][:8] if fr[i]>0]
+
+print('alpha:', topk(t,au))
+print('beta :', topk(t,bu))
+print('gamma:', topk(t,g))
+
+# Hypothesis: components share periods? Look at gamma with more harmonics per period
+# approach: NUFFT style- iterative sinusoid extraction (CLEAN) on gamma
+y=g.copy(); N=len(t)
+comps=[]
+for it in range(10):
+    # scan fine grid for best freq given current residual
+    freqs=np.linspace(0.001,0.25,20001)
+    r=y-y.mean() - np.polyval(np.polyfit(t,y-y.mean(),1),t) if it==0 else y
+    best=(1e18,None)
+    # coarse scan
+    for f in freqs:
+        w=2*np.pi*f
+        X=np.column_stack([np.ones(N),np.cos(w*t),np.sin(w*t)])
+        c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+        s=((r-X@c)**2).sum()
+        if s<best[0]: best=(s,f)
+    f=best[1]
+    # refine
+    for _ in range(30):
+        w=2*np.pi*f
+        dX=np.column_stack([-t*np.sin(w*t), t*np.cos(w*t)])
+        X=np.column_stack([np.ones(N),np.cos(w*t),np.sin(w*t)])
+        c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+        resid=r-X@c
+        # gauss-newton update on freq
+        dc=dX@c[1:]
+        dv=np.linalg.lstsq(np.column_stack([dX@c[1:]]), resid, rcond=None)[0]
+        s0=(resid**2).sum()
+        for step in [1,0.5,0.25]:
+            fn=f+step*dv[0]
+            wn=2*np.pi*fn
+            Xn=np.column_stack([np.ones(N),np.cos(wn*t),np.sin(wn*t)])
+            cn,_,_,_=np.linalg.lstsq(Xn,r,rcond=None)
+            if ((r-Xn@cn)**2).sum()<s0:
+                f=fn;break
+    w=2*np.pi*f
+    X=np.column_stack([np.ones(N),np.cos(w*t),np.sin(w*t)])
+    c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+    amp=np.hypot(c[1],c[2])
+    comps.append((1/f,amp))
+    y=r-X@c
+    print(f'component {it}: period={1/f:.2f} amp={amp:.3f}')
+print('sorted comps:', sorted(comps,key=lambda x:-x[1]))
+print('final resid std', y.std())
+EOF
+python3 /tmp/explore6.py
 ```
 
 ## [23] tool
@@ -437,7 +720,57 @@ final resid std 1.1354921944111809
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore7.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
+Ps=[402.2255967259056, 231.24824858475458, 152.76690486129803, 109.86751733394877,
+    90.7741055939906, 76.15436230988966, 550.4409571568835, 63.92210708410159, 56.93579808210159, 50.6418875178096]
+X=np.column_stack([np.ones(n)]+[f(P) for P in Ps for f in (lambda P: np.cos(2*np.pi*t/P), lambda P: np.sin(2*np.pi*t/P))])
+c,_,_,_=np.linalg.lstsq(X,g,rcond=None); r=g-X@c
+print('gamma ~ 10-period model: resid std', r.std(), 'acf1', np.corrcoef(r[1:],r[:-1])[0,1].round(3))
 
+au=np.unwrap(a); bu=np.unwrap(b)
+# windowed LS freq scan
+def scan(t,y,f0,f1,step=2e-6):
+    res=[]
+    fs=np.arange(f0,f1,step)
+    tc=t-t.mean()
+    for f in fs:
+        w=2*np.pi*f
+        X=np.column_stack([np.ones(len(y)),tc,np.cos(w*t),np.sin(w*t)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        res.append(((y-X@c)**2).sum())
+    i=np.argmin(res)
+    return fs[i],res[i]
+# iterative extraction for alpha and beta unwrapped (keep trend in model each time)
+for name,u in [('alpha',au),('beta',bu)]:
+    y=u.copy(); comps=[]
+    ctx=t-t.mean()
+    for it in range(6):
+        # coarse scan grid over freq 0.001..0.05
+        fs=np.arange(0.001,0.06,2e-5)
+        best=(np.inf,None)
+        for f in fs:
+            w=2*np.pi*f
+            X=np.column_stack([np.ones(n),ctx,np.cos(w*t),np.sin(w*t)])
+            c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+            s=((y-X@c)**2).sum()
+            if s<best[0]: 
+                best=(s,(f,X@c))
+        f,_=best[1]
+        # refine freq with all components refit: keep simple - subtract
+        w=2*np.pi*f
+        X=np.column_stack([np.ones(n),ctx,np.cos(w*t),np.sin(w*t)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        comps.append((1/f, np.hypot(c[2],c[3]), np.degrees(c[1])))
+        y = y - X@np.array([c[0],0.0,c[2],c[3]])
+        c1,_,_,_=np.linalg.lstsq(np.column_stack([np.ones(n),ctx]),y,rcond=None)
+        y = y - np.column_stack([np.ones(n),ctx])@np.array([c1[0],c1[1]])
+    print(name,'comps (period, amp_deg):', [(round(P,1),round(np.degrees(A),3)) for P,A,_ in comps], 'resid std deg', np.degrees(y.std()).round(3))
+EOF
+python3 /tmp/explore7.py
 ```
 
 ## [25] tool
@@ -452,7 +785,46 @@ beta comps (period, amp_deg): [(np.float64(480.8), np.float64(60.536)), (np.floa
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore8.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
 
+def fit(X,y,name):
+    c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    r=y-X@c
+    print(f'{name:30s} resid std={r.std():.4f} acf1={np.corrcoef(r[1:],r[:-1])[0,1]:.3f}')
+    return r
+
+from itertools import product
+# grid search best single pair (Ha,Hb)
+best=[]
+for Ha,Hb in product(range(1,7),range(1,7)):
+    cols=[np.ones(n)]
+    for h in range(1,Hb+1): cols += [np.cos(h*b),np.sin(h*b)]
+    for h in range(1,Ha+1): cols += [np.cos(h*a),np.sin(h*a)]
+    X=np.column_stack(cols)
+    c,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+    r=g-X@c
+    best.append((r.std(),Ha,Hb))
+best.sort()
+print(best[:6])
+# best pair resid
+_,Ha,Hb=best[0]
+cols=[np.ones(n)]
+for h in range(1,Hb+1): cols += [np.cos(h*b),np.sin(h*b)]
+for h in range(1,Ha+1): cols += [np.cos(h*a),np.sin(h*a)]
+X=np.column_stack(cols)
+c,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+r=g-X@c
+print(f'best ({Ha},{Hb}): resid std={r.std():.4f} acf1={np.corrcoef(r[1:],r[:-1])[0,1]:.3f}')
+# any structure left in r vs t?
+F=np.fft.rfft(r-r.mean()); mag=np.abs(F); fr=np.fft.rfftfreq(n,1.)
+idx=np.argsort(mag)[::-1][:5]
+print('resid top periods:', sorted((1/fr[idx]).round(1)))
+EOF
+python3 /tmp/explore8.py
 ```
 
 ## [27] tool
@@ -467,7 +839,48 @@ resid top periods: [np.float64(2.8), np.float64(2.9), np.float64(3.8), np.float6
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore9.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
+au=np.unwrap(a); bu=np.unwrap(b)
 
+def extract(t,u,Nmax=8):
+    y=u.copy(); comps=[]
+    tc=t-t.mean()
+    Xk=[np.ones(n),tc]
+    for it in range(Nmax):
+        fs=np.arange(0.0012,0.03,2e-5)
+        r=y  # y already has trend removed? keep trend columns in each trial
+        best=(np.inf,None)
+        for f in fs:
+            w=2*np.pi*f
+            X=np.column_stack(Xk+[np.cos(w*t),np.sin(w*t)])
+            c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+            s=((r-X@c)**2).sum()
+            if s<best[0]: best=(s,f)
+        f=best[1]
+        w=2*np.pi*f
+        Xk += [np.cos(w*t),np.sin(w*t)]
+        X=np.column_stack(Xk)
+        c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+        y=u-X@c
+        comps.append((1/f, np.hypot(c[-2],c[-1])))
+    return comps,y
+
+comps_a, res_a = extract(t,au,6)
+comps_b, res_b = extract(t,bu,10)
+print('alpha comps P,amp_deg:', [(round(P,2),round(np.degrees(A),3)) for P,A in comps_a], 'resid std deg', np.degrees(res_a.std()).round(3))
+print('beta  comps P,amp_deg:', [(round(P,2),round(np.degrees(A),2)) for P,A in comps_b], 'resid std deg', np.degrees(res_b.std()).round(3))
+# check differences / sums with gamma periods
+Pg=[402.2,231.2,152.8,109.9,90.8,76.15,63.9,56.9,550.4,50.6]
+pa=[c[0] for c in comps_a]; pb=[c[0] for c in comps_b]
+print('gamma P:', Pg)
+print('alpha P:', [round(x,1) for x in pa])
+print('beta  P:', [round(x,1) for x in pb])
+EOF
+python3 /tmp/explore9.py
 ```
 
 ## [29] tool
@@ -484,7 +897,28 @@ beta  P: [np.float64(480.8), np.float64(219.3), np.float64(145.8), np.float64(10
 **tool call: bash**
 
 ```
-
+cd data && mkdir -p /tmp/plots && cat > /tmp/plot1.py <<'EOF'
+import pandas as pd, numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=df.alpha.values; b=df.beta.values; g=df.gamma.values
+fig,ax=plt.subplots(4,1,figsize=(14,12),sharex=True)
+ax[0].plot(t,g); ax[0].set_ylabel('gamma')
+ax[1].plot(t,a); ax[1].set_ylabel('alpha')
+ax[2].plot(t,b); ax[2].set_ylabel('beta')
+ax[3].scatter(a,g,s=1); ax[3].set_ylabel('gamma vs alpha')
+ax[3].set_xlabel('t / alpha')
+tt=np.sort(pd.read_csv('test.csv').t.values)
+for x in ax: 
+    for v in tt: x.axvline(v,color='r',alpha=0.15)
+plt.tight_layout(); plt.savefig('/tmp/plots/overview.png',dpi=80)
+# scatter gamma vs beta
+plt.figure(figsize=(8,5)); plt.scatter(b,g,s=2); plt.xlabel('beta'); plt.ylabel('gamma'); plt.savefig('/tmp/plots/gb.png',dpi=80)
+print('saved')
+EOF
+python3 /tmp/plot1.py 2>/dev/null || pip list 2>/dev/null | grep -i matplotlib
 ```
 
 ## [31] tool
@@ -494,7 +928,67 @@ beta  P: [np.float64(480.8), np.float64(219.3), np.float64(145.8), np.float64(10
 **tool call: bash**
 
 ```
+ls /tmp/plots/ && cd data && cat > /tmp/explore10.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
+# unmatched residual of beta after 8 comps had std 0.9deg - is it periodic? scan more comps or find its structure
+# First: check gamma super-resolution around 402 with windowing HERE: use DPSS-ish? simply try LS fit on second half vs first half - period stable?
+half=n//2
+def best_period(tt,yy,center,span=0.15):
+    tc=tt-tt.mean()
+    fs=np.arange(1/(center*(1+span)),1/(center*(1-span)),1e-6)
+    best=(np.inf,None)
+    for f in fs:
+        w=2*np.pi*f
+        X=np.column_stack([np.ones(len(tt)),tc,np.cos(w*tt),np.sin(w*tt)])
+        c,_,_,_=np.linalg.lstsq(X,yy,rcond=None)
+        s=((yy-X@c)**2).sum()
+        if s<best[0]: best=(s,f)
+    return 1/best[1], best[0]
 
+# sequential extraction per half
+def clean_extract(tt,y,K=3):
+    yd=y - np.polyval(np.polyfit(tt,y,1),tt)
+    comps=[]
+    N=len(y); tc=tt-tt.mean()
+    ycur=y.copy()
+    cols=[np.ones(N),tc]
+    for k in range(K):
+        fs=np.arange(0.001,0.05,2e-5)
+        best=(np.inf,None)
+        for f in fs:
+            w=2*np.pi*f
+            X=np.column_stack(cols+[np.cos(w*tt),np.sin(w*tt)])
+            c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+            s=((y-X@c)**2).sum()
+            if s<best[0]: best=(s,f)
+        f=best[1]; w=2*np.pi*f
+        cols += [np.cos(w*tt),np.sin(w*tt)]
+        X=np.column_stack(cols)
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        y=y-X@c
+        cols=[np.ones(N),tc]
+        comps.append((1/f,np.hypot(c[-2],c[-1]),np.arctan2(c[-2],c[-1])))
+        # re-add trend for next loop? simpler: track only sin comps iteratively
+        break_ = False
+    return comps
+# Simpler: fit all components jointly fine scan per half is expensive; print period found in each half for dominant gamma sinusoid via direct nonlinear LS
+from scipy.optimize import minimize_scalar
+def nlfreq(tt,y,fbracket):
+    tc=tt-tt.mean()
+    def cost(f):
+        w=2*np.pi*f
+        X=np.column_stack([np.ones(len(tt)),tc,np.cos(w*tt),np.sin(w*tt)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        return ((y-X@c)**2).sum()
+    r=minimize_scalar(cost,bracket=fbracket,method='brent')
+    return 1/r.x
+f1=nlfreq(t[:half],g[:half],(1/440,1/370)); f2=nlfreq(t[half:],g[half:],(1/440,1/370))
+print('gamma dominant period first half:',f1,'second half:',f2)
+EOF
+python3 /tmp/explore10.py
 ```
 
 ## [33] tool
@@ -507,7 +1001,28 @@ gamma dominant period first half: 377.6338826886941 second half: 190.11342918977
 **tool call: bash**
 
 ```
-
+cd data && cat > /tmp/explore11.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
+# sliding window local amplitude of the ~402d component to check stationarity
+W=200
+amp=[]; cen=[]
+P=402.2
+for s in range(0,n-W,50):
+    tt=t[s:s+W]; yy=g[s:s+W]; tc=tt-tt.mean()
+    w=2*np.pi/P
+    X=np.column_stack([np.ones(W),tc,np.cos(w*tt),np.sin(w*tt)])
+    c,_,_,_=np.linalg.lstsq(X,yy,rcond=None)
+    amp.append(np.hypot(c[2],c[3])); cen.append(tt.mean())
+print('window centers:', [round(c) for c in cen])
+print('402d amps    :', [round(x,2) for x in amp])
+# also check gamma mean-shifted: rolling mean
+rm=pd.Series(g).rolling(51,center=True).mean().values
+print('rolling mean range:', np.nanmin(rm), np.nanmax(rm))
+EOF
+python3 /tmp/explore11.py
 ```
 
 ## [35] tool
@@ -538,7 +1053,13 @@ The gamma series has large nonstationary swings (rolling mean from -20 to +41). 
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+print(df.tail(40).to_string())
+print()
+print(df.iloc[440:480].to_string())
+"
 ```
 
 ## [37] tool
@@ -633,7 +1154,31 @@ The gamma series has large nonstationary swings (rolling mean from -20 to +41). 
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore12.py <<'EOF'
+import pandas as pd, numpy as np
+import matplotlib; matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+au=np.unwrap(a); bu=np.unwrap(b)
+dif = np.degrees(au-bu)
+sumv = np.degrees(au+bu)
+fig,ax=plt.subplots(5,1,figsize=(14,13),sharex=True)
+ax[0].plot(t,g); ax[0].set_ylabel('gamma')
+ax[1].plot(t,dif); ax[1].set_ylabel('unwrap(a)-unwrap(b) deg')
+ax[2].plot(t,sumv); ax[2].set_ylabel('unwrap(a)+unwrap(b)')
+ax[3].plot(t,np.degrees(au)); ax[3].set_ylabel('unwrap alpha')
+ax[4].plot(t,np.degrees(bu)); ax[4].set_ylabel('unwrap beta'); ax[4].set_xlabel('t')
+plt.tight_layout(); plt.savefig('/tmp/plots/diffs.png',dpi=80)
+print('corr gamma vs (a-b):', np.corrcoef(g,au-bu)[0,1])
+print('corr gamma vs bu:', np.corrcoef(g,bu)[0,1])
 
+# gamma range check
+print('g min/max', g.min(), g.max())
+# check rolling max/min
+print(pd.Series(g).rolling(100).mean().describe())
+EOF
+python3 /tmp/explore12.py
 ```
 
 ## [39] tool
@@ -651,7 +1196,30 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd data && sed -i '/matplotlib/d; /plt\./d; /fig,ax/d; /ax\[/d' /tmp/explore12.py && cat > /tmp/explore12.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+au=np.unwrap(a); bu=np.unwrap(b)
+print('corr gamma vs (au-bu):', np.corrcoef(g,au-bu)[0,1])
+print('corr gamma vs bu:', np.corrcoef(g,bu)[0,1])
+print('corr gamma vs au:', np.corrcoef(g,au)[0,1])
+print('g min/max', g.min(), g.max())
+print(pd.Series(g).rolling(100).mean().describe())
+# The gamma trend is strongly negative over time but oscillates. Fit gamma ~ bu harmonics only failed. 
+# Look: gamma decreasing trend overall. Fit gamma vs t linearly:
+p=np.polyfit(t,g,1); print('linear trend:', p)
+r=g-np.polyval(p,t)
+print('detrended gamma std', r.std())
+# how much of detrended gamma explained by bu harmonics?
+for H in [2,3,4]:
+    cols=[np.ones(len(t))]
+    for h in range(1,H+1): cols += [np.cos(h*bu),np.sin(h*bu)]
+    X=np.column_stack(cols)
+    c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+    print('H',H,'resid', (r-X@c).std())
+EOF
+python3 /tmp/explore12.py
 ```
 
 ## [41] tool
@@ -681,7 +1249,36 @@ H 4 resid 1.2451940456688004
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore13.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+# Wide scan of gamma vs angle-function representations
+cands={}
+cands['sin(b)']=[np.sin(b),np.cos(b)]
+cands['sin(au)']=[np.sin(au),np.cos(au)]
+cands['sin(au-bu)']=[np.sin(au-bu),np.cos(au-bu)]
+cands['sin(au+bu)']=[np.sin(au+bu),np.cos(au+bu)]
+# tan-based?
+for k,v in list(cands.items()):
+    X=np.column_stack([np.ones(n),t]+v)
+    c,_,_,_=np.linalg.lstsq(X,g,rcond=None); print(k,'resid', (g-X@c).std().round(3))
+
+# Fit gamma ~ cos(h*bu) for h=1..4 WITH trend t,t^2: earlier got 1.08 (only cos/sin h1,h2). full mixed:
+for H in [4,5,6]:
+    cols=[np.ones(n),t]
+    for h in range(1,H+1): cols += [np.cos(h*b),np.sin(h*b)]
+    for h in range(1,H+1): cols += [np.cos(h*a),np.sin(h*a)]
+    X=np.column_stack(cols); c,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+    print(f'mixed angles H{H} + trend: resid {(g-X@c).std():.4f}')
+
+# Nonlinearity: gamma vs predicted-from-angles relation smooth? check rank deficient? Instead of rambling,
+# accept model gamma ~ mixed angles H=4 (resid .43). Now the challenge: extrapolate angles.
+# Compare extrapolation error sources: fit angles with their own harmonic models, validate on last 100 days.
+EOF
+python3 /tmp/explore13.py
 ```
 
 ## [43] tool
@@ -702,7 +1299,55 @@ Gamma is very well explained by harmonics of alpha and beta (residual ~0.4° ≈
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore14.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+# Fine-resolution extraction of angle components using nonlinear least squares per sinusoid, sequential
+from scipy.optimize import minimize
+def refine_freq(tt,y,f0,cols):
+    def cost(f):
+        w=2*np.pi*f
+        X=np.column_stack(cols+[np.cos(w*tt),np.sin(w*tt)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        return ((y-X@c)**2).sum()
+    from scipy.optimize import minimize_scalar
+    r=minimize_scalar(cost,bracket=(f0*0.98,f0,f0*1.02))
+    return r.x
+
+def extract(tt,y,K):
+    N=len(tt); tc=tt-tt.mean()
+    cols=[np.ones(N),tc]
+    comps=[]
+    for k in range(K):
+        fs=np.arange(0.0012,0.05,5e-6)
+        r=y
+        best=(np.inf,None)
+        for f in fs:
+            w=2*np.pi*f
+            X=np.column_stack(cols+[np.cos(w*tt),np.sin(w*tt)])
+            c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+            s=((r-X@c)**2).sum()
+            if s<best[0]: best=(s,f)
+        f=refine_freq(tt,y,best[1],cols)
+        w=2*np.pi*f
+        X=np.column_stack(cols+[np.cos(w*tt),np.sin(w*tt)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        y=y-X@c
+        cols=[np.ones(N),tc]
+        y = y - (np.ones(N)*y.mean())  # recenter, trend handled next iter
+        comps.append((1/f, np.hypot(c[-2],c[-1])))
+    return comps
+
+ca=extract(t,au,4); print('alpha:', [(round(1/f,3), round(np.degrees(A),3)) for f,A in ca])
+cb=extract(t,bu,10); print('beta :', [(round(1/f,3), round(np.degrees(A),3)) for f,A in cb])
+pg=[402.2,231.2,152.8,109.9,90.8,76.15,63.9,56.9,550.4,50.6]
+print('gamma:', pg)
+# search integer-ish frequency combos
+EOF
+python3 /tmp/explore14.py
 ```
 
 ## [45] tool
@@ -723,7 +1368,52 @@ gamma: [402.2, 231.2, 152.8, 109.9, 90.8, 76.15, 63.9, 56.9, 550.4, 50.6]
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore15.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+def refine_freq(tt,y,f0,cols):
+    def cost(f):
+        w=2*np.pi*f
+        X=np.column_stack(cols+[np.cos(w*tt),np.sin(w*tt)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        return ((y-X@c)**2).sum()
+    r=minimize_scalar(cost,bracket=(f0*0.97,f0,f0*1.03))
+    return r.x
+
+def extract(tt,y,K):
+    N=len(tt); tc=tt-tt.mean()
+    cols=[np.ones(N),tc]
+    comps=[]
+    for k in range(K):
+        fs=np.arange(0.0012,0.05,5e-6)
+        r=y
+        best=(np.inf,None)
+        for f in fs:
+            w=2*np.pi*f
+            X=np.column_stack(cols+[np.cos(w*tt),np.sin(w*tt)])
+            c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+            s=((r-X@c)**2).sum()
+            if s<best[0]: best=(s,f)
+        f=refine_freq(tt,y,best[1],cols)
+        w=2*np.pi*f
+        X=np.column_stack(cols+[np.cos(w*tt),np.sin(w*tt)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        y=y-X@c
+        cols=[np.ones(N),tc]
+        y = y - y.mean()
+        comps.append((1/f, np.hypot(c[-2],c[-1])))
+    return comps
+
+ca=extract(t,au,5)
+print('alpha:', [(round(P,2), round(np.degrees(A),3)) for P,A in ca])
+cb=extract(t,bu,10)
+print('beta :', [(round(P,2), round(np.degrees(A),3)) for P,A in cb])
+EOF
+python3 /tmp/explore15.py
 ```
 
 ## [47] tool
@@ -737,7 +1427,18 @@ beta : [(np.float64(481.65), np.float64(60.568)), (np.float64(222.0), np.float64
 **tool call: bash**
 
 ```
-
+cd data && cat > /tmp/explore16.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
+T=517.0
+# check if periods are T/k
+for name,ps in [('alpha',[326.08,167.68]),('beta',[481.65,222.0,147.46,108.16,87.9,73.94,63.06,55.11,49.05]),('gamma',[402.2,231.2,152.8,109.9,90.8,76.15,63.9,56.9,550.4,50.6])]:
+    print(name, [round(T/p,2) for p in ps])
+EOF
+python3 /tmp/explore16.py
 ```
 
 ## [49] tool
@@ -752,7 +1453,58 @@ gamma [1.29, 2.24, 3.38, 4.7, 5.69, 6.79, 8.09, 9.09, 0.94, 10.22]
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore17.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar, minimize
+df = pd.read_csv('test.csv'); tt_fut=df.t.values
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+n=len(t)
 
+def design(tvals, fy, fa, Ky, Ka, Kb):
+    X=[np.ones(len(tvals))]
+    for k in range(1,Ky+1):
+        X += [np.cos(2*np.pi*k*fy*tvals), np.sin(2*np.pi*k*fy*tvals)]
+    for k in range(1,Ka+1):
+        X += [np.cos(2*np.pi*k*fa*tvals), np.sin(2*np.pi*k*fa*tvals)]
+    for k in range(1,Kb+1):
+        X += [np.cos(2*np.pi*k*(fy-fa)*tvals), np.sin(2*np.pi*k*(fy-fa)*tvals)]
+    return np.column_stack(X)
+
+def train_eval(cut, fy, fa, Ky=4, Ka=2, Kb=2):
+    m=t<=cut
+    X=design(t[m], fy, fa, Ky, Ka, Kb)
+    c,_,_,_=np.linalg.lstsq(X,g[m],rcond=None)
+    r=g[m]-X@c
+    Xte=design(t[~m], fy, fa, Ky, Ka, Kb)
+    pr=Xte@c
+    return r.std(), np.sqrt(np.mean((g[~m]-pr)**2)), np.abs(g[~m]-pr).max()
+
+# grid search fy, fa over plausible ranges
+best=(1e9,None)
+for fy in np.arange(1/700,1/150,2e-5):
+    for fa in np.arange(1/500,1/200,2e-5):
+        X=design(t,fy,fa,4,2,2)
+        c,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+        r=((g-X@c)**2).sum()
+        if r<best[0]: best=(r,(fy,fa))
+print('coarse best fy,fa:', best[1], '1/fy,1/fa:', 1/best[0][0], 1/best[0][1], 'RSS', best[0])
+
+# refine with nonlinear opt on full data
+def cost(p):
+    fy,fa=p
+    X=design(t,fy,fa,4,2,2)
+    c,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+    return ((g-X@c)**2).sum()
+r=minimize(cost,best[1],method='Nelder-Mead',options={'xatol':1e-12,'fatol':1e-6,'maxiter':5000})
+fy,fa=r.x
+print('refined fy,fa:', fy, fa, 'periods:', 1/fy, 1/fa, 'RSS', r.fun, 'resid std', np.sqrt(r.fun/n))
+print('beat period 1/(fy-fa):', 1/(fy-fa))
+for cut in [380,416,450,480]:
+    s,rmse,mx=train_eval(cut,fy,fa)
+    print(f'cut={cut}: train_std={s:.3f} holdout_rmse={rmse:.3f} maxerr={mx:.2f}')
+EOF
+python3 /tmp/explore17.py
 ```
 
 ## [51] tool
@@ -770,7 +1522,7 @@ IndexError: invalid index to scalar variable.
 **tool call: bash**
 
 ```
-
+cd data && sed -i 's/best=(1e9,None)/best=(1e9,(None,None))/; s/print(.coarse best fy,fa:., best\[1\], .1\/fy,1\/fa:., 1\/best\[0\]\[0\], 1\/best\[0\]\[1\], .RSS., best\[0\])/print("coarse best fy,fa:", best[1], "periods:", 1\/best[1][0], 1\/best[1][1], "RSS", best[0])/' /tmp/explore17.py && python3 /tmp/explore17.py
 ```
 
 ## [53] tool
@@ -789,7 +1541,54 @@ cut=480: train_std=1.460 holdout_rmse=7.144 maxerr=15.90
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore18.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import differential_evolution, minimize
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
 
+def design(tt, ab):
+    aa=np.deg2rad(np.interp(tt,t,np.degrees(a))) if not hasattr(ab,'__len__') else None
+    return None
+
+def Xangle(tt, fa, coefa, fb, coefb):
+    au=np.zeros(len(tt)); bu=np.zeros(len(tt))
+    for k,(A,ph) in enumerate(coefa, start=1):
+        au+=A*np.cos(2*np.pi*k*fa*tt+ph if False else 2*np.pi*k*fa*tt)+ ph*np.sin(2*np.pi*k*fa*tt)
+    # placeholder; do linear in params below
+    return au
+
+def model(ff, La, Lb, tt, refit=True):
+    fa,fb=ff
+    tc=tt-tt.mean()
+    cols=[np.ones(len(tt)),tc]
+    for k in range(1,La+1): cols+=[np.cos(2*np.pi*k*fa*tt),np.sin(2*np.pi*k*fa*tt)]
+    for k in range(1,Lb+1): cols+=[np.cos(2*np.pi*k*fb*tt),np.sin(2*np.pi*k*fb*tt)]
+    X=np.column_stack(cols)
+    pa,_,_,_=np.linalg.lstsq(X,np.unwrap(a),rcond=None)
+    pb,_,_,_=np.linalg.lstsq(X,np.unwrap(b),rcond=None)
+    aup=X@pa; bup=X@pb
+    aw=(aup+np.pi)%(2*np.pi)-np.pi; bw=(bup+np.pi)%(2*np.pi)-np.pi
+    cols2=[np.ones(len(tt))]
+    for h in range(1,5): cols2+=[np.cos(h*aw),np.sin(h*aw),np.cos(h*bw),np.sin(h*bw)]
+    Xb=np.column_stack(cols2)
+    c,_,_,_=np.linalg.lstsq(Xb,G,rcond=None)
+    r=G-Xb@c
+    return r
+
+best=(1e12,None)
+for fa in [1/T for T in np.arange(250,400,5)]:
+    for fb in [1/T for T in np.arange(420,560,5)]:
+        r=model((fa,fb),4,8,t)
+        s=(r**2).sum()
+        if s<best[0]: best=(s,(fa,fb))
+print('coarse best fa,fb periods:', [round(1/f,1) for f in best[1]], 'resid std', np.sqrt(best[0]/n))
+r2=minimize(lambda ff: (model(ff,4,8,t)**2).sum(), best[1], method='Nelder-Mead', options={'maxiter':4000,'xatol':1e-10})
+fa,fb=r2.x
+print('refined periods:', 1/fa, 1/fb, 'resid std', np.sqrt(r2.fun/n))
+EOF
+python3 /tmp/explore18.py
 ```
 
 ## [55] tool
@@ -803,7 +1602,70 @@ refined periods: 253.7516927006201 345.96570136128497 resid std 0.52627884602687
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore19.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); ALL=np.arange(n)
 
+def _design_angles(tt, fa, La, fb, Lb, drift=1):
+    p=[np.ones(len(tt)), tt-tt.mean()] if drift>=1 else [np.ones(len(tt))]
+    if drift==2: p+=[(tt-tt.mean())**2/1e3]
+    out=p[:]
+    for k in range(1,La+1): out+=[np.cos(2*np.pi*k*fa*tt),np.sin(2*np.pi*k*fa*tt)]
+    for k in range(1,Lb+1): out+=[np.cos(2*np.pi*k*fb*tt),np.sin(2*np.pi*k*fb*tt)]
+    return np.column_stack(out)
+
+def fit_and_eval(tt,yy_g, yy_a, yy_b, fa, La, fb, Lb, Ha=4, Hb=4, drift=1):
+    X=_design_angles(tt,fa,La,fb,Lb,drift)
+    pa,_,_,_=np.linalg.lstsq(X,yy_a,rcond=None)
+    pb,_,_,_=np.linalg.lstsq(X,yy_b,rcond=None)
+    aup=X@pa; bup=X@pb
+    aw=(aup+np.pi)%(2*np.pi)-np.pi; bw=(bup+np.pi)%(2*np.pi)-np.pi
+    cols=[np.ones(len(tt))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    Xg=np.column_stack(cols)
+    c,_,_,_=np.linalg.lstsq(Xg,yy_g,rcond=None)
+    return (X,pa,pb,Xg,c), yy_g-Xg@c
+
+def joint_cost(x, La, Lb, tr_idx, drift=1):
+    fa,fb=x
+    tt=t[tr_idx]
+    (_,_,_,_,_), r = fit_and_eval(tt,G[tr_idx],au[tr_idx],bu[tr_idx],fa,La,fb,Lb,drift=drift)
+    return (r**2).sum()
+
+au=np.unwrap(a); bu=np.unwrap(b)
+La,Lb=4,8
+# optimize on all data for (fa,fb) with different bounds; local minimum hunting from several starts
+sol=(1e12,None)
+for p0a,p0b in [(300,480),(250,420),(350,480),(300,350),(254,346)]:
+    r=minimize(lambda x: joint_cost(x,La,Lb,ALL), [1/p0a,1/p0b], method='Nelder-Mead',options={'maxiter':3000,'xatol':1e-9,'fatol':1e-3})
+    if r.fun<sol[0]: sol=(r.fun,r.x)
+fa,fb=sol[1]
+print('best periods:', round(1/fa,2), round(1/fb,2), 'std', np.sqrt(sol[0]/n))
+
+# Holdout validation
+for cut in [300,350,400,450,480]:
+    tr=ALL[t<=cut]; te=ALL[t>cut]
+    r=minimize(lambda x: joint_cost(x,La,Lb,tr), [fa,fb], method='Nelder-Mead',options={'maxiter':3000,'xatol':1e-9,'fatol':1e-3})
+    fa2,fb2=r.x
+    mdl,_=fit_and_eval(t[tr],G[tr],au[tr],bu[tr],fa2,La,fb2,Lb)
+    Xtr,pa,pb,_,c=mdl
+    # predict test
+    tt=t[te]
+    X=_design_angles(tt,fa2,La,fb2,Lb)
+    awp=(X@pa+np.pi)%(2*np.pi)-np.pi; bwp=(X@pb+np.pi)%(2*np.pi)-np.pi
+    cols=[np.ones(len(tt))]
+    for h in range(1,5): cols+=[np.cos(h*bwp),np.sin(h*bwp)]
+    for h in range(1,5): cols+=[np.cos(h*awp),np.sin(h*awp)]
+    Xg=np.column_stack(cols)
+    pr=Xg@c
+    rmse=np.sqrt(np.mean((G[te]-pr)**2)); mx=np.abs(G[te]-pr).max()
+    print(f'cut={cut} (hold {n-cut} d): freq model std_train={np.sqrt(r.fun/len(tr)):.3f} holdout_rmse={rmse:.3f} maxerr={mx:.2f}')
+EOF
+python3 /tmp/explore19.py
 ```
 
 ## [57] tool
@@ -821,7 +1683,41 @@ cut=480 (hold 37 d): freq model std_train=0.402 holdout_rmse=51.460 maxerr=68.76
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore20.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
 
+def design_f(tt, P, H):
+    cols=[np.ones(len(tt))]
+    for h in range(1,H+1):
+        cols += [np.cos(2*np.pi*h*tt/P), np.sin(2*np.pi*h*tt/P)]
+    return np.column_stack(cols)
+
+def cost(P, tt, y, H):
+    X=design_f(tt,P,H)
+    c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    return ((y-X@c)**2).sum()
+
+au=np.unwrap(a); bu=np.unwrap(b)
+for H in [3,4,5]:
+    best=(1e12,None)
+    for Pcoarse in np.arange(150,400,2.0):
+        s=cost(Pcoarse,t,au,H)
+        if s<best[0]: best=(s,Pcoarse)
+    r=minimize(lambda p: cost(p[0],t,au,H), [best[1]], method='Nelder-Mead', options={'xatol':1e-7,'maxiter':3000})
+    print(f'alpha H={H}: P={r.x[0]:.3f} resid_std_deg={np.degrees(np.sqrt(r.fun/n)):.3f}')
+for H in [4,5,6]:
+    best=(1e12,None)
+    for Pcoarse in np.arange(300,650,2.0):
+        s=cost(Pcoarse,t,bu,H)
+        if s<best[0]: best=(s,Pcoarse)
+    r=minimize(lambda p: cost(p[0],t,bu,H), [best[1]], method='Nelder-Mead', options={'xatol':1e-7,'maxiter':3000})
+    print(f'beta  H={H}: P={r.x[0]:.3f} resid_std_deg={np.degrees(np.sqrt(r.fun/n)):.3f}')
+EOF
+python3 /tmp/explore20.py
 ```
 
 ## [59] tool
@@ -839,7 +1735,37 @@ beta  H=6: P=612.889 resid_std_deg=3.668
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore21.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+def designP(tt, P, H):
+    cols=[np.ones(len(tt))]
+    for h in range(1,H+1):
+        cols += [np.cos(2*np.pi*h*tt/P+P*0), np.sin(2*np.pi*h*tt/P)]
+    return np.column_stack(cols)
+
+def costp(P, yy, H):
+    X=designP(t,P,H)
+    c,_,_,_=np.linalg.lstsq(X,yy,rcond=None)
+    return ((yy-X@c)**2).sum()
+for yy,name in [(bu,'beta')]:
+    for H in [8,10,12,14]:
+        cands=[]
+        for Pc in np.arange(400,4500,10.):
+            s=costp(Pc,yy,H)
+            cands.append((s,Pc))
+        cands.sort()
+        r=minimize(lambda p: costp(p[0],yy,H),[cands[0][1]],method='Nelder-Mead',options={'xatol':1e-7,'maxiter':4000})
+        import math
+        print(name,'H',H,'P*=',round(r.x[0],2),'resid std deg', round(np.degrees(np.sqrt(r.fun/n)),3), 'P*/P_candidate: tmax/P', round(517/r.x[0]*n/n,3))
+
+def gyro(P, A): return A*np.sin(2*np.pi*t/P)
+EOF
+python3 /tmp/explore21.py
 ```
 
 ## [61] tool
@@ -855,7 +1781,62 @@ beta H 14 P*= 592.74 resid std deg 0.762 P*/P_candidate: tmax/P 0.872
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore22.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize, minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+def designP(tt, P, H):
+    cols=[np.ones(len(tt))]
+    for h in range(1,H+1):
+        cols += [np.cos(2*np.pi*h*tt/P), np.sin(2*np.pi*h*tt/P)]
+    return np.column_stack(cols)
+def fitp(P,yy,H,tt):
+    X=designP(tt,P,H)
+    c,_,_,_=np.linalg.lstsq(X,yy,rcond=None)
+    return c
+def costp(P,yy,H,tt):
+    X=designP(tt,P,H)
+    c,_,_,_=np.linalg.lstsq(X,yy,rcond=None)
+    return ((yy-X@c)**2).sum()
+
+# alpha unwrapped: fit trend + harmonics of P
+def designdrift(tt,P,H):
+    return np.column_stack([np.ones(len(tt)),tt-tt.mean()] + \
+        [f(2*np.pi*h*tt/P) for h in range(1,H+1) for f in (np.cos,np.sin)])
+def costpa(P,yy,H,tt):
+    X=designdrift(tt,P,H)
+    c,_,_,_=np.linalg.lstsq(X,yy,rcond=None)
+    return ((yy-X@c)**2).sum()
+best=(1e18,None)
+for Pc in np.arange(180,700,2.):
+    s=costpa(Pc,au,3,t)
+    if s<best[0]: best=(s,Pc)
+r=minimize(lambda p: costpa(p[0],au,3,t),[best[1]],method='Nelder-Mead',options={'xatol':1e-8,'maxiter':3000})
+print('alpha P*=',round(r.x[0],2),'std deg',round(np.degrees(np.sqrt(r.fun/n)),3))
+bestb=(1e18,None)
+for Pc in np.arange(400,5000,10):
+    s=costp(Pc,bu,14,t)
+    if s<bestb[0]: bestb=(s,Pc)
+rb=minimize(lambda p: costp(p[0],bu,14,t),[bestb[1]],method='Nelder-Mead',options={'xatol':1e-8,'maxiter':4000})
+Pb=rb.x[0]
+print('beta P*=',round(Pb,2),'std deg',round(np.degrees(np.sqrt(rb.fun/n)),3))
+
+# Holdout consistency: estimate P on first 400 days, predict last 116 days of angles
+def holdout(cut, Hb=14, Ha=3):
+    m=t<=cut
+    rb=minimize(lambda p: costp(p[0],bu[m],Hb,t[m]),[Pb],method='Nelder-Mead',options={'xatol':1e-8,'maxiter':3000})
+    P_h=rb.x[0]
+    c=fitp(P_h,bu[m],Hb,t[m])
+    pred=designP(t[~m],P_h,Hb)@c
+    true=bu[~m]
+    errp=np.degrees(np.abs((pred-true+np.pi)%(2*np.pi)-np.pi))
+    print(f'cut={cut}: beta hold P={P_h:.2f} max_circ_err_deg={errp.max():.2f} rmse_deg={np.sqrt(np.mean(errp**2)):.2f}')
+holdout(300); holdout(400); holdout(450)
+EOF
+python3 /tmp/explore22.py
 ```
 
 ## [63] tool
@@ -874,6 +1855,35 @@ Direct Fourier-like extrapolation of the angles is unstable. Let me visualize th
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+au=np.unwrap(a); bu=np.unwrap(b)
+# local rates in 50-day windows
+for name,u in [('alpha',au),('beta',bu)]:
+    print(name, 'local rate deg/day by window:')
+    line=[]
+    for s in range(0,len(t)-50,50):
+        r=np.polyfit(t[s:s+50],u[s:s+50],1)[0]
+        line.append(round(np.degrees(r),3))
+    print('  ',line)
+    # local curvature: windowed quadratic mid coef
+print('gamma by 50-day means:')
+print([round(x,1) for x in [g[s:s+50].mean() for s in range(0,len(t)-50,50)]])
+print('gamma rolling slope windows:')
+for s in range(0,len(t)-50,50):
+    print(round(np.polyfit(t[s:s+50],g[s:s+50],1)[0],3), end=' ')
+print()
+# alpha unwrapped minus trend: extrema times
+p=np.polyfit(t,au,1); ra=np.degrees(au-np.polyval(p,t))
+from scipy.signal import find_peaks
+pk,_=find_peaks(ra, prominence=5); tr,_=find_peaks(-ra,prominence=5)
+print('alpha resid peaks at t=', pk, 'troughs at t=', tr)
+p=np.polyfit(t,bu,1); rb=np.degrees(bu-np.polyval(p,t))
+pk,_=find_peaks(rb, prominence=5); tr,_=find_peaks(-rb,prominence=5)
+print('beta resid peaks at t=', pk, 'troughs at t=', tr)
+"
 
 ```
 
@@ -896,7 +1906,21 @@ beta resid peaks at t= [434] troughs at t= [330]
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); g=df.gamma.values
+au=np.unwrap(a); bu=np.unwrap(b)
+p=np.polyfit(t,bu,1); rb=np.degrees(bu-np.polyval(p,t))
+from scipy.signal import find_peaks
+pk,pp=find_peaks(rb, prominence=1); tr,tt2=find_peaks(-rb,prominence=1)
+print('beta resid peaks:', list(zip(pk, rb[pk].round(1)))[:12])
+print('beta resid troughs:', list(zip(tr, rb[tr].round(1)))[:12])
+print()
+print('beta resid sample: t, rb')
+for s in range(0,len(t),25):
+    print(s, round(rb[s],1))
+"
 ```
 
 ## [67] tool
@@ -933,7 +1957,21 @@ beta resid sample: t, rb
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); b=np.deg2rad(df.beta.values)
+bu=np.unwrap(b)
+rb=bu-np.polyval(np.polyfit(t,bu,1),t)
+seg=(t>=330)&(t<=380)
+# local rate per day over that segment
+for s in range(335,376,5):
+    r=np.polyfit(t[s:s+8],bu[s:s+8],1)[0]
+    print(s, round(np.degrees(r),3))
+print('single-day diffs around 340-380:')
+d=np.degrees(np.diff(bu))
+print([round(x,2) for x in d[338:380]])
+"
 ```
 
 ## [69] tool
@@ -958,7 +1996,51 @@ The beta dynamics (accelerating phases — like a spinning top near-lapthrough o
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore23.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize, minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+# Super-resolve top frequencies via iterative extraction with linear trend, exact minimization of each freq
+def extract(tt,y,K,trend=1):
+    N=len(tt)
+    base=[np.ones(N), tt-tt.mean()] if trend else [np.ones(N)]
+    cols=base[:]
+    comps=[]
+    for k in range(K):
+        r=y
+        # coarse+golden on cost
+        def cost(f):
+            X=np.column_stack(cols+[np.cos(2*np.pi*f*tt),np.sin(2*np.pi*f*tt)])
+            c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+            return ((r-X@c)**2).sum()
+        fs=np.arange(0.0012,0.03,2e-6)
+        cs=np.array([cost(f) for f in fs])
+        f0=fs[np.argmin(cs)]
+        rr=minimize_scalar(cost,bracket=(f0*0.995,f0,f0*1.005))
+        f=rr.x
+        X=np.column_stack(cols+[np.cos(2*np.pi*f*tt),np.sin(2*np.pi*f*tt)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        y=y-X@c
+        cols=base[:]
+        y=y-np.polyval(np.polyfit(tt,y,1),tt) if trend else y-y.mean()
+        comps.append((1/f, np.degrees(np.hypot(c[-2],c[-1])) if np.degrees(abs(c[-2]))>0 else 0, np.hypot(c[-2],c[-1])))
+    return comps
+
+# High precision list for gamma (radians consistent: gamma in degrees, amps in deg)
+fig=extract(t,G,8)
+print('gamma comps: period amp_deg')
+for P,A,_ in fig: print(f'  P={P:9.3f}  amp={A:8.3f}  f*T={n/P:.4f}')
+fba=extract(t,np.degrees(au),5)
+print('alpha comps:')
+for P,A,_ in fba: print(f'  P={P:9.3f}  amp={A:8.3f}  f*T={n/P:.4f}')
+fbb=extract(t,np.degrees(bu),12)
+print('beta comps:')
+for P,A,_ in fbb: print(f'  P={P:9.3f}  amp={A:8.3f}  f*T={n/P:.4f}')
+EOF
+python3 /tmp/explore23.py
 ```
 
 ## [71] tool
@@ -998,7 +2080,30 @@ beta comps:
 **tool call: bash**
 
 ```
-
+cd data && cat > /tmp/explore24.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values; n=len(t)
+# sweeps of fitted dominant period over time (fit sin with period candidate within window-free approach):
+# Instead compute gamma autocorrelation peaks
+y=g-g.mean()
+ac=np.correlate(y,y,'full')[n-1:]/n/ y.var()
+from scipy.signal import find_peaks
+pk,_=find_peaks(ac[:400],distance=15)
+print('acf peaks at lags:', pk, ac[pk].round(2))
+# first trough / crossing
+tr,_=find_peaks(-ac[:400])
+print('acf troughs:', tr, ac[tr].round(2))
+# structure function
+sf=[]
+for L in range(1,260):
+    sf.append(np.mean((y[L:]-y[:-L])**2)**0.5)
+sf=np.array(sf)
+troughs,_=find_peaks(-sf,distance=15)
+peaks,_=find_peaks(sf,distance=20)
+print('SF mins at lags:', troughs[:12], 'SF maxima:', peaks[:12])
+EOF
+python3 /tmp/explore24.py
 ```
 
 ## [73] tool
@@ -1013,7 +2118,42 @@ SF mins at lags: [216] SF maxima: [131]
 **tool call: bash**
 
 ```
-
+cd data && cat > /tmp/explore25.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
+au=np.unwrap(a); bu=np.unwrap(b)
+# subtract linear trend from unwrapped angles, then look at the two largest periodicities precisely
+def sub_trend(u):
+    return u - np.polyval(np.polyfit(t,u,1),t)
+ra=sub_trend(au); rb2=sub_trend(bu)
+# alpha: does ra look like a single sinusoid with growing amplitude? windowed fits of its period
+for lo,hi in [(0,258),(258,517)]:
+    tt=t[lo:hi]; u=au[lo:hi]
+    dc=tt-tt.mean()
+    def cost(f):
+        X=np.column_stack([np.ones(len(tt)),dc,np.cos(2*np.pi*f*tt),np.sin(2*np.pi*f*tt)])
+        c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+        return ((u-X@c)**2).sum()
+    r=minimize_scalar(cost,bracket=(1/500,1/326,1/200))
+    X=np.column_stack([np.ones(len(tt)),dc,np.cos(2*np.pi*r.x*tt),np.sin(2*np.pi*r.x*tt)])
+    c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+    print(f'alpha window {lo}-{hi}: P={1/r.x:.1f} amp={np.degrees(np.hypot(c[2],c[3])):.2f} resid_std={np.degrees(np.sqrt(cost(r.x)/len(tt))):.3f}')
+for lo,hi in [(0,200),(200,517),(0,517)]:
+    tt=t[lo:hi]; u=bu[lo:hi]
+    dc=tt-tt.mean()
+    def cost(f):
+        X=np.column_stack([np.ones(len(tt)),dc,np.cos(2*np.pi*f*tt),np.sin(2*np.pi*f*tt)])
+        c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+        return ((u-X@c)**2).sum()
+    r=minimize_scalar(cost,bracket=(1/700,1/480,1/300))
+    X=np.column_stack([np.ones(len(tt)),dc,np.cos(2*np.pi*r.x*tt),np.sin(2*np.pi*r.x*tt)])
+    c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+    print(f'beta window {lo}-{hi}: P={1/r.x:.1f} amp={np.degrees(np.hypot(c[2],c[3])):.2f} resid_std={np.degrees(np.sqrt(cost(r.x)/len(tt))):.3f}')
+EOF
+python3 /tmp/explore25.py
 ```
 
 ## [75] tool
@@ -1044,7 +2184,7 @@ ValueError: Bracketing values (xa, xb, xc) do not fulfill this requirement: (f(x
 **tool call: bash**
 
 ```
-
+cd data && sed -i 's/bracket=(1\/500,1\/326,1\/200)/bracket=(1\/400,1\/250)/; s/bracket=(1\/700,1\/480,1\/300)/bracket=(1\/550,1\/400)/' /tmp/explore25.py && python3 /tmp/explore25.py
 ```
 
 ## [77] tool
@@ -1063,7 +2203,33 @@ Let me examine phase evolution over short windows to see whether frequencies are
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore26.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); b=np.deg2rad(df.beta.values); a=np.deg2rad(df.alpha.values)
+bu=np.unwrap(b); au=np.unwrap(a)
 
+# beta: fit single sinusoid+trend within sliding windows of 150d; track best-freq and residual
+W=150
+print('beta: window, bestP, amp, resid_std_deg, phase')
+for s in range(0,517-W,40):
+    tt=t[s:s+W]; u=bu[s:s+W]; dc=tt-tt.mean()
+    def cost(f):
+        X=np.column_stack([np.ones(W),dc,np.cos(2*np.pi*f*tt),np.sin(2*np.pi*f*tt)])
+        c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+        return ((u-X@c)**2).sum()
+    # scan
+    fs=np.arange(1/700,1/120,5e-6)
+    cs=[cost(f) for f in fs]
+    f0=fs[int(np.argmin(cs))]
+    r=minimize_scalar(cost,bracket=(f0*0.97,f0*1.03))
+    X=np.column_stack([np.ones(W),dc,np.cos(2*np.pi*r.x*tt),np.sin(2*np.pi*r.x*tt)])
+    c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+    ph=np.arctan2(c[2],c[3])
+    print(f'  {s:3d}-{s+W:3d}: P={1/r.x:7.1f} amp={np.degrees(np.hypot(c[2],c[3])):6.1f} resid={np.degrees(np.sqrt(cost(r.x)/W)):6.2f} phase={ph:6.2f}')
+EOF
+python3 /tmp/explore26.py
 ```
 
 ## [79] tool
@@ -1086,7 +2252,30 @@ beta: window, bestP, amp, resid_std_deg, phase
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore27.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
 
+for Hab in [(4,2),(4,3),(5,3),(6,3),(6,4),(4,4)]:
+    Hb,Ha=Hab
+    cols=[np.ones(n)]
+    for h in range(1,Hb+1): cols+=[np.cos(h*b),np.sin(h*b)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*a),np.sin(h*a)]
+    X=np.column_stack(cols)
+    c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+    r=G-X@c
+    print(f'Hb={Hb},Ha={Ha}: std={r.std():.4f} maxabs={np.abs(r).max():.2f} acf1={np.corrcoef(r[1:],r[:-1])[0,1]:.3f}')
+# ranked individual coefs for (4,2)
+cols=[np.ones(n)]; names=['1']
+for h in range(1,5): cols+=[np.cos(h*b),np.sin(h*b)]; names+=[f'c{h}b',f's{h}b']
+for h in range(1,3): cols+=[np.cos(h*a),np.sin(h*a)]; names+=[f'c{h}a',f's{h}a']
+X=np.column_stack(cols)
+c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+for nm,v in zip(names,c): print(f'{nm:5s} {v:9.3f}')
+EOF
+python3 /tmp/explore27.py
 ```
 
 ## [81] tool
@@ -1117,7 +2306,71 @@ s2a       0.086
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore28.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
 
+def design_angle(tt, basef, L, trend=1):
+    cols=[np.ones(len(tt))]
+    if trend>=1: cols.append(tt-tt.mean())
+    if trend>=2: 
+        tc=tt-tt.mean(); cols.append(tc**2/tt.max())
+    for k in range(1,L+1):
+        w=2*np.pi*k*basef
+        cols+=[np.cos(w*tt),np.sin(w*tt)]
+    return np.column_stack(cols)
+
+def gamma_block(tt, aw, bw, Hb=4, Ha=2):
+    cols=[np.ones(len(tt))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+
+def fit_angles(tt, fa_coefs, La, fb_coefs, Lb):
+    # grids passed as coefficient vectors
+    Xa=design_angle(tt, Fa, La); Xb=design_angle(tt, Fb, Lb)
+
+from scipy.optimize import minimize, differential_evolution
+au=np.unwrap(a); bu=np.unwrap(b)
+La,Lb=3,10
+def obj(freqs, tt=t, verbose=False):
+    fa,fb=freqs
+    Xa=design_angle(tt,fa,La); Xb=design_angle(tt,fb,Lb)
+    pa,_,_,_=np.linalg.lstsq(Xa,np.interp(tt,t,au),rcond=None)
+    pb,_,_,_=np.linalg.lstsq(Xb,np.interp(tt,t,bu),rcond=None)
+    aw=Xa@pa; bw=Xb@pb
+    awn=(aw+np.pi)%(2*np.pi)-np.pi; bwn=(bw+np.pi)%(2*np.pi)-np.pi
+    Xg=gamma_block(tt,awn,bwn)
+    c,_,_,_=np.linalg.lstsq(Xg,np.interp(tt,t,G),rcond=None)
+    r=np.interp(tt,t,G)-Xg@c
+    return (r**2).sum()
+
+res=differential_evolution(obj,[(1/500,1/200),(1/700,1/350)],maxiter=40,popsize=15,seed=1,tol=1e-9)
+print('DE result:', res.fun**0.5/np.sqrt(n), 'periods', 1/res.x[0],1/res.x[1])
+res2=minimize(obj,res.x,method='Nelder-Mead',options={'maxiter':6000,'xatol':1e-10,'fatol':1e-3})
+print('refined:', np.sqrt(res2.fun/n), 'periods', 1/res2.x[0],1/res2.x[1])
+fa,fb=res2.x
+# holdout eval
+for cut in [400,450,480]:
+    m=t<=cut
+    r3=minimize(lambda fr: obj(fr,t[m]),res2.x,method='Nelder-Mead',options={'maxiter':4000,'xatol':1e-10})
+    fa3,fb3=r3.x
+    Xa=design_angle(t[m],fa3,La); pa,_,_,_=np.linalg.lstsq(Xa,au[m],rcond=None)
+    Xb=design_angle(t[m],fb3,Lb); pb,_,_,_=np.linalg.lstsq(Xb,bu[m],rcond=None)
+    awtr=Xa@pa; bwtr=Xb@pb
+    Xg=gamma_block(t[m],(awtr+np.pi)%(2*np.pi)-np.pi,(bwtr+np.pi)%(2*np.pi)-np.pi)
+    c,_,_,_=np.linalg.lstsq(Xg,G[m],rcond=None)
+    # test
+    tt=t[~m]
+    awp=design_angle(tt,fa3,La)@pa; bwp=design_angle(tt,fb3,Lb)@pb
+    Xg2=gamma_block(tt,(awp+np.pi)%(2*np.pi)-np.pi,(bwp+np.pi)%(2*np.pi)-np.pi)
+    pr=Xg2@c
+    rmse=np.sqrt(np.mean((G[~m]-pr)**2))
+    print(f'cut={cut}: periods {1/fa3:.1f},{1/fb3:.1f} holdout gamma rmse={rmse:.3f} max={np.abs(G[~m]-pr).max():.2f}')
+EOF
+python3 /tmp/explore28.py
 ```
 
 ## [83] tool
@@ -1134,7 +2387,29 @@ cut=480: periods 422.4,462.0 holdout gamma rmse=64.822 max=67.09
 **tool call: bash**
 
 ```
-
+cd data && cat > /tmp/explore29.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
+# candidate explanatory combos of time only: fundamental frequency scan with drift
+# Try fitting gamma as harmonics of a SINGLE time-period + linear drift, scan P with harmonics H=8..12, 
+# minimizing LS. If P chosen so all 10 gamma sinusoids are harmonics, should reach ~0.9 (their fit) or better.
+def designP(tt,P,H,drift=0):
+    cols=[np.ones(len(tt))]
+    if drift: cols+= [tt-tt.mean()]
+    for h in range(1,H+1): cols+=[np.cos(2*np.pi*h*tt/P),np.sin(2*np.pi*h*tt/P)]
+    return np.column_stack(cols)
+for H in [8,10,12]:
+    best=(1e15,None)
+    for P in np.arange(180,2000,0.5):
+        X=designP(t,P,H)
+        c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+        s=((G-X@c)**2).sum()
+        if s<best[0]: best=(s,P)
+    print('H',H,'best P=',best[1],'std',np.sqrt(best[0]/n))
+EOF
+python3 /tmp/explore29.py
 ```
 
 ## [85] tool
@@ -1149,7 +2424,50 @@ H 12 best P= 572.0 std 0.7441777402882686
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore30.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); G=df.gamma.values; n=len(t)
 
+def designP(tt,P,H):
+    cols=[np.ones(len(tt))]
+    for h in range(1,H+1): cols+=[np.cos(2*np.pi*h*tt/P),np.sin(2*np.pi*h*tt/P)]
+    return np.column_stack(cols)
+
+def costp(P,tt,y,H):
+    X=designP(tt,P,H)
+    c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    return ((y-X@c)**2).sum()
+
+# local minima map on fine grid
+H=12
+cands=[]
+for P in np.arange(500,700,0.25):
+    cands.append((costp(P,t,G,H),P))
+cands.sort()
+print('top P candidates:', [(round(P,1)) for s,P in cands[:8]], 'best std', np.sqrt(cands[0][0]/n))
+result=minimize(lambda p: costp(p[0],t,G,H), [cands[0][1]], method='Nelder-Mead', options={'xatol':1e-8,'maxiter':5000})
+Pbest=result.x[0]
+print('refined P*=',Pbest,'std',np.sqrt(result.fun/n))
+
+# Holdout: fit P on early data, evaluate on tail
+def holdout(cut,H):
+    m=t<=cut
+    r=minimize(lambda p: costp(p[0],t[m],G[m],H),[Pbest],method='Nelder-Mead',options={'xatol':1e-8,'maxiter':4000})
+    Ph=r.x[0]
+    X=designP(t[m],Ph,H); c,_,_,_=np.linalg.lstsq(X,G[m],rcond=None)
+    pr=designP(t[~m],Ph,H)@c
+    rmse=np.sqrt(np.mean((G[~m]-pr)**2))
+    # also try fixed P from full fit
+    c2,_,_,_=np.linalg.lstsq(designP(t[m],Pbest,H),G[m],rcond=None)
+    pr2=designP(t[~m],Pbest,H)@c2
+    rmse2=np.sqrt(np.mean((G[~m]-pr2)**2))
+    print(f'cut={cut} H={H}: freeP={Ph:.1f} rmse={rmse:.3f} | fixedP rmse={rmse2:.3f}')
+for cut in [350,400,450,480]:
+    holdout(cut,H)
+EOF
+python3 /tmp/explore30.py
 ```
 
 ## [87] tool
@@ -1169,7 +2487,48 @@ Let me test the position-dependent γ(α,β) model with *persisted raw angles* b
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore31.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+def gamma_fit(Xg, y):
+    c,_,_,_=np.linalg.lstsq(Xg,y,rcond=None); return c
+def gamma_block(aw, bw, Hb=4, Ha=2):
+    cols=[np.ones(len(aw))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+def wrap(x): return (x+np.pi)%(2*np.pi)-np.pi
+
+def eval_scheme(cut, horizon, kind='linear', W=60):
+    # train gamma map on all data up to cut
+    m=t<=cut
+    Xg=gamma_block(a[m],b[m])
+    c=gamma_fit(Xg,G[m])
+    tt=np.arange(cut+1,cut+1+horizon)
+    tt=tt[tt<=516]
+    if kind=='persist':
+        ap=np.full(len(tt),a[m][-1]); bp=np.full(len(tt),b[m][-1])
+    elif kind=='linear':
+        ra=np.polyfit(t[m][-W:],au[m][-W:],1)[0]
+        rbk=np.polyfit(t[m][-W:],bu[m][-W:],1)[0]
+        ap=wrap(au[m][-1]+ra*(tt-t[m][-1])); bp=wrap(bu[m][-1]+rbk*(tt-t[m][-1]))
+    pr=gamma_block(ap,bp)@c
+    true_idx=np.isin(t,tt)
+    true=G[true_idx]
+    rmse=np.sqrt(np.mean((true-pr)**2))
+    return rmse, np.abs(true-pr).max()
+
+for kind in ['persist','linear']:
+    for cut in [400,450,480]:
+        for W in ([20,60,100] if kind=='linear' else [0]):
+            rmse,mx=eval_scheme(cut,516-cut,kind,W if kind=='linear' else 0)
+            print(f'{kind} W={W}: cut={cut} rmse={rmse:.3f} max={mx:.2f}')
+EOF
+python3 /tmp/explore31.py
 ```
 
 ## [89] tool
@@ -1195,7 +2554,48 @@ Now let me fit a physical parametric model to beta unwrapped: two-body circle-pl
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore32.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize, minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); bu=np.unwrap(b)
 
+# parametric: viewer on inner circle radius r (period Pv), object on outer circle radius R (period Po)
+# bearing = atan2( R sin(fo t + po) - r sin(fv t + pv), R cos(fo t+po) - r cos(fv t+pv) )
+def bearing_model(tt, Pv, r, Po, po, pv):
+    fv=2*np.pi/Pv; fo=2*np.pi/Po
+    y= np.sin(fo*tt+po) - r*np.sin(fv*tt+pv)
+    x= np.cos(fo*tt+po) - r*np.cos(fv*tt+pv)
+    return np.unwrap(np.arctan2(y,x))
+
+def cost(params, tt, y):
+    Pv,r,Po,po,pv,off=params
+    pred=bearing_model(tt,np.abs(Pv),r,np.abs(Po),po,pv)+off
+    # allow sign flip / direction: try both handled by abs via r negative allowed
+    e=np.abs((y-pred+np.pi)%(2*np.pi)-np.pi)
+    return np.sum(e**2)
+
+best=(1e18,None)
+rng=np.random.default_rng(0)
+for trial in range(60):
+    Pv=rng.uniform(80,300); r=rng.uniform(0.05,0.9); Po=rng.uniform(400,900)
+    po=rng.uniform(-np.pi,np.pi); pv=rng.uniform(-np.pi,np.pi); off=bu.mean()
+    res=minimize(cost,[Pv,r,Po,po,pv,off],args=(t,bu),method='Nelder-Mead',options={'maxiter':8000,'fatol':1e-3})
+    if res.fun<best[0]: best=(res.fun,res.x)
+print('best fit std deg:', np.degrees(np.sqrt(best[0]/n)), 'params:', best[0], best[1])
+Pv,r,Po,po,pv,off=best[1]
+print('Pv*,r,Po*:', Pv,r,Po)
+# holdout
+for cut in [300,400,450]:
+    m=t<=cut
+    res=minimize(cost,best[1].copy(),args=(t[m],bu[m]),method='Nelder-Mead',options={'maxiter':8000,'fatol':1e-3})
+    Pv,r,Po,po,pv,off=res.x
+    pred=bearing_model(t[~m],abs(Pv),r,abs(Po),po,pv)+off
+    e=np.abs((bu[~m]-pred+np.pi)%(2*np.pi)-np.pi)
+    print(f'cut={cut}: angle holdout rmse_deg={np.degrees(np.sqrt(np.mean(e**2))):.2f} max={np.degrees(e.max()):.1f} params Pv={Pv:.1f} Po={Po:.1f} r={r:.3f}')
+EOF
+python3 /tmp/explore32.py
 ```
 
 ## [91] tool
@@ -1213,7 +2613,37 @@ cut=450: angle holdout rmse_deg=25.35 max=41.4 params Pv=390.4 Po=391.4 r=0.999
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore33.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+def bu_norm(tt,P):
+    ph=2*np.pi*tt/P
+    ph=(ph+np.pi)%(2*np.pi)-np.pi
+    return (np.sin(ph)/2./np.cos(ph/2))
+
+def fit_eval(cut, Hgam=6):
+    m=t<=cut
+    # 1) estimate P on train
+    def costP(P):
+        y=bu_norm(t[m],P)
+        # fit beta as function of y,ph harmonics: linear in basis: [1, y, y*sin/cos?] simple: poly(y,3) + harmonics of phase
+        ph=2*np.pi*t[m]/P
+        X=np.column_stack([np.ones(m.sum()), y, y**2, y**3, np.cos(ph),np.sin(ph),np.cos(2*ph),np.sin(2*ph)])
+        c,_,_,_=np.linalg.lstsq(X,bu[m],rcond=None)
+        return ((bu[m]-X@c)**2).sum()
+    best=(1e18,None)
+    for P in np.arange(300,900,2.0):
+        s=costP(P)
+        if s<best[0]: best=(s,P)
+    return best
+
+print(fit_eval(516))
+EOF
+python3 /tmp/explore33.py
 ```
 
 ## [93] tool
@@ -1228,7 +2658,45 @@ Interesting—beta maps to `tan(φ/2)`-ish structure with specific P. Let me ful
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore34.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); bu=np.unwrap(b)
 
+def bu_norm(tt,P):
+    ph=2*np.pi*tt/P
+    phw=(ph+np.pi)%(2*np.pi)-np.pi
+    return 0.5*np.sin(phw)/np.cos(phw/2)**2/1.0  # = sin/(1+cos)* (2 cos(ph/2)^2 /cos^2)... simplify below
+
+def bu_norm2(tt,P):
+    ph=np.mod(2*np.pi*tt/P, 2*np.pi)
+    return np.tan(ph/2)  # infinite at wrapping boundary
+
+def fitP(cut):
+    m=t<=cut
+    def cost(P):
+        y=bu_norm2(t[m],P)
+        ph=2*np.pi*t[m]/P
+        X=np.column_stack([np.ones(m.sum()), np.clip(y,-10,10), np.clip(y,-10,10)**2])
+        c,_,_,_=np.linalg.lstsq(X,bu[m],rcond=None)
+        return ((bu[m]-X@c)**2).sum()
+    best=(1e18,None)
+    for P in np.arange(400,900,1.0):
+        s=cost(P)
+        if s<best[0]:best=(s,P)
+    return best[1]
+P=fitP(516)
+print('best P tanh-map:',P)
+# check residual std
+m=np.ones(n,dtype=bool)
+y=bu_norm2(t,P)
+X=np.column_stack([np.ones(n),np.clip(y,-10,10),np.clip(y,-10,10)**2,np.clip(y,-10,10)**3])
+c,_,_,_=np.linalg.lstsq(X,bu,rcond=None)
+print('resid std deg all:', np.degrees(np.sqrt(((bu-X@c)**2).mean())))
+EOF
+python3 /tmp/explore34.py
 ```
 
 ## [95] tool
@@ -1242,7 +2710,35 @@ resid std deg all: 53.45470978711752
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore35.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a)
 
+def bb(yy,tt,Lb=8):
+    X=np.column_stack([np.ones(len(tt))]+[f(2*np.pi*k*tt/P) for k in range(1,Lb+1) for f in (np.cos,np.sin)]) if False else None
+
+# alpha P estimate on windows
+def Pwin(lo,hi):
+    m=(t>=lo)&(t<hi); u=au[m]; tt=t[m]
+    def cost(f):
+        X=np.column_stack([np.ones(len(tt)),tt-tt.mean(),np.cos(2*np.pi*f*tt),np.sin(2*np.pi*f*tt)])
+        c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+        return ((u-X@c)**2).sum()
+    fs=np.arange(2/750,1/200,2e-6)
+    cs=[cost(f) for f in fs]
+    f0=fs[int(np.argmin(cs))]
+    r=minimize_scalar(cost,bracket=(f0*0.98,f0*1.02),method='brent')
+    X=np.column_stack([np.ones(len(tt)),tt-tt.mean(),np.cos(2*np.pi*r.x*tt),np.sin(2*np.pi*r.x*tt)])
+    c,_,_,_=np.linalg.lstsq(X,u,rcond=None)
+    amp=np.degrees(np.hypot(c[2],c[3])); rs=np.degrees(np.sqrt(cost(r.x)/len(tt)))
+    return 1/r.x, amp, rs
+for lo,hi in [(0,258),(130,388),(258,517),(0,517)]:
+    print(f'alpha window {lo}-{hi}:', Pwin(lo,hi))
+EOF
+python3 /tmp/explore35.py
 ```
 
 ## [97] tool
@@ -1260,7 +2756,48 @@ Let me test the harmonic-gamma + drift model at longer horizon (cut at 356 → 1
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore36.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); G=df.gamma.values; n=len(t)
 
+def designP(tt,P,H,drift):
+    cols=[np.ones(len(tt))]
+    if drift>=1: cols+=[tt-tt.mean()]
+    if drift>=2: 
+        tc=(tt-516/2); cols+=[(tc/516)**2]
+    for h in range(1,H+1): cols+=[np.cos(2*np.pi*h*tt/P),np.sin(2*np.pi*h*tt/P)]
+    return np.column_stack(cols)
+def costp(P,tt,y,H,drift):
+    X=designP(tt,P,H,drift)
+    c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    return ((y-X@c)**2).sum()
+
+def holdout(cut,H,P_init=None,drift=1):
+    m=t<=cut
+    if P_init is None:
+        best=(1e18,None)
+        for P in np.arange(300,900,2.0):
+            s=costp(P,t[m],G[m],H,drift)
+            if s<best[0]:best=(s,P)
+        P0=best[1]
+    else: P0=P_init
+    r=minimize(lambda p: costp(p[0],t[m],G[m],H,drift),[P0],method='Nelder-Mead',options={'xatol':1e-9,'maxiter':6000})
+    Ph=r.x[0]
+    c,_,_,_=np.linalg.lstsq(designP(t[m],Ph,H,drift),G[m],rcond=None)
+    pr=designP(t[~m],Ph,H,drift)@c
+    rmse=np.sqrt(np.mean((G[~m]-pr)**2)); mx=np.abs(G[~m]-pr).max()
+    print(f'cut={cut} H={H} drift={drift}: Ph={Ph:.1f} rmse={rmse:.3f} max={mx:.2f} | last-test t={t[~m][-1]:.0f}')
+    return Ph,rmse
+
+for H in [10,11,12,13,14]:
+    holdout(356,H,drift=1)
+print()
+for H in [11,12,13]:
+    holdout(356,H,drift=0)
+EOF
+python3 /tmp/explore36.py
 ```
 
 ## [99] tool
@@ -1283,7 +2820,25 @@ Let me try the GP/direct angle-track approaches as a robust alternative: use **t
 **tool call: bash**
 
 ```
-
+cd data && cat > /tmp/explore37.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
+def gamma_block(aw, bw, Hb=4, Ha=2):
+    cols=[np.ones(len(aw))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+# map error with true angles:
+for cut in [300,400,450,480]:
+    m=t<=cut
+    c,_,_,_=np.linalg.lstsq(gamma_block(a[m],b[m]),G[m],rcond=None)
+    pr=gamma_block(a[~m],b[~m])@c
+    r=G[~m]-pr
+    print(f'cut={cut}: map-only rmse={np.sqrt(np.mean(r**2)):.3f} max={np.abs(r).max():.2f} bias={r.mean():.3f}')
+EOF
+python3 /tmp/explore37.py
 ```
 
 ## [101] tool
@@ -1299,7 +2854,28 @@ cut=480: map-only rmse=1.009 max=2.13 bias=-0.827
 **tool call: bash**
 
 ```
-
+cd data && cat > /tmp/explore38.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
+cols=[np.ones(n)]
+for h in range(1,5): cols+=[np.cos(h*b),np.sin(h*b)]
+for h in range(1,3): cols+=[np.cos(h*a),np.sin(h*a)]
+X=np.column_stack(cols)
+c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+mu=X@c
+r=G-mu
+print('in-sample resid sigma:', r.std())
+se=np.sqrt(np.sum((X@np.linalg.inv(X.T@X)*X).reshape(n,-1)[:0] if False else np.einsum('ij,jk,ik->i',X,np.linalg.inv(X.T@X),X),axis=1)* (r.std()**2))
+print('leverage h_i: max', se.max()/r.std(), 'mean', np.mean(se/r.std()))
+print('in-sample coverage ±1.96sigma:', np.mean(np.abs(r)<1.96*r.std()))
+print('kurtosis-ish: resid > 3sigma count:', (np.abs(r)>3*r.std()).sum())
+# z for 95% empirical
+q=np.quantile(np.abs(r),0.95)
+print('95% abs-resid quantile:', q)
+EOF
+python3 /tmp/explore38.py
 ```
 
 ## [103] tool
@@ -1326,7 +2902,47 @@ Let me quickly test a GP-style correction on top of the harmonic-fit residuals (
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/explore39.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); G=df.gamma.values; n=len(t)
 
+def designP(tt,P,H):
+    cols=[np.ones(len(tt))]
+    for h in range(1,H+1): cols+=[np.cos(2*np.pi*h*tt/P),np.sin(2*np.pi*h*tt/P)]
+    return np.column_stack(cols)
+from scipy.optimize import minimize
+def costp(P,tt,y,H):
+    X=designP(tt,P,H)
+    c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    return ((y-X@c)**2).sum()
+best=(1e18,None)
+for P in np.arange(500,650,0.5):
+    s=costp(P,t,G,12)
+    if s<best[0]:best=(s,P)
+r=minimize(lambda p: costp(p[0],t,G,12),[best[1]],method='Nelder-Mead',options={'xatol':1e-9,'maxiter':6000})
+Pf=r.x[0]
+c12,_,_,_=np.linalg.lstsq(designP(t,Pf,12),G,rcond=None)
+res=G-designP(t,Pf,12)@c12
+from scipy.linalg import solve
+# residual ACF
+d=res-res.mean()
+ac=np.correlate(d,d,'full')[n-1:]/np.dot(d,d)
+print('harmonic12 resid std', res.std(), 'acf lags 1-10:', ac[1:11].round(3))
+# mixed: gamma map resid acf1 was 0.059 -> noise only. use that for tail correction?
+cols=[np.ones(n)]
+a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values)
+for h in range(1,5): cols+=[np.cos(h*b),np.sin(h*b)]
+for h in range(1,3): cols+=[np.cos(h*a),np.sin(h*a)]
+X=np.column_stack(cols)
+cmap,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+rmap=G-X@cmap
+dm=rmap-rmap.mean()
+acm=np.correlate(dm,dm,'full')[n-1:]/np.dot(dm,dm)
+print('map resid std', rmap.std(), 'acf 1-5:', acm[1:6].round(3))
+print('mean rmap last 10:', rmap[-10:].mean(), 'last 30:', rmap[-30:].mean())
+EOF
+python3 /tmp/explore39.py
 ```
 
 ## [105] tool
@@ -1347,7 +2963,81 @@ Let me build the final model: γ(α,β) map on observed-training, predictions fo
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/backtest_intervals.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
 
+# gamma map in-sample sigma
+def gamma_block(tt, aw, bw, Hb, Ha):
+    cols=[np.ones(len(tt))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+Hb,Ha=5,3
+X=gamma_block(t,a,b,Hb,Ha)
+c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+res=G-X@c
+sig=np.sqrt(np.sum(res**2)/(n-(2*Hb+2*Ha+1)))
+print('map sigma:',sig, 'std resid:',res.std())
+
+# GAM model M: refit on truncated data at cut; predict angles for horizon h; predict gamma
+def poly_model(cut, Hb_=Hb, Ha_=Ha):
+    m=t<=cut
+    cc,_,_,_=np.linalg.lstsq(gamma_block(t[m],a[m],b[m],Hb_,Ha_),G[m],rcond=None)
+    return cc
+
+# Predict a,b by analytic continuation of the dominant-period harmonic models fit on ALL *cut* data:
+from scipy.optimize import minimize
+def design_harm(tt, P_list):
+    cols=[np.ones(len(tt)), tt-t.mean()]
+    for P in P_list:
+        w=2*np.pi/P
+        cols+=[np.cos(w*tt),np.sin(w*tt)]
+    return np.column_stack(cols)
+def angle_pred(cut, unwrapped, P_lo, P_hi, K, tt_pred):
+    # estimate K top periods on t<=cut, then refit LS, extrapolate
+    m=t<=cut; tt=t[m]; y=unwrapped[m]
+    cols=[np.ones(len(tt)),tt-tt.mean()]
+    yc=y.copy(); comps=[]
+    for k in range(K):
+        # scan
+        fs=np.arange(1/P_hi,1/P_lo,2e-6)
+        r=yc
+        best=(1e18,None)
+        for f in fs:
+            X=np.column_stack(cols+[np.cos(2*np.pi*f*tt),np.sin(2*np.pi*f*tt)])
+            c,_,_,_=np.linalg.lstsq(X,r,rcond=None)
+            s=((r-X@c)**2).sum()
+            if s<best[0]:best=(s,f,f)
+        f=best[1]
+        # refine
+        r2=minimize(lambda ff: ((yc-np.column_stack(cols+[np.cos(2*np.pi*ff[0]*tt),np.sin(2*np.pi*ff[0]*tt)])@np.linalg.lstsq(np.column_stack(cols+[np.cos(2*np.pi*ff[0]*tt),np.sin(2*np.pi*ff[0]*tt)]),yc,rcond=None)[0])**2).sum(),[f],method='Nelder-Mead',options={'xatol':1e-10,'maxiter':2000})
+        f=r2.x[0]
+        X=np.column_stack(cols+[np.cos(2*np.pi*f*tt),np.sin(2*np.pi*f*tt)])
+        c,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        yc=y-X@c
+        cols=[np.ones(len(tt)),tt-tt.mean()]
+        comps.append(1/f)
+    X=np.column_stack([np.ones(len(tt)),tt-tt.mean()]+[g(2*np.pi*tt/P) for P in comps for g in (np.cos,np.sin)])
+    cf,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    Xp=np.column_stack([np.ones(len(tt_pred)),tt_pred-t.mean()]+[g(2*np.pi*tt_pred/P) for P in comps for g in (np.cos,np.sin)])
+    return Xp@cf, comps
+
+# test at cut=390 horizon to 516 (126 days)
+for cut in [390, 430]:
+    tt_pred=np.arange(cut+1,517)
+    pa,comps_a=angle_pred(cut,au.copy(),100,700,3,tt_pred)
+    pb,comps_b=angle_pred(cut,bu.copy(),100,700,8,tt_pred)
+    m=t<=cut
+    cmapg=poly_model(cut)
+    pr=gamma_block(tt_pred,(pa+np.pi)%(2*np.pi)-np.pi,(pb+np.pi)%(2*np.pi)-np.pi,Hb,Ha)@cmapg
+    true=G[~m]
+    rmse=np.sqrt(np.mean((true-pr)**2))
+    print(f'cut={cut}: angle-extrap model rmse={rmse:.2f} max={np.abs(true-pr).max():.1f} periods_a={[round(x,1) for x in comps_a]} periods_b={[round(x,1) for x in comps_b]}')
+EOF
+python3 /tmp/backtest_intervals.py
 ```
 
 ## [107] tool
@@ -1445,7 +3135,69 @@ I've confirmed the picture. Now let me write the final self-contained solution w
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/final_model.py <<'EOF'
+import pandas as pd, numpy as np
 
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t)
+
+Hb, Ha = 5, 3
+def gamma_block(aw, bw):
+    cols=[np.ones(len(aw))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+
+def wrap(x): return (x+np.pi)%(2*np.pi)-np.pi
+
+def fit_map(cut):
+    m=t<=cut
+    X=gamma_block(a[m],b[m])
+    c,_,_,_=np.linalg.lstsq(X,G[m],rcond=None)
+    r=G[m]-X@c
+    sig=np.sqrt((r**2).sum()/(m.sum()-X.shape[1]))
+    return c,sig
+
+def predict_components(cut, tt_fut, W=20):
+    """Return dict of gamma point predictions from 3 schemes + sigma(h) using only t<=cut data."""
+    m=t<=cut
+    c,sig=fit_map(cut)
+    # P1 persist angles at cut
+    ap1=np.full(len(tt_fut), a[m][-1]); bp1=np.full(len(tt_fut), b[m][-1])
+    mu1=gamma_block(ap1,bp1)@c
+    # P2 local linear continuation of unwrapped angles
+    au=np.unwrap(a); bu=np.unwrap(b)
+    mm=np.where(m)[0]
+    ra=np.polyfit(t[mm[-W:]],au[mm[-W:]],1)[0]
+    rbk=np.polyfit(t[mm[-W:]],bu[mm[-W:]],1)[0]
+    ap2=wrap(au[mm[-1]]+ra*(tt_fut-t[mm[-1]]))
+    bp2=wrap(bu[mm[-1]]+rbk*(tt_fut-t[mm[-1]]))
+    mu2=gamma_block(ap2,bp2)@c
+    # P3 damped return to marginal mean
+    h=tt_fut-t[mm[-1]]
+    mu=G[m].mean()
+    w=np.exp(-h/150.0)
+    mu3=w*G[mm[-1]]+(1-w)*mu
+    return dict(mu1=mu1,mu2=mu2,mu3=mu3,mu=(mu1+mu2+mu3)/3,sig=sig,last=t[mm[-1]],mmean=mu)
+
+def sigma_h(h, sig, cap=19.0, s36=2.1, p=1.2):
+    grow=np.minimum(cap, s36*(np.maximum(h,1)/36.0)**p)
+    return np.sqrt(sig**2+grow**2)
+
+# ---- Backtest the whole scheme (point+interval) at several cuts ----
+for cut in [370,400,430,450,480]:
+    m=t<=cut; tt_fut=t[~m]
+    out=predict_components(cut,tt_fut)
+    h=tt_fut-out['last']
+    s=sigma_h(h,out['sig'])
+    lo=out['mu']-1.96*s; up=out['mu']+1.96*s
+    y=G[~m]
+    cov=np.mean((y>=lo)&(y<=up))
+    rmse=np.sqrt(np.mean((y-out['mu'])**2))
+    print(f'cut={cut}: horizon 1..{len(tt_fut)}d  rmse={rmse:6.2f}  coverage={cov:.3f}  mean_width={np.mean(up-lo):6.1f}')
+EOF
+python3 /tmp/final_model.py
 ```
 
 ## [109] tool
@@ -1464,7 +3216,67 @@ The interval calibration needs to account for possible large model excursions (a
 **tool call: bash**
 
 ```
+mkdir -p /predict_tmp 2>/dev/null; cd data && cat > /tmp/produce.py <<'EOF'
+import pandas as pd, numpy as np
 
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
+te = pd.read_csv('test.csv'); tf=te.t.values.astype(float)
+Hb,Ha=5,3
+
+def gamma_block(aw,bw):
+    cols=[np.ones(len(aw))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+def wrap(x): return (x+np.pi)%(2*np.pi)-np.pi
+
+# map fit + sigma
+X=gamma_block(a,b); c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+r=G-X@c; sig_map=np.sqrt((r**2).sum()/(n-X.shape[1]))
+
+# forward angle components from state at t=516
+a516=a[-1]; b516=b[-1]; g516=G[-1]
+W=20
+ra=np.polyfit(t[-W:],au[-W:],1)[0]; rbk=np.polyfit(t[-W:],bu[-W:],1)[0]
+h=tf-516.0
+# persistence point (follows present trough drift)
+mu_pers=gamma_block(np.full(len(tf),a516),np.full(len(tf),b516))@c
+# local linear prediction for first ~40 days, damped toward persistence after
+mu_lin=gamma_block(wrap(au[-1]+ra*h),wrap(bu[-1]+rbk*h))@c
+ldam=1-np.exp(-h/20.)
+mu_early=(1-ldam)*mu_lin+ldam*mu_pers
+# long-run: blend persistence point with marginal mean, reaching mean by ~ day 650+
+mu_glob=G.mean()
+wmean=np.clip((h-120)/220.,0,1)  # weight of mean-recovery: 0 until 120d, ->1 by ~340d
+mu_dd=(1-wmean)*mu_pers+wmean*mu_glob
+# point estimate: near term deterministic, far term damped recovery
+w=np.where(h<=60,1.0, np.where(h>=420,0.0, 1-(h-60)/360.))
+mu_pred=w*mu_early+(1-w)*mu_dd
+
+# ---- intervals: backtest-informed ----
+# near-term (<=36d): linear scheme cut=480 rmse 0.80 over 36d -> slope ~ (very good short)
+# persistence cut=480 over 36d rmse 2.12
+# mid: cut=450 36d rmse: persist 1.5-3, plus model drift;
+# Use sigma(h) with floor and growth to cap; cover gamma plausible range roughly [-25,55]
+sig=np.sqrt(sig_map**2 + (2.1*np.minimum(1.0,h/36.)**1.0)**2)
+# beyond 150d: expand toward covering plausible oscillation range around mu_pred; 
+swing=13.0  # characteristic model-excursion half-width needed (gamma range 73 deg; P95 half ~ 1.65*sd)
+extra=np.clip((h-150)/120.,0,1)*swing
+stot=np.sqrt(sig**2+extra**2)
+lower=mu_pred-1.96*stot
+upper=mu_pred+1.96*stot
+# clamp to plausible physical gamma range observed/known [-90,90]
+lower=np.clip(lower,-90,90); upper=np.clip(upper,-90,90)
+
+out=pd.DataFrame({'t':te.t.values,'y_pred':np.round(mu_pred,4),'y_lower':np.round(lower,4),'y_upper':np.round(upper,4)})
+out.to_csv('/predict_tmp/predictions.csv',index=False)
+out.to_csv('predictions.csv',index=False)
+print(out.to_string())
+print('sig_map',sig_map,'ra deg/d',np.degrees(ra),'rb deg/d',np.degrees(rbk))
+EOF
+python3 /tmp/produce.py
 ```
 
 ## [111] tool
@@ -1488,7 +3300,68 @@ sig_map 0.42472173094475474 ra deg/d 0.9093726315789454 rb deg/d 0.0436757894736
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/produce2.py <<'EOF'
+import pandas as pd, numpy as np
 
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
+te = pd.read_csv('test.csv'); tf=te.t.values.astype(float)
+Hb,Ha=5,3
+
+def gamma_block(aw,bw):
+    cols=[np.ones(len(aw))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+def wrap(x): return (x+np.pi)%(2*np.pi)-np.pi
+
+# --- map fit on all data ---
+X=gamma_block(a,b); c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+r=G-X@c; sig_map=np.sqrt((r**2).sum()/(n-X.shape[1]))
+
+# --- regime-conditional far-future state: trough persist ~64d, recover to mean ~96d ---
+a516,b516=a[-1],b[-1]
+h=tf-516.0
+W=20
+ra=np.polyfit(t[-W:],au[-W:],1)[0]; rbk=np.polyfit(t[-W:],bu[-W:],1)[0]
+mu_pers=gamma_block(np.full(len(tf),a516),np.full(len(tf),b516))@c
+mu_lin =gamma_block(wrap(au[-1]+ra*h),wrap(bu[-1]+rbk*h))@c
+lam=1-np.exp(-h/15.)
+mu_early=(1-lam)*mu_lin+lam*mu_pers
+
+P_rec=160.0
+rec=np.clip((h-64)/P_rec,0,1)
+mu_glob=G.mean()
+mu_far=(1-rec)*mu_pers+rec*mu_glob
+w=np.clip(1-(h-40)/40,0,1)
+mu_pred=w*mu_early+(1-w)*mu_far
+
+# --- calibrated sigma(h): conservative covering under independent timing/recovery uncertainty ---
+# base measurement noise (1-sigma of a NEW noisy y)
+base=sig_map
+# epistemic growth: observed backtest errors: persist over 36d rmse~2.1, over 66d ~4.3, over 100d+ ~9-20
+seg=np.minimum.accumulate
+s36=2.1; s66=4.3; s120=9.0
+s=np.select(
+    [h<=36, h<=66, h<=120],
+    [s36*h/36., np.minimum(s66, s36+(h-36)*2.2/30.), s120],
+    default=s120
+)
+# far-future broad regime spread: swings imply gamma range ~ [-24, 52]; half-width 95% ~ 2*18.7=37.4 deg far
+sfar=19.0
+s=np.maximum(s, np.clip((h-120)/120.,0,1)*sfar)
+s=np.sqrt(base**2+s**2)
+
+# asymmetric-toward-range clamp not needed; symmetric
+lower=mu_pred-1.96*s; upper=mu_pred+1.96*s
+lower=np.clip(lower,-90,90); upper=np.clip(upper,-90,90)
+
+out=pd.DataFrame({'t':te.t.values,'y_pred':np.round(mu_pred,4),'y_lower':np.round(lower,4),'y_upper':np.round(upper,4)})
+out.to_csv('predictions.csv',index=False)
+print(out.to_string())
+EOF
+python3 /tmp/produce2.py && cat data/predictions.csv 2>/dev/null; ls -la data/predictions.csv 
 ```
 
 ## [113] tool
@@ -1513,7 +3386,55 @@ ls: cannot access 'data/predictions.csv': No such file or directory
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/produce3.py <<'EOF'
+import pandas as pd, numpy as np
 
+df = pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
+te = pd.read_csv('test.csv'); tf=te.t.values.astype(float)
+Hb,Ha=5,3
+
+def gamma_block(aw,bw):
+    cols=[np.ones(len(aw))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+def wrap(x): return (x+np.pi)%(2*np.pi)-np.pi
+
+X=gamma_block(a,b); c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+r=G-X@c; sig_map=np.sqrt((r**2).sum()/(n-X.shape[1]))
+
+# state at t=516 (last obs)
+a516,b516,n516=a[-1],b[-1],G[-1]
+g516=G[-1]
+h=tf-516.0
+W=20
+ra=np.polyfit(t[-W:],au[-W:],1)[0]; rbk=np.polyfit(t[-W:],bu[-W:],1)[0]
+
+# component predictions
+mu_pers=gamma_block(np.full(len(tf),a516),np.full(len(tf),b516))@c
+mu_lin =gamma_block(wrap(au[-1]+ra*h),wrap(bu[-1]+rbk*h))@c
+
+# point estimate: damped persistence with recovery to marginal mean weighted by h
+wmean=np.clip((h-64)/180.,0,1)*0.65   # cap mean-weight at 0.65 (keep trough-bias)
+mu_pred=(1-wmean)*0.5*(mu_pers+mu_lin)+wmean*G.mean()
+# at small h (first test rows) blend last measured gamma for continuity
+blend=np.exp(-h/8.)
+mu_pred=blend*g516+(1-blend)*mu_pred
+
+# sigma(h): backtest-informed, smooth saturating curve
+s_mod=22.5*np.tanh(h/95.0)          # saturates at 22.5 (far model-uncertainty in trough regime with mild restoring)
+s_tot=np.sqrt(sig_map**2+s_mod**2)
+lower=mu_pred-1.96*s_tot; upper=mu_pred+1.96*s_tot
+lower=np.clip(lower,-90,90); upper=np.clip(upper,-90,90)
+
+out=pd.DataFrame({'t':te.t.values,'y_pred':np.round(mu_pred,4),'y_lower':np.round(lower,4),'y_upper':np.round(upper,4)})
+out.to_csv('predictions.csv',index=False)
+print(out.to_string())
+print('check rows:', len(out), 'expected', len(te))
+EOF
+python3 /tmp/produce3.py && echo "---" && cat /tmp/../predictions.csv 2>/dev/null; cat $(pwd)/../predictions.csv 2>/dev/null; pwd; ls data/predictions.csv predictions.csv 2>&1
 ```
 
 ## [115] tool
@@ -1543,7 +3464,28 @@ The intervals are now wider than needed (44° half-width at far horizon). Let me
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/calib_final.py <<'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t=df.t.values.astype(float); G=df.gamma.values; n=len(t)
+# Empirical conditional swing stats: gamma segments (trough~150d, modest~110d, peak~80d)
+# In trough regime (start like our cut), distribution of future gamma over next ~290d
+# Use rolling trough starts: where gamma<-15 (trough centers): episodes at 380-516
+# For prediction anchored at trough state -21 (like 516), ensemble of subsequences following gamma<-20
+idxs=np.where(G<-20)[0]
+print('trough point count:',len(idxs),'first/last:',idxs.min(),idxs.max())
+# ensemble: from each trough day in record, gamma at +h days after
+h_grid=[3,35,67,99,132,164,196,228,261,293]
+ens={h:[] for h in h_grid}
+for i in idxs[:-40]:
+    for h in h_grid:
+        if i+h<n: ens[h].append(G[i+h])
+for h in h_grid:
+    v=np.array(ens[h])
+    if len(v)>0:
+        print(f'h={h}: n={len(v)} mean={v.mean():6.1f} sd={v.std():5.1f} p5={np.percentile(v,5):6.1f} p95={np.percentile(v,95):6.1f}')
+EOF
+python3 /tmp/calib_final.py
 ```
 
 ## [117] tool
@@ -1558,7 +3500,54 @@ Only one trough episode. Final answer: use the trough-regime model with σ_stat�
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/final.py <<'EOF'
+import pandas as pd, numpy as np
 
+df = pd.read_csv('data/train.csv')
+t=df.t.values.astype(float); a=np.deg2rad(df.alpha.values); b=np.deg2rad(df.beta.values); G=df.gamma.values
+n=len(t); au=np.unwrap(a); bu=np.unwrap(b)
+te = pd.read_csv('data/test.csv'); tf=te.t.values.astype(float)
+Hb,Ha=5,3
+
+def gamma_block(aw,bw):
+    cols=[np.ones(len(aw))]
+    for h in range(1,Hb+1): cols+=[np.cos(h*bw),np.sin(h*bw)]
+    for h in range(1,Ha+1): cols+=[np.cos(h*aw),np.sin(h*aw)]
+    return np.column_stack(cols)
+def wrap(x): return (x+np.pi)%(2*np.pi)-np.pi
+
+# --- 1) gamma = f(alpha,beta) map on all data ---
+X=gamma_block(a,b); c,_,_,_=np.linalg.lstsq(X,G,rcond=None)
+r=G-X@c; sig_map=np.sqrt((r**2).sum()/(n-X.shape[1]))
+
+# --- 2) future angle paths (persistence & local-linear) from state at t=516 ---
+a516,b516,g516=a[-1],b[-1],G[-1]
+h=tf-516.0
+W=20
+ra=np.polyfit(t[-W:],au[-W:],1)[0]; rbk=np.polyfit(t[-W:],bu[-W:],1)[0]
+mu_pers=gamma_block(np.full(len(tf),a516),np.full(len(tf),b516))@c
+mu_lin =gamma_block(wrap(au[-1]+ra*h),wrap(bu[-1]+rbk*h))@c
+
+# --- 3) trough-regime point forecast: persist trough, mean-recovery blended in, capped ---
+wmean=np.clip((h-64)/180.,0,1)*0.70
+mu_pred=(1-wmean)*mu_pers+wmean*G.mean()
+blend=np.exp(-h/8.)                     # continuity with last obs for t=519
+mu_pred=blend*mu_lin+(1-blend)*mu_pred if False else blend*g516+(1-blend)*mu_pred
+
+# --- 4) calibrated 1-sigma(h) curve (backtest/regime-informed) ---
+s_mod=15.0*np.tanh(h/70.0) + 1.2*np.tanh(h/25.0)   # near-term small, far ~16
+s_tot=np.sqrt(sig_map**2+s_mod**2)
+lower=mu_pred-1.96*s_tot; upper=mu_pred+1.96*s_tot
+lower=np.clip(lower,-90,90); upper=np.clip(upper,-90,90)
+
+out=pd.DataFrame({'t':te.t.values,'y_pred':np.round(mu_pred,4),'y_lower':np.round(lower,4),'y_upper':np.round(upper,4)})
+assert len(out)==len(te)
+assert (out.y_upper>=out.y_lower).all()
+out.to_csv('predictions.csv',index=False)
+print(out.to_string())
+print('rows:',len(out))
+EOF
+python3 /tmp/final.py && echo "=== file ===" && cat predictions.csv
 ```
 
 ## [119] tool

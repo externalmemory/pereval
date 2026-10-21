@@ -56,7 +56,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+cd /root 2>/dev/null; ls -la; echo "---"; find . -maxdepth 2 -name "*.csv" 2>/dev/null; echo "---pwd---"; pwd
 ```
 
 ## [3] tool
@@ -83,7 +83,7 @@ drwxr-xr-x 1 root root 4096 Aug 11 05:15 ..
 **tool call: bash**
 
 ```
-
+find / -maxdepth 4 -name "train.csv" 2>/dev/null; find / -maxdepth 4 -name "scenario.csv" 2>/dev/null; echo "done"
 ```
 
 ## [5] tool
@@ -98,7 +98,7 @@ done
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -la && echo "---train head---" && head -20 data/train.csv && echo "---scenario---" && cat data/scenario.csv && echo "---wc---" && wc -l data/train.csv data/scenario.csv
 ```
 
 ## [7] tool
@@ -158,7 +158,14 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+df=pd.read_csv('data/train.csv')
+print(df.shape)
+print(df.head(25).to_string())
+print('---tail---')
+print(df.tail(15).to_string())
+"
 ```
 
 ## [9] tool
@@ -222,6 +229,20 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+df=pd.read_csv('data/train.csv')
+cols=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+for c in cols:
+    nonnull=df[c].notnull()
+    first=df['quarter'][nonnull].min()
+    last=df['quarter'][nonnull].max()
+    n=nonnull.sum()
+    print(f'{c}: first={first}, last={last}, n={n}')
+print()
+print('gdp range', df.gdp.min(), df.gdp.max())
+print('scenario gdp', )
+"
 
 ```
 
@@ -272,6 +293,26 @@ scenario gdp
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+d=df.copy()
+d['logit']=np.log(d.default_rate/(1-d.default_rate))
+cols=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+print('Correlation with default_rate (raw):')
+for c in cols:
+    print(f'{c:14s} {np.corrcoef(d[c],d.default_rate)[0,1]:+.3f}  (n={d[c].notnull().sum()})')
+print()
+print('Correlation with logit(default_rate):')
+for c in cols:
+    print(f'{c:14s} {np.corrcoef(d[c],d.logit)[0,1]:+.3f}  (n={d[c].notnull().sum()})')
+print()
+print('Corr of log series with logit:')
+import numpy as np
+for c in cols:
+    lc=np.log(d[c])
+    print(f'log {c:10s} {np.corrcoef(lc,d.logit)[0,1]:+.3f}')
+"
 
 ```
 
@@ -324,6 +365,16 @@ log cpi        -0.313
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+d=df.copy()
+d['logit']=np.log(d.default_rate/(1-d.default_rate))
+cols=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+for c in cols:
+    mask=d[[c,'logit']].notnull().all(axis=1)
+    print(f'{c:14s} raw corr {np.corrcoef(d[c][mask],d.logit[mask])[0,1]:+.3f}  log corr {np.corrcoef(np.log(d[c][mask]),d.logit[mask])[0,1]:+.3f}  n={mask.sum()}')
+"
 
 ```
 
@@ -437,6 +488,16 @@ cpi            raw corr -0.317  log corr -0.313  n=80
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+d=df.copy()
+d['logit']=np.log(d.default_rate/(1-d.default_rate))
+# scenario
+s=pd.read_csv('data/scenario.csv')
+print('Scenario new quarters:', list(s.columns))
+print(s.to_string())
+"
 
 ```
 
@@ -482,6 +543,33 @@ Scenario new quarters: ['quarter', 'gdp', 'unemployment', 'hpi', 'bbb_spread', '
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df=pd.read_csv('data/train.csv')
+d=df.copy()
+d['logit']=np.log(d.default_rate/(1-d.default_rate))
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    d['l_'+c]=np.log(d[c])
+
+# candidate predictor sets
+sets = {
+ 'unemp':['l_unemployment'],
+ 'unemp+vix':['l_unemployment','l_vix'],
+ 'unemp+vix+spread':['l_unemployment','l_vix','l_bbb_spread'],
+ 'unemp+vix+spread+nasdaq':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq'],
+ 'full8':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq','l_gdp','l_hpi','l_cpi'],
+ 'all9':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq','l_gdp','l_hpi','l_cpi','l_sp500','l_djia'],
+}
+for name,cols in sets.items():
+    sub=d.dropna(subset=['logit']+cols)
+    X=sm.add_constant(sub[cols].astype(float))
+    mod=sm.OLS(sub['logit'].astype(float), X).fit()
+    print(f'--- {name} n={len(sub)} adjR2={mod.rsquared_adj:.3f}')
+    for k in mod.params.index:
+        print(f'   {k:16s} {mod.params[k]:+.3f} (p={mod.pvalues[k]:.3f})')
+    print()
+"
 
 ```
 
@@ -575,6 +663,21 @@ Scenario new quarters: ['quarter', 'gdp', 'unemployment', 'hpi', 'bbb_spread', '
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+d=df.copy()
+d['logit']=np.log(d.default_rate/(1-d.default_rate))
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    d['l_'+c]=np.log(d[c])
+cols=['l_unemployment','l_vix','l_bbb_spread','l_nasdaq']
+print(d[cols].corr().round(2))
+print()
+print('corr with logit:')
+for c in cols:
+    m=d[[c,'logit']].notnull().all(axis=1)
+    print(c, round(np.corrcoef(d[c][m],d.logit[m])[0,1],3))
+"
 
 ```
 
@@ -644,6 +747,38 @@ l_nasdaq -0.315
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df=pd.read_csv('data/train.csv')
+s=pd.read_csv('data/scenario.csv')
+d=df.copy()
+d['logit']=np.log(d.default_rate/(1-d.default_rate))
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    d['l_'+c]=np.log(d[c]); s['l_'+c]=np.log(s[c])
+
+def logit(p): return np.log(p/(1-p))
+def invlogit(z): return 1/(1+np.exp(-z))
+
+sets = {
+ 'unemp':['l_unemployment'],
+ 'spread':['l_bbb_spread'],
+ 'spread+nasdaq':['l_bbb_spread','l_nasdaq'],
+ 'unemp+spread+nasdaq':['l_unemployment','l_bbb_spread','l_nasdaq'],
+ 'unemp+vix+spread+nasdaq':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq'],
+ 'unemp+vix+spread+nasdaq+gdp+cpi':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq','l_gdp','l_cpi'],
+ 'all_after32':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq','l_gdp','l_hpi','l_cpi','l_sp500','l_djia'],
+}
+for name,cols in sets.items():
+    sub=d.dropna(subset=['logit']+cols)
+    X=sm.add_constant(sub[cols].astype(float))
+    mod=sm.OLS(sub['logit'].astype(float), X).fit()
+    Xs=sm.add_constant(s[cols].astype(float))
+    pred_logit=mod.predict(Xs)
+    pred=invlogit(pred_logit)
+    print(f'--- {name} (n={len(sub)}) adjR2={mod.rsquared_adj:.3f}')
+    print('   scenario preds:', np.round(pred,4))
+"
 
 ```
 
@@ -807,6 +942,11 @@ dtype: float64
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+print(df[['quarter','gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi','default_rate']].iloc[30:].to_string())
+"
 
 ```
 
@@ -953,7 +1093,47 @@ dtype: float64
 **tool call: bash**
 
 ```
+cd /workspace && cat > model.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy import stats
 
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+
+feats = ['unemployment','vix','bbb_spread','nasdaq']
+d = df.copy()
+d['logit'] = np.log(d.default_rate/(1-d.default_rate))
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    d['l_'+c] = np.log(d[c])
+    sc['l_'+c] = np.log(sc[c])
+
+cols = ['l_'+f for f in feats]
+sub = d.dropna(subset=['logit']+cols)
+X = sm.add_constant(sub[cols].astype(float))
+mod = sm.OLS(sub['logit'].astype(float), X).fit()
+print(mod.summary())
+
+Xs = sm.add_constant(sc[cols].astype(float))
+mean_logit = mod.predict(Xs)
+n = len(sub); k = len(cols)
+mse = mod.mse_resid
+Xa = X.values
+covb = mse * np.linalg.inv(Xa.T @ Xa)
+Xs_arr = Xs.values
+var_pred = mse + np.einsum('ij,jk,ik->i', Xs_arr, covb, Xs_arr)
+dfree = n - k - 1
+tcrit = stats.t.ppf(0.975, dfree)
+lo_logit = mean_logit - tcrit*np.sqrt(var_pred)
+hi_logit = mean_logit + tcrit*np.sqrt(var_pred)
+invlogit = lambda z: 1/(1+np.exp(-z))
+pred = invlogit(mean_logit); lo = invlogit(lo_logit); hi=invlogit(hi_logit)
+out = pd.DataFrame({'quarter':sc.quarter,'y_pred':pred,'y_lower':lo,'y_upper':hi})
+print(out.round(5).to_string())
+out.to_csv('predictions.csv', index=False)
+print('saved', out.shape)
+EOF
+python model.py
 ```
 
 ## [27] tool
@@ -1024,6 +1204,38 @@ saved (9, 4)
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from sklearn.model_selection import KFold
+df=pd.read_csv('data/train.csv')
+d=df.copy()
+d['logit']=np.log(d.default_rate/(1-d.default_rate))
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    d['l_'+c]=np.log(d[c])
+cands={
+ 'unemp':['l_unemployment'],
+ 'spread':['l_bbb_spread'],
+ 'nasdaq':['l_nasdaq'],
+ 'spread+nasdaq':['l_bbb_spread','l_nasdaq'],
+ 'unemp+spread+nasdaq':['l_unemployment','l_bbb_spread','l_nasdaq'],
+ 'unemp+vix+spread+nasdaq':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq'],
+ 'unemp+spread+nasdaq+vix+gdp+hpi+cpi':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq','l_gdp','l_hpi','l_cpi'],
+}
+kf=KFold(5,shuffle=True,random_state=0)
+for name,cols in cands.items():
+    sub=d.dropna(subset=['logit']+cols).reset_index(drop=True)
+    y=sub['logit'].values
+    Xv=sub[cols].values
+    errs=[]
+    for tr,te in kf.split(Xv):
+        Xtr=sm.add_constant(Xv[tr]); Xte=sm.add_constant(Xv[te])
+        m=sm.OLS(y[tr],Xtr).fit()
+        p=m.predict(Xte)
+        errs.append((p-y[te])**2)
+    rmse=np.sqrt(np.mean(np.concatenate(errs)))
+    print(f'{name:28s} CV-RMSE(logit)={rmse:.3f}')
+"
 
 ```
 
@@ -1098,6 +1310,24 @@ unemp+spread+nasdaq+vix+gdp+hpi+cpi CV-RMSE(logit)=0.471
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df=pd.read_csv('data/train.csv'); sc=pd.read_csv('data/scenario.csv')
+d=df.copy(); d['logit']=np.log(d.default_rate/(1-d.default_rate))
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    d['l_'+c]=np.log(d[c]); sc['l_'+c]=np.log(sc[c])
+invlogit=lambda z:1/(1+np.exp(-z))
+for name,cols in {'spread+nasdaq':['l_bbb_spread','l_nasdaq'],
+                  'unemp+spread+nasdaq':['l_unemployment','l_bbb_spread','l_nasdaq'],
+                  'unemp+vix+spread+nasdaq':['l_unemployment','l_vix','l_bbb_spread','l_nasdaq']}.items():
+    sub=d.dropna(subset=['logit']+cols)
+    X=sm.add_constant(sub[cols]); m=sm.OLS(sub.logit,X).fit()
+    Xs=sm.add_constant(sc[cols]); p=invlogit(m.predict(Xs))
+    print(f'--- {name} n={len(sub)} adjR2={m.rsquared_adj:.3f}')
+    for k in m.params.index: print(f'   {k:14s}{m.params[k]:+.3f} (p={m.pvalues[k]:.3f})')
+    print('   pred:', np.round(p.values,4))
+"
 
 ```
 
@@ -1168,6 +1398,24 @@ unemp+spread+nasdaq+vix+gdp+hpi+cpi CV-RMSE(logit)=0.471
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df=pd.read_csv('data/train.csv')
+d=df.copy(); d['logit']=np.log(d.default_rate/(1-d.default_rate))
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    d['l_'+c]=np.log(d[c])
+cols=['l_unemployment','l_vix','l_bbb_spread','l_nasdaq']
+sub=d.dropna(subset=['logit']+cols)
+X=sm.add_constant(sub[cols]); m=sm.OLS(sub.logit,X).fit()
+sub=sub.copy(); sub['resid']=m.resid; sub['fitted']=m.fittedvalues
+sub['default']=1/(1+np.exp(-sub.fitted))
+sub=sub.sort_values('quarter')
+print(sub[['quarter','unemployment','vix','bbb_spread','nasdaq','default_rate','fitted','resid']].iloc[-20:].round(3).to_string())
+print()
+print('last rows resid sign count')
+print(sub['resid'].tail(15).round(2).tolist())
+"
 
 ```
 
@@ -1270,7 +1518,16 @@ Let me verify the predictions file and finalize.
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && echo "---" && python -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+s=pd.read_csv('data/scenario.csv')
+print('rows',len(p),'scenario rows',len(s))
+print('cols',list(p.columns))
+print('quarters match:', (p.quarter.values==s.quarter.values).all())
+print('all lower<=pred<=upper:', (p.y_lower<=p.y_pred).all() and (p.y_pred<=p.y_upper).all())
+print('all fractions in [0,1]:', ((p[['y_pred','y_lower','y_upper']]>=0).all().all() and (p[['y_pred','y_lower','y_upper']]<=1).all().all()))
+"
 ```
 
 ## [35] tool

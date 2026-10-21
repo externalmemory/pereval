@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+cd data && head train.csv && echo "---" && wc -l train.csv && echo "---" && head test.csv && echo "---" && wc -l test.csv && echo "---" && tail train.csv
 ```
 
 ## [3] tool
@@ -111,7 +111,15 @@ t
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd
+df=pd.read_csv('train.csv')
+print(df.head())
+print(df.tail())
+print(df.describe())
+print('test:')
+print(pd.read_csv('test.csv'))
+"
 ```
 
 ## [5] tool
@@ -172,7 +180,22 @@ test:
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+# look at beta in unwrapped form
+b=df.beta.values
+# unwrap
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+df['beta_u']=bu
+# print every 200
+for i in range(0,len(df),300):
+    print(int(df.t[i]), round(df.alpha[i],2), round(df.beta[i],2), round(bu[i],2))
+print('total unwrapped beta increase:', bu[-1]-bu[0])
+print('alpha range')
+a=df.alpha.values
+print('alpha diff:', a[-1]-a[0])
+"
 ```
 
 ## [7] tool
@@ -250,7 +273,27 @@ alpha diff: 4.046999999999997
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; a=df.alpha.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+# differentiate beta_u
+db=np.diff(bu,prepend=bu[0])
+# alpha periods: find local maxima of alpha
+# smooth
+from scipy.signal import argrelextrema
+am=argrelextrema(a, np.greater, order=30)[0]
+print('alpha local max indices/ts:', [int(t[i]) for i in am])
+print('differences:', np.diff([t[i] for i in am]))
+# beta slope
+print('avg slope beta_u over whole:', (bu[-1]-bu[0])/(t[-1]-t[0]))
+# check periodicity of residual after linear fit
+from numpy.polynomial import polynomial as P
+c=np.polyfit(t,bu,1)
+res=bu-np.polyval(c,t)
+print('residual range',res.min(),res.max())
+"
 ```
 
 ## [9] tool
@@ -278,7 +321,16 @@ residual range -54.088753279718276 58.248865411493966
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; a=df.alpha.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+# look at beta_u at t multiples of 360
+for t0 in range(0,3610,360):
+    i=np.argmin(np.abs(t-t0))
+    print(t0, round(a[i],2), round(bu[i],2))
+"
 ```
 
 ## [11] tool
@@ -319,7 +371,27 @@ residual range -54.088753279718276 58.248865411493966
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; a=df.alpha.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+# FFT of beta_u
+n=len(t)
+# detrend
+c=np.polyfit(t,bu,1)
+res=bu-np.polyval(c,t)
+res=res-res.mean()
+f=np.fft.rfftfreq(n)*n  # cycles per whole period in freq units
+ft=np.fft.rfft(res)
+mag=np.abs(ft)
+idx=np.argsort(mag)[::-1][:10]
+print('top freqs (cycles per 3609):')
+for i in idx:
+    print(f[i], 'mag', round(mag[i],1))
+# convert: freq per day = f/3609
+print('periods:', [round(3609/f[i]) for i in idx])
+"
 ```
 
 ## [13] tool
@@ -415,7 +487,15 @@ periods: [1203, 516, 902, 601, 722, 361, 1804, 451, 212, 401]
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; a=df.alpha.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+# samples
+for i in range(0,len(df),60):
+    print(int(t[i]), round(a[i],1), round(bu[i],1))
+"
 ```
 
 ## [15] tool
@@ -615,7 +695,23 @@ periods: [1203, 516, 902, 601, 722, 361, 1804, 451, 212, 401]
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+a=df.alpha.values; t=df.t.values
+n=len(t)
+# unwrap alpha
+au=np.unwrap(np.deg2rad(a))*180/np.pi
+c=np.polyfit(t,au,1)
+# alpha residual around maybe multiple periods? alpha has period 360, check 0..360 shape
+print('alpha period 360? values at same phase over cycles:')
+# alpha at t and t+360
+for t0 in [0,100,200]:
+    for k in range(0,3600,360):
+        i=t0+k
+        print(k,t0,round(a[i],1))
+    print('---')
+"
 ```
 
 ## [17] tool
@@ -701,7 +797,20 @@ alpha period 360? values at same phase over cycles:
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; a=df.alpha.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+c=np.polyfit(t,bu,1)
+res=bu-np.polyval(c,t)
+# autocorrelation at various lags
+def autocorr(x,lag):
+    x=x-x.mean()
+    return np.sum(x[:len(x)-lag]*x[lag:])/np.sum(x*x)
+for lag in [360,720,1080,1440,1800,2160,3609]:
+    print('lag',lag,'ac',round(autocorr(res,lag),3))
+"
 ```
 
 ## [19] tool
@@ -742,7 +851,25 @@ lag 3609 ac 0.0
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; a=df.alpha.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+c=np.polyfit(t,bu,1)
+res=bu-np.polyval(c,t)
+res=res-res.mean()
+n=len(t)
+# compute Lomb-Scargle style via fine grid periodogram
+from scipy.signal import periodogram
+# use periodogram with many frequencies
+f,p=periodogram(res, fs=1.0, detrend=False, nfft=2**16)
+# convert to period
+idx=np.argsort(p)[::-1][:10]
+for i in idx:
+    freq=f[i]  # cycles/day
+    print('period',round(1/freq,2),'power',round(p[i],3))
+"
 ```
 
 ## [21] tool
@@ -808,7 +935,51 @@ period 992.97 power 1948953.264
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; a=df.alpha.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
 
+# Fit beta_u = constant + slope*t + sum of sinusoids at given periods, extrapolate to holdout
+train=df[t<2880]
+val=df[t>=2880]
+tt=train.t.values; bv=bu[:len(train.t)]
+# refit on full for periods
+from numpy.linalg import lstsq
+def fit_predict_periods(tt,bv,tp,tq):
+    # design: t, 1, sin/cos for each period
+    cols=[np.ones(len(tt)),tt]
+    for per,t0 in tp:
+        cols.append(np.sin(2*np.pi*(tt-t0)/per))
+        cols.append(np.cos(2*np.pi*(tt-t0)/per))
+    X=np.array(cols).T
+    coef,_,_,_=lstsq(X,bv,rcond=None)
+    # predict
+    cols=[np.ones(len(tq)),tq]
+    for per,t0 in tp:
+        cols.append(np.sin(2*np.pi*(tq-t0)/per))
+        cols.append(np.cos(2*np.pi*(tq-t0)/per))
+    Xq=np.array(cols).T
+    return Xq@coef
+
+tq=val.t.values; bq=bu[len(train.t):]
+# candidate models
+from itertools import product
+cands={
+ 'linear':[],
+ '1080':[(1080,0)],
+ '1080+360':[(1080,0),(360,0)],
+ '1080+540':[(1080,0),(540,0)],
+ '1080+1080h':[(1080,0),(540,0),(360,0)],
+ '1024':[(1024,0)],
+ '1057':[(1057,0)],
+}
+for name,tp in cands.items():
+    pred=fit_predict_periods(tt,bv,tp,tq)
+    rmse=np.sqrt(np.mean((pred-bq)**2))
+    print(name,'rmse',round(rmse,2))
+"
 ```
 
 ## [23] tool
@@ -851,7 +1022,32 @@ linear rmse 31.68
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+from numpy.linalg import lstsq
+def fit(tt,bv,pers,trend=True):
+    cols=[]
+    if trend:
+        cols=[np.ones(len(tt))]
+        cols.append(tt)
+    else:
+        cols=[np.ones(len(tt))]
+    for per in pers:
+        cols.append(np.sin(2*np.pi*tt/per))
+        cols.append(np.cos(2*np.pi*tt/per))
+    X=np.array(cols).T
+    coef,_,_,_=lstsq(X,bv,rcond=None)
+    return X@coef,coef
+# residuals on full data (in-sample)
+for pers in [[360,540],[360,540,1080],[360,1080],[540,1080],[360,540,1080,720],[ 360, 540, 720]]:
+    for trend in [True,False]:
+        pred,coef=fit(t,bu,pers,trend)
+        res=bu-pred
+        print(pers,'trend',trend,'in-sample res std',round(res.std(),3),'range',round(res.min(),1),round(res.max(),1))
+"
 ```
 
 ## [25] tool
@@ -911,7 +1107,22 @@ linear rmse 31.68
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+a=df.alpha.values; t=df.t.values
+au=np.unwrap(np.deg2rad(a))*180/np.pi
+# fit alpha with period 360
+from numpy.linalg import lstsq
+X=np.array([np.ones(len(t)),t,np.sin(2*np.pi*t/360),np.cos(2*np.pi*t/360)]).T
+coef,_,_,_=lstsq(X,au,rcond=None)
+pred=X@coef
+print('coefs const,slope,sin,cos:',coef)
+print('res std', (au-pred).std())
+print('slope deg/day:',coef[1],'period for drift days:',360/coef[1])
+# amplitude
+print('sin amp',coef[2],'cos amp',coef[3])
+"
 ```
 
 ## [27] tool
@@ -1003,7 +1214,39 @@ sin amp -29.453968723615535 cos amp 24.593463843111557
 **tool call: bash**
 
 ```
+cd data && cat > model_test.py << 'EOF'
+import pandas as pd, numpy as np
+from numpy.linalg import lstsq
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t)
 
+def fitpred(tt,bv,tq,pers):
+    cols=[np.ones(len(tt)),tt]
+    for per in pers:
+        cols.append(np.sin(2*np.pi*tt/per)); cols.append(np.cos(2*np.pi*tt/per))
+    X=np.array(cols).T
+    coef,_,_,_=lstsq(X,bv,rcond=None)
+    cols=[np.ones(len(tq)),tq]
+    for per in pers:
+        cols.append(np.sin(2*np.pi*tq/per)); cols.append(np.cos(2*np.pi*tq/per))
+    Xq=np.array(cols).T
+    return Xq@coef
+
+# multiple rolling splits: train up to cutoff, validate next 600-700 days
+cutoffs=[2000,2400,2700,2900]
+for per_obj in [500,520,540,560,580]:
+    pers=[360,per_obj,2*per_obj]
+    rmses=[]
+    for c in cutoffs:
+        tr=t<=c; val=(t>c)&(t<=c+600)
+        bv=bu[tr]; tt=t[tr]; tq=t[val]; bq=bu[val]
+        pred=fitpred(tt,bv,tq,pers)
+        rmses.append(np.sqrt(np.mean((pred-bq)**2)))
+    print('objper',per_obj,'avgrms',round(np.mean(rmses),2),rmses)
+EOF
+python3 model_test.py
 ```
 
 ## [29] tool
@@ -1058,7 +1301,35 @@ objper 580 avgrms 28.74 [np.float64(23.77547441083512), np.float64(35.2627541416
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; a=df.alpha.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+# estimate noise from local differencing on unwrapped (but slope adds). Use residual from smooth.
+# fit model
+from numpy.linalg import lstsq
+pers=[360,540,1080]
+cols=[np.ones(len(t)),t]
+for per in pers:
+    cols.append(np.sin(2*np.pi*t/per)); cols.append(np.cos(2*np.pi*t/per))
+X=np.array(cols).T
+coef,_,_,_=lstsq(X,bu,rcond=None)
+pred=X@coef
+res=bu-pred
+print('res std',res.std(),'res mean abs',np.abs(res).mean())
+# estimate noise via high-freq: second difference of residual
+d2=np.diff(res,2)
+# variance of second diff = 6*sigma^2
+print('sigma from 2nd diff:',np.sqrt(np.var(d2)/6))
+# also alpha
+au=np.unwrap(np.deg2rad(a))*180/np.pi
+cols=[np.ones(len(t)),t,np.sin(2*np.pi*t/360),np.cos(2*np.pi*t/360)]
+X=np.array(cols).T
+coef2,_,_,_=lstsq(X,au,rcond=None)
+res2=au-X@coef2
+print('alpha res std',res2.std(),'sigma from 2nd diff',np.sqrt(np.var(np.diff(res2,2))/6))
+"
 ```
 
 ## [31] tool
@@ -1138,7 +1409,17 @@ alpha res std 5.856536889249566 sigma from 2nd diff 0.24198613391348178
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+# check beta mod 360 periodic with 1080
+for t0 in range(0,2000,100):
+    i=np.argmin(np.abs(t-t0)); j=np.argmin(np.abs(t-(t0+1080)))
+    d=np.mod(b[j]-b[i],360)
+    if d>180: d=d-360
+    print(t0, round(b[i],1), round(b[j],1), 'diff',round(d,1))
+"
 ```
 
 ## [33] tool
@@ -1186,7 +1467,28 @@ alpha res std 5.856536889249566 sigma from 2nd diff 0.24198613391348178
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+# t from 0..3608, t+1080 within range for t<=2528
+t0=t[t<=2520]
+diffs=[]
+for x in t0:
+    i=np.argmin(np.abs(t-x)); j=np.argmin(np.abs(t-(x+1080)))
+    d=np.mod(b[j]-b[i],360)
+    if d>180: d=d-360
+    diffs.append((x,d))
+diffs=np.array(diffs)
+# fit trend
+c=np.polyfit(diffs[:,0],diffs[:,1],1)
+print('slope of diff vs t0:',c[0])
+print('mean diff:',diffs[:,1].mean(),'std',diffs[:,1].std())
+# check if residual (diff after linear) periodic
+res=diffs[:,1]-np.polyval(c,diffs[:,0])
+# maybe residual is periodic with the drift
+print(res.min(),res.max())
+"
 ```
 
 ## [35] tool
@@ -1219,7 +1521,23 @@ mean diff: -0.6470270130900434 std 0.39997305824103513
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+def periodicity(P):
+    pairs=[]; t0=t[t<=3600-P]
+    for x in t0[::5]:
+        i=np.argmin(np.abs(t-x)); j=np.argmin(np.abs(t-(x+P)))
+        d=np.mod(b[j]-b[i],360)
+        if d>180: d-=360
+        pairs.append(d)
+    pairs=np.array(pairs)
+    return pairs.std(), pairs.mean()
+for P in [1075,1076,1077,1078,1079,1080,1081,1082,1083,1084,1085]:
+    s,m=periodicity(P)
+    print(P,'std',round(s,3),'mean',round(m,2))
+"
 ```
 
 ## [37] tool
@@ -1300,7 +1618,41 @@ mean diff: -0.6470270130900434 std 0.39997305824103513
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.interpolate import UnivariateSpline
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
 
+def periodic_predict(P, train_t, train_b, q, phase=0.0):
+    # map q to (q mod P)+phase, within train range
+    # gather training points by phase
+    out=[]
+    for qv in q:
+        ph=np.mod(qv,P)
+        # phase values ph+phase
+        # collect all training points whose t mod P == ph (within tolerance)
+        # use interpolation on a single representative (t%P, beta) using all cycles
+        out.append(np.nan)
+    return np.array(out)
+
+def fit_periodic(P, train_t, train_b, q):
+    # build a spline on phase grid using all cycles
+    phase=np.mod(train_t,P)
+    # sort phase, fit smoothing spline to phase->beta
+    spl=UnivariateSpline(phase, train_b, s=len(train_t)*0.5, k=3)
+    return spl(np.mod(q,P))
+
+# validation
+tr=(t<2880); val=(t>=2880)
+tt=t[tr]; bb=b[tr]; tq=t[val]; bq=b[val]
+for P in [1070,1075,1080,1085,1090]:
+    pred=fit_periodic(P,tt,bb,tq)
+    # handle angle distance
+    d=np.mod(pred-bq,360); d=np.where(d>180,d-360,d)
+    rmse=np.sqrt(np.mean(d**2))
+    print('P',P,'rmse',round(rmse,2))
+"
 ```
 
 ## [39] tool
@@ -1328,7 +1680,36 @@ ValueError: x must be increasing if s > 0
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.interpolate import UnivariateSpline, interp1d
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
 
+def fit_periodic(P, train_t, train_b, q, sfrac=1.0):
+    phase=np.mod(train_t,P)
+    # round to nearest int to group, average
+    keys=np.round(phase,1)
+    d=pd.DataFrame({'ph':phase,'b':train_b}).groupby(np.round(phase,1)).mean()
+    ph=d.index.values; bb=d.values[:,0]
+    # wrap for smoother cyclic interp: duplicate
+    order=np.argsort(ph)
+    ph=ph[order]; bb=bb[order]
+    # extend for wrap
+    ph_ext=np.concatenate([ph-P, ph, ph+P])
+    bb_ext=np.concatenate([bb, bb, bb])
+    spl=UnivariateSpline(ph_ext,bb_ext,s=len(ph)*sfrac,k=3)
+    return spl(np.mod(q,P))
+
+tr=(t<2880); val=(t>=2880)
+tt=t[tr]; bb=b[tr]; tq=t[val]; bq=b[val]
+for P in [1075,1080,1085]:
+    for sf in [0.3,1.0,2.0]:
+        pred=fit_periodic(P,tt,bb,tq,sf)
+        d=np.mod(pred-bq,360); d=np.where(d>180,d-360,d)
+        rmse=np.sqrt(np.mean(d**2))
+        print('P',P,'sf',sf,'rmse',round(rmse,3))
+"
 ```
 
 ## [41] tool
@@ -1371,7 +1752,33 @@ P 1085 sf 2.0 rmse 102.447
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+P=1080
+# direct check: beta(t)%360 vs beta((t mod P)+P0)
+# build lookup: phase -> mean beta (wrapped into [0,360))
+# use training data, phase in [0,P)
+phase=np.mod(t,P)
+d=pd.DataFrame({'ph':phase,'b':b})
+# bin phase into 1-degree bins
+d['bin']=np.floor(d.ph).astype(int)
+grp=d.groupby('bin')['b'].mean()
+# predict validation
+tr=(t<2880); val=(t>=2880)
+tq=t[val]; bq=b[val]
+pred=[]
+for qv in tq:
+    ph=qv % P
+    binv=int(np.floor(ph))
+    # nearest bin
+    pred.append(grp.reindex([binv]).values[0])
+pred=np.array(pred)
+d2=np.mod(pred-bq,360); d2=np.where(d2>180,d2-360,d2)
+print('RMSE',np.sqrt(np.mean(d2**2)))
+print('sample preds:',pred[:5],'actual',bq[:5])
+"
 ```
 
 ## [43] tool
@@ -1419,7 +1826,40 @@ sample preds: [274.30963333 274.97923333 275.41496667 276.2564     276.29533333]
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from numpy.linalg import lstsq
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t)
 
+def fourier(tt,bv,tq,P,nmax,trend=True):
+    cols=[]
+    if trend: cols=[np.ones(len(tt)),tt]
+    else: cols=[np.ones(len(tt))]
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tt/per)); cols.append(np.cos(2*np.pi*tt/per))
+    X=np.array(cols).T
+    coef,_,_,_=lstsq(X,bv,rcond=None)
+    cols=[]
+    if trend: cols=[np.ones(len(tq)),tq]
+    else: cols=[np.ones(len(tq))]
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tq/per)); cols.append(np.cos(2*np.pi*tq/per))
+    Xq=np.array(cols).T
+    return Xq@coef
+
+# validation
+tr=(t<2880); val=(t>=2880)
+tt=t[tr]; bv=bu[tr]; tq=t[val]; bq=bu[val]
+for nmax in [3,5,8,12,20]:
+    pred=fourier(tt,bv,tq,1080,nmax,trend=True)
+    rmse=np.sqrt(np.mean((pred-bq)**2))
+    print('harmonics',nmax,'rmse',round(rmse,3))
+"
 ```
 
 ## [45] tool
@@ -1452,7 +1892,37 @@ harmonics 20 rmse 0.434
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from numpy.linalg import lstsq
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
 
+def fourier(tt,bv,tq,P,nmax):
+    cols=[np.ones(len(tt)),tt]
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tt/per)); cols.append(np.cos(2*np.pi*tt/per))
+    X=np.array(cols).T
+    coef,_,_,_=lstsq(X,bv,rcond=None)
+    cols=[np.ones(len(tq)),tq]
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tq/per)); cols.append(np.cos(2*np.pi*tq/per))
+    Xq=np.array(cols).T
+    return Xq@coef, coef
+
+# rolling validation over several cutoff points
+for nmax in [8,12,16,20,25]:
+    rmses=[]
+    for c in [2000,2400,2700,2900,3000]:
+        tr=t<=c; val=(t>c)&(t<=c+600)
+        tt=t[tr]; bv=bu[tr]; tq=t[val]; bq=bu[val]
+        pred,coef=fourier(tt,bv,tq,1080,nmax)
+        rmses.append(np.sqrt(np.mean((pred-bq)**2)))
+    print('nmax',nmax,'mean rmse',round(np.mean(rmses),2),'each',[round(x,2) for x in rmses])
+"
 ```
 
 ## [47] tool
@@ -1502,7 +1972,26 @@ nmax 25 mean rmse 0.44 each [np.float64(0.38), np.float64(0.39), np.float64(0.51
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from numpy.linalg import lstsq
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+def fourier(tt,bv,P,nmax,trend=True):
+    cols=[np.ones(len(tt))]
+    if trend: cols.append(tt)
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tt/per)); cols.append(np.cos(2*np.pi*tt/per))
+    X=np.array(cols).T
+    coef,_,_,_=lstsq(X,bv,rcond=None)
+    return X@coef,coef
+for nmax in [10,20,30,40,60,80]:
+    pred,coef=fourier(t,bu,1080,nmax)
+    r=bu-pred
+    print('nmax',nmax,'res std',round(r.std(),4),'maxabs',round(np.abs(r).max(),3),'slope',round(coef[1],5))
+"
 ```
 
 ## [49] tool
@@ -1550,7 +2039,33 @@ nmax 80 res std 0.3063 maxabs 1.117 slope 0.33276
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from numpy.linalg import lstsq
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+def fourier(tt,bv,tq,P,nmax):
+    cols=[np.ones(len(tt)),tt]
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tt/per)); cols.append(np.cos(2*np.pi*tt/per))
+    X=np.array(cols).T
+    coef,_,_,_=lstsq(X,bv,rcond=None)
+    cols=[np.ones(len(tq)),tq]
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tq/per)); cols.append(np.cos(2*np.pi*tq/per))
+    Xq=np.array(cols).T
+    return Xq@coef
+# long-horizon validation train up to 2000, holdout 2001..3608
+tr=t<=2000; val=t>2000
+tt=t[tr]; bv=bu[tr]; tq=t[val]; bq=bu[val]
+for nmax in [6,8,12,16,20]:
+    pred=fourier(tt,bv,tq,1080,nmax)
+    rmse=np.sqrt(np.mean((pred-bq)**2))
+    print('nmax',nmax,'long-horizon rmse',round(rmse,3))
+"
 ```
 
 ## [51] tool
@@ -1591,7 +2106,57 @@ nmax 20 long-horizon rmse 0.453
 **tool call: bash**
 
 ```
+cd data && cat > build_model.py << 'EOF'
+import pandas as pd, numpy as np
+from numpy.linalg import lstsq, inv
 
+df=pd.read_csv('train.csv')
+test=pd.read_csv('test.csv')
+t=df.t.values; b=df.beta.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t)
+P=1080.0
+nmax=20
+
+def build_design(tt,P,nmax,trend=True):
+    cols=[np.ones(len(tt))]
+    if trend: cols.append(tt)
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tt/per)); cols.append(np.cos(2*np.pi*tt/per))
+    return np.array(cols).T
+
+X=build_design(t,P,nmax)
+coef,_,_,_=lstsq(X,bu,rcond=None)
+pred_train=X@coef
+res=bu-pred_train
+p=X.shape[1]
+sigma2=np.sum(res**2)/(n-p)
+sigma=np.sqrt(sigma2)
+print('sigma (noise) =',round(sigma,4))
+print('slope=',round(coef[1],5))
+
+# test predictions
+tq=test.t.values
+Xq=build_design(tq,P,nmax)
+pred=Xq@coef
+# prediction error variance for new observation: sigma2*(1 + h)
+XtX_inv=inv(X.T@X)
+h=np.einsum('ij,jk,ik->i', Xq, XtX_inv, Xq)
+se=np.sqrt(sigma2*(1+h))
+print('se range',se.min(),se.max())
+# wrap predictions
+def wrap(a):
+    return np.mod(a,360.0)
+y_pred=wrap(pred)
+y_lo=wrap(pred-1.96*se)
+y_hi=wrap(pred+1.96*se)
+
+out=pd.DataFrame({'t':test.t.values,'y_pred':y_pred,'y_lower':y_lo,'y_upper':y_hi})
+print(out)
+out.to_csv('../predictions.csv',index=False)
+EOF
+python3 build_model.py
 ```
 
 ## [53] tool
@@ -1659,7 +2224,25 @@ se range 0.31337468577068556 0.31398908362449635
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from numpy.linalg import lstsq
+df=pd.read_csv('train.csv')
+b=df.beta.values; t=df.t.values
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+def fitP(tt,bv,P,nmax):
+    cols=[np.ones(len(tt)),tt]
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tt/per)); cols.append(np.cos(2*np.pi*tt/per))
+    X=np.array(cols).T
+    coef,_,_,_=lstsq(X,bv,rcond=None)
+    return bu-X@coef  # residual on this data
+for P in [1060,1070,1080,1090,1100,540,720,2160]:
+    # full in-sample residual
+    r=fitP(t,bu,P,20)
+    print('P',P,'in-sample res std',round(r.std(),4))
+"
 ```
 
 ## [55] tool
@@ -1719,7 +2302,14 @@ P 2160 in-sample res std 0.4841
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd
+d=pd.read_csv('../predictions.csv')
+print(d.shape)
+print(d.head())
+print(d['t'].values)
+print('rows:',len(d))
+"
 ```
 
 ## [57] tool
@@ -1748,7 +2338,10 @@ rows: 10
 **tool call: bash**
 
 ```
-
+cd data && wc -l test.csv && python3 -c "
+import pandas as pd
+print(len(pd.read_csv('test.csv')))
+" && ls -la predictions.csv
 ```
 
 ## [59] tool
@@ -1772,7 +2365,7 @@ ls: cannot access 'predictions.csv': No such file or directory
 **tool call: bash**
 
 ```
-
+pwd && ls -la && echo "---" && ls -la ../predictions.csv && echo "---" && ls -la data
 ```
 
 ## [61] tool
@@ -1803,7 +2396,15 @@ drwxr-xr-x 2 root root 4096 Aug 11 00:55 data
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+pred=pd.read_csv('predictions.csv')
+test=pd.read_csv('data/test.csv')
+print('pred rows:',len(pred),'test rows:',len(test))
+print('columns:',list(pred.columns))
+print(pred)
+print('t match:', (pred.t.values==test.t.values).all())
+"
 ```
 
 ## [63] tool
@@ -1843,7 +2444,26 @@ t match: True
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+b=df.beta.values; t=df.t.values
+P=1080
+# for each phase, collect values across cycles and compute spread
+ph=t%P
+# group by rounded phase
+g=pd.DataFrame({'ph':np.round(ph,2),'b':b})
+gc=g.groupby('ph')['b'].agg(['count',lambda x: x.std()])
+gc=gc[gc['count']>=3]
+print('mean within-phase std (noise estimate):',round(gc['<lambda_0>'].mean(),4))
+print('median:',round(gc['<lambda_0>'].median(),4))
+# also do same in unwrapped
+bu=np.unwrap(np.deg2rad(b))*180/np.pi
+g2=pd.DataFrame({'ph':np.round(ph,2),'bu':bu})
+gc2=g2.groupby('ph')['bu'].agg(['count',lambda x: x.std(ddof=1)])
+gc2=gc2[gc2['count']>=3]
+print('unwrapped within-phase std:',round(gc2['<lambda_0>'].mean(),4))
+"
 ```
 
 ## [65] tool
@@ -1890,7 +2510,27 @@ unwrapped within-phase std: 395.072
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from numpy.linalg import lstsq, inv
+df=pd.read_csv('data/train.csv'); test=pd.read_csv('data/test.csv')
+t=df.t.values; b=df.beta.values; bu=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t); P=1080.0
+def build(tt,P,nmax):
+    cols=[np.ones(len(tt)),tt]
+    for k in range(1,nmax+1):
+        per=P/k
+        cols.append(np.sin(2*np.pi*tt/per)); cols.append(np.cos(2*np.pi*tt/per))
+    return np.array(cols).T
+tq=test.t.values
+for nmax in [12,16,20,25,30]:
+    X=build(t,P,nmax); coef,_,_,_=lstsq(X,bu,rcond=None)
+    p=X.shape[1]; sigma2=np.sum((bu-X@coef)**2)/(n-p)
+    Xq=build(tq,P,nmax); pred=Xq@coef
+    h=np.einsum('ij,jk,ik->i',Xq,inv(X.T@X),Xq)
+    se=np.sqrt(sigma2*(1+h))
+    print('nmax',nmax,'sigma',round(sqrt if False else np.sqrt(sigma2),4),'pred t_4331',round(np.mod(pred[4],360),4),'halfwidth',round(1.96*se[4],4))
+"
 ```
 
 ## [67] tool
@@ -1931,7 +2571,15 @@ nmax 30 sigma 0.3118 pred t_4331 355.1676 halfwidth 0.6161
 **tool call: bash**
 
 ```
-
+cd /workspace && head predictions.csv && echo "..." && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); ts=pd.read_csv('data/test.csv')
+assert list(p.columns)==['t','y_pred','y_lower','y_upper']
+assert len(p)==len(ts)
+assert (p.t.values==ts.t.values).all()
+assert (p.y_lower<=p.y_pred).all() and (p.y_pred<=p.y_upper).all()
+print('OK rows',len(p))
+"
 ```
 
 ## [69] tool
@@ -1993,7 +2641,7 @@ The model is built and predictions are saved. Let me do a final sanity check on 
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv
 ```
 
 ## [73] tool

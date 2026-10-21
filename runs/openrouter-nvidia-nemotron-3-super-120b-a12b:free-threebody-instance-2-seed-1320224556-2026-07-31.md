@@ -56,7 +56,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+ls -la
 ```
 
 ## [3] tool
@@ -80,7 +80,7 @@ drwxr-xr-x 2 root root 4096 Jul 31 23:08 data
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [5] tool
@@ -105,7 +105,7 @@ drwxr-xr-x 1 root root  4096 Jul 31 23:08 ..
 **tool call: bash**
 
 ```
-
+head -5 data/train.csv
 ```
 
 ## [7] tool
@@ -128,7 +128,7 @@ t,alpha,beta
 **tool call: bash**
 
 ```
-
+head -5 data/test.csv
 ```
 
 ## [9] tool
@@ -154,7 +154,7 @@ t
 **tool call: bash**
 
 ```
-
+tail -5 data/train.csv
 ```
 
 ## [11] tool
@@ -180,7 +180,7 @@ t
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv
 ```
 
 ## [13] tool
@@ -446,7 +446,7 @@ ls -la data/
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [25] tool
@@ -678,7 +678,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [29] tool
@@ -700,7 +700,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+wc -l data/test.csv
 ```
 
 ## [31] tool
@@ -723,7 +723,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [33] tool
@@ -767,7 +767,7 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
-
+ls -l *.csv
 ```
 
 ## [35] tool
@@ -1008,7 +1008,7 @@ max / sigma: 1.8631793189309849
 **tool call: bash**
 
 ```
-
+head -5 predictions.csv
 ```
 
 ## [45] tool
@@ -1168,7 +1168,7 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+awk -F, 'NR>1 {print $1,$2,$3,$4}' predictions.csv | head -10
 ```
 
 ## [51] tool
@@ -1211,7 +1211,73 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
+cat > predict_beta.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+def main():
+    train = pd.read_csv('data/train.csv')
+    test = pd.read_csv('data/test.csv')
+    
+    t_train = train['t'].values
+    beta_raw = train['beta'].values  # degrees 0-360
+    
+    # unwrap beta
+    unwrapped = np.zeros_like(beta_raw, dtype=float)
+    unwrapped[0] = beta_raw[0]
+    for i in range(1, len(beta_raw)):
+        delta = ((beta_raw[i] - beta_raw[i-1] + 180) % 360) - 180
+        unwrapped[i] = unwrapped[i-1] + delta
+    
+    # linear regression: unwrapped = a * t + b
+    A = np.vstack([t_train, np.ones_like(t_train)]).T
+    a, b = np.linalg.lstsq(A, unwrapped, rcond=None)[0]
+    
+    # residuals and sigma
+    pred_unwrapped = a * t_train + b
+    residuals = unwrapped - pred_unwrapped
+    sigma = np.sqrt(np.sum(residuals**2) / (len(t_train) - 2))  # unbiased
+    
+    # summary stats
+    mean_t = np.mean(t_train)
+    n = len(t_train)
+    Sxx = np.sum((t_train - mean_t) ** 2)
+    
+    def predict_interval(t_val):
+        mean_pred = a * t_val + b
+        var_pred = sigma**2 * (1 + 1/n + ((t_val - mean_t)**2) / Sxx)
+        std_pred = np.sqrt(var_pred)
+        lower = mean_pred - 1.96 * std_pred
+        upper = mean_pred + 1.96 * std_pred
+        # wrap to [0, 360)
+        lower_wrapped = ((lower % 360) + 360) % 360
+        upper_wrapped = ((upper % 360) + 360) % 360
+        pred_wrapped = ((mean_pred % 360) + 360) % 360
+        return pred_wrapped, lower_wrapped, upper_wrapped
+    
+    t_test = test['t'].values
+    preds = []
+    lowers = []
+    uppers = []
+    for t_val in t_test:
+        p, l, u = predict_interval(t_val)
+        preds.append(p)
+        lowers.append(l)
+        uppers.append(u)
+    
+    output = pd.DataFrame({
+        't': t_test,
+        'y_pred': preds,
+        'y_lower': lowers,
+        'y_upper': uppers
+    })
+    output.to_csv('predictions.csv', index=False)
+    print('Saved predictions.csv')
+    print(output.head())
+
+if __name__ == '__main__':
+    main()
+EOF
 ```
 
 ## [53] tool
@@ -1229,7 +1295,7 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+python3 predict_beta.py
 ```
 
 ## [55] tool
@@ -1263,7 +1329,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [57] tool
@@ -1309,7 +1375,7 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
-
+echo 'Predictions file ready.'
 ```
 
 ## [59] tool

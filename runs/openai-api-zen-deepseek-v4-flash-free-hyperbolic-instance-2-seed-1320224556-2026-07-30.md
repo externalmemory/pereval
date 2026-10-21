@@ -57,19 +57,19 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd /home/user && cat data/train.csv | head -20
 ```
 
 **tool call: bash**
 
 ```
-
+cd /home/user && cat data/test.csv | head -20
 ```
 
 **tool call: bash**
 
 ```
-
+cd /home/user && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -101,7 +101,7 @@ bash: line 1: cd: /home/user: No such file or directory
 **tool call: bash**
 
 ```
-
+pwd && ls -la
 ```
 
 ## [7] tool
@@ -124,19 +124,19 @@ drwxr-xr-x 2 root root 4096 Jul 30 17:52 data
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 **tool call: bash**
 
 ```
-
+head -5 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -5 data/test.csv
 ```
 
 ## [9] tool
@@ -177,7 +177,7 @@ t
 **tool call: bash**
 
 ```
-
+tail -30 data/train.csv
 ```
 
 ## [13] tool
@@ -225,7 +225,16 @@ t
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.shape)
+print(df.head(10))
+print(df.tail(10))
+print(df.info())
+print('Missing values:')
+print(df.isnull().sum())
+"
 ```
 
 ## [15] tool
@@ -284,7 +293,18 @@ dtype: int64
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+# find first row where beta not null
+print('First non-null beta index:', df['beta'].first_valid_index())
+print('Last non-null beta index:', df['beta'].last_valid_index())
+# check distribution of nulls
+print('Rows with beta non-null:')
+print(df[df['beta'].notna()].head())
+print('...')
+print(df[df['beta'].notna()].tail())
+"
 ```
 
 ## [17] tool
@@ -318,7 +338,7 @@ Rows with beta non-null:
 **tool call: bash**
 
 ```
-
+cat data/test.csv
 ```
 
 ## [19] tool
@@ -359,7 +379,23 @@ t
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+import matplotlib.pyplot as plt
+df = pd.read_csv('data/train.csv')
+plt.figure(figsize=(12,8))
+plt.subplot(3,1,1)
+plt.plot(df['t'], df['alpha'], label='alpha')
+plt.legend()
+plt.subplot(3,1,2)
+plt.plot(df['t'], df['beta'], label='beta')
+plt.legend()
+plt.subplot(3,1,3)
+plt.plot(df['t'], df['gamma'], label='gamma')
+plt.legend()
+plt.savefig('series.png')
+print('saved')
+"
 ```
 
 ## [21] tool
@@ -381,7 +417,25 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import numpy as np
+import pandas as pd
+import scipy
+import statsmodels
+import sklearn
+print('all imports ok')
+# check for matplotlib
+try:
+    import matplotlib
+    print('matplotlib version:', matplotlib.__version__)
+except:
+    print('no matplotlib')
+try:
+    import seaborn
+    print('seaborn')
+except:
+    print('no seaborn')
+"
 ```
 
 ## [23] tool
@@ -412,7 +466,20 @@ no seaborn
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+# describe alpha
+print('Alpha stats:')
+print(df['alpha'].describe())
+print()
+# print alpha values at regular intervals
+for t in range(0, 545, 50):
+    row = df[df['t']==t]
+    if len(row):
+        print(t, row['alpha'].values[0])
+"
 ```
 
 ## [25] tool
@@ -454,7 +521,20 @@ Name: alpha, dtype: float64
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+print('Observed gamma range: t from', df_obs['t'].min(), 'to', df_obs['t'].max())
+print('Gamma stats:')
+print(df_obs['gamma'].describe())
+print()
+# print some values
+print('t, alpha, beta, gamma')
+for _, row in df_obs.iterrows():
+    print(int(row['t']), row['alpha'], row['beta'], row['gamma'])
+"
 ```
 
 ## [27] tool
@@ -664,7 +744,59 @@ t, alpha, beta, gamma
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+
+# try linear regression of gamma on t
+X = df_obs[['t']]
+y = df_obs['gamma']
+lr = LinearRegression().fit(X, y)
+print('Linear on t: coef', lr.coef_, 'intercept', lr.intercept_)
+print('R^2:', lr.score(X, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr.predict(X))))
+
+# try quadratic
+X2 = np.column_stack([df_obs['t'], df_obs['t']**2])
+lr2 = LinearRegression().fit(X2, y)
+print('Quadratic on t: R^2:', lr2.score(X2, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr2.predict(X2))))
+
+# try alpha
+Xa = df_obs[['alpha']]
+lr_a = LinearRegression().fit(Xa, y)
+print('Linear on alpha: R^2:', lr_a.score(Xa, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr_a.predict(Xa))))
+
+# try alpha + alpha^2
+Xa2 = np.column_stack([df_obs['alpha'], df_obs['alpha']**2])
+lr_a2 = LinearRegression().fit(Xa2, y)
+print('Quadratic on alpha: R^2:', lr_a2.score(Xa2, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr_a2.predict(Xa2))))
+
+# try beta
+Xb = df_obs[['beta']]
+lr_b = LinearRegression().fit(Xb, y)
+print('Linear on beta: R^2:', lr_b.score(Xb, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr_b.predict(Xb))))
+
+# try t and alpha
+Xta = df_obs[['t', 'alpha']]
+lr_ta = LinearRegression().fit(Xta, y)
+print('Linear on t+alpha: R^2:', lr_ta.score(Xta, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr_ta.predict(Xta))))
+
+# try t, alpha, beta
+Xtab = df_obs[['t', 'alpha', 'beta']]
+lr_tab = LinearRegression().fit(Xtab, y)
+print('Linear on t+alpha+beta: R^2:', lr_tab.score(Xtab, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr_tab.predict(Xtab))))
+"
 ```
 
 ## [29] tool
@@ -703,7 +835,28 @@ RMSE: 1.6077811003452946
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+# compute diff of alpha
+alpha = df['alpha'].values
+t = df['t'].values
+dalpha = np.diff(alpha)
+print('Alpha diff stats:')
+print('mean:', np.mean(dalpha))
+print('std:', np.std(dalpha))
+print('min:', np.min(dalpha))
+print('max:', np.max(dalpha))
+# check where alpha wraps (large negative jumps)
+wrap_indices = np.where(dalpha < -100)[0]
+print('Wrap indices:', wrap_indices)
+for i in wrap_indices:
+    print('t:', t[i], 'alpha:', alpha[i], '->', alpha[i+1], 'diff:', dalpha[i])
+# also large positive jumps
+big_jumps = np.where(np.abs(dalpha) > 100)[0]
+print('Big jumps indices:', big_jumps)
+"
 ```
 
 ## [31] tool
@@ -730,7 +883,14 @@ Big jumps indices: [365 366 367]
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+for t in range(360, 380):
+    row = df[df['t']==t]
+    if len(row):
+        print(t, row['alpha'].values[0])
+"
 ```
 
 ## [33] tool
@@ -770,7 +930,34 @@ Big jumps indices: [365 366 367]
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+alphas = df['alpha'].values
+ts = df['t'].values
+# compute unwrapped alpha by adding 360 when large negative diff
+unwrap = np.zeros_like(alphas)
+unwrap[0] = alphas[0]
+for i in range(1, len(alphas)):
+    diff = alphas[i] - alphas[i-1]
+    if diff < -180:
+        unwrap[i] = unwrap[i-1] + diff + 360
+    elif diff > 180:
+        unwrap[i] = unwrap[i-1] + diff - 360
+    else:
+        unwrap[i] = unwrap[i-1] + diff
+print('Unwrapped alpha at few points:')
+for i in range(0, len(ts), 50):
+    print(ts[i], alphas[i], unwrap[i])
+# check linearity
+from sklearn.linear_model import LinearRegression
+X = ts.reshape(-1,1)
+lr = LinearRegression().fit(X, unwrap)
+print('Linear fit on unwrapped alpha: slope', lr.coef_[0], 'intercept', lr.intercept_)
+print('R^2:', lr.score(X, unwrap))
+# slope is about 0.208? Let's compute
+"
 ```
 
 ## [35] tool
@@ -806,7 +993,48 @@ R^2: 0.9975814410582983
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+df = pd.read_csv('data/train.csv')
+# compute unwrapped alpha
+alphas = df['alpha'].values
+ts = df['t'].values
+unwrap = np.zeros_like(alphas)
+unwrap[0] = alphas[0]
+for i in range(1, len(alphas)):
+    diff = alphas[i] - alphas[i-1]
+    if diff < -180:
+        unwrap[i] = unwrap[i-1] + diff + 360
+    elif diff > 180:
+        unwrap[i] = unwrap[i-1] + diff - 360
+    else:
+        unwrap[i] = unwrap[i-1] + diff
+df['alpha_unwrap'] = unwrap
 
+df_obs = df[df['gamma'].notna()].copy()
+# gamma vs alpha_unwrap
+X = df_obs[['alpha_unwrap']]
+y = df_obs['gamma']
+lr = LinearRegression().fit(X, y)
+print('Gamma ~ alpha_unwrap: coef', lr.coef_, 'intercept', lr.intercept_)
+print('R^2:', lr.score(X, y))
+print('RMSE:', np.sqrt(np.mean((y - lr.predict(X))**2)))
+
+# quadratic
+X2 = np.column_stack([df_obs['alpha_unwrap'], df_obs['alpha_unwrap']**2])
+lr2 = LinearRegression().fit(X2, y)
+print('Quadratic: R^2:', lr2.score(X2, y))
+print('RMSE:', np.sqrt(np.mean((y - lr2.predict(X2))**2)))
+
+# also try beta vs alpha_unwrap
+Xb = df_obs[['alpha_unwrap']]
+y_b = df_obs['beta']
+lr_b = LinearRegression().fit(Xb, y_b)
+print('Beta ~ alpha_unwrap: coef', lr_b.coef_, 'intercept', lr_b.intercept_)
+print('R^2:', lr_b.score(Xb, y_b))
+"
 ```
 
 ## [37] tool
@@ -847,7 +1075,29 @@ R^2: 0.9415343747225635
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+df_obs['diff'] = df_obs['beta'] - df_obs['alpha']
+print('Beta - alpha:')
+print(df_obs[['t','alpha','beta','diff','gamma']].head(10))
+print()
+# correlation
+print('Corr with gamma:', df_obs['diff'].corr(df_obs['gamma']))
+# linear model
+from sklearn.linear_model import LinearRegression
+X = df_obs[['diff']]
+y = df_obs['gamma']
+lr = LinearRegression().fit(X, y)
+print('Gamma ~ diff: R^2:', lr.score(X, y))
+print('RMSE:', np.sqrt(np.mean((y - lr.predict(X))**2)))
+# quadratic?
+X2 = np.column_stack([df_obs['diff'], df_obs['diff']**2])
+lr2 = LinearRegression().fit(X2, y)
+print('Quadratic on diff: R^2:', lr2.score(X2, y))
+"
 ```
 
 ## [39] tool
@@ -886,7 +1136,29 @@ Quadratic on diff: R^2: 0.1731131030593548
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+# Beta vs alpha
+X = df_obs[['alpha']]
+y = df_obs['beta']
+lr = LinearRegression().fit(X, y)
+print('Beta ~ alpha: R^2:', lr.score(X, y))
+print('coef:', lr.coef_, 'intercept:', lr.intercept_)
+# residual
+resid = y - lr.predict(X)
+print('Residual std:', np.std(resid))
+# plot residuals? can't
+# check if residual correlates with gamma
+print('Corr of residual with gamma:', np.corrcoef(resid, df_obs['gamma'])[0,1])
+# try quadratic
+X2 = np.column_stack([df_obs['alpha'], df_obs['alpha']**2])
+lr2 = LinearRegression().fit(X2, y)
+print('Beta ~ alpha^2: R^2:', lr2.score(X2, y))
+"
 ```
 
 ## [41] tool
@@ -913,7 +1185,31 @@ Beta ~ alpha^2: R^2: 0.9976960883953272
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
 
+# quadratic in alpha
+X = np.column_stack([df_obs['alpha'], df_obs['alpha']**2])
+y = df_obs['gamma']
+lr = LinearRegression().fit(X, y)
+print('Gamma ~ alpha + alpha^2:')
+print('Coef:', lr.coef_, 'Intercept:', lr.intercept_)
+print('R^2:', lr.score(X, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr.predict(X))))
+# residual analysis
+resid = y - lr.predict(X)
+print('Residual mean:', np.mean(resid))
+print('Residual std:', np.std(resid))
+# check autocorrelation
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(resid, nlags=10)
+print('ACF:', acf_vals)
+"
 ```
 
 ## [43] tool
@@ -943,7 +1239,28 @@ ACF: [1.         0.50138992 0.43833043 0.40069372 0.39427744 0.36844209
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
 
+# quadratic in t
+X = np.column_stack([df_obs['t'], df_obs['t']**2])
+y = df_obs['gamma']
+lr = LinearRegression().fit(X, y)
+print('Gamma ~ t + t^2:')
+print('Coef:', lr.coef_, 'Intercept:', lr.intercept_)
+print('R^2:', lr.score(X, y))
+print('RMSE:', np.sqrt(mean_squared_error(y, lr.predict(X))))
+resid = y - lr.predict(X)
+print('Residual std:', np.std(resid))
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(resid, nlags=10)
+print('ACF:', acf_vals)
+"
 ```
 
 ## [45] tool
@@ -980,7 +1297,35 @@ ACF: [1.         0.50461507 0.39732733 0.38647864 0.38431487 0.37686038
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+def sine_func(t, A, period, phase, offset):
+    return A * np.sin(2*np.pi * t / period + phase) + offset
+
+# initial guess: amplitude 23, period 330, phase, offset 0
+# Let's try to fit
+p0 = [23, 330, 0, 0]
+try:
+    popt, pcov = curve_fit(sine_func, t, y, p0=p0, maxfev=10000)
+    print('Fitted params:', popt)
+    y_pred = sine_func(t, *popt)
+    rmse = np.sqrt(np.mean((y - y_pred)**2))
+    print('RMSE:', rmse)
+    # R^2
+    ss_res = np.sum((y - y_pred)**2)
+    ss_tot = np.sum((y - np.mean(y))**2)
+    print('R^2:', 1 - ss_res/ss_tot)
+except Exception as e:
+    print('Error:', e)
+"
 ```
 
 ## [47] tool
@@ -1003,7 +1348,31 @@ R^2: 0.9911276469839481
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+def sine_func(t, A, period, phase, offset):
+    return A * np.sin(2*np.pi * t / period + phase) + offset
+
+popt = [31.53235573, 511.26624021, 3.17451426, -12.43439689]
+y_pred = sine_func(t, *popt)
+resid = y - y_pred
+print('Residual std:', np.std(resid))
+# plot residuals? can't
+# check autocorrelation
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(resid, nlags=10)
+print('ACF:', acf_vals)
+# check if residuals are correlated with t
+print('Corr with t:', np.corrcoef(t, resid)[0,1])
+"
 ```
 
 ## [49] tool
@@ -1039,7 +1408,42 @@ Corr with t: -0.0020940947543008725
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+# unwrap alpha
+alphas = df['alpha'].values
+ts = df['t'].values
+unwrap = np.zeros_like(alphas)
+unwrap[0] = alphas[0]
+for i in range(1, len(alphas)):
+    diff = alphas[i] - alphas[i-1]
+    if diff < -180:
+        unwrap[i] = unwrap[i-1] + diff + 360
+    elif diff > 180:
+        unwrap[i] = unwrap[i-1] + diff - 360
+    else:
+        unwrap[i] = unwrap[i-1] + diff
+
+# linear regression on t
+X = ts.reshape(-1,1)
+lr = LinearRegression().fit(X, unwrap)
+print('Alpha linear model: slope', lr.coef_[0], 'intercept', lr.intercept_)
+print('R^2:', lr.score(X, unwrap))
+y_pred = lr.predict(X)
+resid = unwrap - y_pred
+print('Residual std:', np.std(resid))
+# The residuals might have some pattern; let's check ACF
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(resid, nlags=20)
+print('ACF first 10:', acf_vals[:11])
+# The linear model seems very good; R^2=0.9976
+# But there might be some periodic residual? Let's examine
+"
 ```
 
 ## [51] tool
@@ -1072,7 +1476,22 @@ ACF first 10: [1.         0.97606528 0.97242175 0.96997459 0.96793516 0.96115072
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import numpy as np
+# quadratic coefficients from earlier fit on t (t, t^2)
+coef = np.array([-0.00118913, 0.80524877, -113.64644780796014])
+# predict for t=544
+t = 544
+pred = coef[0]*t**2 + coef[1]*t + coef[2]
+print('t=544 pred:', pred)
+# actual gamma at t=544 is -21.3418
+print('actual: -21.3418')
+# extrapolate to t=546,556,...
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+for t in test_ts:
+    pred = coef[0]*t**2 + coef[1]*t + coef[2]
+    print(f't={t}: pred={pred:.4f}')
+"
 ```
 
 ## [53] tool
@@ -1106,7 +1525,18 @@ t=638: pred=-83.9260
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import numpy as np
+def sine_func(t, A, period, phase, offset):
+    return A * np.sin(2*np.pi * t / period + phase) + offset
+popt = [31.53235573, 511.26624021, 3.17451426, -12.43439689]
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+for t in test_ts:
+    pred = sine_func(t, *popt)
+    print(f't={t}: pred={pred:.4f}')
+# also check at observed range end
+print('At t=544:', sine_func(544, *popt))
+"
 ```
 
 ## [55] tool
@@ -1141,7 +1571,24 @@ At t=544: -25.728229728498835
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+def sine_func(t, A, period, phase, offset):
+    return A * np.sin(2*np.pi * t / period + phase) + offset
+popt = [31.53235573, 511.26624021, 3.17451426, -12.43439689]
+y_pred = sine_func(t, *popt)
+resid = y - y_pred
+# print last 10 residuals
+for i in range(-10, 0):
+    print('t', t[i], 'actual', y[i], 'pred', y_pred[i], 'resid', resid[i])
+"
 ```
 
 ## [57] tool
@@ -1177,7 +1624,32 @@ t 544 actual -21.3418 pred -25.728229728498835 resid 4.386429728498836
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+X = df_obs[['t']].values
+y = df_obs['gamma'].values
+
+# define kernel
+kernel = ConstantKernel(1.0, (1e-3, 1e3)) * RBF(length_scale=10.0, length_scale_bounds=(1e-2, 1e3)) + WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-3, 1e3))
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, alpha=0.0, normalize_y=True)
+gp.fit(X, y)
+print('Learned kernel:', gp.kernel_)
+print('Log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+
+# predict test
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+X_test = np.array(test_ts).reshape(-1,1)
+y_pred, y_std = gp.predict(X_test, return_std=True)
+print('Predictions:')
+for t, pred, std in zip(test_ts, y_pred, y_std):
+    print(f't={t}: pred={pred:.4f}, std={std:.4f}')
+"
 ```
 
 ## [59] tool
@@ -1220,7 +1692,31 @@ t=638: pred=6.2946, std=13.5178
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel, DotProduct, Sum
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+X = df_obs[['t']].values
+y = df_obs['gamma'].values
+
+# kernel with linear trend: RBF + linear
+kernel = ConstantKernel(1.0) * RBF(length_scale=10.0) + DotProduct(sigma_0=1.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=False)
+gp.fit(X, y)
+print('Learned kernel:', gp.kernel_)
+print('Log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+X_test = np.array(test_ts).reshape(-1,1)
+y_pred, y_std = gp.predict(X_test, return_std=True)
+print('Predictions:')
+for t, pred, std in zip(test_ts, y_pred, y_std):
+    print(f't={t}: pred={pred:.4f}, std={std:.4f}')
+"
 ```
 
 ## [61] tool
@@ -1255,7 +1751,30 @@ t=638: pred=11.7309, std=18.8635
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+def sine_func(t, A, phase, offset):
+    period = 365.0
+    return A * np.sin(2*np.pi * t / period + phase) + offset
+
+p0 = [23, 0, 0]
+popt, pcov = curve_fit(sine_func, t, y, p0=p0, maxfev=10000)
+print('Fitted params:', popt)
+y_pred = sine_func(t, *popt)
+rmse = np.sqrt(np.mean((y - y_pred)**2))
+print('RMSE:', rmse)
+ss_res = np.sum((y - y_pred)**2)
+ss_tot = np.sum((y - np.mean(y))**2)
+print('R^2:', 1 - ss_res/ss_tot)
+"
 ```
 
 ## [63] tool
@@ -1276,7 +1795,19 @@ R^2: 0.9887144644729439
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import numpy as np
+def sine_func(t, A, phase, offset):
+    period = 365.0
+    return A * np.sin(2*np.pi * t / period + phase) + offset
+popt = [22.90680462, 1.04795631, -4.68995357]
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+for t in test_ts:
+    pred = sine_func(t, *popt)
+    print(f't={t}: pred={pred:.4f}')
+# check at t=544
+print('At t=544:', sine_func(544, *popt))
+"
 ```
 
 ## [65] tool
@@ -1307,7 +1838,25 @@ At t=544: -23.81176169948874
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+def sine_func(t, A, phase, offset):
+    period = 365.0
+    return A * np.sin(2*np.pi * t / period + phase) + offset
+popt = [22.90680462, 1.04795631, -4.68995357]
+y_pred = sine_func(t, *popt)
+resid = y - y_pred
+for i in range(-10, 0):
+    print('t', t[i], 'actual', y[i], 'pred', y_pred[i], 'resid', resid[i])
+print('RMSE:', np.sqrt(np.mean(resid**2)))
+"
 ```
 
 ## [67] tool
@@ -1346,7 +1895,25 @@ RMSE: 1.5154709360844416
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+# compute differences
+diffs = np.diff(y)
+print('First diffs:')
+for i in range(0, len(diffs), 10):
+    print(f't={t[i]}: diff={diffs[i]:.4f}')
+# compute approximate second diff
+diffs2 = np.diff(diffs)
+print('Second diffs:')
+for i in range(0, len(diffs2), 10):
+    print(f't={t[i]}: diff2={diffs2[i]:.4f}')
+"
 ```
 
 ## [69] tool
@@ -1426,7 +1993,33 @@ t=540: diff2=-0.1734
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+# create features: linear trend + sin/cos with period 365
+X = np.column_stack([t, np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+lr = LinearRegression().fit(X, y)
+print('Coef:', lr.coef_)
+print('Intercept:', lr.intercept_)
+y_pred = lr.predict(X)
+rmse = np.sqrt(mean_squared_error(y, y_pred))
+print('RMSE:', rmse)
+print('R^2:', lr.score(X, y))
+# predict test
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+X_test = np.column_stack([test_ts, np.sin(2*np.pi*np.array(test_ts)/365), np.cos(2*np.pi*np.array(test_ts)/365)])
+pred_test = lr.predict(X_test)
+for t_val, pred in zip(test_ts, pred_test):
+    print(f't={t_val}: pred={pred:.4f}')
+"
 ```
 
 ## [71] tool
@@ -1466,7 +2059,24 @@ t=638: pred=-44.1415
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+X = np.column_stack([t, np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+lr = LinearRegression().fit(X, y)
+y_pred = lr.predict(X)
+resid = y - y_pred
+print('Residual std:', np.std(resid))
+for i in range(-10, 0):
+    print('t', t[i], 'actual', y[i], 'pred', y_pred[i], 'resid', resid[i])
+"
 ```
 
 ## [73] tool
@@ -1509,7 +2119,28 @@ t 544 actual -21.3418 pred -25.801176969655913 resid 4.459376969655914
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+# fit linear on last 30 points
+for N in [20, 30, 40, 50, 100]:
+    X = t[-N:].reshape(-1,1)
+    y_ = y[-N:]
+    lr = LinearRegression().fit(X, y_)
+    y_pred = lr.predict(X)
+    rmse = np.sqrt(np.mean((y_ - y_pred)**2))
+    print(f'N={N}: slope={lr.coef_[0]:.4f}, intercept={lr.intercept_:.4f}, RMSE={rmse:.4f}')
+    # predict at t=546
+    pred = lr.predict([[546]])[0]
+    print(f'  pred at 546: {pred:.4f}')
+"
 ```
 
 ## [75] tool
@@ -1547,7 +2178,31 @@ N=100: slope=-0.3760, intercept=178.7286, RMSE=1.5138
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel, ExpSineSquared, DotProduct
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+X = df_obs[['t']].values
+y = df_obs['gamma'].values
+
+# kernel: periodic + RBF + noise
+kernel = ConstantKernel(1.0) * ExpSineSquared(length_scale=50.0, periodicity=365.0, periodicity_bounds=(300, 600)) + RBF(length_scale=10.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=True)
+gp.fit(X, y)
+print('Learned kernel:', gp.kernel_)
+print('Log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+X_test = np.array(test_ts).reshape(-1,1)
+y_pred, y_std = gp.predict(X_test, return_std=True)
+print('Predictions:')
+for t_val, pred, std in zip(test_ts, y_pred, y_std):
+    print(f't={t_val}: pred={pred:.4f}, std={std:.4f}')
+"
 ```
 
 ## [77] tool
@@ -1583,7 +2238,31 @@ t=638: pred=5.3002, std=13.3750
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel, ExpSineSquared, DotProduct
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+X = df_obs[['t']].values
+y = df_obs['gamma'].values
+
+# kernel: periodic + RBF + noise, no normalization
+kernel = ConstantKernel(1.0) * ExpSineSquared(length_scale=50.0, periodicity=365.0, periodicity_bounds=(300, 600)) + RBF(length_scale=10.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=False)
+gp.fit(X, y)
+print('Learned kernel:', gp.kernel_)
+print('Log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+X_test = np.array(test_ts).reshape(-1,1)
+y_pred, y_std = gp.predict(X_test, return_std=True)
+print('Predictions:')
+for t_val, pred, std in zip(test_ts, y_pred, y_std):
+    print(f't={t_val}: pred={pred:.4f}, std={std:.4f}')
+"
 ```
 
 ## [79] tool
@@ -1623,7 +2302,31 @@ t=638: pred=1.7316, std=13.6029
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+for deg in [1,2,3,4]:
+    X = np.column_stack([t**i for i in range(1, deg+1)])
+    lr = LinearRegression().fit(X, y)
+    y_pred = lr.predict(X)
+    rmse = np.sqrt(mean_squared_error(y, y_pred))
+    print(f'Degree {deg}: RMSE={rmse:.4f}, R^2={lr.score(X, y):.4f}')
+    # predictions at test
+    test_ts = [546,556,567,577,587,597,607,618,628,638]
+    X_test = np.column_stack([np.array(test_ts)**i for i in range(1, deg+1)])
+    preds = lr.predict(X_test)
+    for t_val, p in zip(test_ts, preds):
+        print(f'  t={t_val}: {p:.4f}')
+    print()
+"
 ```
 
 ## [81] tool
@@ -1697,7 +2400,58 @@ Degree 4: RMSE=1.5781, R^2=0.9878
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+# split at index 150 (since 165 total)
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+# 1) linear
+lr_lin = LinearRegression().fit(t_train.reshape(-1,1), y_train)
+pred_lin = lr_lin.predict(t_test.reshape(-1,1))
+print('Linear RMSE:', np.sqrt(mean_squared_error(y_test, pred_lin)))
+
+# 2) quadratic
+X_train = np.column_stack([t_train, t_train**2])
+lr_quad = LinearRegression().fit(X_train, y_train)
+X_test = np.column_stack([t_test, t_test**2])
+pred_quad = lr_quad.predict(X_test)
+print('Quadratic RMSE:', np.sqrt(mean_squared_error(y_test, pred_quad)))
+
+# 3) sine with period 365
+def sine_func(t, A, phase, offset):
+    period = 365.0
+    return A * np.sin(2*np.pi * t / period + phase) + offset
+from scipy.optimize import curve_fit
+popt, _ = curve_fit(sine_func, t_train, y_train, p0=[20, 0, 0])
+pred_sine = sine_func(t_test, *popt)
+print('Sine365 RMSE:', np.sqrt(mean_squared_error(y_test, pred_sine)))
+print('Sine365 params:', popt)
+
+# 4) linear + sin/cos
+X_train_sc = np.column_stack([t_train, np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+lr_sc = LinearRegression().fit(X_train_sc, y_train)
+X_test_sc = np.column_stack([t_test, np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+pred_sc = lr_sc.predict(X_test_sc)
+print('Linear+SinCos RMSE:', np.sqrt(mean_squared_error(y_test, pred_sc)))
+
+# print actual vs predicted last few
+print('Actual:', y_test[-5:])
+print('Linear:', pred_lin[-5:])
+print('Quad:', pred_quad[-5:])
+print('Sine:', pred_sine[-5:])
+print('Lin+SC:', pred_sc[-5:])
+"
 ```
 
 ## [83] tool
@@ -1739,7 +2493,36 @@ Lin+SC: [-28.67979784 -29.21697882 -29.75552588 -30.29537941 -30.83647941]
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+# sin/cos only
+X_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+lr_sc = LinearRegression().fit(X_train, y_train)
+print('Intercept:', lr_sc.intercept_, 'Coef:', lr_sc.coef_)
+X_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+pred_sc = lr_sc.predict(X_test)
+print('SinCos only RMSE:', np.sqrt(mean_squared_error(y_test, pred_sc)))
+print('Actual:', y_test[-5:])
+print('Pred:', pred_sc[-5:])
+
+# full data fit
+X_full = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+lr_full = LinearRegression().fit(X_full, y)
+print('Full data coef:', lr_full.intercept_, lr_full.coef_)
+"
 ```
 
 ## [85] tool
@@ -1772,7 +2555,34 @@ Full data coef: -4.68995357577137 [11.43834688 19.84655938]
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+# create features: sin and cos with period 365
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)  # intercept
+model = sm.OLS(y, X).fit()
+print(model.summary())
+
+# test data
+test_ts = [546,556,567,577,587,597,607,618,628,638]
+X_test = np.column_stack([np.sin(2*np.pi*np.array(test_ts)/365), np.cos(2*np.pi*np.array(test_ts)/365)])
+X_test = sm.add_constant(X_test)
+# predictions and intervals
+pred = model.get_prediction(X_test)
+pred_summary = pred.summary_frame(alpha=0.05)  # 95% interval
+print(pred_summary)
+# It returns: mean, mean_se, mean_ci_lower, mean_ci_upper, obs_ci_lower, obs_ci_upper
+# We want prediction interval for new observation (obs_ci)
+print(pred_summary[['mean', 'obs_ci_lower', 'obs_ci_upper']])
+"
 ```
 
 ## [87] tool
@@ -1848,7 +2658,29 @@ Notes:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.stattools import acf, pacf
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)
+model = sm.OLS(y, X).fit()
+resid = model.resid
+print('ACF of residuals:')
+print(acf(resid, nlags=20))
+print('PACF:')
+print(pacf(resid, nlags=20))
+# Ljung-Box test
+lb = sm.stats.acorr_ljungbox(resid, lags=[10, 20], return_df=True)
+print(lb)
+"
 ```
 
 ## [89] tool
@@ -1887,7 +2719,32 @@ PACF:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+# fit deterministic component
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)
+model_ols = sm.OLS(y, X).fit()
+y_det = model_ols.predict(X)
+resid = y - y_det
+
+# fit AR(1) on residuals
+arima = ARIMA(resid, order=(1,0,0), trend='n')
+arima_fit = arima.fit()
+print(arima_fit.summary())
+# check residuals of ARIMA
+resid2 = arima_fit.resid
+print('ACF of ARIMA residuals:', sm.tsa.acf(resid2, nlags=10))
+"
 ```
 
 ## [91] tool
@@ -1954,7 +2811,41 @@ ACF of ARIMA residuals: [ 1.         -0.16163012  0.05849997  0.12144595  0.1310
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+# exogenous variables: sin and cos
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+exog = sm.add_constant(exog)
+
+# fit ARIMA(1,0,0) with exog
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+print(fit.summary())
+
+# forecast for test
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+exog_test = sm.add_constant(exog_test)
+# forecast
+forecast = fit.forecast(steps=len(test_ts), exog=exog_test)
+print('Point forecasts:')
+for t_val, f in zip(test_ts, forecast):
+    print(f't={t_val}: {f:.4f}')
+# get prediction intervals
+# Use get_forecast
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+pred_summary = forecast_result.summary_frame(alpha=0.05)
+print(pred_summary[['mean', 'mean_se', 'obs_ci_lower', 'obs_ci_upper']])
+"
 ```
 
 ## [93] tool
@@ -1981,7 +2872,33 @@ ValueError: A constant trend was included in the model specification, but the `e
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+# exogenous variables: sin and cos, no constant
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+# fit ARIMA(1,0,0) with exog
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+print(fit.summary())
+
+# forecast for test
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+# forecast
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+pred_summary = forecast_result.summary_frame(alpha=0.05)
+print(pred_summary[['mean', 'mean_se', 'obs_ci_lower', 'obs_ci_upper']])
+"
 ```
 
 ## [95] tool
@@ -2036,7 +2953,29 @@ Warnings:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+pred_summary = forecast_result.summary_frame(alpha=0.05)
+print(pred_summary.columns.tolist())
+print(pred_summary)
+"
 ```
 
 ## [97] tool
@@ -2072,7 +3011,34 @@ y       mean   mean_se  mean_ci_lower  mean_ci_upper
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+# get variance
+print('Predicted variance:')
+print(forecast_result.var_pred)
+print('se_mean:', forecast_result.se_mean)
+# The total forecast variance is var_pred + var_resid? Actually var_pred is the variance of the forecast error, I think.
+# Let's check docs.
+# We can also get the full results
+print(dir(forecast_result))
+"
 ```
 
 ## [99] tool
@@ -2098,7 +3064,36 @@ Predicted variance:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+print(forecast_result.__class__)
+print(forecast_result.__dict__.keys())
+# maybe there is var_pred_? 
+print('var_pred_?')
+try:
+    print(forecast_result.var_pred_)
+except:
+    pass
+# check summary_frame columns
+print(forecast_result.summary_frame().columns)
+"
 ```
 
 ## [101] tool
@@ -2120,7 +3115,32 @@ Index(['mean', 'mean_se', 'mean_ci_lower', 'mean_ci_upper'], dtype='str', name='
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+# get the underlying results
+res = forecast_result._results
+print(dir(res))
+print('var_pred:', res.var_pred)
+print('se_mean:', res.se_mean)
+# maybe there is also var_pred_obs?
+"
 ```
 
 ## [103] tool
@@ -2149,7 +3169,43 @@ AttributeError: 'PredictionResults' object has no attribute 'var_pred'
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+print('sigma2:', fit.params['sigma2'])
+# or
+print('scale:', fit.scale)
+
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+var_pred_mean = forecast_result.var_pred_mean
+print('var_pred_mean:', var_pred_mean)
+sigma2 = fit.params['sigma2']
+pred_var = var_pred_mean + sigma2
+pred_std = np.sqrt(pred_var)
+print('prediction std:', pred_std)
+mean = forecast_result.predicted_mean
+# 95% interval
+from scipy.stats import norm
+z = norm.ppf(0.975)
+lower = mean - z * pred_std
+upper = mean + z * pred_std
+for i, t_val in enumerate(test_ts):
+    print(f't={t_val}: pred={mean[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}')
+"
 ```
 
 ## [105] tool
@@ -2171,7 +3227,25 @@ IndexError: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+print(fit.params)
+# check fit.params structure
+print(type(fit.params))
+"
 ```
 
 ## [107] tool
@@ -2191,7 +3265,39 @@ IndexError: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+sigma2 = fit.params[-1]
+print('sigma2:', sigma2)
+
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+var_pred_mean = forecast_result.var_pred_mean
+print('var_pred_mean:', var_pred_mean)
+pred_var = var_pred_mean + sigma2
+pred_std = np.sqrt(pred_var)
+mean = forecast_result.predicted_mean
+from scipy.stats import norm
+z = norm.ppf(0.975)
+lower = mean - z * pred_std
+upper = mean + z * pred_std
+for i, t_val in enumerate(test_ts):
+    print(f't={t_val}: pred={mean[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}')
+"
 ```
 
 ## [109] tool
@@ -2234,7 +3340,27 @@ t=638: pred=-15.5949, lower=-19.4904, upper=-11.6993
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,0))
+fit = model.fit()
+resid = fit.resid
+print('ACF of ARIMA residuals:')
+print(sm.tsa.acf(resid, nlags=10))
+print('Ljung-Box:')
+print(sm.stats.acorr_ljungbox(resid, lags=[10], return_df=True))
+"
 ```
 
 ## [111] tool
@@ -2260,7 +3386,31 @@ Ljung-Box:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+
+# try different orders
+for order in [(1,0,0), (2,0,0), (1,0,1), (2,0,1), (0,0,1)]:
+    try:
+        model = ARIMA(y, exog=exog, order=order)
+        fit = model.fit()
+        resid = fit.resid
+        lb = sm.stats.acorr_ljungbox(resid, lags=[10], return_df=True)
+        print(f'Order {order}: AIC={fit.aic:.2f}, LB p-value={lb[\"lb_pvalue\"].values[0]:.4f}')
+    except Exception as e:
+        print(f'Order {order}: failed {e}')
+"
 ```
 
 ## [113] tool
@@ -2288,7 +3438,40 @@ Order (0, 0, 1): AIC=578.15, LB p-value=0.0000
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+print(fit.summary())
+
+# forecast
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_ts/365), np.cos(2*np.pi*test_ts/365)])
+forecast_result = fit.get_forecast(steps=len(test_ts), exog=exog_test)
+var_pred_mean = forecast_result.var_pred_mean
+sigma2 = fit.params[-1]  # assuming last is sigma2
+print('sigma2:', sigma2)
+pred_var = var_pred_mean + sigma2
+pred_std = np.sqrt(pred_var)
+mean = forecast_result.predicted_mean
+from scipy.stats import norm
+z = norm.ppf(0.975)
+lower = mean - z * pred_std
+upper = mean + z * pred_std
+for i, t_val in enumerate(test_ts):
+    print(f't={t_val}: pred={mean[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}')
+"
 ```
 
 ## [115] tool
@@ -2348,7 +3531,27 @@ t=638: pred=-12.7381, lower=-16.1743, upper=-9.3019
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+resid = fit.resid
+print('ACF:', sm.tsa.acf(resid, nlags=10))
+print('LB:', sm.stats.acorr_ljungbox(resid, lags=[10], return_df=True))
+# also check residuals vs fitted
+print('Residual std:', np.std(resid))
+"
 ```
 
 ## [117] tool
@@ -2390,7 +3593,37 @@ Residual std: 1.1477718904410374
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.metrics import mean_squared_error
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+# split
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+# function to compute RMSE for given period
+def eval_period(period):
+    # fit sin/cos + AR(1) maybe? For simplicity, just sin/cos OLS
+    X_train = np.column_stack([np.sin(2*np.pi*t_train/period), np.cos(2*np.pi*t_train/period)])
+    X_test = np.column_stack([np.sin(2*np.pi*t_test/period), np.cos(2*np.pi*t_test/period)])
+    from sklearn.linear_model import LinearRegression
+    lr = LinearRegression().fit(X_train, y_train)
+    pred = lr.predict(X_test)
+    rmse = np.sqrt(mean_squared_error(y_test, pred))
+    return rmse
+
+for period in [330, 365, 400, 450, 500, 511, 550, 600]:
+    rmse = eval_period(period)
+    print(f'Period {period}: RMSE={rmse:.4f}')
+"
 ```
 
 ## [119] tool
@@ -2430,7 +3663,28 @@ Period 600: RMSE=3.4613
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+df = pd.read_csv('data/train.csv')
+df_obs = df[df['gamma'].notna()].copy()
+t = df_obs['t'].values
+y = df_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+resid = fit.resid
+print('Last residual:', resid[-1])
+print('Fitted value at t=544:', y[-1] - resid[-1])
+# The deterministic part at t=544
+det = fit.params['const'] + fit.params['x1']*np.sin(2*np.pi*544/365) + fit.params['x2']*np.cos(2*np.pi*544/365)
+print('Deterministic:', det)
+"
 ```
 
 ## [121] tool
@@ -2471,7 +3725,56 @@ Fitted value at t=544: -23.514580562582932
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
+from scipy.stats import norm
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Use only rows where gamma is not null
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# Exogenous variables: sin and cos with period 365
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+# Fit ARIMA(1,0,1)
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+
+# Prepare test exog
+test_t = test['t'].values
+exog_test = np.column_stack([np.sin(2*np.pi*test_t/365), np.cos(2*np.pi*test_t/365)])
+
+# Forecast
+forecast_result = fit.get_forecast(steps=len(test_t), exog=exog_test)
+mean_pred = forecast_result.predicted_mean
+var_pred_mean = forecast_result.var_pred_mean
+sigma2 = fit.params[-1]  # sigma2 is the last parameter
+pred_var = var_pred_mean + sigma2
+pred_std = np.sqrt(pred_var)
+z = norm.ppf(0.975)
+lower = mean_pred - z * pred_std
+upper = mean_pred + z * pred_std
+
+# Create output DataFrame
+output = pd.DataFrame({
+    't': test_t,
+    'y_pred': mean_pred,
+    'y_lower': lower,
+    'y_upper': upper
+})
+print(output)
+# Save
+output.to_csv('predictions.csv', index=False)
+print('Saved predictions.csv')
+"
 ```
 
 ## [123] tool
@@ -2503,7 +3806,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [125] tool
@@ -2536,7 +3839,22 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+print('Params:', fit.params)
+print('Names:', fit.param_names)
+"
 ```
 
 ## [127] tool
@@ -2580,7 +3898,22 @@ Names: ['const', 'x1', 'x2', 'ar.L1', 'ma.L1', 'sigma2']
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+print('sigma2:', fit.params[-1])
+print('var_pred_mean[0]:', fit.get_forecast(steps=1, exog=exog[-1:]).var_pred_mean[0])
+"
 ```
 
 ## [129] tool
@@ -2616,7 +3949,50 @@ var_pred_mean[0]: 1.292301206249285
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
+from scipy.stats import norm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# split
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+exog_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+exog_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+
+model = ARIMA(y_train, exog=exog_train, order=(1,0,1))
+fit = model.fit()
+
+forecast_result = fit.get_forecast(steps=len(t_test), exog=exog_test)
+mean_pred = forecast_result.predicted_mean
+var_pred_mean = forecast_result.var_pred_mean
+sigma2 = fit.params[-1]
+pred_var = var_pred_mean + sigma2
+pred_std = np.sqrt(pred_var)
+z = norm.ppf(0.975)
+lower = mean_pred - z * pred_std
+upper = mean_pred + z * pred_std
+
+# Check coverage
+in_interval = (y_test >= lower) & (y_test <= upper)
+print('Coverage:', in_interval.mean())
+print('Number of test points:', len(y_test))
+# RMSE
+rmse = np.sqrt(np.mean((y_test - mean_pred)**2))
+print('RMSE:', rmse)
+# Print some
+for i in range(len(y_test)):
+    print(f't={t_test[i]}: actual={y_test[i]:.4f}, pred={mean_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}, covered={in_interval[i]}')
+"
 ```
 
 ## [131] tool
@@ -2656,7 +4032,40 @@ t=544: actual=-21.3418, pred=-24.8388, lower=-28.3661, upper=-21.3115, covered=T
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
+from scipy.stats import norm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+exog_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+exog_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+
+model = ARIMA(y_train, exog=exog_train, order=(1,0,1))
+fit = model.fit()
+
+forecast_result = fit.get_forecast(steps=len(t_test), exog=exog_test)
+mean_pred = forecast_result.predicted_mean
+var_pred_mean = forecast_result.var_pred_mean
+# use var_pred_mean only (no sigma2)
+pred_std = np.sqrt(var_pred_mean)
+z = norm.ppf(0.975)
+lower = mean_pred - z * pred_std
+upper = mean_pred + z * pred_std
+
+in_interval = (y_test >= lower) & (y_test <= upper)
+print('Coverage without sigma2:', in_interval.mean())
+"
 ```
 
 ## [133] tool
@@ -2689,7 +4098,35 @@ Coverage without sigma2: 0.8666666666666667
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+print('sigma2:', fit.params[-1])
+# forecast 10 steps
+forecast_result = fit.get_forecast(steps=10, exog=exog[:10])
+print('var_pred_mean:', forecast_result.var_pred_mean)
+# compute theoretical factors
+phi = fit.params['ar.L1']
+theta = fit.params['ma.L1']
+psi = []
+psi.append(1.0)
+psi.append(phi+theta)
+for i in range(2, 10):
+    psi.append(phi*psi[-1])
+var_factor = np.cumsum(np.array(psi)**2)
+print('Theoretical variance factor:', var_factor[:10])
+print('sigma2 * factor:', fit.params[-1] * var_factor[:10])
+"
 ```
 
 ## [135] tool
@@ -2714,7 +4151,30 @@ var_pred_mean: [1.29230121 1.35997837 1.42386553 1.48417493 1.54110691 1.5948506
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+sigma2 = fit.params[-1]
+phi = fit.params[3]
+theta = fit.params[4]
+psi = [1.0]
+psi.append(phi+theta)
+for i in range(2, 10):
+    psi.append(phi*psi[-1])
+var_factor = np.cumsum(np.array(psi)**2)
+print('Theoretical:', sigma2 * var_factor)
+print('Actual var_pred_mean:', fit.get_forecast(steps=10, exog=np.zeros((10,2))).var_pred_mean)
+"
 ```
 
 ## [137] tool
@@ -2756,7 +4216,46 @@ Actual var_pred_mean: [1.29230121 1.35997837 1.42386553 1.48417493 1.54110691 1.
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
+from scipy.stats import norm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+exog_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+exog_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+
+model = ARIMA(y_train, exog=exog_train, order=(1,0,1))
+fit = model.fit()
+
+forecast_result = fit.get_forecast(steps=len(t_test), exog=exog_test)
+mean_pred = forecast_result.predicted_mean
+var_pred_mean = forecast_result.var_pred_mean
+pred_std = np.sqrt(var_pred_mean)
+z = norm.ppf(0.975)
+lower = mean_pred - z * pred_std
+upper = mean_pred + z * pred_std
+
+# Compute average width
+widths = upper - lower
+print('Average width:', np.mean(widths))
+# Compare with RMSE
+print('RMSE:', np.sqrt(np.mean((y_test - mean_pred)**2)))
+# Count number of points where absolute error > 1.96*std?
+std_errors = np.abs(y_test - mean_pred) / pred_std
+print('Mean absolute std error:', np.mean(std_errors))
+print('Percentage with abs error > 1.96:', (std_errors > 1.96).mean())
+"
 ```
 
 ## [139] tool
@@ -2782,7 +4281,48 @@ Percentage with abs error > 1.96: 0.13333333333333333
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy.stats import norm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+X_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+X_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+
+lr = LinearRegression().fit(X_train, y_train)
+y_pred = lr.predict(X_test)
+# Compute prediction intervals using normal approximation
+# Residual variance on training
+resid_train = y_train - lr.predict(X_train)
+sigma2 = np.var(resid_train, ddof=3)  # 3 parameters (intercept, sin, cos)
+# Compute leverage? For simplicity, use constant variance
+# Standard error of prediction
+n = len(X_train)
+p = 3
+# We need to compute X'X inverse
+X_train_with_const = np.column_stack([np.ones(n), X_train])
+XTX_inv = np.linalg.inv(X_train_with_const.T @ X_train_with_const)
+X_test_with_const = np.column_stack([np.ones(len(X_test)), X_test])
+var_pred_mean = np.diag(X_test_with_const @ XTX_inv @ X_test_with_const.T) * sigma2
+pred_std = np.sqrt(var_pred_mean + sigma2)
+z = norm.ppf(0.975)
+lower = y_pred - z * pred_std
+upper = y_pred + z * pred_std
+
+coverage = ((y_test >= lower) & (y_test <= upper)).mean()
+print('OLS coverage:', coverage)
+print('RMSE:', np.sqrt(np.mean((y_test - y_pred)**2)))
+"
 ```
 
 ## [141] tool
@@ -2802,7 +4342,40 @@ RMSE: 1.2455755220438067
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy.stats import norm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+X_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+X_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+
+lr = LinearRegression().fit(X_train, y_train)
+y_pred = lr.predict(X_test)
+resid_train = y_train - lr.predict(X_train)
+sigma2 = np.var(resid_train, ddof=3)
+n = len(X_train)
+p = 3
+X_train_with_const = np.column_stack([np.ones(n), X_train])
+XTX_inv = np.linalg.inv(X_train_with_const.T @ X_train_with_const)
+X_test_with_const = np.column_stack([np.ones(len(X_test)), X_test])
+var_pred_mean = np.diag(X_test_with_const @ XTX_inv @ X_test_with_const.T) * sigma2
+pred_std = np.sqrt(var_pred_mean + sigma2)
+z = norm.ppf(0.975)
+lower = y_pred - z * pred_std
+upper = y_pred + z * pred_std
+print('Average width:', np.mean(upper - lower))
+"
 ```
 
 ## [143] tool
@@ -2831,7 +4404,45 @@ Average width: 6.315263372916704
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy.stats import norm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# Fit OLS with sin/cos
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+lr = LinearRegression().fit(X, y)
+y_pred_train = lr.predict(X)
+resid = y - y_pred_train
+sigma2 = np.var(resid, ddof=3)  # 3 params (intercept, sin, cos)
+n = len(X)
+p = 3
+X_with_const = np.column_stack([np.ones(n), X])
+XTX_inv = np.linalg.inv(X_with_const.T @ X_with_const)
+
+# Test data
+test_t = pd.read_csv('data/test.csv')['t'].values
+X_test = np.column_stack([np.sin(2*np.pi*test_t/365), np.cos(2*np.pi*test_t/365)])
+X_test_with_const = np.column_stack([np.ones(len(X_test)), X_test])
+
+# Point predictions
+y_pred = lr.predict(X_test)
+# Variance of prediction error
+var_pred = np.diag(X_test_with_const @ XTX_inv @ X_test_with_const.T) * sigma2 + sigma2
+pred_std = np.sqrt(var_pred)
+z = norm.ppf(0.975)
+lower = y_pred - z * pred_std
+upper = y_pred + z * pred_std
+
+output = pd.DataFrame({'t': test_t, 'y_pred': y_pred, 'y_lower': lower, 'y_upper': upper})
+print(output)
+"
 ```
 
 ## [145] tool
@@ -2874,7 +4485,25 @@ Average width: 6.315263372916704
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+
+forecast_result = fit.get_forecast(steps=5, exog=np.zeros((5,2)))
+print(dir(forecast_result))
+print('conf_int:')
+print(forecast_result.conf_int())
+"
 ```
 
 ## [147] tool
@@ -2961,7 +4590,28 @@ conf_int:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()]
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+
+test_t = np.array([546])
+exog_test = np.column_stack([np.sin(2*np.pi*test_t/365), np.cos(2*np.pi*test_t/365)])
+forecast_result = fit.get_forecast(steps=1, exog=exog_test)
+print('mean:', forecast_result.predicted_mean)
+print('conf_int:', forecast_result.conf_int())
+print('var_pred_mean:', forecast_result.var_pred_mean)
+print('se_mean:', forecast_result.se_mean)
+"
 ```
 
 ## [149] tool
@@ -3006,7 +4656,104 @@ se_mean: [1.13679427]
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
+from scipy.stats import norm
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+exog = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+
+# Fit ARIMA
+model = ARIMA(y, exog=exog, order=(1,0,1))
+fit = model.fit()
+
+# Parameters and covariance
+params = fit.params
+cov = fit.cov_params()
+print('Params:', params)
+print('Cov diagonal:', np.diag(cov))
+
+# Test data
+test_t = np.array([546,556,567,577,587,597,607,618,628,638])
+exog_test = np.column_stack([np.sin(2*np.pi*test_t/365), np.cos(2*np.pi*test_t/365)])
+
+# Bootstrap
+n_sim = 2000
+n_steps = len(test_t)
+sim_obs = np.zeros((n_sim, n_steps))
+
+# Get the last residual and state for simulation
+# We'll use the fitted model's state space representation to simulate
+# But perhaps easier: use the ARIMA model's simulate method? Actually, statsmodels has `arma_generate_sample` but for ARIMAX?
+
+# We'll implement manually using the estimated parameters.
+# The model: y_t = const + x1*sin + x2*cos + u_t
+# where u_t follows ARIMA(1,0,1): (1-φL) u_t = (1+θL) ε_t, ε_t ~ N(0, σ^2)
+# We can simulate u_t forward given the last u and ε (which we can backcast).
+
+# Get the residuals and last error
+resid = fit.resid
+# The residuals are the one-step prediction errors (innovations). For ARIMA, the residuals are ε_t.
+# Actually, for ARIMAX, the resid attribute is the one-step ahead forecast errors (innovations).
+# So we have ε_t for t=1..165.
+
+# We need the last value of u_t (the regression error). u_t = y_t - const - x1*sin - x2*cos.
+const = params[0]
+x1 = params[1]
+x2 = params[2]
+phi = params[3]
+theta = params[4]
+sigma2 = params[5]
+
+u = y - (const + exog[:,0]*x1 + exog[:,1]*x2)
+# Last u
+u_last = u[-1]
+# Last residual (ε) is the last element of resid? Actually resid is the one-step forecast error, which is ε_t.
+eps_last = resid.iloc[-1] if hasattr(resid, 'iloc') else resid[-1]
+
+# For simulation, we can generate future u using ARIMA recursion:
+# u_t = φ * u_{t-1} + ε_t + θ * ε_{t-1}
+# We need to simulate ε_t ~ N(0, σ^2).
+# For the first step, we have u_last and eps_last.
+# We'll generate future eps.
+
+np.random.seed(42)
+for i in range(n_sim):
+    u_prev = u_last
+    eps_prev = eps_last
+    sim_u = np.zeros(n_steps)
+    for h in range(n_steps):
+        eps = np.random.normal(0, np.sqrt(sigma2))
+        u_h = phi * u_prev + eps + theta * eps_prev
+        sim_u[h] = u_h
+        u_prev = u_h
+        eps_prev = eps
+    # Add deterministic part
+    det = const + exog_test[:,0]*x1 + exog_test[:,1]*x2
+    sim_obs[i] = det + sim_u
+
+# Compute point prediction as mean of simulated?
+# Or use the conditional mean from the model (which is the same as forecast_result.predicted_mean)
+# We'll use the model's point forecast.
+forecast_result = fit.get_forecast(steps=n_steps, exog=exog_test)
+mean_pred = forecast_result.predicted_mean
+
+# Compute quantiles
+lower = np.percentile(sim_obs, 2.5, axis=0)
+upper = np.percentile(sim_obs, 97.5, axis=0)
+
+output = pd.DataFrame({'t': test_t, 'y_pred': mean_pred, 'y_lower': lower, 'y_upper': upper})
+print(output)
+"
 ```
 
 ## [151] tool
@@ -3054,7 +4801,34 @@ Cov diagonal: [8.13507082e-01 2.10516758e+00 4.57563268e-01 5.13285349e-04
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)
+
+# Fit OLS with HAC robust covariance
+model = sm.OLS(y, X)
+fit = model.fit(cov_type='HAC', cov_kwds={'maxlags': 5})
+print(fit.summary())
+
+# Test data
+test_t = pd.read_csv('data/test.csv')['t'].values
+X_test = np.column_stack([np.sin(2*np.pi*test_t/365), np.cos(2*np.pi*test_t/365)])
+X_test = sm.add_constant(X_test)
+
+# Get prediction
+pred = fit.get_prediction(X_test)
+pred_summary = pred.summary_frame(alpha=0.05)
+print(pred_summary[['mean', 'mean_se', 'obs_ci_lower', 'obs_ci_upper']])
+"
 ```
 
 ## [153] tool
@@ -3113,7 +4887,41 @@ Notes:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# split
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+X_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+X_train = sm.add_constant(X_train)
+
+model = sm.OLS(y_train, X_train)
+fit = model.fit(cov_type='HAC', cov_kwds={'maxlags': 5})
+
+X_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+X_test = sm.add_constant(X_test)
+
+pred = fit.get_prediction(X_test)
+pred_summary = pred.summary_frame(alpha=0.05)
+mean = pred_summary['mean']
+lower = pred_summary['obs_ci_lower']
+upper = pred_summary['obs_ci_upper']
+
+coverage = ((y_test >= lower) & (y_test <= upper)).mean()
+print('Coverage:', coverage)
+print('RMSE:', np.sqrt(np.mean((y_test - mean)**2)))
+print('Average width:', np.mean(upper - lower))
+"
 ```
 
 ## [155] tool
@@ -3146,7 +4954,39 @@ Average width: 6.927867444614187
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)
+
+model = sm.OLS(y, X)
+fit = model.fit(cov_type='HAC', cov_kwds={'maxlags': 10})
+print(fit.summary())
+
+test_t = pd.read_csv('data/test.csv')['t'].values
+X_test = np.column_stack([np.sin(2*np.pi*test_t/365), np.cos(2*np.pi*test_t/365)])
+X_test = sm.add_constant(X_test)
+
+pred = fit.get_prediction(X_test)
+pred_summary = pred.summary_frame(alpha=0.05)
+output = pd.DataFrame({
+    't': test_t,
+    'y_pred': pred_summary['mean'],
+    'y_lower': pred_summary['obs_ci_lower'],
+    'y_upper': pred_summary['obs_ci_upper']
+})
+print(output)
+output.to_csv('predictions.csv', index=False)
+print('Saved')
+"
 ```
 
 ## [157] tool
@@ -3214,7 +5054,45 @@ Saved
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)
+
+model = sm.OLS(y, X)
+fit = model.fit(cov_type='HAC', cov_kwds={'maxlags': 10})
+
+# Manually compute prediction interval for first test point
+test_t = 546
+x_test = np.array([1, np.sin(2*np.pi*test_t/365), np.cos(2*np.pi*test_t/365)])
+# Point prediction
+y_pred = x_test @ fit.params
+print('Pred:', y_pred)
+# Residual variance (sigma2)
+sigma2 = fit.scale  # This is the MSE
+print('sigma2:', sigma2)
+# Variance of prediction mean
+var_pred_mean = x_test @ fit.cov_params() @ x_test
+print('var_pred_mean (HAC):', var_pred_mean)
+# Total variance for prediction
+var_pred = var_pred_mean + sigma2
+print('Total var:', var_pred)
+# From statsmodels output
+print('se_mean from output:', np.sqrt(var_pred_mean))
+# Their obs_ci_lower: -27.511855
+z = 1.96
+lower = y_pred - z * np.sqrt(var_pred)
+upper = y_pred + z * np.sqrt(var_pred)
+print('Manual CI:', lower, upper)
+"
 ```
 
 ## [159] tool
@@ -3246,7 +5124,52 @@ Manual CI: -27.51191569545283 -20.957237910126874
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from sklearn.metrics import mean_squared_error
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+# Model 1: sin/cos only
+X1_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+X1_train = sm.add_constant(X1_train)
+m1 = sm.OLS(y_train, X1_train).fit()
+X1_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+X1_test = sm.add_constant(X1_test)
+p1 = m1.predict(X1_test)
+rmse1 = np.sqrt(mean_squared_error(y_test, p1))
+print('SinCos only RMSE:', rmse1)
+
+# Model 2: sin/cos + linear trend
+X2_train = np.column_stack([t_train, np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+X2_train = sm.add_constant(X2_train)
+m2 = sm.OLS(y_train, X2_train).fit()
+X2_test = np.column_stack([t_test, np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+X2_test = sm.add_constant(X2_test)
+p2 = m2.predict(X2_test)
+rmse2 = np.sqrt(mean_squared_error(y_test, p2))
+print('SinCos+Linear RMSE:', rmse2)
+print('m2 params:', m2.params)
+
+# Model 3: quadratic in t
+X3_train = np.column_stack([t_train, t_train**2])
+X3_train = sm.add_constant(X3_train)
+m3 = sm.OLS(y_train, X3_train).fit()
+X3_test = np.column_stack([t_test, t_test**2])
+X3_test = sm.add_constant(X3_test)
+p3 = m3.predict(X3_test)
+rmse3 = np.sqrt(mean_squared_error(y_test, p3))
+print('Quadratic RMSE:', rmse3)
+"
 ```
 
 ## [161] tool
@@ -3286,7 +5209,35 @@ Quadratic RMSE: 5.213755911230822
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.metrics import mean_squared_error
+from sklearn.linear_model import LinearRegression
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# Use cross-validation (last 15 as validation)
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+best_rmse = 1e9
+best_period = None
+for period in np.arange(300, 600, 5):
+    X_train = np.column_stack([np.sin(2*np.pi*t_train/period), np.cos(2*np.pi*t_train/period)])
+    X_test = np.column_stack([np.sin(2*np.pi*t_test/period), np.cos(2*np.pi*t_test/period)])
+    lr = LinearRegression().fit(X_train, y_train)
+    pred = lr.predict(X_test)
+    rmse = np.sqrt(mean_squared_error(y_test, pred))
+    if rmse < best_rmse:
+        best_rmse = rmse
+        best_period = period
+print(f'Best period: {best_period}, RMSE: {best_rmse}')
+"
 ```
 
 ## [163] tool
@@ -3320,7 +5271,53 @@ Best period: 365, RMSE: 1.2455755220438067
 **tool call: bash**
 
 ```
+cat > /workspace/generate_predictions.py << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+# Load training data
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# Features: sin and cos with period 365 days
+X = np.column_stack([np.sin(2 * np.pi * t / 365),
+                     np.cos(2 * np.pi * t / 365)])
+X = sm.add_constant(X)
+
+# Fit OLS with HAC standard errors to account for autocorrelation
+model = sm.OLS(y, X)
+fit = model.fit(cov_type='HAC', cov_kwds={'maxlags': 10})
+
+# Load test data
+test = pd.read_csv('data/test.csv')
+test_t = test['t'].values
+
+# Features for test
+X_test = np.column_stack([np.sin(2 * np.pi * test_t / 365),
+                          np.cos(2 * np.pi * test_t / 365)])
+X_test = sm.add_constant(X_test)
+
+# Get prediction intervals
+pred = fit.get_prediction(X_test)
+pred_summary = pred.summary_frame(alpha=0.05)  # 95% prediction interval
+
+# Build output DataFrame
+output = pd.DataFrame({
+    't': test_t,
+    'y_pred': pred_summary['mean'],
+    'y_lower': pred_summary['obs_ci_lower'],
+    'y_upper': pred_summary['obs_ci_upper']
+})
+
+# Save
+output.to_csv('predictions.csv', index=False)
+print('predictions.csv written successfully')
+print(output)
+EOF
+python /workspace/generate_predictions.py
 ```
 
 ## [165] tool
@@ -3356,7 +5353,26 @@ predictions.csv written successfully
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)
+fit = sm.OLS(y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 10})
+resid = fit.resid
+print('ACF of residuals:')
+print(sm.tsa.acf(resid, nlags=20))
+# Ljung-Box
+lb = sm.stats.acorr_ljungbox(resid, lags=[10, 20], return_df=True)
+print(lb)
+"
 ```
 
 ## [167] tool
@@ -3388,7 +5404,43 @@ ACF of residuals:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from sklearn.metrics import mean_squared_error
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# split
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+# Model with first and second harmonics
+X_train = np.column_stack([
+    np.sin(2*np.pi*t_train/365),
+    np.cos(2*np.pi*t_train/365),
+    np.sin(4*np.pi*t_train/365),
+    np.cos(4*np.pi*t_train/365)
+])
+X_train = sm.add_constant(X_train)
+m = sm.OLS(y_train, X_train).fit()
+X_test = np.column_stack([
+    np.sin(2*np.pi*t_test/365),
+    np.cos(2*np.pi*t_test/365),
+    np.sin(4*np.pi*t_test/365),
+    np.cos(4*np.pi*t_test/365)
+])
+X_test = sm.add_constant(X_test)
+p = m.predict(X_test)
+rmse = np.sqrt(mean_squared_error(y_test, p))
+print('RMSE with 2 harmonics:', rmse)
+print(m.summary())
+"
 ```
 
 ## [169] tool
@@ -3449,7 +5501,30 @@ Notes:
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+import scipy.stats as stats
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)
+fit = sm.OLS(y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 10})
+resid = fit.resid
+
+# Normality test
+print('Jarque-Bera:', stats.jarque_bera(resid))
+print('Shapiro:', stats.shapiro(resid))
+
+# Skewness and kurtosis
+print('Skewness:', stats.skew(resid))
+print('Kurtosis:', stats.kurtosis(resid))
+"
 ```
 
 ## [171] tool
@@ -3506,7 +5581,29 @@ Kurtosis: -0.36408635335554873
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+for period in [365.0, 365.25, 366, 360]:
+    X_train = np.column_stack([np.sin(2*np.pi*t_train/period), np.cos(2*np.pi*t_train/period)])
+    X_test = np.column_stack([np.sin(2*np.pi*t_test/period), np.cos(2*np.pi*t_test/period)])
+    lr = LinearRegression().fit(X_train, y_train)
+    pred = lr.predict(X_test)
+    rmse = np.sqrt(mean_squared_error(y_test, pred))
+    print(f'Period {period}: RMSE {rmse:.4f}')
+"
 ```
 
 ## [173] tool
@@ -3532,7 +5629,7 @@ Period 360: RMSE 1.2578
 **tool call: bash**
 
 ```
-
+cd /workspace && python generate_predictions.py
 ```
 
 ## [175] tool
@@ -3564,7 +5661,31 @@ predictions.csv written successfully
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+split = 150
+t_train, y_train = t[:split], y[:split]
+t_test, y_test = t[split:], y[split:]
+
+X_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+X_train = sm.add_constant(X_train)
+fit = sm.OLS(y_train, X_train).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+X_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+X_test = sm.add_constant(X_test)
+pred = fit.get_prediction(X_test)
+ps = pred.summary_frame(alpha=0.05)
+coverage = ((y_test >= ps['obs_ci_lower']) & (y_test <= ps['obs_ci_upper'])).mean()
+print('Coverage with maxlags=4:', coverage)
+print('Average width:', np.mean(ps['obs_ci_upper'] - ps['obs_ci_lower']))
+"
 ```
 
 ## [177] tool
@@ -3598,7 +5719,67 @@ Average width: 6.828368231570723
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# We'll use alpha_unwrap
+# Compute unwrapped alpha for all rows
+df_all = train.copy()
+alphas = df_all['alpha'].values
+ts_all = df_all['t'].values
+unwrap = np.zeros_like(alphas)
+unwrap[0] = alphas[0]
+for i in range(1, len(alphas)):
+    diff = alphas[i] - alphas[i-1]
+    if diff < -180:
+        unwrap[i] = unwrap[i-1] + diff + 360
+    elif diff > 180:
+        unwrap[i] = unwrap[i-1] + diff - 360
+    else:
+        unwrap[i] = unwrap[i-1] + diff
+df_all['alpha_unwrap'] = unwrap
+
+# For observed gamma rows, we have alpha_unwrap
+df_obs = df_all[df_all['gamma'].notna()].copy()
+t_obs = df_obs['t'].values
+y_obs = df_obs['gamma'].values
+alpha_unwrap_obs = df_obs['alpha_unwrap'].values
+
+# Split
+split = 150
+t_train, y_train, alpha_train = t_obs[:split], y_obs[:split], alpha_unwrap_obs[:split]
+t_test, y_test, alpha_test = t_obs[split:], y_obs[split:], alpha_unwrap_obs[split:]
+
+# Model: gamma ~ alpha_unwrap + alpha_unwrap^2
+X_train = np.column_stack([alpha_train, alpha_train**2])
+lr = LinearRegression().fit(X_train, y_train)
+X_test = np.column_stack([alpha_test, alpha_test**2])
+pred = lr.predict(X_test)
+rmse = np.sqrt(mean_squared_error(y_test, pred))
+print('RMSE using alpha:', rmse)
+
+# For future, we need to predict alpha_unwrap first.
+# Fit linear model for alpha_unwrap ~ t using all data (not just observed gamma)
+lr_alpha = LinearRegression().fit(ts_all.reshape(-1,1), unwrap)
+print('Alpha linear slope:', lr_alpha.coef_[0])
+# Predict alpha_unwrap for test
+test_ts = np.array([546,556,567,577,587,597,607,618,628,638])
+alpha_pred = lr_alpha.predict(test_ts.reshape(-1,1))
+# Predict gamma
+X_test_future = np.column_stack([alpha_pred, alpha_pred**2])
+gamma_pred = lr.predict(X_test_future)
+print('Gamma predictions using alpha:')
+for t_val, g in zip(test_ts, gamma_pred):
+    print(f't={t_val}: {g:.4f}')
+"
 ```
 
 ## [179] tool
@@ -3663,7 +5844,37 @@ t=638: -84.6751
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+# Expanding window: start with 50 points, then expand by 1 each time, forecast next point
+n = len(y)
+coverages = []
+for start in range(50, n-1):
+    t_train = t[:start]
+    y_train = y[:start]
+    t_test = t[start:start+1]
+    y_test = y[start]
+    X_train = np.column_stack([np.sin(2*np.pi*t_train/365), np.cos(2*np.pi*t_train/365)])
+    X_train = sm.add_constant(X_train)
+    X_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+    X_test = sm.add_constant(X_test)
+    fit = sm.OLS(y_train, X_train).fit(cov_type='HAC', cov_kwds={'maxlags': 5})
+    pred = fit.get_prediction(X_test)
+    ps = pred.summary_frame(alpha=0.05)
+    lower = ps['obs_ci_lower'].values[0]
+    upper = ps['obs_ci_upper'].values[0]
+    coverages.append((y_test >= lower) & (y_test <= upper))
+print('Overall coverage:', np.mean(coverages))
+print('Number of tests:', len(coverages))
+"
 ```
 
 ## [181] tool
@@ -3694,7 +5905,15 @@ ValueError: shapes (1,2) and (3,) not aligned: 2 (dim 1) != 3 (dim 0)
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import numpy as np
+import statsmodels.api as sm
+t_test = np.array([530])
+X_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+print('X_test shape before add_const:', X_test.shape)
+X_test = sm.add_constant(X_test)
+print('X_test shape after add_const:', X_test.shape)
+"
 ```
 
 ## [183] tool
@@ -3714,7 +5933,15 @@ X_test shape after add_const: (1, 2)
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import numpy as np
+import statsmodels.api as sm
+t_test = np.array([530])
+X_test = np.column_stack([np.sin(2*np.pi*t_test/365), np.cos(2*np.pi*t_test/365)])
+print('X_test:', X_test)
+X_test = sm.add_constant(X_test, has_constant='add')
+print('X_test after:', X_test)
+"
 ```
 
 ## [185] tool
@@ -3748,7 +5975,30 @@ X_test after: [[ 1.          0.29671282 -0.95496675]]
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+X = np.column_stack([np.sin(2*np.pi*t/365), np.cos(2*np.pi*t/365)])
+X = sm.add_constant(X)
+fit = sm.OLS(y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 10})
+resid = fit.resid
+fitted = fit.fittedvalues
+# Check correlation with fitted
+print('Corr of abs(resid) with fitted:', np.corrcoef(np.abs(resid), fitted)[0,1])
+# Check mean of abs resid in bins
+bins = np.linspace(fitted.min(), fitted.max(), 5)
+for i in range(len(bins)-1):
+    mask = (fitted >= bins[i]) & (fitted < bins[i+1])
+    if mask.sum() > 0:
+        print(f'Bin {i}: mean abs resid = {np.mean(np.abs(resid[mask])):.3f}')
+"
 ```
 
 ## [187] tool
@@ -3779,7 +6029,29 @@ Bin 3: mean abs resid = 1.323
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+train_obs = train[train['gamma'].notna()].copy()
+t = train_obs['t'].values
+y = train_obs['gamma'].values
+
+for period in [365.0, 365.25, 365.2425]:
+    X = np.column_stack([np.sin(2*np.pi*t/period), np.cos(2*np.pi*t/period)])
+    X = sm.add_constant(X)
+    fit = sm.OLS(y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 10})
+    test_t = np.array([546,556,567,577,587,597,607,618,628,638])
+    X_test = np.column_stack([np.sin(2*np.pi*test_t/period), np.cos(2*np.pi*test_t/period)])
+    X_test = sm.add_constant(X_test)
+    pred = fit.get_prediction(X_test)
+    ps = pred.summary_frame(alpha=0.05)
+    print(f'Period {period}:')
+    print(ps[['mean', 'obs_ci_lower', 'obs_ci_upper']].to_string())
+    print()
+"
 ```
 
 ## [189] tool
@@ -3844,7 +6116,7 @@ Period 365.2425:
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [191] tool

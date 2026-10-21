@@ -51,19 +51,19 @@ Let me start by examining the data files to understand their structure and
 **tool call: bash**
 
 ```
-
+head -50 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/test.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -20 data/test.csv
 ```
 
 ## [3] tool
@@ -158,13 +158,31 @@ Let me explore the data more thoroughly
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+print('Shape:', train.shape)
+print('t range:', train['t'].min(), '-', train['t'].max())
+print('alpha range:', train['alpha'].min(), '-', train['alpha'].max())
+print('beta range:', train['beta'].min(), '-', train['beta'].max())
+print('gamma range:', train['gamma'].min(), '-', train['gamma'].max())
+print()
+print('Non-null counts:')
+print(train.count())
+print()
+# Check if beta and gamma have missing values
+print('gamma null count:', train['gamma'].isna().sum())
+print('beta null count:', train['beta'].isna().sum())
+print('alpha null count:', train['alpha'].isna().sum())
+"
 ```
 
 ## [7] tool
@@ -226,7 +244,44 @@ alpha null count: 0
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+# Look at gamma vs t relationship
+print('First 10 gamma values:', train['gamma'].head(10).values)
+print('Last 10 gamma values:', train['gamma'].tail(10).values)
+print()
+
+# Check if gamma has a periodic pattern
+# Look at gamma differences
+gamma = train['gamma'].values
+print('gamma diff stats:')
+diffs = np.diff(gamma)
+print('mean diff:', np.mean(diffs))
+print('std diff:', np.std(diffs))
+print('min diff:', np.min(diffs))
+print('max diff:', np.max(diffs))
+print()
+
+# Look at alpha vs gamma
+print('alpha vs gamma correlation:', np.corrcoef(train['alpha'], train['gamma'])[0,1])
+print('beta vs gamma correlation:', np.corrcoef(train['beta'], train['gamma'])[0,1])
+print()
+
+# Check if alpha and beta are angles that wrap around
+print('alpha at start:', train['alpha'].iloc[0], 'alpha at end:', train['alpha'].iloc[-1])
+print('beta at start:', train['beta'].iloc[0], 'beta at end:', train['beta'].iloc[-1])
+print()
+
+# Look at the rate of change of alpha
+alpha = train['alpha'].values
+alpha_diffs = np.diff(alpha)
+print('alpha daily change mean:', np.mean(alpha_diffs), 'std:', np.std(alpha_diffs))
+print('alpha daily change range:', np.min(alpha_diffs), '-', np.max(alpha_diffs))
+"
 ```
 
 ## [10] tool
@@ -273,7 +328,35 @@ alpha daily change range: -358.4577 - 2.6182000000000016
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+# Let's look at gamma more carefully - is there a periodic component?
+# Compute FFT of gamma
+gamma = train['gamma'].values
+t = train['t'].values
+
+# Try to decompose gamma into trend + periodic components
+from scipy import signal
+
+# Let's look at the autocorrelation
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(gamma, nlags=100)
+print('ACF at lag 1:', acf_vals[1])
+print('ACF at lag 7:', acf_vals[7])
+print('ACF at lag 30:', acf_vals[30])
+print('ACF at lag 365:', acf_vals[365] if len(acf_vals) > 365 else 'N/A')
+print()
+
+# Look at gamma by month (approx 30 day periods)
+for start in range(0, 517, 30):
+    end = min(start+30, 517)
+    chunk = gamma[start:end]
+    print(f't={start}-{end-1}: mean={np.mean(chunk):.3f}, std={np.std(chunk):.3f}')
+"
 ```
 
 ## [12] tool
@@ -325,7 +408,64 @@ t=510-516: mean=-21.539, std=0.566
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+# Let's look at gamma more carefully - maybe it's a sinusoidal function of time
+# or a function of alpha/beta
+gamma = train['gamma'].values
+t = train['t'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Try fitting gamma as a function of t using polynomial
+from numpy.polynomial import polynomial as P
+
+# Try different polynomial degrees
+for deg in [1, 2, 3, 4, 5]:
+    coeffs = np.polyfit(t, gamma, deg)
+    pred = np.polyval(coeffs, t)
+    residual = gamma - pred
+    print(f'Degree {deg}: RMSE={np.sqrt(np.mean(residual**2)):.4f}, R2={1-np.var(residual)/np.var(gamma):.4f}')
+
+print()
+
+# Maybe gamma is related to alpha and beta in a trigonometric way
+# Since alpha and beta are angles, maybe gamma = f(alpha, beta) for some function
+# Let's try: gamma = A * sin(alpha + phi) + B * sin(beta + psi) + C
+from scipy.optimize import minimize
+
+def model(params, alpha, beta):
+    A1, phi1, A2, phi2, C = params
+    return A1 * np.sin(np.radians(alpha + phi1)) + A2 * np.sin(np.radians(beta + phi2)) + C
+
+def loss(params):
+    pred = model(params, alpha, beta)
+    return np.mean((gamma - pred)**2)
+
+# Initial guess
+x0 = [30, 0, 10, 0, 0]
+result = minimize(loss, x0, method='Nelder-Mead')
+print('Trig model (alpha, beta): RMSE =', np.sqrt(result.fun))
+print('Params:', result.x)
+
+# Also try with just alpha
+def model2(params, alpha):
+    A1, phi1, C = params
+    return A1 * np.sin(np.radians(alpha + phi1)) + C
+
+def loss2(params):
+    pred = model2(params, alpha)
+    return np.mean((gamma - pred)**2)
+
+x0_2 = [30, 0, 0]
+result2 = minimize(loss2, x0_2, method='Nelder-Mead')
+print('Trig model (alpha only): RMSE =', np.sqrt(result2.fun))
+print('Params:', result2.x)
+"
 ```
 
 ## [14] tool
@@ -384,7 +524,43 @@ Params: [14.93697078 15.75832729 14.88490301]
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+gamma = train['gamma'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Let's look at alpha and beta more carefully
+# Alpha goes from ~77 to ~275 over 516 days - roughly 0.38 deg/day
+# Beta goes from ~283 to ~188 over 516 days - roughly -0.18 deg/day
+# These are both angles that wrap around 360
+
+# Check if alpha wraps
+alpha_diffs = np.diff(alpha)
+print('Alpha diffs < -180 (wrapping):', np.sum(alpha_diffs < -180))
+print('Alpha diffs > 180 (wrapping):', np.sum(alpha_diffs > 180))
+print('Alpha diffs <-10:', alpha_diffs[alpha_diffs < -10])
+print()
+
+# Check beta diffs
+beta_diffs = np.diff(beta)
+print('Beta diffs < -180 (wrapping):', np.sum(beta_diffs < -180))
+print('Beta diffs > 180 (wrapping):', np.sum(beta_diffs > 180))
+print('Beta diffs <-10:', beta_diffs[beta_diffs < -10])
+print()
+
+# Let's unwrap alpha and beta
+alpha_unwrapped = np.unwrap(np.radians(alpha))
+beta_unwrapped = np.unwrap(np.radians(beta))
+print('Alpha unwrapped start:', alpha_unwrapped[0], 'end:', alpha_unwrapped[-1])
+print('Beta unwrapped start:', beta_unwrapped[0], 'end:', beta_unwrapped[-1])
+print('Alpha unwrapped range:', alpha_unwrapped[-1] - alpha_unwrapped[0])
+print('Beta unwrapped range:', beta_unwrapped[-1] - beta_unwrapped[0])
+"
 ```
 
 ## [16] tool
@@ -421,7 +597,83 @@ Beta unwrapped range: 4.632175393292282
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+gamma = train['gamma'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Find where alpha wraps
+alpha_diffs = np.diff(alpha)
+wrap_idx = np.where(alpha_diffs < -100)[0]
+print('Alpha wrap at indices:', wrap_idx)
+print('Alpha values around wrap:', alpha[wrap_idx[0]-2:wrap_idx[0]+3])
+print()
+
+# Find where beta wraps
+beta_diffs = np.diff(beta)
+wrap_idx_b = np.where(beta_diffs < -100)[0]
+print('Beta wrap at indices:', wrap_idx_b)
+print('Beta values around wrap:', beta[wrap_idx_b[0]-2:wrap_idx_b[0]+3])
+print()
+
+# Let's try a different approach - model gamma as a function of alpha and beta
+# Since alpha and beta are angles, maybe gamma depends on the difference or sum
+# Or maybe gamma = some function of the relative geometry
+
+# Let's try: gamma as a function of (alpha - beta) or (alpha + beta)
+diff_ab = alpha - beta
+sum_ab = alpha + beta
+print('Correlation gamma vs (alpha-beta):', np.corrcoef(gamma, diff_ab)[0,1])
+print('Correlation gamma vs (alpha+beta):', np.corrcoef(gamma, sum_ab)[0,1])
+print()
+
+# Maybe gamma is related to the elevation of a celestial object
+# which depends on the hour angle (alpha) and declination (beta)
+# In astronomy, elevation = arcsin(sin(lat)*sin(dec) + cos(lat)*cos(dec)*cos(HA))
+# But we don't know the latitude
+
+# Let's try a simpler approach: fit gamma as a smooth function of t
+# using a periodic spline or Fourier series
+
+# First, let's understand the overall pattern better
+# Gamma starts at ~18, ends at ~-22, with a bump to ~42 in the middle
+# This looks like it could be a sinusoidal pattern with a trend
+
+# Let's try fitting with Fourier terms
+from scipy.optimize import curve_fit
+
+def fourier_model(t, a0, a1, b1, a2, b2, a3, b3, a4, b4, a5, b5, c):
+    result = np.full_like(t, c, dtype=float)
+    for k in range(1, 6):
+        result += a_k * np.sin(2*np.pi*k*t/period) + b_k * np.cos(2*np.pi*k*t/period)
+    return result
+
+# What's the period? Let's look at the gamma pattern more carefully
+# Gamma goes: 18 -> down -> 14 -> up -> 42 -> down -> -22
+# The rise from 14 to 42 happens around t=300-390
+# This could be a period of about 500-600 days or so
+
+# Actually, let me just try a polynomial + sinusoidal fit
+# Or better yet, let me try a Gaussian process regression
+
+# First, let's try a simple approach: local regression with smoothing
+# Gamma has very high autocorrelation, so a smooth function of t should work well
+
+# Let's try fitting gamma = f(t) with a smooth spline
+from scipy.interpolate import UnivariateSpline
+
+# Try different smoothing parameters
+for s in [0.1, 1, 5, 10, 50, 100]:
+    spl = UnivariateSpline(t, gamma, s=s)
+    pred = spl(t)
+    rmse = np.sqrt(np.mean((gamma - pred)**2))
+    print(f'Spline s={s}: RMSE={rmse:.4f}')
+"
 ```
 
 ## [18] tool
@@ -474,7 +726,70 @@ Let me explore the relationship between gamma and the other variables more deepl
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+gamma = train['gamma'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Unwrap alpha and beta to get continuous angles
+# Alpha wraps at t=268, beta wraps at t=354
+alpha_cont = alpha.copy()
+beta_cont = beta.copy()
+
+# Fix alpha wrap: add 360 after t=268
+alpha_cont[269:] += 360
+# Fix beta wrap: add 360 after t=354
+beta_cont[355:] += 360
+
+print('Alpha continuous range:', alpha_cont[0], '-', alpha_cont[-1])
+print('Beta continuous range:', beta_cont[0], '-', beta_cont[-1])
+print()
+
+# Now let's try modeling gamma as a function of alpha_cont and beta_cont
+# and t
+
+# Try a linear model: gamma = a*alpha + b*beta + c*t + d
+from numpy.linalg import lstsq
+X = np.column_stack([alpha_cont, beta_cont, t, np.ones_like(t)])
+coeffs, residuals, rank, s = lstsq(X, gamma, rcond=None)
+pred = X @ coeffs
+rmse = np.sqrt(np.mean((gamma - pred)**2))
+print(f'Linear model (alpha_cont, beta_cont, t): RMSE={rmse:.4f}')
+print('Coeffs:', coeffs)
+print()
+
+# Try a model with sin/cos of alpha and beta
+# gamma = a*sin(alpha) + b*cos(alpha) + c*sin(beta) + d*cos(beta) + e*t + f
+X2 = np.column_stack([
+    np.sin(np.radians(alpha)), np.cos(np.radians(alpha)),
+    np.sin(np.radians(beta)), np.cos(np.radians(beta)),
+    t, np.ones_like(t)
+])
+coeffs2, _, _, _ = lstsq(X2, gamma, rcond=None)
+pred2 = X2 @ coeffs2
+rmse2 = np.sqrt(np.mean((gamma - pred2)**2))
+print(f'Linear model (sin/cos alpha, sin/cos beta, t): RMSE={rmse2:.4f}')
+print('Coeffs:', coeffs2)
+print()
+
+# Try with unwrapped alpha and beta
+X3 = np.column_stack([
+    np.sin(np.radians(alpha_cont)), np.cos(np.radians(alpha_cont)),
+    np.sin(np.radians(beta_cont)), np.cos(np.radians(beta_cont)),
+    t, np.ones_like(t)
+])
+coeffs3, _, _, _ = lstsq(X3, gamma, rcond=None)
+pred3 = X3 @ coeffs3
+rmse3 = np.sqrt(np.mean((gamma - pred3)**2))
+print(f'Linear model (sin/cos alpha_cont, sin/cos beta_cont, t): RMSE={rmse3:.4f}')
+print('Coeffs:', coeffs3)
+"
 ```
 
 ## [20] tool
@@ -523,7 +838,95 @@ Coeffs: [-3.74609865 -4.63528948 19.62477735 29.42950924 -0.06588961 36.29446161
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+gamma = train['gamma'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Since test.csv only has t, I need to predict gamma from t alone
+# But I can use alpha and beta as intermediate predictions
+
+# First, let me model alpha as a function of t
+# Alpha wraps at t=268 (from ~358 to ~0), so the unwrapped version is linear-ish
+alpha_cont = alpha.copy()
+alpha_cont[269:] += 360
+
+# Model alpha_cont as a function of t
+from numpy.linalg import lstsq
+X_a = np.column_stack([t, np.ones_like(t)])
+coeffs_a, _, _, _ = lstsq(X_a, alpha_cont, rcond=None)
+print('Alpha model: a0 =', coeffs_a)
+alpha_pred = X_a @ coeffs_a
+rmse_a = np.sqrt(np.mean((alpha_cont - alpha_pred)**2))
+print(f'Alpha RMSE: {rmse_a:.4f}')
+print(f'Alpha rate: {coeffs_a[0]:.6f} deg/day')
+print()
+
+# Model beta_cont as a function of t
+beta_cont = beta.copy()
+beta_cont[355:] += 360
+
+X_b = np.column_stack([t, np.ones_like(t)])
+coeffs_b, _, _, _ = lstsq(X_b, beta_cont, rcond=None)
+print('Beta model: b0 =', coeffs_b)
+beta_pred = X_b @ coeffs_b
+rmse_b = np.sqrt(np.mean((beta_cont - beta_pred)**2))
+print(f'Beta RMSE: {rmse_b:.4f}')
+print(f'Beta rate: {coeffs_b[0]:.6f} deg/day')
+print()
+
+# Now model gamma as a function of t alone
+# Let's try a sinusoidal + linear trend model
+# gamma = A*sin(2*pi*t/P + phi) + B*t + C
+
+# First, let's try to find the period using FFT
+from scipy.fft import fft, fftfreq
+
+# Detrend gamma first
+gamma_detrended = gamma - np.polyval(np.polyfit(t, gamma, 1), t)
+N = len(gamma_detrended)
+yf = fft(gamma_detrended)
+xf = fftfreq(N, 1)  # 1 day spacing
+
+# Find dominant frequencies (positive only)
+pos_mask = xf > 0
+freqs = xf[pos_mask]
+mags = np.abs(yf[pos_mask])
+top_idx = np.argsort(mags)[-10:]
+print('Top 10 frequencies (cycles/day):')
+for i in top_idx:
+    print(f'  freq={freqs[i]:.6f}, period={1/freqs[i]:.2f} days, magnitude={mags[i]:.2f}')
+print()
+
+# Let's also try fitting a model directly
+def model(t, A, P, phi, B, C):
+    return A * np.sin(2*np.pi*t/P + phi) + B*t + C
+
+# Try different periods
+best_rmse = float('inf')
+best_params = None
+for P_try in [50, 100, 150, 200, 250, 300, 365, 400, 500, 516, 600, 700, 800, 1000]:
+    try:
+        p0 = [20, P_try, 0, -0.08, 18]
+        popt, _ = curve_fit(model, t, gamma, p0=p0, maxfev=10000)
+        pred = model(t, *popt)
+        rmse = np.sqrt(np.mean((gamma - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_params = popt
+            best_P = P_try
+    except:
+        pass
+
+print(f'Best sinusoidal+linear model (P={best_P}): RMSE={best_rmse:.4f}')
+print('Params:', best_params)
+"
 ```
 
 ## [22] tool
@@ -581,7 +984,64 @@ Params: [ 2.43052217e+01  5.71604506e+02 -2.27413613e+00 -1.43163130e-01
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+gamma = train['gamma'].values
+
+# Let's try a more flexible model: sum of sinusoids + polynomial trend
+# gamma = sum_k [A_k*sin(2*pi*k*t/P + phi_k)] + poly(t)
+
+# First, let's try a cubic polynomial + a few sinusoids
+def model1(t, a, b, c, d, A1, P1, phi1, A2, P2, phi2):
+    trend = a + b*t + c*t**2 + d*t**3
+    seasonal = A1*np.sin(2*np.pi*t/P1 + phi1) + A2*np.sin(2*np.pi*t/P2 + phi2)
+    return trend + seasonal
+
+# Try with P1=517 (full data length) and P2=258 (half)
+try:
+    p0 = [18, -0.08, 0, 0, 30, 517, 0, 10, 258, 0]
+    popt, pcov = curve_fit(model1, t, gamma, p0=p0, maxfev=50000)
+    pred = model1(t, *popt)
+    rmse = np.sqrt(np.mean((gamma - pred)**2))
+    print(f'Model1 (cubic + 2 sin): RMSE={rmse:.4f}')
+    print('Params:', popt)
+except Exception as e:
+    print(f'Model1 failed: {e}')
+
+# Try a simpler approach: just polynomial
+for deg in [2, 3, 4, 5, 6, 7]:
+    coeffs = np.polyfit(t, gamma, deg)
+    pred = np.polyval(coeffs, t)
+    rmse = np.sqrt(np.mean((gamma - pred)**2))
+    print(f'Polynomial degree {deg}: RMSE={rmse:.4f}')
+
+print()
+
+# Let's also try: gamma = A*sin(2*pi*t/P + phi) + B*t + C (single sinusoid + linear)
+# with different periods
+best_rmse = float('inf')
+best_popt = None
+for P in range(50, 600, 10):
+    try:
+        p0 = [20, P, 0, -0.08, 18]
+        popt, _ = curve_fit(lambda t, A, P, phi, B, C: A*np.sin(2*np.pi*t/P + phi) + B*t + C, 
+                           t, gamma, p0=p0, maxfev=10000)
+        pred = popt[0]*np.sin(2*np.pi*t/popt[1] + popt[2]) + popt[3]*t + popt[4]
+        rmse = np.sqrt(np.mean((gamma - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_popt = popt
+    except:
+        pass
+
+print(f'Best single sinusoid + linear: RMSE={best_rmse:.4f}, P={best_popt[1]:.1f}')
+print('Params:', best_popt)
+"
 ```
 
 ## [24] tool
@@ -629,7 +1089,39 @@ Let me try a Gaussian Process approach and also explore the alpha/beta feature e
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Scale t for better GP performance
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# Try GP with RBF kernel
+kernel = ConstantKernel(1.0) * RBF(length_scale=1.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(t_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(t_test_scaled, return_std=True)
+print('GP RBF predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}, 95%=[{y_pred[i]-1.96*y_std[i]:.4f}, {y_pred[i]+1.96*y_std[i]:.4f}]')
+
+print()
+print('GP kernel:', gp.kernel_)
+print('GP log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+"
 ```
 
 ## [26] tool
@@ -680,7 +1172,60 @@ The GP with RBF reverts to mean for extrapolation. Let me try a better approach 
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, RationalQuadratic, LinearKernel
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# Try GP with Matern kernel (better for extrapolation than RBF)
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(t_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(t_test_scaled, return_std=True)
+print('GP Matern(2.5) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print()
+
+# Try GP with RationalQuadratic kernel
+kernel2 = ConstantKernel(1.0) * RationalQuadratic(length_scale=1.0, alpha=1.0) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(t_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(t_test_scaled, return_std=True)
+print('GP RationalQuadratic predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}')
+print('Kernel:', gp2.kernel_)
+print()
+
+# Try GP with Linear kernel + RBF
+kernel3 = ConstantKernel(1.0) * (LinearKernel() + RBF(length_scale=1.0)) + WhiteKernel(noise_level=1.0)
+gp3 = GaussianProcessRegressor(kernel=kernel3, n_restarts_optimizer=10, alpha=0.01)
+gp3.fit(t_train_scaled, gamma_train)
+
+y_pred3, y_std3 = gp3.predict(t_test_scaled, return_std=True)
+print('GP Linear+RBF predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred3[i]:.4f}, std={y_std3[i]:.4f}')
+print('Kernel:', gp3.kernel_)
+"
 ```
 
 ## [28] tool
@@ -703,7 +1248,49 @@ Let me fix the approach and try multiple strategies
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, RationalQuadratic, ExpSineSquared
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# Try GP with Matern kernel
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(t_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(t_test_scaled, return_std=True)
+print('GP Matern(2.5) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print()
+
+# Try GP with ExpSineSquared + Linear trend
+# The ExpSineSquared kernel captures periodicity
+kernel2 = ConstantKernel(1.0) * ExpSineSquared(length_scale=1.0, periodicity=100.0) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(t_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(t_test_scaled, return_std=True)
+print('GP ExpSineSquared predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}')
+print('Kernel:', gp2.kernel_)
+"
 ```
 
 ## [30] tool
@@ -768,7 +1355,101 @@ Let me try a more principled approach - modeling alpha and beta as functions of 
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, DotProduct
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# === Approach: Use alpha and beta as features for gamma ===
+# First, we need to predict alpha and beta for test t values
+
+# Model alpha: it's roughly linear with a wrap at t=268
+# Unwrap alpha
+alpha_unwrapped = alpha_train.copy()
+alpha_unwrapped[269:] += 360  # wrap at t=268
+
+# Model beta: it's roughly linear with a wrap at t=354
+beta_unwrapped = beta_train.copy()
+beta_unwrapped[355:] += 360  # wrap at t=354
+
+# Fit linear models for alpha and beta
+from numpy.linalg import lstsq
+
+# Alpha model: alpha_unwrapped = a*t + b
+X_a = np.column_stack([t_train, np.ones_like(t_train)])
+coeffs_a, _, _, _ = lstsq(X_a, alpha_unwrapped, rcond=None)
+alpha_pred_train = X_a @ coeffs_a
+rmse_a = np.sqrt(np.mean((alpha_unwrapped - alpha_pred_train)**2))
+print(f'Alpha linear model RMSE: {rmse_a:.4f}')
+print(f'Alpha: {coeffs_a[0]:.6f}*t + {coeffs_a[1]:.4f}')
+
+# Beta model: beta_unwrapped = a*t + b
+X_b = np.column_stack([t_train, np.ones_like(t_train)])
+coeffs_b, _, _, _ = lstsq(X_b, beta_unwrapped, rcond=None)
+beta_pred_train = X_b @ coeffs_b
+rmse_b = np.sqrt(np.mean((beta_unwrapped - beta_pred_train)**2))
+print(f'Beta linear model RMSE: {rmse_b:.4f}')
+print(f'Beta: {coeffs_b[0]:.6f}*t + {coeffs_b[1]:.4f}')
+
+# Predict alpha and beta for test t
+alpha_test_unwrapped = coeffs_a[0] * t_test + coeffs_a[1]
+beta_test_unwrapped = coeffs_b[0] * t_test + coeffs_b[1]
+
+# Wrap them back to 0-360
+alpha_test = alpha_test_unwrapped % 360
+beta_test = beta_test_unwrapped % 360
+
+print()
+print('Predicted alpha for test:', alpha_test)
+print('Predicted beta for test:', beta_test)
+print()
+
+# Now model gamma as a function of alpha, beta, and t
+# Use the sin/cos representation for angles
+X_features = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    t_train
+])
+
+X_test_features = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    t_test
+])
+
+# Fit linear regression
+lr = LinearRegression()
+lr.fit(X_features, gamma_train)
+gamma_pred = lr.predict(X_test_features)
+gamma_residuals = gamma_train - lr.predict(X_features)
+residual_std = np.std(gamma_residuals)
+print(f'Gamma model (sin/cos alpha, sin/cos beta, t) RMSE: {np.sqrt(np.mean(gamma_residuals**2)):.4f}')
+print(f'Residual std: {residual_std:.4f}')
+print('Coefficients:', lr.coef_)
+print('Intercept:', lr.intercept_)
+print()
+
+print('Gamma predictions for test:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: pred={gamma_pred[i]:.4f}')
+"
 ```
 
 ## [32] tool
@@ -840,7 +1521,79 @@ Let me check the beta trend more carefully and also try a direct gamma model
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+beta = train['beta'].values
+
+# Unwrap beta
+beta_uw = beta.copy()
+beta_uw[355:] += 360
+
+# Check beta trend
+from numpy.polynomial import polynomial as P
+for deg in [1, 2, 3]:
+    coeffs = np.polyfit(t, beta_uw, deg)
+    pred = np.polyval(coeffs, t)
+    rmse = np.sqrt(np.mean((beta_uw - pred)**2))
+    print(f'Beta unwrapped poly degree {deg}: RMSE={rmse:.4f}')
+
+print()
+
+# Now let's focus on modeling gamma directly as a function of t
+# Gamma has very high autocorrelation, so a smooth function of t should work
+
+# Let's try: gamma = A*sin(2*pi*t/P + phi) + B*t + C
+# where we find the best P
+
+from scipy.optimize import minimize
+
+def model_sinlin(t, A, P, phi, B, C):
+    return A * np.sin(2*np.pi*t/P + phi) + B*t + C
+
+def loss(params):
+    A, P, phi, B, C = params
+    pred = model_sinlin(t, A, P, phi, B, C)
+    return np.mean((gamma - pred)**2)
+
+# Try different initial periods
+best_loss = float('inf')
+best_params = None
+for P_init in [100, 200, 300, 400, 500, 600, 700, 800, 1000]:
+    for A_init in [10, 20, 30, 40]:
+        for B_init in [-0.1, -0.05, 0, 0.05]:
+            try:
+                p0 = [A_init, P_init, 0, B_init, 15]
+                result = minimize(loss, p0, method='Nelder-Mead', 
+                                 options={'maxiter': 50000, 'xatol': 1e-8, 'fatol': 1e-10})
+                if result.fun < best_loss:
+                    best_loss = result.fun
+                    best_params = result.x
+            except:
+                pass
+
+print(f'Best sin+lin model: RMSE={np.sqrt(best_loss):.4f}')
+A, P, phi, B, C = best_params
+print(f'A={A:.4f}, P={P:.4f}, phi={phi:.4f}, B={B:.6f}, C={C:.4f}')
+
+# Also try with two sinusoids
+def model_sinlin2(t, A1, P1, phi1, A2, P2, phi2, B, C):
+    return A1*np.sin(2*np.pi*t/P1 + phi1) + A2*np.sin(2*np.pi*t/P2 + phi2) + B*t + C
+
+def loss2(params):
+    A1, P1, phi1, A2, P2, phi2, B, C = params
+    pred = model_sinlin2(t, A1, P1, phi1, A2, P2, phi2, B, C)
+    return np.mean((gamma - pred)**2)
+
+# Use the best single sinusoid as starting point
+p0_2 = list(best_params) + [10, 250, 0]  # add second sinusoid
+result2 = minimize(loss2, p0_2, method='Nelder-Mead', options={'maxiter': 100000})
+print(f'Best sin+sin+lin model: RMSE={np.sqrt(result2.fun):.4f}')
+print('Params:', result2.x)
+"
 ```
 
 ## [34] tool
@@ -886,7 +1639,58 @@ Let me take a more systematic approach to modeling gamma as a function of t
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+gamma = train['gamma'].values
+
+# Model 1: Polynomial (degree 3-5)
+print('=== Polynomial models ===')
+for deg in [3, 4, 5]:
+    coeffs = np.polyfit(t, gamma, deg)
+    pred = np.polyval(coeffs, t)
+    rmse = np.sqrt(np.mean((gamma - pred)**2))
+    # Also check extrapolation behavior
+    t_ext = np.arange(516, 810)
+    pred_ext = np.polyval(coeffs, t_ext)
+    print(f'Degree {deg}: RMSE={rmse:.4f}, ext range [{pred_ext.min():.2f}, {pred_ext.max():.2f}]')
+
+print()
+
+# Model 2: Sinusoidal + linear trend
+# gamma = A*sin(2*pi*t/P + phi) + B*t + C
+print('=== Sinusoidal + linear models ===')
+# Try a grid of periods
+for P in [100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 1000]:
+    try:
+        # Initial guess: A=20, B=-0.08, C=18
+        p0 = [20, P, 0, -0.08, 18]
+        popt, pcov = curve_fit(lambda t, A, P, phi, B, C: A*np.sin(2*np.pi*t/P + phi) + B*t + C,
+                               t, gamma, p0=p0, maxfev=50000)
+        pred = popt[0]*np.sin(2*np.pi*t/popt[1] + popt[2]) + popt[3]*t + popt[4]
+        rmse = np.sqrt(np.mean((gamma - pred)**2))
+        print(f'P={P}: RMSE={rmse:.4f}, A={popt[0]:.2f}, B={popt[3]:.6f}, C={popt[4]:.2f}')
+    except Exception as e:
+        print(f'P={P}: FAILED - {e}')
+
+print()
+
+# Model 3: Try a cubic spline with smoothing
+from scipy.interpolate import UnivariateSpline
+print('=== Smoothing splines ===')
+for s in [0.5, 1, 2, 5, 10, 20]:
+    spl = UnivariateSpline(t, gamma, s=s)
+    pred = spl(t)
+    rmse = np.sqrt(np.mean((gamma - pred)**2))
+    # Extrapolate
+    t_ext = np.arange(516, 810)
+    pred_ext = spl(t_ext)
+    print(f's={s}: RMSE={rmse:.4f}, ext range [{pred_ext.min():.2f}, {pred_ext.max():.2f}]')
+"
 ```
 
 ## [36] tool
@@ -948,7 +1752,64 @@ Let me try a more careful approach with GP and also explore the feature-based mo
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, Sum, Product, DotProduct
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# Try GP with a kernel that has a linear trend component
+# DotProduct kernel can capture linear trends
+kernel = ConstantKernel(1.0) * DotProduct(sigma_0=1.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(t_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(t_test_scaled, return_std=True)
+print('GP DotProduct predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print('Log-ML:', gp.log_marginal_likelihood_value_)
+print()
+
+# Try GP with Matern + DotProduct (trend + smooth)
+kernel2 = ConstantKernel(1.0) * (Matern(length_scale=1.0, nu=2.5) + DotProduct(sigma_0=1.0)) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(t_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(t_test_scaled, return_std=True)
+print('GP Matern+DotProduct predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}')
+print('Kernel:', gp2.kernel_)
+print('Log-ML:', gp2.log_marginal_likelihood_value_)
+print()
+
+# Try GP with RationalQuadratic + DotProduct
+kernel3 = ConstantKernel(1.0) * (RationalQuadratic(length_scale=1.0, alpha=1.0) + DotProduct(sigma_0=1.0)) + WhiteKernel(noise_level=1.0)
+gp3 = GaussianProcessRegressor(kernel=kernel3, n_restarts_optimizer=10, alpha=0.01)
+gp3.fit(t_train_scaled, gamma_train)
+
+y_pred3, y_std3 = gp3.predict(t_test_scaled, return_std=True)
+print('GP RQ+DotProduct predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred3[i]:.4f}, std={y_std3[i]:.4f}')
+print('Kernel:', gp3.kernel_)
+print('Log-ML:', gp3.log_marginal_likelihood_value_)
+"
 ```
 
 ## [38] tool
@@ -1037,7 +1898,111 @@ Let me try a more sophisticated approach combining feature engineering with GP
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, Sum, Product
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# === Step 1: Predict alpha and beta for test t ===
+# Alpha wraps at t=268, beta wraps at t=354
+# Unwrap them
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360
+
+# Fit linear models
+from numpy.linalg import lstsq
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+# Predict for test
+alpha_uw_test = c_alpha[0] * t_test + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test + c_beta[1]
+
+# Wrap back
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+# Also keep unwrapped versions for use as features
+alpha_uw_test_mod = alpha_uw_test
+beta_uw_test_mod = beta_uw_test
+
+# === Step 2: Build features for gamma model ===
+# Use sin/cos of alpha, beta, and t as features
+# Also include unwrapped alpha and beta
+
+# Training features
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    np.sin(np.radians(alpha_uw_train := alpha_uw)),
+    np.cos(np.radians(alpha_uw_train)),
+    np.sin(np.radians(beta_uw_train := beta_uw)),
+    np.cos(np.radians(beta_uw_train)),
+    t_train,
+    t_train**2,
+])
+
+# Test features
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    np.sin(np.radians(alpha_uw_test_mod)),
+    np.cos(np.radians(alpha_uw_test_mod)),
+    np.sin(np.radians(beta_uw_test_mod)),
+    np.cos(np.radians(beta_uw_test_mod)),
+    t_test,
+    t_test**2,
+])
+
+# Fit linear regression
+lr = LinearRegression()
+lr.fit(X_train, gamma_train)
+gamma_pred = lr.predict(X_test)
+residuals = gamma_train - lr.predict(X_train)
+residual_std = np.std(residuals)
+print(f'Feature model RMSE: {np.sqrt(np.mean(residuals**2)):.4f}')
+print(f'Residual std: {residual_std:.4f}')
+print('Predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: pred={gamma_pred[i]:.4f}')
+print()
+
+# === Step 3: Try GP with alpha, beta features ===
+# Scale features
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(X_train_scaled, gamma_train)
+
+y_pred_gp, y_std_gp = gp.predict(X_test_scaled, return_std=True)
+print('GP with features predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: pred={y_pred_gp[i]:.4f}, std={y_std_gp[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print('Log-ML:', gp.log_marginal_likelihood_value_)
+"
 ```
 
 ## [40] tool
@@ -1120,7 +2085,85 @@ Let me try a more careful approach - fitting a deterministic model and using res
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from sklearn.model_selection import cross_val_score
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t = train['t'].values
+gamma = train['gamma'].values
+t_test = test['t'].values
+
+# === Approach: Fit a smooth model to gamma vs t ===
+# Use a combination of polynomial + sinusoidal terms
+
+# Model: gamma = poly(t) + sum_k A_k * sin(2*pi*k*t/P + phi_k)
+# where P is the period
+
+# First, let's try a cubic polynomial + sinusoidal
+def model_cubic_sin(t, a0, a1, a2, a3, A, P, phi):
+    trend = a0 + a1*t + a2*t**2 + a3*t**3
+    seasonal = A * np.sin(2*np.pi*t/P + phi)
+    return trend + seasonal
+
+# Try different periods
+print('=== Cubic + single sinusoid ===')
+best_rmse = float('inf')
+best_params = None
+best_P = None
+for P in [100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 1000, 1500, 2000]:
+    try:
+        p0 = [18, -0.08, 0, 0, 20, P, 0]
+        popt, pcov = curve_fit(model_cubic_sin, t, gamma, p0=p0, maxfev=50000)
+        pred = model_cubic_sin(t, *popt)
+        rmse = np.sqrt(np.mean((gamma - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_params = popt
+            best_P = P
+        print(f'P={P}: RMSE={rmse:.4f}, A={popt[4]:.2f}, B={popt[1]:.6f}')
+    except Exception as e:
+        print(f'P={P}: FAILED')
+
+print(f'Best: P={best_P}, RMSE={best_rmse:.4f}')
+print('Params:', best_params)
+print()
+
+# Now let's try with two sinusoids
+def model_cubic_sin2(t, a0, a1, a2, a3, A1, P1, phi1, A2, P2, phi2):
+    trend = a0 + a1*t + a2*t**2 + a3*t**3
+    seasonal = A1*np.sin(2*np.pi*t/P1 + phi1) + A2*np.sin(2*np.pi*t/P2 + phi2)
+    return trend + seasonal
+
+print('=== Cubic + two sinusoids ===')
+best_rmse2 = float('inf')
+best_params2 = None
+# Use the best single sinusoid period as a starting point
+P1_best = best_P
+for P1 in [P1_best]:
+    for P2 in [P1/2, P1*2, 100, 150, 200, 250, 400, 500]:
+        try:
+            p0 = [18, -0.08, 0, 0, 20, P1, 0, 10, P2, 0]
+            popt, pcov = curve_fit(model_cubic_sin2, t, gamma, p0=p0, maxfev=50000)
+            pred = model_cubic_sin2(t, *popt)
+            rmse = np.sqrt(np.mean((gamma - pred)**2))
+            if rmse < best_rmse2:
+                best_rmse2 = rmse
+                best_params2 = popt
+            print(f'P1={P1}, P2={P2}: RMSE={rmse:.4f}')
+        except Exception as e:
+            pass
+
+if best_params2 is not None:
+    print(f'Best two-sinusoid: RMSE={best_rmse2:.4f}')
+    print('Params:', best_params2)
+"
 ```
 
 ## [42] tool
@@ -1186,7 +2229,167 @@ Let me now build the final model and generate predictions
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t = train['t'].values
+gamma = train['gamma'].values
+t_test = test['t'].values
+
+# === Final model: cubic + two sinusoids ===
+def model(t, a0, a1, a2, a3, A1, P1, phi1, A2, P2, phi2):
+    trend = a0 + a1*t + a2*t**2 + a3*t**3
+    seasonal = A1*np.sin(2*np.pi*t/P1 + phi1) + A2*np.sin(2*np.pi*t/P2 + phi2)
+    return trend + seasonal
+
+# Best params from previous search
+popt = [3.76340518e+01, -4.70477861e-01, 2.56271919e-03, -3.79483458e-06,
+        9.86563787e+00, 1.52845827e+02, -7.43596542e+00, 1.14069165e+01,
+        1.93664585e+02, -9.15334581e+00]
+
+pred_train = model(t, *popt)
+residuals = gamma - pred_train
+residual_std = np.std(residuals)
+rmse = np.sqrt(np.mean(residuals**2))
+print(f'Training RMSE: {rmse:.4f}')
+print(f'Residual std: {residual_std:.4f}')
+print(f'Residual mean: {np.mean(residuals):.6f}')
+print()
+
+# Check residual autocorrelation
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(residuals, nlags=20)
+print('Residual ACF at lag 1:', acf_vals[1])
+print('Residual ACF at lag 2:', acf_vals[2])
+print('Residual ACF at lag 5:', acf_vals[5])
+print()
+
+# Predictions for test
+pred_test = model(t_test, *popt)
+print('Test predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: pred={pred_test[i]:.4f}')
+print()
+
+# 95% prediction interval: pred +/- 1.96 * sigma
+# where sigma includes both model uncertainty and observation noise
+# For a new observation, the prediction interval is:
+# pred +/- 1.96 * sqrt(residual_var + model_uncertainty)
+# Since we're extrapolating, model_uncertainty is large
+# Let's use a conservative approach: 
+# - Use residual_std for the observation noise
+# - Add extra uncertainty for extrapolation
+
+# Simple approach: use residual_std as the noise estimate
+# For extrapolation beyond training data, increase the uncertainty
+
+# Distance from training data
+t_max_train = t.max()
+distances = t_test - t_max_train
+print('Distances from training data:', distances)
+print()
+
+# For prediction intervals, use:
+# - The residual std for observation noise
+# - Additional uncertainty proportional to extrapolation distance
+# A simple approach: use the residual std and add a term for extrapolation uncertainty
+
+# Let's compute the standard error of the prediction
+# For a nonlinear model, we can use the delta method or bootstrap
+# Simple approach: use the residual std and scale by extrapolation distance
+
+# For now, let's use a simple approach:
+# y_lower = pred - 1.96 * sigma_total
+# y_upper = pred + 1.96 * sigma_total
+# where sigma_total = sqrt(residual_std^2 + extrapolation_uncertainty^2)
+
+# The extrapolation uncertainty grows with distance from training data
+# A reasonable estimate: for each day beyond training, add some uncertainty
+# The noise in gamma is about 0.7-1.0 per day (from the ACF)
+# The standard deviation of gamma changes is about 0.71
+
+# For a simple approach, let's use the residual std as the noise estimate
+# and add a term that grows with extrapolation distance
+# The growth rate could be estimated from the model's sensitivity to parameters
+
+# Actually, let me try a more principled approach using the GP
+# But first, let me just use the deterministic model with residual-based intervals
+
+# For the prediction interval, I'll use:
+# sigma_total = sqrt(residual_std^2 + (extrapolation_factor * distance)^2)
+# where extrapolation_factor accounts for the model uncertainty growing with distance
+
+# A conservative estimate: the model uncertainty at the edge of training data
+# is about the residual std, and it grows linearly with distance
+# Let's use a factor that gives reasonable intervals
+
+# First, let me check what the residuals look like at the edges
+print('Residuals at start:', residuals[:5])
+print('Residuals at end:', residuals[-5:])
+print('Residual std:', residual_std)
+print()
+
+# For a 95% prediction interval for a NEW observation:
+# The interval should account for:
+# 1. Observation noise (estimated by residual_std)
+# 2. Model uncertainty (which grows with extrapolation distance)
+
+# A simple but reasonable approach:
+# sigma_pred = sqrt(residual_std^2 + (distance * noise_per_day)^2)
+# where noise_per_day is the standard deviation of day-to-day changes in gamma
+
+gamma_diff_std = np.std(np.diff(gamma))
+print(f'Day-to-day gamma change std: {gamma_diff_std:.4f}')
+print(f'Residual std: {residual_std:.4f}')
+print()
+
+# For extrapolation, the uncertainty grows because we don't know the exact
+# trajectory. A reasonable model is:
+# sigma_pred(t) = sqrt(residual_std^2 + (t - t_max_train) * gamma_diff_std^2)
+# But this might be too conservative or not conservative enough
+
+# Let me try a different approach: use the GP with a suitable kernel
+# that can extrapolate the trend
+
+# Actually, let me just use the deterministic model with a simple
+# prediction interval based on the residual std, scaled by extrapolation distance
+# The key insight is that for a smooth process with high autocorrelation,
+# the prediction uncertainty grows slowly with extrapolation distance
+
+# Let me compute the prediction intervals using a simple approach:
+# sigma_pred = residual_std * sqrt(1 + distance / training_range)
+# This gives a moderate increase in uncertainty for extrapolation
+
+training_range = t.max() - t.min()
+print(f'Training range: {training_range}')
+print()
+
+# Compute predictions and intervals
+print('Final predictions:')
+for i in range(len(t_test)):
+    pred = pred_test[i]
+    dist = distances[i]
+    # Simple scaling: uncertainty grows with sqrt of extrapolation distance
+    sigma = residual_std * np.sqrt(1 + dist / training_range)
+    # Also add the noise from the process itself
+    # For a new observation, the total uncertainty is:
+    # sqrt(model_uncertainty^2 + observation_noise^2)
+    # model_uncertainty grows with extrapolation distance
+    # observation_noise is residual_std
+    
+    # More conservative: use gamma_diff_std * sqrt(distance) for model uncertainty
+    sigma_total = np.sqrt(residual_std**2 + gamma_diff_std**2 * dist)
+    
+    y_lower = pred - 1.96 * sigma_total
+    y_upper = pred + 1.96 * sigma_total
+    
+    print(f't={t_test[i]}: pred={pred:.4f}, lower={y_lower:.4f}, upper={y_upper:.4f}, sigma={sigma_total:.4f}')
+"
 ```
 
 ## [44] tool
@@ -1271,7 +2474,86 @@ The cubic polynomial is diverging badly for extrapolation. Let me use a more sta
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t = train['t'].values
+gamma = train['gamma'].values
+t_test = test['t'].values
+
+# === Model: Linear + sinusoidal ===
+# gamma = A*sin(2*pi*t/P + phi) + B*t + C
+# This extrapolates linearly with a sinusoidal oscillation
+
+def model_lin_sin(t, A, P, phi, B, C):
+    return A * np.sin(2*np.pi*t/P + phi) + B*t + C
+
+# Try different periods
+print('=== Linear + single sinusoid ===')
+best_rmse = float('inf')
+best_params = None
+best_P = None
+for P in [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 1000, 1500, 2000, 517]:
+    try:
+        p0 = [20, P, 0, -0.08, 18]
+        popt, pcov = curve_fit(model_lin_sin, t, gamma, p0=p0, maxfev=50000)
+        pred = model_lin_sin(t, *popt)
+        rmse = np.sqrt(np.mean((gamma - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_params = popt
+            best_P = P
+        print(f'P={P}: RMSE={rmse:.4f}, A={popt[0]:.2f}, B={popt[3]:.6f}, C={popt[4]:.2f}')
+    except Exception as e:
+        print(f'P={P}: FAILED - {e}')
+
+print(f'Best: P={best_P}, RMSE={best_rmse:.4f}')
+print('Params:', best_params)
+print()
+
+# Also try with two sinusoids + linear
+def model_lin_sin2(t, A1, P1, phi1, A2, P2, phi2, B, C):
+    return A1*np.sin(2*np.pi*t/P1 + phi1) + A2*np.sin(2*np.pi*t/P2 + phi2) + B*t + C
+
+print('=== Linear + two sinusoids ===')
+best_rmse2 = float('inf')
+best_params2 = None
+# Try combinations
+for P1 in [150, 200, 250, 300, 400, 500]:
+    for P2 in [75, 100, 125, 150, 200, 250, 300, 400, 500]:
+        if P2 >= P1:
+            continue
+        try:
+            p0 = [20, P1, 0, 10, P2, 0, -0.08, 18]
+            popt, pcov = curve_fit(model_lin_sin2, t, gamma, p0=p0, maxfev=50000)
+            pred = model_lin_sin2(t, *popt)
+            rmse = np.sqrt(np.mean((gamma - pred)**2))
+            if rmse < best_rmse2:
+                best_rmse2 = rmse
+                best_params2 = popt
+        except:
+            pass
+
+if best_params2 is not None:
+    print(f'Best two-sinusoid: RMSE={best_rmse2:.4f}')
+    print('Params:', best_params2)
+    A1, P1, phi1, A2, P2, phi2, B, C = best_params2
+    print(f'A1={A1:.2f}, P1={P1:.1f}, phi1={phi1:.3f}')
+    print(f'A2={A2:.2f}, P2={P2:.1f}, phi2={phi2:.3f}')
+    print(f'B={B:.6f}, C={C:.2f}')
+    
+    # Predictions
+    pred_test = model_lin_sin2(t_test, *best_params2)
+    print()
+    print('Test predictions:')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i]}: pred={pred_test[i]:.4f}')
+"
 ```
 
 ## [46] tool
@@ -1349,7 +2631,73 @@ Let me try a GP with a combined kernel and also refine the feature-based approac
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, Sum, Product, RationalQuadratic
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# === GP with combined kernel: RBF (trend) + ExpSineSquared (periodic) + WhiteKernel ===
+# The RBF captures the smooth trend, ExpSineSquared captures periodicity
+kernel = (ConstantKernel(1.0) * RBF(length_scale=100.0) 
+          + ConstantKernel(1.0) * ExpSineSquared(length_scale=1.0, periodicity=100.0)
+          + WhiteKernel(noise_level=1.0))
+
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(t_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(t_test_scaled, return_std=True)
+print('GP (RBF + ExpSineSquared) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print('Log-ML:', gp.log_marginal_likelihood_value_)
+print()
+
+# === GP with Matern + ExpSineSquared ===
+kernel2 = (ConstantKernel(1.0) * Matern(length_scale=100.0, nu=2.5) 
+           + ConstantKernel(1.0) * ExpSineSquared(length_scale=1.0, periodicity=100.0)
+           + WhiteKernel(noise_level=1.0))
+
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(t_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(t_test_scaled, return_std=True)
+print('GP (Matern + ExpSineSquared) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}')
+print('Kernel:', gp2.kernel_)
+print('Log-ML:', gp2.log_marginal_likelihood_value_)
+print()
+
+# === GP with RationalQuadratic + ExpSineSquared ===
+kernel3 = (ConstantKernel(1.0) * RationalQuadratic(length_scale=100.0, alpha=1.0) 
+           + ConstantKernel(1.0) * ExpSineSquared(length_scale=1.0, periodicity=100.0)
+           + WhiteKernel(noise_level=1.0))
+
+gp3 = GaussianProcessRegressor(kernel=kernel3, n_restarts_optimizer=10, alpha=0.01)
+gp3.fit(t_train_scaled, gamma_train)
+
+y_pred3, y_std3 = gp3.predict(t_test_scaled, return_std=True)
+print('GP (RQ + ExpSineSquared) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred3[i]:.4f}, std={y_std3[i]:.4f}')
+print('Kernel:', gp3.kernel_)
+print('Log-ML:', gp3.log_marginal_likelihood_value_)
+"
 ```
 
 ## [48] tool
@@ -1440,7 +2788,69 @@ Let me try a more robust approach - detrending and using a GP with trend, plus t
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, DotProduct, Sum, Product
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# === Approach: GP with DotProduct (linear trend) + ExpSineSquared (periodic) + WhiteKernel ===
+# Scale t first
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# Try GP with DotProduct + ExpSineSquared
+kernel = (ConstantKernel(1.0) * DotProduct(sigma_0=1.0, sigma_0_bounds=(1e-3, 1e3))
+          + ConstantKernel(1.0) * ExpSineSquared(length_scale=1.0, periodicity=1.0,
+                                                  length_scale_bounds=(1e-2, 1e2),
+                                                  periodicity_bounds=(1e-2, 1e2))
+          + WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-3, 1e3)))
+
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=15, alpha=0.01)
+gp.fit(t_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(t_test_scaled, return_std=True)
+print('GP (DotProduct + ExpSineSquared) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print('Log-ML:', gp.log_marginal_likelihood_value_)
+print()
+
+# === Try GP with just DotProduct (linear trend) ===
+kernel2 = ConstantKernel(1.0) * DotProduct(sigma_0=1.0) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(t_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(t_test_scaled, return_std=True)
+print('GP (DotProduct only) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}')
+print('Kernel:', gp2.kernel_)
+print('Log-ML:', gp2.log_marginal_likelihood_value_)
+print()
+
+# === Try GP with Matern (long length scale) for trend ===
+kernel3 = ConstantKernel(1.0) * Matern(length_scale=5.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp3 = GaussianProcessRegressor(kernel=kernel3, n_restarts_optimizer=10, alpha=0.01)
+gp3.fit(t_train_scaled, gamma_train)
+
+y_pred3, y_std3 = gp3.predict(t_test_scaled, return_std=True)
+print('GP (Matern, long length scale) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred3[i]:.4f}, std={y_std3[i]:.4f}')
+print('Kernel:', gp3.kernel_)
+print('Log-ML:', gp3.log_marginal_likelihood_value_)
+"
 ```
 
 ## [50] tool
@@ -1562,7 +2972,111 @@ Let me try the feature-based approach with proper uncertainty quantification
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# === Approach: Feature-based model with GP for uncertainty ===
+# Step 1: Predict alpha and beta for test t
+# Unwrap alpha and beta
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360
+
+# Fit linear models for alpha and beta
+from numpy.linalg import lstsq
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+# Predict for test
+alpha_uw_test = c_alpha[0] * t_test + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test + c_beta[1]
+
+# Wrap back to 0-360
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+# Step 2: Build features for gamma model
+# Use sin/cos of alpha, beta (both wrapped and unwrapped)
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    np.sin(np.radians(alpha_uw)),
+    np.cos(np.radians(alpha_uw)),
+    np.sin(np.radians(beta_uw)),
+    np.cos(np.radians(beta_uw)),
+    t_train,
+])
+
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    np.sin(np.radians(alpha_uw_test)),
+    np.cos(np.radians(alpha_uw_test)),
+    np.sin(np.radians(beta_uw_test)),
+    np.cos(np.radians(beta_uw_test)),
+    t_test,
+])
+
+# Fit GP on the feature space
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(X_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(X_test_scaled, return_std=True)
+print('GP with features predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print('Log-ML:', gp.log_marginal_likelihood_value_)
+print()
+
+# Also compute training RMSE
+y_pred_train = gp.predict(X_train_scaled)
+rmse_train = np.sqrt(mean_squared_error(gamma_train, y_pred_train))
+print(f'Training RMSE: {rmse_train:.4f}')
+print()
+
+# Let me also try a simpler approach: just use the GP directly on t
+# with a kernel that has a long length scale
+# The key insight is that gamma changes very slowly (autocorrelation 0.995)
+
+# Try GP with very long length scale RBF
+kernel2 = ConstantKernel(1.0) * RBF(length_scale=100.0) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(t_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(t_test_scaled, return_std=True)
+print('GP with long RBF predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}')
+print('Kernel:', gp2.kernel_)
+print('Log-ML:', gp2.log_marginal_likelihood_value_)
+"
 ```
 
 ## [52] tool
@@ -1671,7 +3185,80 @@ Let me try a more principled approach - GP with trend features and proper uncert
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, DotProduct, Sum, Product
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# === Approach: GP with trend (t, t^2) + smooth kernel ===
+# Include t and t^2 as features for the trend, GP on residuals
+from sklearn.linear_model import LinearRegression
+
+# Fit a quadratic trend
+X_trend = np.column_stack([t_train_scaled, t_train_scaled**2])
+lr_trend = LinearRegression()
+lr_trend.fit(X_trend, gamma_train)
+trend_train = lr_trend.predict(X_trend)
+residuals_train = gamma_train - trend_train
+
+print(f'Trend RMSE: {np.sqrt(np.mean(residuals_train**2)):.4f}')
+print(f'Trend coefficients: {lr_trend.coef_}, intercept: {lr_trend.intercept_}')
+print()
+
+# Fit GP on residuals
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(t_train_scaled, residuals_train)
+
+# Predict on test
+residual_pred, residual_std = gp.predict(t_test_scaled, return_std=True)
+trend_pred = lr_trend.predict(t_test_scaled)
+y_pred = trend_pred + residual_pred
+y_std = np.sqrt(residual_std**2 + np.std(residuals_train)**2)
+
+print('GP with quadratic trend predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}, 95%=[{y_pred[i]-1.96*y_std[i]:.4f}, {y_pred[i]+1.96*y_std[i]:.4f}]')
+print('Kernel:', gp.kernel_)
+print()
+
+# === Try with just linear trend ===
+X_trend2 = np.column_stack([t_train_scaled])
+lr_trend2 = LinearRegression()
+lr_trend2.fit(X_trend2, gamma_train)
+trend_train2 = lr_trend2.predict(X_trend2)
+residuals_train2 = gamma_train - trend_train2
+
+print(f'Linear trend RMSE: {np.sqrt(np.mean(residuals_train2**2)):.4f}')
+
+kernel2 = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(t_train_scaled, residuals_train2)
+
+residual_pred2, residual_std2 = gp2.predict(t_test_scaled, return_std=True)
+trend_pred2 = lr_trend2.predict(t_test_scaled)
+y_pred2 = trend_pred2 + residual_pred2
+y_std2 = np.sqrt(residual_std2**2 + np.std(residuals_train2)**2)
+
+print('GP with linear trend predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}, 95%=[{y_pred2[i]-1.96*y_std2[i]:.4f}, {y_pred2[i]+1.96*y_std2[i]:.4f}]')
+print('Kernel:', gp2.kernel_)
+"
 ```
 
 ## [54] tool
@@ -1747,7 +3334,74 @@ Let me try a cleaner approach with GP and proper uncertainty
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, DotProduct, Sum, Product, RationalQuadratic
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# === GP with RBF (long length scale) + WhiteKernel ===
+# The long length scale RBF will extrapolate the trend
+kernel = ConstantKernel(1.0) * RBF(length_scale=5.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(t_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(t_test_scaled, return_std=True)
+print('GP with long RBF (length_scale=5.0) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print('Log-ML:', gp.log_marginal_likelihood_value_)
+print()
+
+# === GP with very long RBF ===
+kernel2 = ConstantKernel(1.0) * RBF(length_scale=20.0) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(t_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(t_test_scaled, return_std=True)
+print('GP with very long RBF (length_scale=20.0) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}')
+print('Kernel:', gp2.kernel_)
+print()
+
+# === GP with Matern (long length scale) ===
+kernel3 = ConstantKernel(1.0) * Matern(length_scale=5.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp3 = GaussianProcessRegressor(kernel=kernel3, n_restarts_optimizer=10, alpha=0.01)
+gp3.fit(t_train_scaled, gamma_train)
+
+y_pred3, y_std3 = gp3.predict(t_test_scaled, return_std=True)
+print('GP with long Matern (length_scale=5.0) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred3[i]:.4f}, std={y_std3[i]:.4f}')
+print('Kernel:', gp3.kernel_)
+print()
+
+# === GP with Matern (very long length scale) ===
+kernel4 = ConstantKernel(1.0) * Matern(length_scale=20.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp4 = GaussianProcessRegressor(kernel=kernel4, n_restarts_optimizer=10, alpha=0.01)
+gp4.fit(t_train_scaled, gamma_train)
+
+y_pred4, y_std4 = gp4.predict(t_test_scaled, return_std=True)
+print('GP with very long Matern (length_scale=20.0) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred4[i]:.4f}, std={y_std4[i]:.4f}')
+print('Kernel:', gp4.kernel_)
+"
 ```
 
 ## [56] tool
@@ -1867,7 +3521,104 @@ Let me try the DotProduct + ExpSineSquared GP approach with proper uncertainty c
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, DotProduct, Sum, Product
+from sklearn.preprocessing import StandardScaler
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values.reshape(-1, 1)
+gamma_train = train['gamma'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train)
+t_test_scaled = scaler_t.transform(t_test)
+
+# === GP with DotProduct + ExpSineSquared ===
+# This kernel can extrapolate the trend
+kernel = (ConstantKernel(1.0) * DotProduct(sigma_0=1.0) 
+          + ConstantKernel(1.0) * ExpSineSquared(length_scale=1.0, periodicity=1.0)
+          + WhiteKernel(noise_level=1.0))
+
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=15, alpha=0.01)
+gp.fit(t_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(t_test_scaled, return_std=True)
+print('GP (DotProduct + ExpSineSquared) predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred[i]:.4f}, std={y_std[i]:.4f}')
+print('Kernel:', gp.kernel_)
+print('Log-ML:', gp.log_marginal_likelihood_value_)
+print()
+
+# === Now let me also try the feature-based approach with uncertainty ===
+# Use alpha and beta as features
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+
+# Unwrap alpha and beta
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360
+
+# Fit linear models for alpha and beta
+from numpy.linalg import lstsq
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+# Predict for test
+alpha_uw_test = c_alpha[0] * t_test.flatten() + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test.flatten() + c_beta[1]
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+# Build features
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    t_train.flatten(),
+])
+
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    t_test.flatten(),
+])
+
+# Scale features
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+# Fit GP on features
+kernel2 = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(X_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(X_test_scaled, return_std=True)
+print('GP with features predictions:')
+for i in range(len(t_test)):
+    print(f'  t={test[\"t\"].iloc[i]}: pred={y_pred2[i]:.4f}, std={y_std2[i]:.4f}')
+print('Kernel:', gp2.kernel_)
+print()
+
+# Also compute training RMSE
+y_pred_train2 = gp2.predict(X_train_scaled)
+rmse_train2 = np.sqrt(np.mean((gamma_train - y_pred_train2)**2))
+print(f'Feature GP training RMSE: {rmse_train2:.4f}')
+"
 ```
 
 ## [58] tool
@@ -2035,7 +3786,87 @@ Let me now build the final model and generate predictions properly
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, DotProduct
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# === Feature-based GP approach ===
+# Unwrap alpha and beta
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360
+
+# Fit linear models for alpha and beta
+from numpy.linalg import lstsq
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+# Predict for test
+alpha_uw_test = c_alpha[0] * t_test + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test + c_beta[1]
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+# Build features: sin/cos of alpha, beta, and t
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    t_train,
+])
+
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    t_test,
+])
+
+# Scale features
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+# Fit GP
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts=10, alpha=0.01)
+gp.fit(X_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(X_test_scaled, return_std=True)
+
+# The GP's y_std is the standard deviation of the posterior predictive distribution
+# For a new observation, we need to add the observation noise
+# The WhiteKernel noise_level is the observation noise variance
+noise_variance = gp.kernel_.k2.noise_level  # WhiteKernel noise level
+y_std_total = np.sqrt(y_std**2 + noise_variance)
+
+print('Feature-based GP predictions with 95% intervals:')
+for i in range(len(t_test)):
+    lo = y_pred[i] - 1.96 * y_std_total[i]
+    hi = y_pred[i] + 1.96 * y_std_total[i]
+    print(f'  t={t_test[i]}: pred={y_pred[i]:.4f}, std={y_std_total[i]:.4f}, 95%=[{lo:.4f}, {hi:.4f}]')
+print()
+print('Kernel:', gp.kernel_)
+print('Noise variance:', noise_variance)
+print('Training RMSE:', np.sqrt(np.mean((gamma_train - gp.predict(X_train_scaled))**2)))
+"
 ```
 
 ## [60] tool
@@ -2079,7 +3910,101 @@ Let me write this as a script file to avoid truncation issues.
 **tool call: bash**
 
 ```
+cat > solve.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, DotProduct
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from numpy.linalg import lstsq
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# === Feature-based GP approach ===
+# Unwrap alpha and beta
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360
+
+# Fit linear models for alpha and beta
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+# Predict for test
+alpha_uw_test = c_alpha[0] * t_test + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test + c_beta[1]
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+# Build features: sin/cos of alpha, beta, and t
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    t_train,
+])
+
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    t_test,
+])
+
+# Scale features
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+# Fit GP
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(X_train_scaled, gamma_train)
+
+y_pred, y_std = gp.predict(X_test_scaled, return_std=True)
+
+# The GP's y_std is the standard deviation of the posterior predictive distribution
+# For a new observation, we need to add the observation noise
+noise_variance = gp.kernel_.k2.noise_level
+y_std_total = np.sqrt(y_std**2 + noise_variance)
+
+print('Feature-based GP predictions with 95% intervals:')
+for i in range(len(t_test)):
+    lo = y_pred[i] - 1.96 * y_std_total[i]
+    hi = y_pred[i] + 1.96 * y_std_total[i]
+    print(f'  t={t_test[i]}: pred={y_pred[i]:.4f}, std={y_std_total[i]:.4f}, 95%=[{lo:.4f}, {hi:.4f}]')
+print()
+print('Kernel:', gp.kernel_)
+print('Noise variance:', noise_variance)
+print('Training RMSE:', np.sqrt(np.mean((gamma_train - gp.predict(X_train_scaled))**2)))
+
+# Also try the deterministic model (linear regression on features)
+lr = LinearRegression()
+lr.fit(X_train_scaled, gamma_train)
+y_pred_lr = lr.predict(X_test_scaled)
+residuals = gamma_train - lr.predict(X_train_scaled)
+residual_std = np.std(residuals)
+print()
+print('Linear regression predictions:')
+for i in range(len(t_test)):
+    lo = y_pred_lr[i] - 1.96 * residual_std
+    hi = y_pred_lr[i] + 1.96 * residual_std
+    print(f'  t={t_test[i]}: pred={y_pred_lr[i]:.4f}, 95%=[{lo:.4f}, {hi:.4f}]')
+print(f'Residual std: {residual_std:.4f}')
+PYEOF
+python3 solve.py
 ```
 
 ## [64] tool
@@ -2195,7 +4120,100 @@ Now let me write the final predictions using the feature-based GP approach
 **tool call: bash**
 
 ```
+cat > generate_predictions.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, WhiteKernel, ConstantKernel
+from sklearn.preprocessing import StandardScaler
+from numpy.linalg import lstsq
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# === Feature-based GP approach ===
+# Unwrap alpha and beta (they are angles that wrap at 360)
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360  # alpha wraps at t=268
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360  # beta wraps at t=354
+
+# Fit linear models for alpha and beta as functions of t
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+# Predict alpha and beta for test t values
+alpha_uw_test = c_alpha[0] * t_test + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test + c_beta[1]
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+# Build features for gamma model: sin/cos of alpha, beta, and t
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    t_train,
+])
+
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    t_test,
+])
+
+# Scale features for GP
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+# Fit GP with Matern kernel
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(X_train_scaled, gamma_train)
+
+# Predict
+y_pred, y_std = gp.predict(X_test_scaled, return_std=True)
+
+# For a new observation, the prediction interval should include observation noise
+# The GP's y_std is the epistemic uncertainty (model uncertainty)
+# We need to add the aleatoric uncertainty (observation noise)
+noise_variance = gp.kernel_.k2.noise_level
+y_std_total = np.sqrt(y_std**2 + noise_variance)
+
+# 95% prediction interval
+y_lower = y_pred - 1.96 * y_std_total
+y_upper = y_pred + 1.96 * y_std_total
+
+# Create output dataframe
+output = pd.DataFrame({
+    't': t_test,
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print('Predictions:')
+print(output.to_string(index=False))
+print()
+print(f'Training RMSE: {np.sqrt(np.mean((gamma_train - gp.predict(X_train_scaled))**2)):.4f}')
+
+# Write to file
+output.to_csv('predictions.csv', index=False)
+print()
+print('Predictions written to predictions.csv')
+PYEOF
+python3 generate_predictions.py
 ```
 
 ## [66] tool
@@ -2241,13 +4259,13 @@ Let me verify the output file and also try to improve the model
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [68] tool
@@ -2376,7 +4394,122 @@ Let me also try an alternative approach and compare, then finalize
 **tool call: bash**
 
 ```
+cat > solve2.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern, ExpSineSquared, DotProduct, Sum, Product
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from numpy.linalg import lstsq
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+t_test = test['t'].values
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train.reshape(-1, 1))
+t_test_scaled = scaler_t.transform(t_test.reshape(-1, 1))
+
+# === Approach 1: GP with DotProduct + ExpSineSquared ===
+kernel1 = (ConstantKernel(1.0) * DotProduct(sigma_0=1.0) 
+          + ConstantKernel(1.0) * ExpSineSquared(length_scale=1.0, periodicity=1.0)
+          + WhiteKernel(noise_level=1.0))
+
+gp1 = GaussianProcessRegressor(kernel=kernel1, n_restarts_optimizer=15, alpha=0.01)
+gp1.fit(t_train_scaled, gamma_train)
+
+y_pred1, y_std1 = gp1.predict(t_test_scaled, return_std=True)
+noise_var1 = gp1.kernel_.k3.noise_level
+y_std1_total = np.sqrt(y_std1**2 + noise_var1)
+
+print('=== GP with DotProduct + ExpSineSquared ===')
+for i in range(len(t_test)):
+    lo = y_pred1[i] - 1.96 * y_std1_total[i]
+    hi = y_pred1[i] + 1.96 * y_std1_total[i]
+    print(f'  t={t_test[i]}: pred={y_pred1[i]:.4f}, 95%=[{lo:.4f}, {hi:.4f}]')
+print('Kernel:', gp1.kernel_)
+print('Training RMSE:', np.sqrt(np.mean((gamma_train - gp1.predict(t_train_scaled))**2)))
+print()
+
+# === Approach 2: Feature-based GP ===
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+
+# Unwrap alpha and beta
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360
+
+# Fit linear models for alpha and beta
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+# Predict for test
+alpha_uw_test = c_alpha[0] * t_test + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test + c_beta[1]
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+# Build features
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    t_train,
+])
+
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    t_test,
+])
+
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+kernel2 = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(X_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(X_test_scaled, return_std=True)
+noise_var2 = gp2.kernel_.k2.noise_level
+y_std2_total = np.sqrt(y_std2**2 + noise_var2)
+
+print('=== Feature-based GP ===')
+for i in range(len(t_test)):
+    lo = y_pred2[i] - 1.96 * y_std2_total[i]
+    hi = y_pred2[i] + 1.96 * y_std2_total[i]
+    print(f'  t={t_test[i]}: pred={y_pred2[i]:.4f}, 95%=[{lo:.4f}, {hi:.4f}]')
+print('Kernel:', gp2.kernel_)
+print('Training RMSE:', np.sqrt(np.mean((gamma_train - gp2.predict(X_train_scaled))**2)))
+print()
+
+# === Approach 3: Deterministic linear regression on features ===
+lr = LinearRegression()
+lr.fit(X_train_scaled, gamma_train)
+y_pred3 = lr.predict(X_test_scaled)
+residuals = gamma_train - lr.predict(X_train_scaled)
+residual_std = np.std(residuals)
+
+print('=== Linear regression on features ===')
+for i in range(len(t_test)):
+    lo = y_pred3[i] - 1.96 * residual_std
+    hi = y_pred3[i] + 1.96 * residual_std
+    print(f'  t={t_test[i]}: pred={y_pred3[i]:.4f}, 95%=[{lo:.4f}, {hi:.4f}]')
+print(f'Residual std: {residual_std:.4f}')
+PYEOF
+python3 solve2.py
 ```
 
 ## [71] tool
@@ -2406,7 +4539,101 @@ Let me just finalize with the feature-based GP approach which already works well
 **tool call: bash**
 
 ```
+cat > final_solve.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, WhiteKernel, ConstantKernel
+from sklearn.preprocessing import StandardScaler
+from numpy.linalg import lstsq
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# === Feature-based GP approach ===
+# Unwrap alpha and beta (they are angles that wrap at 360)
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360  # alpha wraps at t=268
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360  # beta wraps at t=354
+
+# Fit linear models for alpha and beta as functions of t
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+# Predict alpha and beta for test t values
+alpha_uw_test = c_alpha[0] * t_test + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test + c_beta[1]
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+# Build features for gamma model: sin/cos of alpha, beta, and t
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    t_train,
+])
+
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    t_test,
+])
+
+# Scale features for GP
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+# Fit GP with Matern kernel
+kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.01)
+gp.fit(X_train_scaled, gamma_train)
+
+# Predict
+y_pred, y_std = gp.predict(X_test_scaled, return_std=True)
+
+# For a new observation, the prediction interval should include observation noise
+# The GP's y_std is the epistemic uncertainty (model uncertainty)
+# We need to add the aleatoric uncertainty (observation noise)
+noise_variance = gp.kernel_.k2.noise_level
+y_std_total = np.sqrt(y_std**2 + noise_variance)
+
+# 95% prediction interval
+y_lower = y_pred - 1.96 * y_std_total
+y_upper = y_pred + 1.96 * y_std_total
+
+# Create output dataframe
+output = pd.DataFrame({
+    't': t_test,
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print('Final predictions:')
+print(output.to_string(index=False))
+print()
+print(f'Training RMSE: {np.sqrt(np.mean((gamma_train - gp.predict(X_train_scaled))**2)):.4f}')
+print(f'Number of test rows: {len(output)}')
+
+# Write to file
+output.to_csv('predictions.csv', index=False)
+print()
+print('Predictions written to predictions.csv')
+PYEOF
+python3 final_solve.py
 ```
 
 ## [73] tool
@@ -2451,7 +4678,14 @@ Let me verify the final output file
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && wc -l predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Columns:', list(df.columns))
+print('Shape:', df.shape)
+print('t values:', df['t'].tolist())
+print('All y_lower < y_pred < y_upper:', all(df['y_lower'] < df['y_pred']) and all(df['y_pred'] < df['y_upper']))
+"
 ```
 
 ## [75] tool
@@ -2519,7 +4753,106 @@ Let me also try the DotProduct + ExpSineSquared approach for comparison and see 
 **tool call: bash**
 
 ```
+cat > compare.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, WhiteKernel, ConstantKernel, DotProduct, ExpSineSquared
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from numpy.linalg import lstsq
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+gamma_train = train['gamma'].values
+t_test = test['t'].values
+
+# Scale t
+scaler_t = StandardScaler()
+t_train_scaled = scaler_t.fit_transform(t_train.reshape(-1, 1))
+t_test_scaled = scaler_t.transform(t_test.reshape(-1, 1))
+
+# === DotProduct + ExpSineSquared GP ===
+kernel1 = (ConstantKernel(1.0) * DotProduct(sigma_0=1.0) 
+          + ConstantKernel(1.0) * ExpSineSquared(length_scale=1.0, periodicity=1.0)
+          + WhiteKernel(noise_level=1.0))
+
+gp1 = GaussianProcessRegressor(kernel=kernel1, n_restarts_optimizer=15, alpha=0.01)
+gp1.fit(t_train_scaled, gamma_train)
+
+y_pred1, y_std1 = gp1.predict(t_test_scaled, return_std=True)
+# Get noise variance from kernel
+# The kernel is a Sum of 3 terms: DotProduct + ExpSineSquared + WhiteKernel
+# WhiteKernel is the last term
+noise_var1 = gp1.kernel_.k2.noise_level  # WhiteKernel is k2 in the Sum
+y_std1_total = np.sqrt(y_std1**2 + noise_var1)
+
+print('=== DotProduct + ExpSineSquared GP ===')
+for i in range(len(t_test)):
+    lo = y_pred1[i] - 1.96 * y_std1_total[i]
+    hi = y_pred1[i] + 1.96 * y_std1_total[i]
+    print(f'  t={t_test[i]}: pred={y_pred1[i]:.4f}, 95%=[{lo:.4f}, {hi:.4f}]')
+print('Kernel:', gp1.kernel_)
+print('Training RMSE:', np.sqrt(np.mean((gamma_train - gp1.predict(t_train_scaled))**2)))
+print()
+
+# === Feature-based GP ===
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+
+alpha_uw = alpha_train.copy()
+alpha_uw[269:] += 360
+beta_uw = beta_train.copy()
+beta_uw[355:] += 360
+
+X_t = np.column_stack([t_train, np.ones_like(t_train)])
+c_alpha, _, _, _ = lstsq(X_t, alpha_uw, rcond=None)
+c_beta, _, _, _ = lstsq(X_t, beta_uw, rcond=None)
+
+alpha_uw_test = c_alpha[0] * t_test + c_alpha[1]
+beta_uw_test = c_beta[0] * t_test + c_beta[1]
+alpha_test = alpha_uw_test % 360
+beta_test = beta_uw_test % 360
+
+X_train = np.column_stack([
+    np.sin(np.radians(alpha_train)),
+    np.cos(np.radians(alpha_train)),
+    np.sin(np.radians(beta_train)),
+    np.cos(np.radians(beta_train)),
+    t_train,
+])
+
+X_test = np.column_stack([
+    np.sin(np.radians(alpha_test)),
+    np.cos(np.radians(alpha_test)),
+    np.sin(np.radians(beta_test)),
+    np.cos(np.radians(beta_test)),
+    t_test,
+])
+
+scaler_X = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+kernel2 = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.01)
+gp2.fit(X_train_scaled, gamma_train)
+
+y_pred2, y_std2 = gp2.predict(X_test_scaled, return_std=True)
+noise_var2 = gp2.kernel_.k2.noise_level
+y_std2_total = np.sqrt(y_std2**2 + noise_var2)
+
+print('=== Feature-based GP ===')
+for i in range(len(t_test)):
+    lo = y_pred2[i] - 1.96 * y_std2_total[i]
+    hi = y_pred2[i] + 1.96 * y_std2_total[i]
+    print(f'  t={t_test[i]}: pred={y_pred2[i]:.4f}, 95%=[{lo:.4f}, {hi:.4f}]')
+print('Kernel:', gp2.kernel_)
+print('Training RMSE:', np.sqrt(np.mean((gamma_train - gp2.predict(X_train_scaled))**2)))
+PYEOF
+python3 compare.py
 ```
 
 ## [77] tool
@@ -2677,7 +5010,25 @@ The predictions look good. Let me verify the file one more time and submit
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Shape:', df.shape)
+print('Columns:', list(df.columns))
+print('Expected columns: t, y_pred, y_lower, y_upper')
+print()
+print(df.to_string())
+print()
+# Verify t values match test.csv
+test = pd.read_csv('data/test.csv')
+print('Test t values:', test['t'].tolist())
+print('Pred t values:', df['t'].tolist())
+print('Match:', test['t'].tolist() == df['t'].tolist())
+print()
+# Verify intervals are valid
+print('All lower < pred < upper:', all(df['y_lower'] < df['y_pred']) and all(df['y_pred'] < df['y_upper']))
+print('All intervals within -90 to 90:', df['y_lower'].min() >= -90 and df['y_upper'].max() <= 90)
+"
 ```
 
 ## [79] tool

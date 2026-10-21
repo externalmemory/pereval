@@ -63,7 +63,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls data/
 ```
 
 ## [3] tool
@@ -83,13 +83,13 @@ train.csv
 **tool call: bash**
 
 ```
-
+head -50 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -50 data/test.csv
 ```
 
 ## [5] tool
@@ -174,18 +174,36 @@ t
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+tail -50 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+print('Shape:', df.shape)
+print('dtypes:', df.dtypes)
+print('Missing values:')
+print(df.isnull().sum())
+print('Basic stats:')
+print(df.describe())
+print()
+print('t range:', df['t'].min(), df['t'].max())
+print()
+# Check how many rows have gamma missing
+print('Rows where gamma is missing:', df['gamma'].isnull().sum())
+print('Rows where beta is missing:', df['beta'].isnull().sum())
+print('Rows where alpha is missing:', df['alpha'].isnull().sum())
+"
 
 ```
 
@@ -295,6 +313,16 @@ Rows where alpha is missing: 0
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print('t values diff:')
+print('Min diff:', df['t'].diff().min())
+print('Max diff:', df['t'].diff().max())
+print('Are there gaps?')
+diffs = df['t'].diff()
+print(diffs.value_counts().sort_index())
+"
 
 ```
 
@@ -367,6 +395,23 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+print('Gamma stats by quarter:')
+df['quarter'] = pd.cut(df['t'], bins=4, labels=['0-129', '129-258', '258-387', '387-516'])
+print(df.groupby('quarter')['gamma'].describe())
+
+# Let's look at autocorrelation
+print()
+print('Autocorrelation of gamma:')
+for lag in range(1, 30):
+    corr = df['gamma'].autocorr(lag=lag)
+    if abs(corr) > 0.1:
+        print(f'Lag {lag}: {corr:.4f}')
+"
 
 ```
 
@@ -431,6 +476,26 @@ Lag 29: 0.7537
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Compute correlations
+print('Correlations with gamma:')
+print('alpha-gamma:', df['alpha'].corr(df['gamma']))
+print('beta-gamma:', df['beta'].corr(df['gamma']))
+print('alpha-beta:', df['alpha'].corr(df['beta']))
+
+# Let's look at scatter
+print()
+print('First few rows:')
+print(df.head(10))
+print()
+print('Last few rows:')
+print(df.tail(10))
+"
 
 ```
 
@@ -496,6 +561,28 @@ Last few rows:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Let's look at the differences of gamma
+gamma_diff = df['gamma'].diff()
+print('Gamma diff stats:')
+print(gamma_diff.describe())
+print()
+print('First 20 gamma diffs:')
+print(gamma_diff.head(20))
+
+# Check if gamma might be related to the derivative of alpha or something
+print()
+print('Alpha diffs stats:')
+print(df['alpha'].diff().describe())
+print()
+print('Beta diffs stats:')
+print(df['beta'].diff().describe())
+"
 
 ```
 
@@ -571,6 +658,27 @@ Name: beta, dtype: float64
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Check for wrap-around in alpha and beta
+print('Alpha range:', df['alpha'].min(), df['alpha'].max())
+print('Beta range:', df['beta'].min(), df['beta'].max())
+
+# Let's find where alpha has large drops
+alpha_diff = df['alpha'].diff()
+print('Rows where alpha diff < -300:')
+print(df[alpha_diff < -300][['t', 'alpha']])
+print()
+
+# Let's find where beta has large drops
+beta_diff = df['beta'].diff()
+print('Rows where beta diff < -300:')
+print(df[beta_diff < -300][['t', 'beta']])
+"
 
 ```
 
@@ -606,6 +714,20 @@ Rows where beta diff < -300:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Let's look at gamma sorted by alpha
+print('Gamma vs alpha (sorted by alpha):')
+print('alpha\tgamma')
+sorted_idx = np.argsort(df['alpha'].values)
+for i in range(0, 517, 50):
+    idx = sorted_idx[i]
+    print(f'{df[\"alpha\"].iloc[idx]:.2f}\t{df[\"gamma\"].iloc[idx]:.2f}')
+"
 
 ```
 
@@ -655,6 +777,22 @@ alpha	gamma
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+print('Gamma percentiles:')
+for p in [1, 5, 10, 25, 50, 75, 90, 95, 99]:
+    print(f'{p}%: {np.percentile(df[\"gamma\"], p):.4f}')
+
+print()
+print('Number of days with gamma < -20:', (df['gamma'] < -20).sum())
+print('Number of days with gamma > 40:', (df['gamma'] > 40).sum())
+print('Number of days with gamma < 0:', (df['gamma'] < 0).sum())
+print('Number of days with gamma > 0:', (df['gamma'] > 0).sum())
+"
 
 ```
 
@@ -694,6 +832,27 @@ Number of days with gamma > 0: 405
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+
+# Compute FFT
+n = len(gamma)
+fft = np.fft.fft(gamma - np.mean(gamma))
+freqs = np.fft.fftfreq(n)
+power = np.abs(fft)**2
+
+# Find top frequencies (positive only)
+idx = np.argsort(power)[::-1]
+print('Top 10 frequencies:')
+for i in range(10):
+    f = freqs[idx[i]]
+    period = 1/f if f != 0 else np.inf
+    print(f'Freq: {f:.6f}, Period: {period:.2f} days, Power: {power[idx[i]]:.2f}')
+"
 
 ```
 
@@ -735,6 +894,20 @@ Freq: -0.009671, Period: -103.40 days, Power: 935018.43
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+
+# Compute autocorrelations for lags up to 365
+print('Autocorrelations for key lags:')
+for lag in [258, 259, 260, 171, 172, 173, 85, 86, 87, 103, 104, 365]:
+    if lag < len(gamma):
+        corr = np.corrcoef(gamma[:-lag], gamma[lag:])[0, 1]
+        print(f'Lag {lag}: {corr:.4f}')
+"
 
 ```
 
@@ -780,7 +953,7 @@ Lag 365: 0.6558
 **tool call: bash**
 
 ```
-
+cat data/test.csv
 ```
 
 ## [32] tool
@@ -826,6 +999,23 @@ t
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Check gamma at intervals of 32 days
+print('Gamma at t multiples near test points:')
+for start in range(0, 500, 32):
+    print(f't={start}: gamma={df.loc[df[\"t\"]==start, \"gamma\"].values[0]:.2f}' if start in df['t'].values else f't={start}: not in data')
+
+# Also check intervals of 33
+print()
+print('Gamma at t multiples of 33:')
+for start in range(0, 500, 33):
+    print(f't={start}: gamma={df.loc[df[\"t\"]==start, \"gamma\"].values[0]:.2f}' if start in df['t'].values else f't={start}: not in data')
+"
 
 ```
 
@@ -894,6 +1084,32 @@ t=495: gamma=-19.28
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Alpha seems to increase roughly linearly but wraps around
+# Let's unwrap alpha
+alpha = df['alpha'].values
+alpha_unwrapped = np.unwrap(alpha * np.pi / 180) * 180 / np.pi
+# Check if unwrapped alpha is more linear
+print('Alpha (original) first few:', alpha[:10])
+print('Alpha (unwrapped) first few:', alpha_unwrapped[:10])
+
+# Fit a linear trend to unwrapped alpha
+coeffs = np.polyfit(df['t'], alpha_unwrapped, 1)
+print('Linear trend for unwrapped alpha: slope=', coeffs[0], 'intercept=', coeffs[1])
+print('Predicted alpha at t=809:', coeffs[0]*809 + coeffs[1])
+
+# Similar for beta
+beta = df['beta'].values
+beta_unwrapped = np.unwrap(beta * np.pi / 180) * 180 / np.pi
+coeffs_beta = np.polyfit(df['t'], beta_unwrapped, 1)
+print('Linear trend for unwrapped beta: slope=', coeffs_beta[0], 'intercept=', coeffs_beta[1])
+print('Predicted beta at t=809:', coeffs_beta[0]*809 + coeffs_beta[1])
+"
 
 ```
 
@@ -922,6 +1138,49 @@ Predicted beta at t=809: 700.2100719419504
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Let's compute some derived quantities
+alpha = df['alpha'].values
+beta = df['beta'].values
+gamma = df['gamma'].values
+
+# Compute angular differences (mod 360)
+diff = (alpha - beta) % 360
+# Or maybe the absolute difference
+ab_diff = np.abs(alpha - beta)
+# Or the sum
+sum_ab = (alpha + beta) % 360
+
+print('Correlation with gamma:')
+print('alpha-beta diff (mod 360):', np.corrcoef(diff, gamma)[0, 1])
+print('abs(alpha-beta):', np.corrcoef(ab_diff, gamma)[0, 1])
+print('alpha+beta (mod 360):', np.corrcoef(sum_ab, gamma)[0, 1])
+
+# Let's also check if gamma is related to the unmodded difference
+diff_unmod = alpha_unwrapped - beta_unwrapped
+alpha_unwrapped = np.unwrap(alpha * np.pi / 180) * 180 / np.pi
+beta_unwrapped = np.unwrap(beta * np.pi / 180) * 180 / np.pi
+diff_unmod = alpha_unwrapped - beta_unwrapped
+print('alpha_unwrap - beta_unwrap:', np.corrcoef(diff_unmod, gamma)[0, 1])
+
+# Maybe gamma is related to sine of something?
+print()
+print('Trying sin and cos transformations...')
+# Convert to radians
+alpha_rad = alpha * np.pi / 180
+beta_rad = beta * np.pi / 180
+print('sin(alpha):', np.corrcoef(np.sin(alpha_rad), gamma)[0, 1])
+print('cos(alpha):', np.corrcoef(np.cos(alpha_rad), gamma)[0, 1])
+print('sin(beta):', np.corrcoef(np.sin(beta_rad), gamma)[0, 1])
+print('cos(beta):', np.corrcoef(np.cos(beta_rad), gamma)[0, 1])
+print('sin(alpha-beta):', np.corrcoef(np.sin(alpha_rad - beta_rad), gamma)[0, 1])
+print('cos(alpha-beta):', np.corrcoef(np.cos(alpha_rad - beta_rad), gamma)[0, 1])
+"
 
 ```
 
@@ -948,6 +1207,34 @@ alpha+beta (mod 360): 0.10215917157225446
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+alpha = df['alpha'].values
+beta = df['beta'].values
+gamma = df['gamma'].values
+
+alpha_unwrapped = np.unwrap(alpha * np.pi / 180) * 180 / np.pi
+beta_unwrapped = np.unwrap(beta * np.pi / 180) * 180 / np.pi
+diff_unmod = alpha_unwrapped - beta_unwrapped
+print('alpha_unwrap - beta_unwrap correlation:', np.corrcoef(diff_unmod, gamma)[0, 1])
+
+# Maybe gamma is related to sine of something?
+alpha_rad = alpha * np.pi / 180
+beta_rad = beta * np.pi / 180
+print('sin(alpha):', np.corrcoef(np.sin(alpha_rad), gamma)[0, 1])
+print('cos(alpha):', np.corrcoef(np.cos(alpha_rad), gamma)[0, 1])
+print('sin(beta):', np.corrcoef(np.sin(beta_rad), gamma)[0, 1])
+print('cos(beta):', np.corrcoef(np.cos(beta_rad), gamma)[0, 1])
+print('sin(alpha-beta):', np.corrcoef(np.sin(alpha_rad - beta_rad), gamma)[0, 1])
+print('cos(alpha-beta):', np.corrcoef(np.cos(alpha_rad - beta_rad), gamma)[0, 1])
+print('sin(alpha+beta):', np.corrcoef(np.sin(alpha_rad + beta_rad), gamma)[0, 1])
+print('cos(alpha+beta):', np.corrcoef(np.cos(alpha_rad + beta_rad), gamma)[0, 1])
+print('sin(alpha)*cos(beta):', np.corrcoef(np.sin(alpha_rad) * np.cos(beta_rad), gamma)[0, 1])
+"
 
 ```
 
@@ -982,6 +1269,55 @@ sin(alpha)*cos(beta): -0.24287703677621333
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+beta = df['beta'].values
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Plot gamma vs cos(beta) using text
+print('Gamma vs cos(beta):')
+print('cos(beta)\tgamma')
+cos_beta = np.cos(beta * np.pi / 180)
+for i in range(0, 517, 50):
+    print(f'{cos_beta[i]:.4f}\t{gamma[i]:.2f}')
+
+# Let's fit a linear regression of gamma on cos(beta)
+from sklearn.linear_model import LinearRegression
+X = cos_beta.reshape(-1, 1)
+model = LinearRegression()
+model.fit(X, gamma)
+print()
+print('Linear regression gamma ~ cos(beta):')
+print('Coefficient:', model.coef_[0])
+print('Intercept:', model.intercept_)
+print('R^2:', model.score(X, gamma))
+
+# Also try with sin(alpha)
+sin_alpha = np.sin(df['alpha'].values * np.pi / 180)
+X2 = sin_alpha.reshape(-1, 1)
+model2 = LinearRegression()
+model2.fit(X2, gamma)
+print()
+print('Linear regression gamma ~ sin(alpha):')
+print('Coefficient:', model2.coef_[0])
+print('Intercept:', model2.intercept_)
+print('R^2:', model2.score(X2, gamma))
+
+# Multiple regression with cos(beta) and sin(alpha)
+X3 = np.column_stack([cos_beta, sin_alpha])
+model3 = LinearRegression()
+model3.fit(X3, gamma)
+print()
+print('Multiple regression gamma ~ cos(beta) + sin(alpha):')
+print('Coefficients:', model3.coef_)
+print('Intercept:', model3.intercept_)
+print('R^2:', model3.score(X3, gamma))
+"
 
 ```
 
@@ -1034,6 +1370,46 @@ R^2: 0.8103550936005965
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Unwrap alpha and beta
+alpha = df['alpha'].values * np.pi / 180
+beta = df['beta'].values * np.pi / 180
+alpha_unwrapped = np.unwrap(alpha)
+beta_unwrapped = np.unwrap(beta)
+
+t = df['t'].values
+
+# Fit linear models for unwrapped alpha and beta
+from sklearn.linear_model import LinearRegression
+model_alpha = LinearRegression()
+model_alpha.fit(t.reshape(-1, 1), alpha_unwrapped)
+print('Alpha prediction:')
+print('Slope (rad/day):', model_alpha.coef_[0])
+print('Slope (deg/day):', model_alpha.coef_[0] * 180 / np.pi)
+print('Intercept (rad):', model_alpha.intercept_)
+
+model_beta = LinearRegression()
+model_beta.fit(t.reshape(-1, 1), beta_unwrapped)
+print()
+print('Beta prediction:')
+print('Slope (rad/day):', model_beta.coef_[0])
+print('Slope (deg/day):', model_beta.coef_[0] * 180 / np.pi)
+print('Intercept (rad):', model_beta.intercept_)
+
+# Check residuals
+alpha_pred = model_alpha.predict(t.reshape(-1, 1))
+beta_pred = model_beta.predict(t.reshape(-1, 1))
+print()
+print('Alpha residual std:', np.std(alpha_unwrapped - alpha_pred))
+print('Beta residual std:', np.std(beta_unwrapped - beta_pred))
+print('Max alpha residual (deg):', np.max(np.abs(alpha_unwrapped - alpha_pred)) * 180 / np.pi)
+print('Max beta residual (deg):', np.max(np.abs(beta_unwrapped - beta_pred)) * 180 / np.pi)
+"
 
 ```
 
@@ -1068,6 +1444,42 @@ Max beta residual (deg): 83.5709127629703
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('data/train.csv')
+
+alpha = df['alpha'].values * np.pi / 180
+beta = df['beta'].values * np.pi / 180
+alpha_unwrapped = np.unwrap(alpha)
+beta_unwrapped = np.unwrap(beta)
+
+t = df['t'].values
+
+# Fit linear models
+from sklearn.linear_model import LinearRegression
+model_alpha = LinearRegression()
+model_alpha.fit(t.reshape(-1, 1), alpha_unwrapped)
+model_beta = LinearRegression()
+model_beta.fit(t.reshape(-1, 1), beta_unwrapped)
+
+alpha_res = alpha_unwrapped - model_alpha.predict(t.reshape(-1, 1))
+beta_res = beta_unwrapped - model_beta.predict(t.reshape(-1, 1))
+
+# Plot residuals
+plt.figure(figsize=(10, 6))
+plt.subplot(2, 1, 1)
+plt.plot(t, alpha_res * 180 / np.pi)
+plt.title('Alpha residuals (deg)')
+plt.subplot(2, 1, 2)
+plt.plot(t, beta_res * 180 / np.pi)
+plt.title('Beta residuals (deg)')
+plt.tight_layout()
+plt.savefig('residuals.png')
+print('Saved residuals plot')
+"
 
 ```
 
@@ -1090,6 +1502,61 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+alpha = df['alpha'].values * np.pi / 180
+beta = df['beta'].values * np.pi / 180
+alpha_unwrapped = np.unwrap(alpha)
+beta_unwrapped = np.unwrap(beta)
+
+t = df['t'].values
+
+# Fit linear models
+from sklearn.linear_model import LinearRegression
+model_alpha = LinearRegression()
+model_alpha.fit(t.reshape(-1, 1), alpha_unwrapped)
+model_beta = LinearRegression()
+model_beta.fit(t.reshape(-1, 1), beta_unwrapped)
+
+alpha_pred = model_alpha.predict(t.reshape(-1, 1))
+beta_pred = model_beta.predict(t.reshape(-1, 1))
+
+alpha_res = alpha_unwrapped - alpha_pred
+beta_res = beta_unwrapped - beta_pred
+
+# Look at the pattern of residuals
+print('Alpha residuals (deg): first 10 and last 10')
+print(np.round(alpha_res[:10] * 180 / np.pi, 2))
+print('...')
+print(np.round(alpha_res[-10:] * 180 / np.pi, 2))
+
+print()
+print('Beta residuals (deg): first 10 and last 10')
+print(np.round(beta_res[:10] * 180 / np.pi, 2))
+print('...')
+print(np.round(beta_res[-10:] * 180 / np.pi, 2))
+
+# Compute FFT of residuals to find periodicities
+def fft_analysis(signal, name):
+    n = len(signal)
+    fft = np.fft.fft(signal - np.mean(signal))
+    freqs = np.fft.fftfreq(n)
+    power = np.abs(fft)**2
+    idx = np.argsort(power)[::-1]
+    print(f'Top frequencies for {name}:')
+    for i in range(5):
+        f = freqs[idx[i]]
+        period = 1/f if f != 0 else np.inf
+        print(f'  Freq: {f:.6f}, Period: {period:.2f} days, Power: {power[idx[i]]:.2f}')
+
+fft_analysis(alpha_res, 'alpha residuals')
+print()
+fft_analysis(beta_res, 'beta residuals')
+"
 
 ```
 
@@ -1165,6 +1632,47 @@ Top frequencies for beta residuals:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Check stationarity of gamma
+from statsmodels.tsa.stattools import adfuller
+result = adfuller(gamma)
+print('ADF test for gamma:')
+print(f'ADF statistic: {result[0]:.4f}')
+print(f'p-value: {result[1]:.4f}')
+print('Critical values:', result[4])
+
+# Check differenced
+gamma_diff = np.diff(gamma)
+result_diff = adfuller(gamma_diff)
+print()
+print('ADF test for differenced gamma:')
+print(f'ADF statistic: {result_diff[0]:.4f}')
+print(f'p-value: {result_diff[1]:.4f}')
+print('Critical values:', result_diff[4])
+
+# Fit ARIMA model
+from statsmodels.tsa.arima.model import ARIMA
+# Try to find best ARIMA order
+# Actually let's use auto_arima? Not available. Let's try a few.
+print()
+print('Trying ARIMA models...')
+for p in range(0, 5):
+    for d in range(0, 2):
+        for q in range(0, 5):
+            try:
+                model = ARIMA(gamma, order=(p, d, q))
+                fitted = model.fit()
+                print(f'ARIMA({p},{d},{q}): AIC={fitted.aic:.2f}, BIC={fitted.bic:.2f}')
+            except:
+                pass
+"
 
 ```
 
@@ -1303,6 +1811,51 @@ ARIMA(4,1,4): AIC=803.87, BIC=842.09
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Detrend gamma by fitting a linear trend
+from sklearn.linear_model import LinearRegression
+model = LinearRegression()
+model.fit(t.reshape(-1, 1), gamma)
+trend = model.predict(t.reshape(-1, 1))
+gamma_detrended = gamma - trend
+
+print('Linear trend slope:', model.coef_[0], 'intercept:', model.intercept_)
+
+# FFT of detrended gamma
+n = len(gamma_detrended)
+fft = np.fft.fft(gamma_detrended)
+freqs = np.fft.fftfreq(n)
+power = np.abs(fft)**2
+
+# Positive frequencies only
+pos_idx = freqs > 0
+freqs_pos = freqs[pos_idx]
+power_pos = power[pos_idx]
+
+idx = np.argsort(power_pos)[::-1]
+print('Top 10 frequencies (detrended gamma):')
+for i in range(10):
+    f = freqs_pos[idx[i]]
+    period = 1/f
+    print(f'Freq: {f:.6f}, Period: {period:.2f} days, Power: {power_pos[idx[i]]:.2f}')
+
+# Let's see if there's a 365-day period
+print()
+# Find index of frequency closest to 1/365
+i_365 = np.argmin(np.abs(freqs_pos - 1/365))
+print(f'Closest to 1/365: freq={freqs_pos[i_365]:.6f}, period={1/freqs_pos[i_365]:.2f}, power={power_pos[i_365]:.2f}')
+
+# Also check 1/182.5 (half year)
+i_182 = np.argmin(np.abs(freqs_pos - 1/182.5))
+print(f'Closest to 1/182.5: freq={freqs_pos[i_182]:.6f}, period={1/freqs_pos[i_182]:.2f}, power={power_pos[i_182]:.2f}')
+"
 
 ```
 
@@ -1342,6 +1895,42 @@ Closest to 1/182.5: freq=0.005803, period=172.33, power=3613507.80
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Detrend gamma
+from sklearn.linear_model import LinearRegression
+model = LinearRegression()
+model.fit(t.reshape(-1, 1), gamma)
+trend = model.predict(t.reshape(-1, 1))
+gamma_detrended = gamma - trend
+
+n = len(gamma_detrended)
+fft = np.fft.fft(gamma_detrended)
+freqs = np.fft.fftfreq(n)
+power = np.abs(fft)**2
+
+# Find power at frequencies near 1/365, 1/180, etc.
+target_periods = [365, 180, 120, 90, 60]
+for period in target_periods:
+    f_target = 1/period
+    # Find the closest frequency
+    idx = np.argmin(np.abs(freqs - f_target))
+    print(f'Target period {period} days: freq={freqs[idx]:.6f}, actual period={1/freqs[idx]:.2f}, power={power[idx]:.2f}')
+
+# Let's also look at the autocorrelation function of detrended gamma
+print()
+print('Autocorrelation of detrended gamma:')
+for lag in [1, 2, 3, 5, 10, 20, 30, 50, 100, 150, 200, 250, 300, 365]:
+    if lag < n:
+        corr = np.corrcoef(gamma_detrended[:-lag], gamma_detrended[lag:])[0, 1]
+        print(f'Lag {lag}: {corr:.4f}')
+"
 
 ```
 
@@ -1393,6 +1982,62 @@ Lag 365: -0.8975
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Create features for harmonic regression
+def create_harmonic_features(t, periods):
+    features = []
+    for period in periods:
+        features.append(np.sin(2 * np.pi * t / period))
+        features.append(np.cos(2 * np.pi * t / period))
+    return np.column_stack(features)
+
+# Try with 365-day period
+periods = [365]
+X = np.column_stack([t, create_harmonic_features(t, periods)])
+model = LinearRegression()
+model.fit(X, gamma)
+print('R^2 with 365-day harmonic:', model.score(X, gamma))
+
+# Try with 365 and 182.5
+periods = [365, 182.5]
+X = np.column_stack([t, create_harmonic_features(t, periods)])
+model = LinearRegression()
+model.fit(X, gamma)
+print('R^2 with 365 and 182.5:', model.score(X, gamma))
+
+# Try with more periods
+periods = [365, 182.5, 121.67]  # yearly, half-yearly, third-yearly
+X = np.column_stack([t, create_harmonic_features(t, periods)])
+model = LinearRegression()
+model.fit(X, gamma)
+print('R^2 with 3 harmonics:', model.score(X, gamma))
+
+# Try without trend
+X = create_harmonic_features(t, [365, 182.5, 121.67, 91.25])
+model = LinearRegression()
+model.fit(X, gamma)
+print('R^2 with 4 harmonics no trend:', model.score(X, gamma))
+
+# Try with trend
+X = np.column_stack([t, create_harmonic_features(t, [365, 182.5, 121.67])])
+model = LinearRegression()
+model.fit(X, gamma)
+print('R^2 with trend + 3 harmonics:', model.score(X, gamma))
+
+# Let's also check residuals
+y_pred = model.predict(X)
+residuals = gamma - y_pred
+print('Residual std:', np.std(residuals))
+print('Residual mean:', np.mean(residuals))
+"
 
 ```
 
@@ -1432,6 +2077,31 @@ Residual mean: -1.9241002515747393e-15
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Check autocorrelation at lag 32 and nearby
+for lag in [30, 31, 32, 33, 34, 35]:
+    if lag < len(gamma):
+        corr = np.corrcoef(gamma[:-lag], gamma[lag:])[0, 1]
+        print(f'Lag {lag}: autocorr={corr:.4f}')
+
+# Also check if gamma at test-like intervals shows pattern
+print()
+print('Gamma at t values similar to test spacing:')
+# The test set starts at 519 (3 days after last training) and then every ~32 days
+# Let's check gamma at t = 3, 35, 67, 99, ... (3 + 32*k)
+for k in range(0, 17):
+    tt = 3 + 32*k
+    if tt <= 516:
+        val = df[df['t']==tt]['gamma'].values[0]
+        print(f't={tt}: gamma={val:.2f}')
+"
 
 ```
 
@@ -1484,6 +2154,63 @@ t=515: gamma=-21.47
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+# Check gamma at t=365
+print('Gamma at t=365:', df[df['t']==365]['gamma'].values[0])
+print('Gamma at t=0:', df[df['t']==0]['gamma'].values[0])
+print('Gamma at t=730 would be extrapolation')
+
+# Let's look at the full cycle
+print()
+print('Gamma at around t=0, 365, 730:')
+# t=0 is 18.56
+# t=365? Let's find closest
+t_vals = [0, 365, 516]
+for tt in t_vals:
+    row = df[df['t']==tt]
+    if not row.empty:
+        print(f't={tt}: gamma={row[\"gamma\"].values[0]:.2f}')
+
+# What about the phase? Let's fit a simple sinusoid with period 365
+from sklearn.linear_model import LinearRegression
+import numpy as np
+
+t = df['t'].values
+gamma = df['gamma'].values
+
+# Model: gamma = a + b*t + c*sin(2*pi*t/365) + d*cos(2*pi*t/365)
+X = np.column_stack([
+    t,
+    np.sin(2*np.pi*t/365),
+    np.cos(2*np.pi*t/365)
+])
+model = LinearRegression().fit(X, gamma)
+print()
+print('Model coefficients:')
+print('Intercept:', model.intercept_)
+print('Trend:', model.coef_[0])
+print('Sin:', model.coef_[1])
+print('Cos:', model.coef_[2])
+print('R^2:', model.score(X, gamma))
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_test = np.column_stack([
+    test_t,
+    np.sin(2*np.pi*test_t/365),
+    np.cos(2*np.pi*test_t/365)
+])
+y_pred = model.predict(X_test)
+print()
+print('Predictions with simple harmonic model:')
+for tt, yp in zip(test_t, y_pred):
+    print(f't={tt}: gamma={yp:.4f}')
+"
 
 ```
 
@@ -1564,6 +2291,76 @@ t=809: gamma=-25.4811
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+
+alpha = df['alpha'].values
+beta = df['beta'].values
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Unwrap alpha and beta
+alpha_unwrapped = np.unwrap(alpha * np.pi / 180) * 180 / np.pi
+beta_unwrapped = np.unwrap(beta * np.pi / 180) * 180 / np.pi
+
+# Compute the difference
+diff = alpha_unwrapped - beta_unwrapped
+
+# Try fitting gamma as a function of diff and maybe sin/cos of diff
+from sklearn.linear_model import LinearRegression
+import itertools
+
+# Let's try many combinations
+predictors = {
+    't': t,
+    'sin(alpha)': np.sin(alpha * np.pi / 180),
+    'cos(alpha)': np.cos(alpha * np.pi / 180),
+    'sin(beta)': np.sin(beta * np.pi / 180),
+    'cos(beta)': np.cos(beta * np.pi / 180),
+    'alpha-beta_mod': (alpha - beta) % 360,
+    'alpha+beta_mod': (alpha + beta) % 360,
+    'sin(alpha-beta)': np.sin((alpha - beta) * np.pi / 180),
+    'cos(alpha-beta)': np.cos((alpha - beta) * np.pi / 180),
+    'sin(alpha+beta)': np.sin((alpha + beta) * np.pi / 180),
+    'cos(alpha+beta)': np.cos((alpha + beta) * np.pi / 180),
+}
+
+# Find best single predictor
+best_r2 = -np.inf
+best_name = ''
+for name, val in predictors.items():
+    r2 = LinearRegression().fit(val.reshape(-1, 1), gamma).score(val.reshape(-1, 1), gamma)
+    if r2 > best_r2:
+        best_r2 = r2
+        best_name = name
+print(f'Best single predictor: {best_name} with R^2={best_r2:.4f}')
+
+# Find best pair
+for (name1, val1), (name2, val2) in itertools.combinations(predictors.items(), 2):
+    X = np.column_stack([val1, val2])
+    r2 = LinearRegression().fit(X, gamma).score(X, gamma)
+    if r2 > best_r2:
+        best_r2 = r2
+        best_name = f'{name1} + {name2}'
+print(f'Best pair: {best_name} with R^2={best_r2:.4f}')
+
+# Try triple
+keys = list(predictors.keys())
+best_r2 = 0
+best_triple = ''
+for i in range(len(keys)):
+    for j in range(i+1, len(keys)):
+        for k in range(j+1, len(keys)):
+            X = np.column_stack([predictors[keys[i]], predictors[keys[j]], predictors[keys[k]]])
+            r2 = LinearRegression().fit(X, gamma).score(X, gamma)
+            if r2 > best_r2:
+                best_r2 = r2
+                best_triple = f'{keys[i]} + {keys[j]} + {keys[k]}'
+print(f'Best triple: {best_triple} with R^2={best_r2:.4f}')
+"
 
 ```
 
@@ -1591,6 +2388,75 @@ Best triple: t + sin(beta) + cos(beta) with R^2=0.9607
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+beta = df['beta'].values
+t = df['t'].values
+
+# Beta is an angle, so it wraps. Let's unwrap it for modeling as a function of t
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Try to model beta as a function of t with harmonic terms
+# First, fit just linear
+X1 = t.reshape(-1, 1)
+model1 = LinearRegression().fit(X1, beta_unwrapped)
+print('Linear model for unwrapped beta:')
+print('R^2:', model1.score(X1, beta_unwrapped))
+print('Std of residuals (deg):', np.std(beta_unwrapped - model1.predict(X1)) * 180 / np.pi)
+
+# Try with harmonic terms
+# Let's add sin and cos of various periods
+def add_harmonic_features(X, t, periods):
+    for p in periods:
+        X = np.column_stack([X, np.sin(2*np.pi*t/p), np.cos(2*np.pi*t/p)])
+    return X
+
+X2 = add_harmonic_features(t.reshape(-1, 1), t, [365, 182.5, 121.67])
+model2 = LinearRegression().fit(X2, beta_unwrapped)
+print()
+print('Model with trend + 3 harmonics for unwrapped beta:')
+print('R^2:', model2.score(X2, beta_unwrapped))
+print('Std of residuals (deg):', np.std(beta_unwrapped - model2.predict(X2)) * 180 / np.pi)
+
+# Let's also try modeling the wrapped beta directly using sin/cos terms
+# Actually we need sin(beta) and cos(beta) for the gamma model
+# So let's model sin(beta) and cos(beta) directly as functions of t
+
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+# Model sin(beta) as a function of t with harmonics
+X3 = add_harmonic_features(t.reshape(-1, 1), t, [365, 182.5, 121.67])
+model_sin = LinearRegression().fit(X3, sin_beta)
+print()
+print('Model for sin(beta) with trend + 3 harmonics:')
+print('R^2:', model_sin.score(X3, sin_beta))
+print('Std of residuals:', np.std(sin_beta - model_sin.predict(X3)))
+
+# Model cos(beta) similarly
+model_cos = LinearRegression().fit(X3, cos_beta)
+print()
+print('Model for cos(beta) with trend + 3 harmonics:')
+print('R^2:', model_cos.score(X3, cos_beta))
+print('Std of residuals:', np.std(cos_beta - model_cos.predict(X3)))
+
+# Alternatively, we could model beta as linear + harmonics and then take sin/cos
+# Let's check if the residuals of the linear+harmonic model for beta are well-behaved
+beta_pred = model2.predict(X2)
+beta_res = beta_unwrapped - beta_pred
+print()
+print('Beta residual std (deg):', np.std(beta_res) * 180 / np.pi)
+print('Beta residual mean (deg):', np.mean(beta_res) * 180 / np.pi)
+
+# Check if sin(beta_res) and cos(beta_res) are small
+print('sin(beta_res) std:', np.std(np.sin(beta_res)))
+print('cos(beta_res) std:', np.std(np.cos(beta_res)))
+"
 
 ```
 
@@ -1633,6 +2499,37 @@ cos(beta_res) std: 0.12198642852462892
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Try with many harmonics
+def create_features(t, n_harmonics=10, base_period=365):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+for n in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+    X = create_features(t, n_harmonics=n, base_period=365)
+    model = LinearRegression().fit(X, gamma)
+    r2 = model.score(X, gamma)
+    print(f'Harmonics: {n}, features: {X.shape[1]}, R^2: {r2:.4f}')
+
+# What if we use a different base period?
+print()
+for period in [300, 320, 340, 360, 365, 380, 400, 420, 517]:
+    X = create_features(t, n_harmonics=5, base_period=period)
+    r2 = LinearRegression().fit(X, gamma).score(X, gamma)
+    print(f'Period: {period}, R^2: {r2:.4f}')
+"
 
 ```
 
@@ -1679,6 +2576,32 @@ Period: 517, R^2: 0.9713
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+def create_features(t, n_harmonics=5, base_period=365):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+# Try different periods and see predictions
+for period in [365, 380, 400, 420, 450, 500, 517]:
+    X = create_features(t, n_harmonics=5, base_period=period)
+    model = LinearRegression().fit(X, gamma)
+    X_test = create_features(test_t, n_harmonics=5, base_period=period)
+    pred = model.predict(X_test)
+    print(f'Period {period}:', ', '.join([f'{p:.2f}' for p in pred]))
+"
 
 ```
 
@@ -1720,6 +2643,91 @@ Period 517: -25.64, -28.54, -26.57, -29.99, -30.73, -29.68, -32.69, -31.00, -28.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+beta = df['beta'].values
+t = df['t'].values
+
+# Let's do time series cross-validation to evaluate models
+# We'll train on first N points and predict the next 10
+
+# Approach 1: Direct harmonic model for gamma
+# Approach 2: Model sin(beta), cos(beta) then gamma from t, sin(beta), cos(beta)
+
+# Let's test both approaches by forecasting the last 10 points (t=507 to 516)
+# Train on t=0 to 506, predict t=507 to 516
+
+train_idx = t <= 506
+test_idx = t >= 507
+
+t_train = t[train_idx]
+gamma_train = gamma[train_idx]
+beta_train = beta[train_idx]
+
+t_test = t[test_idx]
+gamma_test = gamma[test_idx]
+beta_test = beta[test_idx]
+
+print('Test points:', t_test)
+print('True gamma:', gamma_test)
+
+# Approach 1: Direct harmonic model
+def create_features(t, n_harmonics=5, base_period=420):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+X_train = create_features(t_train)
+X_test = create_features(t_test)
+model1 = LinearRegression().fit(X_train, gamma_train)
+pred1 = model1.predict(X_test)
+print()
+print('Approach 1 (harmonic):')
+print('Predictions:', np.round(pred1, 2))
+print('True:', gamma_test)
+print('MAE:', np.mean(np.abs(pred1 - gamma_test)))
+
+# Approach 2: First model beta, then gamma
+# Model sin(beta) and cos(beta) as functions of t
+sin_beta_train = np.sin(beta_train * np.pi / 180)
+cos_beta_train = np.cos(beta_train * np.pi / 180)
+
+# Use harmonic features for beta
+X_beta_train = create_features(t_train, n_harmonics=3, base_period=420)
+X_beta_test = create_features(t_test, n_harmonics=3, base_period=420)
+
+model_sin = LinearRegression().fit(X_beta_train, sin_beta_train)
+model_cos = LinearRegression().fit(X_beta_train, cos_beta_train)
+
+sin_beta_pred_test = model_sin.predict(X_beta_test)
+cos_beta_pred_test = model_cos.predict(X_beta_test)
+
+# Now model gamma using t, sin(beta), cos(beta)
+X_gamma_train = np.column_stack([t_train, sin_beta_train, cos_beta_train])
+model_gamma = LinearRegression().fit(X_gamma_train, gamma_train)
+
+X_gamma_test = np.column_stack([t_test, sin_beta_pred_test, cos_beta_pred_test])
+pred2 = model_gamma.predict(X_gamma_test)
+print()
+print('Approach 2 (beta->gamma):')
+print('Predictions:', np.round(pred2, 2))
+print('True:', gamma_test)
+print('MAE:', np.mean(np.abs(pred2 - gamma_test)))
+
+# Let's also check the in-sample fit of the gamma model
+print()
+print('Gamma model R^2:', model_gamma.score(X_gamma_train, gamma_train))
+print('Gamma model coefficients:', model_gamma.coef_)
+"
 
 ```
 
@@ -1767,6 +2775,67 @@ Gamma model coefficients: [-0.07401688 20.02414908 24.19687094]
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+beta = df['beta'].values
+t = df['t'].values
+
+# Let's build a model using ALL training data and then predict test
+# First, model sin(beta) and cos(beta) as functions of t
+
+# Use harmonic features
+def create_features(t, n_harmonics=3, base_period=420):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+X_beta = create_features(t, n_harmonics=3, base_period=420)
+sin_beta = np.sin(beta * np.pi / 180)
+cos_beta = np.cos(beta * np.pi / 180)
+
+model_sin = LinearRegression().fit(X_beta, sin_beta)
+model_cos = LinearRegression().fit(X_beta, cos_beta)
+
+# Model gamma
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+
+print('Gamma model coefficients:')
+print('t:', model_gamma.coef_[0])
+print('sin(beta):', model_gamma.coef_[1])
+print('cos(beta):', model_gamma.coef_[2])
+print('Intercept:', model_gamma.intercept_)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_beta_test = create_features(test_t, n_harmonics=3, base_period=420)
+sin_beta_pred = model_sin.predict(X_beta_test)
+cos_beta_pred = model_cos.predict(X_beta_test)
+
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+print()
+print('Test predictions:')
+for tt, sp, cp, gp in zip(test_t, sin_beta_pred, cos_beta_pred, gamma_pred):
+    print(f't={tt}: sin(beta)={sp:.4f}, cos(beta)={cp:.4f}, gamma={gp:.4f}')
+
+# Let's also check the implied beta from sin and cos predictions
+beta_pred = np.arctan2(sin_beta_pred, cos_beta_pred) * 180 / np.pi
+beta_pred = beta_pred % 360
+print()
+print('Predicted beta:')
+for tt, bp in zip(test_t, beta_pred):
+    print(f't={tt}: beta={bp:.2f}')
+"
 
 ```
 
@@ -1822,6 +2891,80 @@ t=809: beta=125.78
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+beta = df['beta'].values
+t = df['t'].values
+
+# Unwrap beta
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)  # in radians
+
+# Model unwrapped beta as a function of t with linear and harmonic terms
+def create_features(t, n_harmonics=3, base_period=420):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+X_beta = create_features(t, n_harmonics=3, base_period=420)
+model_beta = LinearRegression().fit(X_beta, beta_unwrapped)
+
+print('Beta model R^2:', model_beta.score(X_beta, beta_unwrapped))
+print('Residual std (deg):', np.std(beta_unwrapped - model_beta.predict(X_beta)) * 180 / np.pi)
+
+# Predict unwrapped beta for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_beta_test = create_features(test_t, n_harmonics=3, base_period=420)
+beta_unwrapped_pred = model_beta.predict(X_beta_test)
+
+# Convert to wrapped beta [0, 360)
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+beta_pred_deg = beta_pred_rad * 180 / np.pi
+
+print()
+print('Predicted beta:')
+for tt, bp in zip(test_t, beta_pred_deg):
+    print(f't={tt}: beta={bp:.2f}')
+
+# Now compute sin(beta) and cos(beta) from the predicted beta
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+
+print()
+print('Predicted sin(beta), cos(beta):')
+for tt, sp, cp in zip(test_t, sin_beta_pred, cos_beta_pred):
+    print(f't={tt}: sin={sp:.4f}, cos={cp:.4f}')
+
+# Now predict gamma using the gamma model
+# Build gamma model on training data
+gamma = df['gamma'].values
+sin_beta_train = np.sin(beta_rad)
+cos_beta_train = np.cos(beta_rad)
+
+X_gamma = np.column_stack([t, sin_beta_train, cos_beta_train])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+
+print()
+print('Gamma model R^2:', model_gamma.score(X_gamma, gamma))
+print('Gamma model coefficients:', model_gamma.coef_)
+print('Intercept:', model_gamma.intercept_)
+
+# Predict gamma for test
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+print()
+print('Final predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+"
 
 ```
 
@@ -1890,6 +3033,57 @@ t=809: gamma=6.1745
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Try SARIMA with yearly seasonality
+# Since we have 517 observations, we can try seasonal period of 365
+# But SARIMAX with such a long period is computationally heavy
+# Let's try a smaller period like 30 or 7
+
+# Actually, the gamma series doesn't show clear daily or weekly patterns
+# Let's try ARIMA with external regressors (t, sin/cos terms)
+
+# Use harmonic terms as exog
+def create_features(t, n_harmonics=5, base_period=365):
+    features = []
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+exog_train = create_features(t, n_harmonics=5, base_period=365)
+
+# Fit ARIMA with exog
+from statsmodels.tsa.arima.model import ARIMA
+
+# Try ARIMA(2,1,2) with exog
+model = ARIMA(gamma, order=(2,1,2), exog=exog_train)
+fitted = model.fit()
+print(fitted.summary())
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+exog_test = create_features(test_t, n_harmonics=5, base_period=365)
+
+# For ARIMA, we need to forecast from the end of the series
+# Use get_forecast
+forecast_result = fitted.get_forecast(steps=len(test_t), exog=exog_test)
+pred = forecast_result.predicted_mean
+conf_int = forecast_result.conf_int(alpha=0.05)
+
+print()
+print('ARIMA with harmonic exog predictions:')
+for tt, p, lower, upper in zip(test_t, pred, conf_int.iloc[:, 0], conf_int.iloc[:, 1]):
+    print(f't={tt}: gamma={p:.4f}, CI=[{lower:.4f}, {upper:.4f}]')
+"
 
 ```
 
@@ -1976,6 +3170,52 @@ ARIMA with harmonic exog predictions:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+beta = df['beta'].values
+t = df['t'].values
+
+# Unwrap beta
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Look at the derivative (difference) of unwrapped beta
+beta_diff = np.diff(beta_unwrapped) * 180 / np.pi
+print('Beta diff stats:')
+print('Mean:', np.mean(beta_diff))
+print('Std:', np.std(beta_diff))
+print('Min:', np.min(beta_diff))
+print('Max:', np.max(beta_diff))
+
+# The mean is about 0.62 deg/day (consistent with linear trend)
+# Let's check if there's a periodic pattern in the differences
+
+# Detrend beta: subtract linear fit
+model_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_detrended = beta_unwrapped - model_linear.predict(t.reshape(-1, 1))
+
+# Compute FFT of detrended beta
+n = len(beta_detrended)
+fft = np.fft.fft(beta_detrended)
+freqs = np.fft.fftfreq(n)
+power = np.abs(fft)**2
+
+pos_idx = freqs > 0
+freqs_pos = freqs[pos_idx]
+power_pos = power[pos_idx]
+
+idx = np.argsort(power_pos)[::-1]
+print()
+print('Top frequencies for detrended beta:')
+for i in range(10):
+    f = freqs_pos[idx[i]]
+    period = 1/f
+    print(f'Freq: {f:.6f}, Period: {period:.2f} days, Power: {power_pos[idx[i]]:.2f}')
+"
 
 ```
 
@@ -2017,6 +3257,33 @@ Freq: 0.019342, Period: 51.70 days, Power: 114.15
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, PeriodicKernel, ConstantKernel, Sum, Product
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values.reshape(-1, 1)
+
+# Try a simple GP with RBF kernel
+kernel = ConstantKernel(1.0) * RBF(length_scale=50.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, alpha=0, normalize_y=True)
+gp.fit(t, gamma)
+print('GP with RBF kernel:')
+print('Log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+print('Kernel:', gp.kernel_)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809]).reshape(-1, 1)
+y_pred, y_std = gp.predict(test_t, return_std=True)
+print()
+print('Predictions with GP RBF:')
+for tt, p, s in zip(test_t.flatten(), y_pred, y_std):
+    print(f't={tt}: gamma={p:.4f}, std={s:.4f}')
+    print(f'  95% CI: [{p-1.96*s:.4f}, {p+1.96*s:.4f}]')
+"
 
 ```
 
@@ -2039,6 +3306,45 @@ ImportError: cannot import name 'PeriodicKernel' from 'sklearn.gaussian_process.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel, DotProduct, Matern
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values.reshape(-1, 1)
+
+# Try GP with RBF kernel
+kernel = ConstantKernel(1.0) * RBF(length_scale=100.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, alpha=0, normalize_y=True, n_restarts_optimizer=5)
+gp.fit(t, gamma)
+print('GP with RBF kernel:')
+print('Log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+print('Kernel:', gp.kernel_)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809]).reshape(-1, 1)
+y_pred, y_std = gp.predict(test_t, return_std=True)
+print()
+print('Predictions with GP RBF:')
+for tt, p, s in zip(test_t.flatten(), y_pred, y_std):
+    print(f't={tt}: gamma={p:.4f}, std={s:.4f}')
+    print(f'  95% CI: [{p-1.96*s:.4f}, {p+1.96*s:.4f}]')
+
+# Also try Matern kernel
+print()
+print('GP with Matern kernel:')
+kernel2 = ConstantKernel(1.0) * Matern(length_scale=100.0, nu=1.5) + WhiteKernel(noise_level=1.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, alpha=0, normalize_y=True, n_restarts_optimizer=5)
+gp2.fit(t, gamma)
+print('Kernel:', gp2.kernel_)
+y_pred2, y_std2 = gp2.predict(test_t, return_std=True)
+print('Predictions:')
+for tt, p, s in zip(test_t.flatten(), y_pred2, y_std2):
+    print(f't={tt}: gamma={p:.4f}, std={s:.4f}')
+"
 
 ```
 
@@ -2120,6 +3426,36 @@ t=809: gamma=10.2937, std=23.7570
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+beta = df['beta'].values
+t = df['t'].values
+
+# Find when beta completes a full cycle (returns to same value modulo 360)
+# Let's see the range of beta
+print('Beta min:', beta.min(), 'max:', beta.max())
+
+# Unwrap beta and look at total change
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+print('Unwrapped beta min:', beta_unwrapped.min() * 180 / np.pi)
+print('Unwrapped beta max:', beta_unwrapped.max() * 180 / np.pi)
+print('Total change:', (beta_unwrapped[-1] - beta_unwrapped[0]) * 180 / np.pi)
+
+# The total change is about 0.62 * 516 = 320 degrees
+# So beta has not completed a full cycle in the observed period
+
+# Let's check the autocorrelation of wrapped beta
+print()
+print('Autocorrelation of beta:')
+for lag in [1, 10, 50, 100, 200, 300, 400, 500]:
+    if lag < len(beta):
+        corr = np.corrcoef(beta[:-lag], beta[lag:])[0, 1]
+        print(f'Lag {lag}: {corr:.4f}')
+"
 
 ```
 
@@ -2169,6 +3505,73 @@ Lag 500: -0.5014
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import TimeSeriesSplit
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Use time series cross-validation to find best period and number of harmonics
+# We'll use the last 50 points as test set repeatedly
+
+def create_features(t, n_harmonics, base_period):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+# Cross-validation
+tscv = TimeSeriesSplit(n_splits=10, test_size=10)
+
+best_period = None
+best_n = None
+best_mae = np.inf
+
+for period in [300, 320, 340, 360, 365, 380, 400, 420, 440, 460, 480, 500, 517, 550, 580]:
+    for n in [1, 2, 3, 4, 5, 6]:
+        maes = []
+        for train_idx, test_idx in tscv.split(t):
+            t_train, t_test = t[train_idx], t[test_idx]
+            gamma_train, gamma_test = gamma[train_idx], gamma[test_idx]
+            
+            X_train = create_features(t_train, n_harmonics=n, base_period=period)
+            X_test = create_features(t_test, n_harmonics=n, base_period=period)
+            
+            model = LinearRegression().fit(X_train, gamma_train)
+            pred = model.predict(X_test)
+            mae = np.mean(np.abs(pred - gamma_test))
+            maes.append(mae)
+        
+        avg_mae = np.mean(maes)
+        if avg_mae < best_mae:
+            best_mae = avg_mae
+            best_period = period
+            best_n = n
+            print(f'New best: period={period}, n_harmonics={n}, avg_mae={avg_mae:.4f}')
+
+print()
+print(f'Best: period={best_period}, n_harmonics={best_n}, avg_mae={best_mae:.4f}')
+
+# Now fit the best model on all training data
+X_train = create_features(t, n_harmonics=best_n, base_period=best_period)
+model = LinearRegression().fit(X_train, gamma)
+print('Training R^2:', model.score(X_train, gamma))
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_test = create_features(test_t, n_harmonics=best_n, base_period=best_period)
+pred = model.predict(X_test)
+print()
+print('Predictions:')
+for tt, p in zip(test_t, pred):
+    print(f't={tt}: gamma={p:.4f}')
+"
 
 ```
 
@@ -2245,6 +3648,74 @@ t=809: gamma=-10.4795
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+beta = df['beta'].values
+t = df['t'].values
+
+# Fit gamma ~ t + sin(beta) + cos(beta)
+sin_beta = np.sin(beta * np.pi / 180)
+cos_beta = np.cos(beta * np.pi / 180)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+
+print('Gamma model coefficients:')
+print('Intercept:', model_gamma.intercept_)
+print('t:', model_gamma.coef_[0])
+print('sin(beta):', model_gamma.coef_[1])
+print('cos(beta):', model_gamma.coef_[2])
+
+# Compute amplitude and phase
+A = np.sqrt(model_gamma.coef_[1]**2 + model_gamma.coef_[2]**2)
+phi = np.arctan2(model_gamma.coef_[1], model_gamma.coef_[2])
+print(f'Amplitude: {A:.4f}')
+print(f'Phase (rad): {phi:.4f}')
+print(f'Phase (deg): {phi*180/np.pi:.4f}')
+
+# So gamma = intercept + t_coef * t + A * cos(beta - phi)
+# where cos(beta - phi) = cos(beta)*cos(phi) + sin(beta)*sin(phi)
+
+# Now model beta as a function of t
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Fit linear model
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+print()
+print('Beta linear model:')
+print('Slope (rad/day):', model_beta_linear.coef_[0])
+print('Slope (deg/day):', model_beta_linear.coef_[0] * 180 / np.pi)
+print('Intercept (rad):', model_beta_linear.intercept_)
+print('Intercept (deg):', model_beta_linear.intercept_ * 180 / np.pi)
+
+# Predict beta for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+beta_unwrapped_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+beta_pred_deg = beta_pred_rad * 180 / np.pi
+
+# Predict gamma
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_test)
+
+print()
+print('Gamma predictions using linear beta model:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+
+# Also compute the implied beta
+print()
+print('Predicted beta (wrapped):')
+for tt, bp in zip(test_t, beta_pred_deg):
+    print(f't={tt}: beta={bp:.2f}')
+"
 
 ```
 
@@ -2317,6 +3788,66 @@ t=809: beta=340.21
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+beta = df['beta'].values
+t = df['t'].values
+
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear model
+model = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_pred = model.predict(t.reshape(-1, 1))
+residuals = beta_unwrapped - beta_pred
+
+print('Residuals of linear beta model:')
+print('Mean:', np.mean(residuals) * 180 / np.pi)
+print('Std:', np.std(residuals) * 180 / np.pi)
+print('First 10 (deg):', np.round(residuals[:10] * 180 / np.pi, 2))
+print('Last 10 (deg):', np.round(residuals[-10:] * 180 / np.pi, 2))
+
+# The residuals show a pattern. Let's see if they can be modeled with harmonics
+# Fit a harmonic model to the residuals
+def create_features(t, n_harmonics=3, base_period=420):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+X_res = create_features(t, n_harmonics=3, base_period=420)
+model_res = LinearRegression().fit(X_res, residuals)
+residuals_pred = model_res.predict(X_res)
+print()
+print('R^2 of residual model:', model_res.score(X_res, residuals))
+print('Residual std after harmonic model:', np.std(residuals - residuals_pred) * 180 / np.pi)
+
+# Now the full beta model: linear + harmonic
+X_beta = create_features(t, n_harmonics=3, base_period=420)
+model_beta_full = LinearRegression().fit(X_beta, beta_unwrapped)
+print()
+print('Full beta model R^2:', model_beta_full.score(X_beta, beta_unwrapped))
+print('Full beta model residual std:', np.std(beta_unwrapped - model_beta_full.predict(X_beta)) * 180 / np.pi)
+
+# The full model residual std is about 6.9 degrees (as we saw earlier)
+# This means even with harmonics, we have about 7 degrees of uncertainty in beta
+
+# Let's see what this implies for gamma uncertainty
+# gamma = a + b*t + c*sin(beta) + d*cos(beta)
+# The uncertainty in beta propagates to gamma
+# For small errors, d(gamma) = (c*cos(beta) - d*sin(beta)) * d(beta)
+# At beta around 188 deg (t=516): c*cos(beta) - d*sin(beta) = 19.8*cos(188°) - 24.1*sin(188°)
+# = 19.8*(-0.99) - 24.1*(-0.139) = -19.6 + 3.35 = -16.25
+# So a 7 degree error in beta causes about 7*16.25/57.3 ≈ 2 degree error in gamma
+
+# This is manageable
+"
 
 ```
 
@@ -2364,6 +3895,45 @@ Full beta model residual std: 6.902342183821824
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Define a sinusoidal model with trend
+def model_sin(t, a, b, c, d, period):
+    return a + b*t + c*np.sin(2*np.pi*t/period + d)
+
+# Initial guess
+p0 = [20, -0.05, 30, 0, 500]
+# Fit
+popt, pcov = curve_fit(model_sin, t, gamma, p0=p0, maxfev=10000)
+print('Fitted parameters:')
+print('a (intercept):', popt[0])
+print('b (trend):', popt[1])
+print('c (amplitude):', popt[2])
+print('d (phase):', popt[3])
+print('period:', popt[4])
+
+# Compute R^2
+pred = model_sin(t, *popt)
+ss_res = np.sum((gamma - pred)**2)
+ss_tot = np.sum((gamma - np.mean(gamma))**2)
+r2 = 1 - ss_res/ss_tot
+print('R^2:', r2)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+pred_test = model_sin(test_t, *popt)
+print()
+print('Predictions:')
+for tt, p in zip(test_t, pred_test):
+    print(f't={tt}: gamma={p:.4f}')
+"
 
 ```
 
@@ -2416,6 +3986,48 @@ t=809: gamma=-59.6837
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Let's check if gamma at t = 3 + 32*k follows a simple pattern
+# and see if we can predict the next ones
+
+# Extract gamma at those intervals
+t_vals = np.array([3 + 32*k for k in range(0, 17) if 3 + 32*k <= 516])
+gamma_vals = [df[df['t']==tt]['gamma'].values[0] for tt in t_vals]
+print('Gamma at t = 3 + 32*k:')
+for tt, gg in zip(t_vals, gamma_vals):
+    print(f't={tt:3d}: gamma={gg:.2f}')
+
+# Plot (text) to see the pattern
+print()
+print('Differences:')
+for i in range(1, len(gamma_vals)):
+    print(f'Step {i}: diff = {gamma_vals[i] - gamma_vals[i-1]:.2f}')
+
+# The pattern: 18.00, 18.73, 18.09, 17.02, 16.39, 14.93, 14.72, 15.15, 16.24, 19.77, 25.54, 41.71, 24.86, -8.13, -14.60, -18.74, -21.47
+# This looks like a smooth curve that first decreases, then increases, then decreases rapidly
+# If we extrapolate this pattern, what would be the next values?
+# After t=515 (last in training), the next would be t=547, 579, 611, ...
+# But our test starts at 519, not 547. Let me check.
+
+# Actually test starts at 519 (3 days after 516), then 551 (32 days later), etc.
+# 519 is not in our regular 32-day grid starting from 3.
+
+# Let's look at gamma at t = 519-32 = 487, 551-32 = 519, etc.
+print()
+print('Check if test points align with any pattern:')
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+for tt in test_t:
+    # Find closest t in training
+    closest = df.iloc[(df['t'] - tt).abs().idxmin()]
+    print(f't={tt}: closest training t={closest[\"t\"]}, gamma={closest[\"gamma\"]:.2f}')
+"
 
 ```
 
@@ -2506,6 +4118,121 @@ t=809: closest training t=516.0, gamma=-22.20
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+
+# Load data
+df_train = pd.read_csv('data/train.csv')
+df_test = pd.read_csv('data/test.csv')
+
+t_train = df_train['t'].values
+gamma_train = df_train['gamma'].values
+beta_train = df_train['beta'].values
+
+test_t = df_test['t'].values
+
+# Approach: Use the gamma ~ t + sin(beta) + cos(beta) model
+# First model beta as a function of t
+
+# Unwrap beta
+beta_rad = beta_train * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Create features for beta model
+def create_harmonic_features(t, base_period=580, n_harmonics=3):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+# Let's use a period of 580 days (approximate from the nonlinear fit)
+# But let's also try to estimate the period from the beta residuals
+
+# Actually, let me use a more robust method: model beta_unwrapped as a function of t
+# using a smoothing spline or GAM, but we don't have those. 
+# Instead, let's use a high-degree polynomial? No, that's dangerous for extrapolation.
+
+# Let's stick with the linear + harmonic model for beta
+X_beta = create_harmonic_features(t_train, base_period=580, n_harmonics=3)
+model_beta = LinearRegression().fit(X_beta, beta_unwrapped)
+
+print('Beta model R^2:', model_beta.score(X_beta, beta_unwrapped))
+beta_residuals = beta_unwrapped - model_beta.predict(X_beta)
+print('Beta residual std (deg):', np.std(beta_residuals) * 180 / np.pi)
+
+# Predict beta for test
+X_beta_test = create_harmonic_features(test_t, base_period=580, n_harmonics=3)
+beta_unwrapped_pred = model_beta.predict(X_beta_test)
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+# Now model gamma
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+X_gamma = np.column_stack([t_train, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma_train)
+
+print()
+print('Gamma model R^2:', model_gamma.score(X_gamma, gamma_train))
+gamma_residuals = gamma_train - model_gamma.predict(X_gamma)
+print('Gamma residual std:', np.std(gamma_residuals))
+
+# Predict gamma for test
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+# Compute prediction intervals
+# For linear regression, the prediction interval for a new observation is:
+# y_pred +/- t_{n-p, alpha/2} * sqrt(MSE * (1 + x_new^T (X^T X)^{-1} x_new))
+# where MSE is the mean squared error of the residuals
+
+# Let's compute this
+n = len(gamma_train)
+p = X_gamma.shape[1]  # number of parameters including intercept
+MSE = np.sum(gamma_residuals**2) / (n - p)
+
+# Compute (X^T X)^{-1}
+XTX_inv = np.linalg.inv(X_gamma.T @ X_gamma)
+
+# For each test point, compute the variance
+se_pred = []
+for i in range(len(test_t)):
+    x_new = X_gamma_test[i]
+    var = MSE * (1 + x_new @ XTX_inv @ x_new)
+    se_pred.append(np.sqrt(var))
+se_pred = np.array(se_pred)
+
+# t-critical value for 95% confidence
+from scipy.stats import t as t_dist
+t_crit = t_dist.ppf(0.975, n - p)
+
+lower = gamma_pred - t_crit * se_pred
+upper = gamma_pred + t_crit * se_pred
+
+print()
+print('Final predictions with 95% prediction intervals:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}, se={se_pred[i]:.4f}')
+
+# Also save to file
+results = pd.DataFrame({
+    't': test_t,
+    'y_pred': gamma_pred,
+    'y_lower': lower,
+    'y_upper': upper
+})
+results.to_csv('predictions.csv', index=False)
+print()
+print('Saved to predictions.csv')
+print(results)
+"
 
 ```
 
@@ -2564,6 +4291,59 @@ Saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# Beta model predictions
+beta = df['beta'].values
+t = df['t'].values
+
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+def create_harmonic_features(t, base_period=580, n_harmonics=3):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+X_beta = create_harmonic_features(t, base_period=580, n_harmonics=3)
+model_beta = LinearRegression().fit(X_beta, beta_unwrapped)
+
+X_beta_test = create_harmonic_features(test_t, base_period=580, n_harmonics=3)
+beta_unwrapped_pred = model_beta.predict(X_beta_test)
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+beta_pred_deg = beta_pred_rad * 180 / np.pi
+
+print('Predicted beta (wrapped):')
+for tt, bp in zip(test_t, beta_pred_deg):
+    print(f't={tt}: beta={bp:.2f}')
+
+# Also show the unwrapped beta prediction
+print()
+print('Predicted beta (unwrapped, deg):')
+for tt, bp in zip(test_t, beta_unwrapped_pred * 180 / np.pi):
+    print(f't={tt}: beta_unwrapped={bp:.2f}')
+
+# Let's also check the trend in beta
+# The linear slope is about 0.62 deg/day
+# Over 293 days (from 516 to 809), beta would change by about 181 degrees
+# So beta would wrap around once
+
+# At t=516, beta is about 188 degrees
+# Predicted at t=809: beta should be around 188 + 0.62*293 = 369 degrees -> wrap to 9 degrees
+# But our model predicts beta around... let me check
+print()
+print(f'Beta at t=516: {df[df[\"t\"]==516][\"beta\"].values[0]:.2f}')
+print(f'Expected beta at t=809 (linear trend): {(188.25 + 0.62*293) % 360:.2f}')
+"
 
 ```
 
@@ -2610,6 +4390,56 @@ Expected beta at t=809 (linear trend): 9.91
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+def create_harmonic_features(t, base_period=580, n_harmonics=3):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+X_beta = create_harmonic_features(t, base_period=580, n_harmonics=3)
+model_beta = LinearRegression().fit(X_beta, beta_unwrapped)
+
+print('Coefficients:')
+print('t:', model_beta.coef_[0] * 180 / np.pi, 'deg/day')
+print('sin(2*pi*t/580):', model_beta.coef_[1])
+print('cos(2*pi*t/580):', model_beta.coef_[2])
+print('sin(2*pi*t/290):', model_beta.coef_[3])
+print('cos(2*pi*t/290):', model_beta.coef_[4])
+print('sin(2*pi*t/193.33):', model_beta.coef_[5])
+print('cos(2*pi*t/193.33):', model_beta.coef_[6])
+print('Intercept:', model_beta.intercept_ * 180 / np.pi)
+
+# So the linear trend in beta is about 0.62 deg/day (the t coefficient)
+# But the harmonic terms also have a trend over the prediction range due to their sinusoidal nature
+# Let's compute the derivative of the harmonic terms at t=809
+# The sin and cos terms oscillate, so they don't contribute a net trend
+# But the linear trend should dominate
+
+# Let's check what the model predicts for t=809
+test_t = np.array([809])
+X_test = create_harmonic_features(test_t, base_period=580, n_harmonics=3)
+pred = model_beta.predict(X_test) * 180 / np.pi
+print()
+print('Predicted unwrapped beta at t=809:', pred[0])
+
+# The linear component alone: intercept + 809 * slope
+linear_part = model_beta.intercept_ + model_beta.coef_[0] * 809
+print('Linear component at t=809:', linear_part * 180 / np.pi)
+print('Harmonic component at t=809:', (pred[0]/180*np.pi - linear_part) * 180 / np.pi)
+"
 
 ```
 
@@ -2649,6 +4479,72 @@ Harmonic component at t=809: -52.54428342760878
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Step 1: Fit linear trend
+model_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_linear.predict(t.reshape(-1, 1))
+beta_res = beta_unwrapped - linear_trend
+
+print('Linear trend slope (deg/day):', model_linear.coef_[0] * 180 / np.pi)
+print('Linear trend intercept (deg):', model_linear.intercept_ * 180 / np.pi)
+
+# Step 2: Model residuals with harmonics
+def create_harmonic_features(t, base_period=580, n_harmonics=3):
+    features = []
+    for k in range(1, n_harmonics+1):
+        period = base_period / k
+        features.append(np.sin(2*np.pi*t / period))
+        features.append(np.cos(2*np.pi*t / period))
+    return np.column_stack(features)
+
+X_res = create_harmonic_features(t, base_period=580, n_harmonics=3)
+model_res = LinearRegression().fit(X_res, beta_res)
+print('Residual model R^2:', model_res.score(X_res, beta_res))
+print('Residual std after harmonic:', np.std(beta_res - model_res.predict(X_res)) * 180 / np.pi)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+linear_pred = model_linear.predict(test_t.reshape(-1, 1))
+res_pred = model_res.predict(create_harmonic_features(test_t, base_period=580, n_harmonics=3))
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+beta_pred_deg = beta_pred_rad * 180 / np.pi
+
+print()
+print('Predicted beta (wrapped):')
+for tt, bp in zip(test_t, beta_pred_deg):
+    print(f't={tt}: beta={bp:.2f}')
+
+# Now model gamma using t, sin(beta), cos(beta)
+gamma = df['gamma'].values
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+print()
+print('Gamma model R^2:', model_gamma.score(X_gamma, gamma))
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+print()
+print('Gamma predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+"
 
 ```
 
@@ -2709,6 +4605,120 @@ t=809: gamma=-23.6353
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Build the two-stage model
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Step 1: Linear trend for beta
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_res = beta_unwrapped - model_beta_linear.predict(t.reshape(-1, 1))
+
+# Step 2: Harmonic model for residuals
+# Find best period for residual model by cross-validation
+from sklearn.model_selection import TimeSeriesSplit
+
+tscv = TimeSeriesSplit(n_splits=10, test_size=10)
+
+best_period = None
+best_mae = np.inf
+
+for period in [300, 320, 340, 360, 365, 380, 400, 420, 440, 460, 480, 500, 520, 540, 560, 580, 600]:
+    for n in [1, 2, 3, 4, 5]:
+        maes = []
+        for train_idx, val_idx in tscv.split(t):
+            t_train, t_val = t[train_idx], t[val_idx]
+            res_train, res_val = beta_res[train_idx], beta_res[val_idx]
+            
+            # Create features
+            X_train = []
+            for k in range(1, n+1):
+                p = period / k
+                X_train.append(np.sin(2*np.pi*t_train / p))
+                X_train.append(np.cos(2*np.pi*t_train / p))
+            X_train = np.column_stack(X_train)
+            
+            X_val = []
+            for k in range(1, n+1):
+                p = period / k
+                X_val.append(np.sin(2*np.pi*t_val / p))
+                X_val.append(np.cos(2*np.pi*t_val / p))
+            X_val = np.column_stack(X_val)
+            
+            model = LinearRegression().fit(X_train, res_train)
+            pred = model.predict(X_val)
+            mae = np.mean(np.abs(pred - res_val))
+            maes.append(mae)
+        
+        avg_mae = np.mean(maes)
+        if avg_mae < best_mae:
+            best_mae = avg_mae
+            best_period = period
+            best_n = n
+            print(f'New best: period={period}, n={n}, avg_mae={avg_mae:.6f}')
+
+print()
+print(f'Best: period={best_period}, n={best_n}, avg_mae={best_mae:.6f}')
+
+# Now fit the final model
+period = best_period
+n = best_n
+X_res = []
+for k in range(1, n+1):
+    p = period / k
+    X_res.append(np.sin(2*np.pi*t / p))
+    X_res.append(np.cos(2*np.pi*t / p))
+X_res = np.column_stack(X_res)
+
+model_res = LinearRegression().fit(X_res, beta_res)
+res_pred = model_res.predict(X_res)
+res_std = np.std(beta_res - res_pred)
+print('Residual std after harmonic:', res_std * 180 / np.pi)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+print('Gamma model MSE:', gamma_mse)
+print('Gamma model R^2:', model_gamma.score(X_gamma, gamma))
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = []
+for k in range(1, n+1):
+    p = period / k
+    X_res_test.append(np.sin(2*np.pi*test_t / p))
+    X_res_test.append(np.cos(2*np.pi*test_t / p))
+X_res_test = np.column_stack(X_res_test)
+res_pred_test = model_res.predict(X_res_test)
+
+beta_unwrapped_pred = linear_pred + res_pred_test
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+print()
+print('Final predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+"
 
 ```
 
@@ -2756,6 +4766,78 @@ t=809: gamma=3.7682
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+gamma = df['gamma'].values
+
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear trend for beta
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_res = beta_unwrapped - model_beta_linear.predict(t.reshape(-1, 1))
+
+# Harmonic model for residuals
+period = 420
+n = 2
+X_res = []
+for k in range(1, n+1):
+    p = period / k
+    X_res.append(np.sin(2*np.pi*t / p))
+    X_res.append(np.cos(2*np.pi*t / p))
+X_res = np.column_stack(X_res)
+model_res = LinearRegression().fit(X_res, beta_res)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = []
+for k in range(1, n+1):
+    p = period / k
+    X_res_test.append(np.sin(2*np.pi*test_t / p))
+    X_res_test.append(np.cos(2*np.pi*test_t / p))
+X_res_test = np.column_stack(X_res_test)
+res_pred_test = model_res.predict(X_res_test)
+
+beta_unwrapped_pred = linear_pred + res_pred_test
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+beta_pred_deg = beta_pred_rad * 180 / np.pi
+
+print('Predicted beta (wrapped):')
+for tt, bp in zip(test_t, beta_pred_deg):
+    print(f't={tt}: beta={bp:.2f}')
+
+# Also show sin(beta) and cos(beta)
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+print()
+print('sin(beta), cos(beta):')
+for tt, sp, cp in zip(test_t, sin_beta_pred, cos_beta_pred):
+    print(f't={tt}: sin={sp:.4f}, cos={cp:.4f}')
+
+# Compute gamma contributions
+print()
+print('Gamma components:')
+for tt, sp, cp in zip(test_t, sin_beta_pred, cos_beta_pred):
+    t_contrib = model_gamma.coef_[0] * tt
+    sin_contrib = model_gamma.coef_[1] * sp
+    cos_contrib = model_gamma.coef_[2] * cp
+    intercept = model_gamma.intercept_
+    total = t_contrib + sin_contrib + cos_contrib + intercept
+    print(f't={tt}: t_contrib={t_contrib:.2f}, sin_contrib={sin_contrib:.2f}, cos_contrib={cos_contrib:.2f}, intercept={intercept:.2f}, total={total:.2f}')
+"
 
 ```
 
@@ -2827,6 +4909,64 @@ t=809: t_contrib=-58.97, sin_contrib=-1.30, cos_contrib=24.03, intercept=40.01, 
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Two-stage model
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear trend for beta
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_res = beta_unwrapped - model_beta_linear.predict(t.reshape(-1, 1))
+
+# Harmonic model for residuals
+period = 420
+n = 2
+X_res = []
+for k in range(1, n+1):
+    p = period / k
+    X_res.append(np.sin(2*np.pi*t / p))
+    X_res.append(np.cos(2*np.pi*t / p))
+X_res = np.column_stack(X_res)
+model_res = LinearRegression().fit(X_res, beta_res)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+
+# Check normality of gamma residuals
+print('Gamma residuals statistics:')
+print('Mean:', np.mean(gamma_res))
+print('Std:', np.std(gamma_res))
+print('Skewness:', stats.skew(gamma_res))
+print('Kurtosis:', stats.kurtosis(gamma_res))
+print('Jarque-Bera test:', stats.jarque_bera(gamma_res))
+
+# Q-Q plot? Can't plot but we can check normality with Shapiro-Wilk
+print('Shapiro-Wilk test:', stats.shapiro(gamma_res[:100]))  # only first 100 due to limit
+
+# Check homoscedasticity
+print()
+print('Residuals vs fitted:')
+fitted = model_gamma.predict(X_gamma)
+# Sort by fitted and check variance
+sorted_idx = np.argsort(fitted)
+half = len(fitted) // 2
+print('Std of first half:', np.std(gamma_res[sorted_idx[:half]]))
+print('Std of second half:', np.std(gamma_res[sorted_idx[half:]]))
+"
 
 ```
 
@@ -2873,6 +5013,134 @@ Std of second half: 3.4948127251689143
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Build the two-stage model
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear trend for beta
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_res_linear = beta_unwrapped - model_beta_linear.predict(t.reshape(-1, 1))
+
+# Harmonic model for residuals
+period = 420
+n = 2
+X_res = []
+for k in range(1, n+1):
+    p = period / k
+    X_res.append(np.sin(2*np.pi*t / p))
+    X_res.append(np.cos(2*np.pi*t / p))
+X_res = np.column_stack(X_res)
+model_res = LinearRegression().fit(X_res, beta_res_linear)
+beta_res_final = beta_res_linear - model_res.predict(X_res)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+
+# Parameters for simulation
+n_sims = 10000
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# For each test point, simulate gamma accounting for:
+# 1. Uncertainty in beta (using the residual std of beta model)
+# 2. Uncertainty in gamma (using the residual std of gamma model)
+# 3. Parameter uncertainty (using covariance matrix)
+
+beta_res_std = np.std(beta_res_final)  # std of beta residuals after harmonic model
+gamma_res_std = np.std(gamma_res)  # std of gamma residuals
+
+print('Beta residual std (rad):', beta_res_std)
+print('Beta residual std (deg):', beta_res_std * 180 / np.pi)
+print('Gamma residual std:', gamma_res_std)
+
+# For simplicity, let's just do a bootstrap by resampling residuals
+# We'll generate many predictions and compute quantiles
+
+# Pre-compute linear prediction for beta
+linear_pred_test = model_beta_linear.predict(test_t.reshape(-1, 1))
+
+# Pre-compute harmonic features for test
+X_res_test = []
+for k in range(1, n+1):
+    p = period / k
+    X_res_test.append(np.sin(2*np.pi*test_t / p))
+    X_res_test.append(np.cos(2*np.pi*test_t / p))
+X_res_test = np.column_stack(X_res_test)
+res_pred_test = model_res.predict(X_res_test)
+
+# Also get covariance matrix for gamma model parameters
+X_gamma_with_intercept = np.column_stack([np.ones(len(t)), X_gamma])
+beta_params = np.linalg.inv(X_gamma_with_intercept.T @ X_gamma_with_intercept) @ X_gamma_with_intercept.T @ gamma
+gamma_mse = np.mean(gamma_res**2)
+cov_params = gamma_mse * np.linalg.inv(X_gamma_with_intercept.T @ X_gamma_with_intercept)
+
+# Monte Carlo simulation
+np.random.seed(42)
+gamma_sims = np.zeros((n_sims, len(test_t)))
+
+for sim in range(n_sims):
+    # Sample beta residuals
+    beta_res_sim = np.random.normal(0, beta_res_std, len(test_t))
+    # Or bootstrap from training residuals
+    # beta_res_sim = np.random.choice(beta_res_final, len(test_t))
+    
+    # Compute beta
+    beta_unwrapped_sim = linear_pred_test + res_pred_test + beta_res_sim
+    beta_rad_sim = beta_unwrapped_sim % (2*np.pi)
+    
+    # Compute sin and cos
+    sin_beta_sim = np.sin(beta_rad_sim)
+    cos_beta_sim = np.cos(beta_rad_sim)
+    
+    # Sample gamma parameters (accounting for parameter uncertainty)
+    params_sim = np.random.multivariate_normal(beta_params, cov_params)
+    intercept_sim = params_sim[0]
+    coef_t_sim = params_sim[1]
+    coef_sin_sim = params_sim[2]
+    coef_cos_sim = params_sim[3]
+    
+    # Predict gamma
+    gamma_pred_sim = intercept_sim + coef_t_sim * test_t + coef_sin_sim * sin_beta_sim + coef_cos_sim * cos_beta_sim
+    
+    # Add observation noise
+    gamma_sim = gamma_pred_sim + np.random.normal(0, gamma_res_std, len(test_t))
+    
+    gamma_sims[sim] = gamma_sim
+
+# Compute point estimates and intervals
+gamma_pred_mean = np.mean(gamma_sims, axis=0)
+gamma_pred_lower = np.percentile(gamma_sims, 2.5, axis=0)
+gamma_pred_upper = np.percentile(gamma_sims, 97.5, axis=0)
+
+print()
+print('Monte Carlo predictions with 95% prediction intervals:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred_mean[i]:.4f}, lower={gamma_pred_lower[i]:.4f}, upper={gamma_pred_upper[i]:.4f}')
+
+# Compare with deterministic predictions
+X_gamma_test = np.column_stack([test_t, 
+                                 np.sin((linear_pred_test + res_pred_test) % (2*np.pi)),
+                                 np.cos((linear_pred_test + res_pred_test) % (2*np.pi))])
+gamma_det = model_gamma.predict(X_gamma_test)
+print()
+print('Deterministic predictions:')
+for tt, gd in zip(test_t, gamma_det):
+    print(f't={tt}: gamma={gd:.4f}')
+"
 
 ```
 
@@ -2922,6 +5190,63 @@ t=809: gamma=3.7682
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_res_linear = beta_unwrapped - model_beta_linear.predict(t.reshape(-1, 1))
+
+period = 420
+n = 2
+X_res = []
+for k in range(1, n+1):
+    p = period / k
+    X_res.append(np.sin(2*np.pi*t / p))
+    X_res.append(np.cos(2*np.pi*t / p))
+X_res = np.column_stack(X_res)
+model_res = LinearRegression().fit(X_res, beta_res_linear)
+beta_res_final = beta_res_linear - model_res.predict(X_res)
+
+print('Beta final residuals (after linear + harmonic):')
+print('Mean:', np.mean(beta_res_final) * 180 / np.pi)
+print('Std:', np.std(beta_res_final) * 180 / np.pi)
+print('Skewness:', stats.skew(beta_res_final))
+print('Kurtosis:', stats.kurtosis(beta_res_final))
+print('Jarque-Bera:', stats.jarque_bera(beta_res_final))
+print('Shapiro-Wilk (first 100):', stats.shapiro(beta_res_final[:100]))
+
+# Check autocorrelation
+print()
+print('Autocorrelation of beta final residuals:')
+for lag in [1, 2, 3, 5, 10, 20]:
+    corr = np.corrcoef(beta_res_final[:-lag], beta_res_final[lag:])[0, 1]
+    print(f'Lag {lag}: {corr:.4f}')
+
+# The residuals seem to have some structure still
+# Let's see if we need more harmonics
+print()
+print('Trying more harmonics...')
+for n_harm in [1, 2, 3, 4, 5]:
+    X_res = []
+    for k in range(1, n_harm+1):
+        p = period / k
+        X_res.append(np.sin(2*np.pi*t / p))
+        X_res.append(np.cos(2*np.pi*t / p))
+    X_res = np.column_stack(X_res)
+    model = LinearRegression().fit(X_res, beta_res_linear)
+    res = beta_res_linear - model.predict(X_res)
+    print(f'n_harmonics={n_harm}: residual std={np.std(res)*180/np.pi:.4f} deg, R^2={model.score(X_res, beta_res_linear):.4f}')
+"
 
 ```
 
@@ -2985,6 +5310,102 @@ n_harmonics=5: residual std=5.2593 deg, R^2=0.9875
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Use linear model for beta (no harmonics)
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_pred_train = model_beta.predict(t.reshape(-1, 1))
+beta_res = beta_unwrapped - beta_pred_train
+
+print('Linear beta model:')
+print('Slope (deg/day):', model_beta.coef_[0] * 180 / np.pi)
+print('Residual std (deg):', np.std(beta_res) * 180 / np.pi)
+
+# Gamma model using t, sin(beta), cos(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+
+print()
+print('Gamma model:')
+print('Coefficients:', model_gamma.coef_)
+print('Intercept:', model_gamma.intercept_)
+print('R^2:', model_gamma.score(X_gamma, gamma))
+print('Residual std:', np.sqrt(gamma_mse))
+
+# Predict for test using linear beta prediction
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+beta_unwrapped_pred = model_beta.predict(test_t.reshape(-1, 1))
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+# Compute prediction intervals using the standard formula
+# But also account for uncertainty in beta prediction
+
+# Approach: Use delta method to combine uncertainties
+# gamma = f(t, beta) where beta = g(t) + epsilon
+# Var(gamma) = (df/dbeta)^2 * Var(beta) + Var(epsilon_gamma) + parameter uncertainty
+
+# For simplicity, let's use the standard linear regression formula for gamma
+# treating sin(beta) and cos(beta) as fixed (this underestimates uncertainty)
+
+# Better: Use bootstrap to get proper intervals
+np.random.seed(42)
+n_bootstrap = 10000
+
+# Bootstrap residuals
+gamma_pred_sims = np.zeros((n_bootstrap, len(test_t)))
+
+for b in range(n_bootstrap):
+    # Sample beta residuals with replacement
+    beta_res_sample = np.random.choice(beta_res, size=len(test_t))
+    beta_unwrapped_sim = beta_unwrapped_pred + beta_res_sample
+    beta_rad_sim = beta_unwrapped_sim % (2*np.pi)
+    
+    sin_beta_sim = np.sin(beta_rad_sim)
+    cos_beta_sim = np.cos(beta_rad_sim)
+    X_gamma_sim = np.column_stack([test_t, sin_beta_sim, cos_beta_sim])
+    
+    # Add gamma observation noise
+    gamma_noise = np.random.normal(0, np.sqrt(gamma_mse), len(test_t))
+    
+    gamma_pred_sims[b] = model_gamma.predict(X_gamma_sim) + gamma_noise
+
+# Compute quantiles
+gamma_median = np.median(gamma_pred_sims, axis=0)
+gamma_lower = np.percentile(gamma_pred_sims, 2.5, axis=0)
+gamma_upper = np.percentile(gamma_pred_sims, 97.5, axis=0)
+
+print()
+print('Bootstrap predictions with 95% PI:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_median[i]:.4f}, lower={gamma_lower[i]:.4f}, upper={gamma_upper[i]:.4f}')
+
+# Also show the deterministic prediction
+print()
+print('Deterministic predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+"
 
 ```
 
@@ -3042,6 +5463,77 @@ t=809: gamma=-3.0074
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import TimeSeriesSplit
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Use harmonic regression with period = 360 / beta_slope
+beta_slope = 0.6191977561247479  # deg/day
+period_beta = 360 / beta_slope  # period of beta in days
+print('Beta period:', period_beta)
+
+# Try harmonic regression with this period
+def create_features(t, n_harmonics, base_period):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        p = base_period / k
+        features.append(np.sin(2*np.pi*t / p))
+        features.append(np.cos(2*np.pi*t / p))
+    return np.column_stack(features)
+
+# Cross-validation
+tscv = TimeSeriesSplit(n_splits=10, test_size=10)
+
+best_period = None
+best_n = None
+best_mae = np.inf
+
+for period in [period_beta, 365, 400, 420, 500, 550, 580, 600]:
+    for n in [1, 2, 3, 4, 5]:
+        maes = []
+        for train_idx, val_idx in tscv.split(t):
+            t_train, t_val = t[train_idx], t[val_idx]
+            gamma_train, gamma_val = gamma[train_idx], gamma[val_idx]
+            
+            X_train = create_features(t_train, n_harmonics=n, base_period=period)
+            X_val = create_features(t_val, n_harmonics=n, base_period=period)
+            
+            model = LinearRegression().fit(X_train, gamma_train)
+            pred = model.predict(X_val)
+            mae = np.mean(np.abs(pred - gamma_val))
+            maes.append(mae)
+        
+        avg_mae = np.mean(maes)
+        if avg_mae < best_mae:
+            best_mae = avg_mae
+            best_period = period
+            best_n = n
+            print(f'New best: period={period:.1f}, n={n}, avg_mae={avg_mae:.4f}')
+
+print()
+print(f'Best: period={best_period:.1f}, n={best_n}, avg_mae={best_mae:.4f}')
+
+# Fit best model
+X_train = create_features(t, n_harmonics=best_n, base_period=best_period)
+model = LinearRegression().fit(X_train, gamma)
+print('Training R^2:', model.score(X_train, gamma))
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_test = create_features(test_t, n_harmonics=best_n, base_period=best_period)
+gamma_pred = model.predict(X_test)
+
+print()
+print('Predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+"
 
 ```
 
@@ -3110,6 +5602,77 @@ t=809: gamma=-10.6127
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Direct harmonic regression for gamma
+# Use period=420 with 5 harmonics (as selected by CV)
+def create_features(t, n_harmonics=5, base_period=420):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        p = base_period / k
+        features.append(np.sin(2*np.pi*t / p))
+        features.append(np.cos(2*np.pi*t / p))
+    return np.column_stack(features)
+
+X_train = create_features(t, n_harmonics=5, base_period=420)
+model = LinearRegression().fit(X_train, gamma)
+
+# Compute residuals
+gamma_pred_train = model.predict(X_train)
+residuals = gamma - gamma_pred_train
+n = len(gamma)
+p = X_train.shape[1] + 1  # number of parameters including intercept
+MSE = np.sum(residuals**2) / (n - p)
+
+print('MSE:', MSE)
+print('Residual std:', np.sqrt(MSE))
+
+# Add intercept to X for variance calculation
+X_train_with_intercept = np.column_stack([np.ones(n), X_train])
+XTX_inv = np.linalg.inv(X_train_with_intercept.T @ X_train_with_intercept)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_test = create_features(test_t, n_harmonics=5, base_period=420)
+X_test_with_intercept = np.column_stack([np.ones(len(test_t)), X_test])
+
+gamma_pred = model.predict(X_test)
+
+# Compute prediction intervals
+t_crit = stats.t.ppf(0.975, n - p)
+
+se_pred = []
+for i in range(len(test_t)):
+    x_new = X_test_with_intercept[i]
+    var_pred = MSE * (1 + x_new @ XTX_inv @ x_new)
+    se_pred.append(np.sqrt(var_pred))
+se_pred = np.array(se_pred)
+
+lower = gamma_pred - t_crit * se_pred
+upper = gamma_pred + t_crit * se_pred
+
+print()
+print('Direct harmonic regression predictions with 95% PI:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}, se={se_pred[i]:.4f}')
+
+# Also show the residuals diagnostics
+print()
+print('Residual diagnostics:')
+print('Mean:', np.mean(residuals))
+print('Std:', np.std(residuals))
+print('Skewness:', stats.skew(residuals))
+print('Kurtosis:', stats.kurtosis(residuals))
+print('Jarque-Bera:', stats.jarque_bera(residuals))
+"
 
 ```
 
@@ -3155,6 +5718,42 @@ Jarque-Bera: SignificanceResult(statistic=np.float64(86.47078952667624), pvalue=
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+def create_features(t, n_harmonics=5, base_period=420):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        p = base_period / k
+        features.append(np.sin(2*np.pi*t / p))
+        features.append(np.cos(2*np.pi*t / p))
+    return np.column_stack(features)
+
+X_train = create_features(t, n_harmonics=5, base_period=420)
+model = LinearRegression().fit(X_train, gamma)
+
+# Predict for a range of t
+t_range = np.arange(0, 1000)
+X_range = create_features(t_range, n_harmonics=5, base_period=420)
+gamma_range = model.predict(X_range)
+
+# Print some values
+print('Gamma predictions for t=0 to 1000 (step 50):')
+for tt in range(0, 1001, 50):
+    idx = np.where(t_range == tt)[0][0]
+    print(f't={tt}: gamma={gamma_range[idx]:.2f}')
+
+# Also check what happens at t=516 (last training point)
+print()
+print('At t=516:', model.predict(create_features(np.array([516]), n_harmonics=5, base_period=420))[0])
+print('Actual gamma at t=516:', df[df['t']==516]['gamma'].values[0])
+"
 
 ```
 
@@ -3215,6 +5814,73 @@ t=950: gamma=-53.33
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Model: gamma = a + b*t + c*sin(2*pi*t/580) + d*cos(2*pi*t/580)
+# The period 580 is approximately 360/0.62 (beta's period)
+
+X = np.column_stack([
+    t,
+    np.sin(2*np.pi*t / 580),
+    np.cos(2*np.pi*t / 580)
+])
+model = LinearRegression().fit(X, gamma)
+print('Model coefficients:')
+print('Intercept:', model.intercept_)
+print('t:', model.coef_[0])
+print('sin:', model.coef_[1])
+print('cos:', model.coef_[2])
+print('R^2:', model.score(X, gamma))
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_test = np.column_stack([
+    test_t,
+    np.sin(2*np.pi*test_t / 580),
+    np.cos(2*np.pi*test_t / 580)
+])
+gamma_pred = model.predict(X_test)
+
+# Compute prediction intervals
+n = len(gamma)
+p = X.shape[1] + 1
+residuals = gamma - model.predict(X)
+MSE = np.sum(residuals**2) / (n - p)
+
+X_with_intercept = np.column_stack([np.ones(n), X])
+XTX_inv = np.linalg.inv(X_with_intercept.T @ X_with_intercept)
+
+X_test_with_intercept = np.column_stack([np.ones(len(test_t)), X_test])
+t_crit = stats.t.ppf(0.975, n - p)
+
+se_pred = []
+for i in range(len(test_t)):
+    x_new = X_test_with_intercept[i]
+    var_pred = MSE * (1 + x_new @ XTX_inv @ x_new)
+    se_pred.append(np.sqrt(var_pred))
+se_pred = np.array(se_pred)
+
+lower = gamma_pred - t_crit * se_pred
+upper = gamma_pred + t_crit * se_pred
+
+print()
+print('Simple harmonic model (period=580) predictions with 95% PI:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}')
+
+# Also check in-sample fit
+print()
+print('In-sample R^2:', model.score(X, gamma))
+print('Residual std:', np.sqrt(MSE))
+"
 
 ```
 
@@ -3290,7 +5956,10 @@ Residual std: 9.282969580911699
 **tool call: bash**
 
 ```
-
+python3 -c "
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+print('Holt-Winters available')
+" 2>&1 || echo "Not available"
 ```
 
 ## [124] tool
@@ -3327,6 +5996,64 @@ Holt-Winters available
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Use period = 365 (yearly) with 2 harmonics
+def create_features(t, n_harmonics=2, base_period=365):
+    features = [t]
+    for k in range(1, n_harmonics+1):
+        p = base_period / k
+        features.append(np.sin(2*np.pi*t / p))
+        features.append(np.cos(2*np.pi*t / p))
+    return np.column_stack(features)
+
+X_train = create_features(t, n_harmonics=2, base_period=365)
+model = LinearRegression().fit(X_train, gamma)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_test = create_features(test_t, n_harmonics=2, base_period=365)
+gamma_pred = model.predict(X_test)
+
+# Prediction intervals
+n = len(gamma)
+p = X_train.shape[1] + 1
+residuals = gamma - model.predict(X_train)
+MSE = np.sum(residuals**2) / (n - p)
+
+X_with_intercept = np.column_stack([np.ones(n), X_train])
+XTX_inv = np.linalg.inv(X_with_intercept.T @ X_with_intercept)
+
+X_test_with_intercept = np.column_stack([np.ones(len(test_t)), X_test])
+t_crit = stats.t.ppf(0.975, n - p)
+
+se_pred = []
+for i in range(len(test_t)):
+    x_new = X_test_with_intercept[i]
+    var_pred = MSE * (1 + x_new @ XTX_inv @ x_new)
+    se_pred.append(np.sqrt(var_pred))
+se_pred = np.array(se_pred)
+
+lower = gamma_pred - t_crit * se_pred
+upper = gamma_pred + t_crit * se_pred
+
+print('Yearly harmonic model (period=365, 2 harmonics) predictions with 95% PI:')
+print(f'Residual std: {np.sqrt(MSE):.4f}')
+print()
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}')
+
+print()
+print('R^2:', model.score(X_train, gamma))
+"
 
 ```
 
@@ -3391,7 +6118,10 @@ R^2: 0.7028227427583653
 **tool call: bash**
 
 ```
-
+python3 -c "
+from sklearn.gaussian_process.kernels import ExpSineSquared
+print('ExpSineSquared kernel available')
+" 2>&1 || echo "Not available"
 ```
 
 ## [128] tool
@@ -3410,6 +6140,47 @@ ExpSineSquared kernel available
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel, ExpSineSquared, Matern, Product, Sum
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values.reshape(-1, 1)
+
+# Try GP with periodic kernel
+# We need a kernel that captures the long-term cycle
+# Use a combination of a periodic kernel and a local RBF kernel
+
+# ExpSineSquared(length_scale, periodicity)
+# The periodicity might be around 580 days (beta's period) or 365 days
+
+# First, let's try with a period of 365
+kernel = ConstantKernel(1.0) * ExpSineSquared(length_scale=50.0, periodicity=365.0) + RBF(length_scale=100.0) + WhiteKernel(noise_level=1.0)
+gp = GaussianProcessRegressor(kernel=kernel, alpha=0, normalize_y=True, n_restarts_optimizer=5)
+
+# Might be slow, let's try
+try:
+    gp.fit(t, gamma)
+    print('GP with periodic kernel fitted')
+    print('Log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+    print('Kernel:', gp.kernel_)
+    
+    # Predict for test
+    test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809]).reshape(-1, 1)
+    y_pred, y_std = gp.predict(test_t, return_std=True)
+    
+    print()
+    print('GP predictions with 95% PI:')
+    for tt, p, s in zip(test_t.flatten(), y_pred, y_std):
+        lower = p - 1.96 * s
+        upper = p + 1.96 * s
+        print(f't={tt}: y_pred={p:.4f}, lower={lower:.4f}, upper={upper:.4f}')
+except Exception as e:
+    print('Error:', e)
+"
 
 ```
 
@@ -3476,6 +6247,57 @@ t=809: y_pred=12.2685, lower=-20.8638, upper=45.4008
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.arima.model import ARIMA
+
+df = pd.read_csv('data/train.csv')
+beta = df['beta'].values
+t = df['t'].values
+
+# Compute differences of wrapped beta
+beta_diff = np.diff(beta)
+
+# Handle wrap-around: if difference is > 180 or < -180, adjust
+beta_diff_adjusted = np.where(beta_diff > 180, beta_diff - 360, 
+                               np.where(beta_diff < -180, beta_diff + 360, beta_diff))
+
+print('Beta diff (adjusted) stats:')
+print('Mean:', np.mean(beta_diff_adjusted))
+print('Std:', np.std(beta_diff_adjusted))
+print('Min:', np.min(beta_diff_adjusted))
+print('Max:', np.max(beta_diff_adjusted))
+
+# Check stationarity
+result = adfuller(beta_diff_adjusted)
+print()
+print('ADF test for adjusted beta diff:')
+print('ADF statistic:', result[0])
+print('p-value:', result[1])
+
+# Fit ARIMA on beta_diff
+# Try to find best ARIMA order
+print()
+print('ARIMA models for beta_diff:')
+best_aic = np.inf
+best_order = None
+for p in range(0, 4):
+    for q in range(0, 4):
+        try:
+            model = ARIMA(beta_diff_adjusted, order=(p, 0, q))
+            fitted = model.fit()
+            if fitted.aic < best_aic:
+                best_aic = fitted.aic
+                best_order = (p, 0, q)
+            print(f'ARIMA({p},0,{q}): AIC={fitted.aic:.2f}')
+        except:
+            pass
+
+print()
+print('Best ARIMA order:', best_order)
+"
 
 ```
 
@@ -3548,6 +6370,122 @@ Best ARIMA order: (2, 0, 3)
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Model beta
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear trend
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+beta_res = beta_unwrapped - linear_trend
+
+# Harmonic model for residuals with period 580
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 580),
+    np.cos(2*np.pi*t / 580),
+    np.sin(2*np.pi*t / 290),
+    np.cos(2*np.pi*t / 290)
+])
+model_res = LinearRegression().fit(X_res, beta_res)
+beta_res_pred = model_res.predict(X_res)
+beta_res_final = beta_res - beta_res_pred
+
+print('Beta model:')
+print('Linear slope (deg/day):', model_beta_linear.coef_[0] * 180 / np.pi)
+print('Residual std after harmonics (deg):', np.std(beta_res_final) * 180 / np.pi)
+
+# Model gamma
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_pred_train = model_gamma.predict(X_gamma)
+gamma_res = gamma - gamma_pred_train
+gamma_mse = np.mean(gamma_res**2)
+
+print()
+print('Gamma model:')
+print('R^2:', model_gamma.score(X_gamma, gamma))
+print('Residual std:', np.sqrt(gamma_mse))
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 580),
+    np.cos(2*np.pi*test_t / 580),
+    np.sin(2*np.pi*test_t / 290),
+    np.cos(2*np.pi*test_t / 290)
+])
+res_pred = model_res.predict(X_res_test)
+
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+print()
+print('Deterministic predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+
+# Bootstrap for intervals
+np.random.seed(42)
+n_bootstrap = 10000
+gamma_sims = np.zeros((n_bootstrap, len(test_t)))
+
+# Bootstrap residuals (pairs bootstrap: jointly sample beta_res_final and gamma_res)
+n_train = len(t)
+for b in range(n_bootstrap):
+    # Sample indices with replacement
+    idx = np.random.choice(n_train, size=n_train)
+    
+    # Bootstrap beta model
+    beta_unwrapped_boot = linear_trend + model_res.predict(X_res) + beta_res_final[idx]
+    beta_rad_boot = beta_unwrapped_boot % (2*np.pi)
+    sin_beta_boot = np.sin(beta_rad_boot)
+    cos_beta_boot = np.cos(beta_rad_boot)
+    X_gamma_boot = np.column_stack([t, sin_beta_boot, cos_beta_boot])
+    model_gamma_boot = LinearRegression().fit(X_gamma_boot, gamma)
+    
+    # Predict for test
+    # For beta, we use the original model (not bootstrap) to avoid recomputing beta model each time
+    # But we add bootstrap residuals to capture beta uncertainty
+    beta_res_sample = np.random.choice(beta_res_final, size=len(test_t))
+    beta_unwrapped_pred_boot = linear_pred + res_pred + beta_res_sample
+    beta_rad_pred_boot = beta_unwrapped_pred_boot % (2*np.pi)
+    
+    sin_beta_pred_boot = np.sin(beta_rad_pred_boot)
+    cos_beta_pred_boot = np.cos(beta_rad_pred_boot)
+    X_gamma_test_boot = np.column_stack([test_t, sin_beta_pred_boot, cos_beta_pred_boot])
+    gamma_pred_boot = model_gamma_boot.predict(X_gamma_test_boot)
+    
+    # Add observation noise
+    gamma_noise = np.random.normal(0, np.sqrt(gamma_mse), len(test_t))
+    gamma_sims[b] = gamma_pred_boot + gamma_noise
+
+gamma_median = np.median(gamma_sims, axis=0)
+gamma_lower = np.percentile(gamma_sims, 2.5, axis=0)
+gamma_upper = np.percentile(gamma_sims, 97.5, axis=0)
+
+print()
+print('Bootstrap predictions with 95% PI:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_median[i]:.4f}, lower={gamma_lower[i]:.4f}, upper={gamma_upper[i]:.4f}')
+"
 
 ```
 
@@ -3677,6 +6615,83 @@ t=809: y_pred=-23.4522, lower=-36.4818, upper=-10.1491
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Build the two-stage model
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear trend
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+
+# Harmonic residuals with period 580, 2 harmonics
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 580),
+    np.cos(2*np.pi*t / 580),
+    np.sin(2*np.pi*t / 290),
+    np.cos(2*np.pi*t / 290)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+beta_res_final = (beta_unwrapped - linear_trend) - model_res.predict(X_res)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 580),
+    np.cos(2*np.pi*test_t / 580),
+    np.sin(2*np.pi*test_t / 290),
+    np.cos(2*np.pi*test_t / 290)
+])
+res_pred = model_res.predict(X_res_test)
+
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+print('Test t, predicted beta (wrapped), sin(beta), cos(beta):')
+for i, tt in enumerate(test_t):
+    bp = beta_pred_rad[i] * 180 / np.pi
+    sp = np.sin(beta_pred_rad[i])
+    cp = np.cos(beta_pred_rad[i])
+    print(f't={tt}: beta={bp:.2f}, sin={sp:.4f}, cos={cp:.4f}')
+
+# Gamma prediction
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+print()
+print('Gamma predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+
+# Compute gamma contribution breakdown
+print()
+print('Gamma component breakdown:')
+for i, tt in enumerate(test_t):
+    t_contrib = model_gamma.coef_[0] * tt
+    sin_contrib = model_gamma.coef_[1] * sin_beta_pred[i]
+    cos_contrib = model_gamma.coef_[2] * cos_beta_pred[i]
+    intercept = model_gamma.intercept_
+    total = t_contrib + sin_contrib + cos_contrib + intercept
+    print(f't={tt}: trend={t_contrib:.2f}, sin={sin_contrib:.2f}, cos={cos_contrib:.2f}, intercept={intercept:.2f}, total={total:.2f}')
+"
 
 ```
 
@@ -3746,6 +6761,125 @@ t=809: trend=-58.97, sin=-19.26, cos=5.57, intercept=40.01, total=-32.65
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Build the two-stage model
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear trend for beta
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+
+# Harmonic residuals
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 580),
+    np.cos(2*np.pi*t / 580),
+    np.sin(2*np.pi*t / 290),
+    np.cos(2*np.pi*t / 290)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+beta_res_final = (beta_unwrapped - linear_trend) - model_res.predict(X_res)
+beta_res_std = np.std(beta_res_final)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+gamma_res_std = np.sqrt(gamma_mse)
+
+print('Beta residual std (deg):', beta_res_std * 180 / np.pi)
+print('Gamma residual std:', gamma_res_std)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 580),
+    np.cos(2*np.pi*test_t / 580),
+    np.sin(2*np.pi*test_t / 290),
+    np.cos(2*np.pi*test_t / 290)
+])
+res_pred = model_res.predict(X_res_test)
+
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+# Compute prediction intervals accounting for both sources of uncertainty
+# Method: Use delta method
+# Var(gamma) = (d_gamma/d_beta)^2 * Var(beta) + Var(gamma|beta)
+# where Var(gamma|beta) is from the gamma model
+
+# Compute d_gamma/d_beta at each test point
+d_gamma_d_beta = model_gamma.coef_[1] * np.cos(beta_pred_rad) - model_gamma.coef_[2] * np.sin(beta_pred_rad)
+
+# Total variance for each test point
+n = len(gamma)
+p = X_gamma.shape[1] + 1  # parameters in gamma model
+MSE = gamma_mse
+
+# Variance due to gamma model (parameter uncertainty + observation noise)
+X_gamma_with_intercept = np.column_stack([np.ones(n), X_gamma])
+XTX_inv = np.linalg.inv(X_gamma_with_intercept.T @ X_gamma_with_intercept)
+
+X_gamma_test_with_intercept = np.column_stack([np.ones(len(test_t)), X_gamma_test])
+
+var_gamma_given_beta = []
+for i in range(len(test_t)):
+    x_new = X_gamma_test_with_intercept[i]
+    var_pred = MSE * (1 + x_new @ XTX_inv @ x_new)
+    var_gamma_given_beta.append(var_pred)
+var_gamma_given_beta = np.array(var_gamma_given_beta)
+
+# Variance due to beta uncertainty
+var_beta = beta_res_std**2  # uncertainty in beta prediction
+var_beta_contrib = d_gamma_d_beta**2 * var_beta
+
+# Total variance
+var_total = var_gamma_given_beta + var_beta_contrib
+se_total = np.sqrt(var_total)
+
+# t-critical value
+t_crit = stats.t.ppf(0.975, n - p)
+
+lower = gamma_pred - t_crit * se_total
+upper = gamma_pred + t_crit * se_total
+
+print()
+print('Final predictions with 95% PI (delta method):')
+print(f't_crit = {t_crit:.4f}')
+print()
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}, se={se_total[i]:.4f}, dg/db={d_gamma_d_beta[i]:.4f}')
+
+# Save to file
+results = pd.DataFrame({
+    't': test_t,
+    'y_pred': gamma_pred,
+    'y_lower': lower,
+    'y_upper': upper
+})
+results.to_csv('predictions.csv', index=False)
+print()
+print('Saved to predictions.csv')
+"
 
 ```
 
@@ -3798,7 +6932,7 @@ Saved to predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [140] tool
@@ -3827,7 +6961,7 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv && wc -l data/test.csv
 ```
 
 ## [142] tool
@@ -3875,6 +7009,68 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Try Holt-Winters with additive trend and no seasonality
+# (since we don't have enough data for yearly seasonality)
+model = ExponentialSmoothing(gamma, trend='add', seasonal=None, initialization_method='estimated')
+fitted = model.fit()
+
+print('Holt model summary:')
+print(fitted.params)
+
+# Forecast for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+# The forecast steps: from t=516 to t=809 is 293 steps, but test_t are not consecutive
+# We need to forecast step by step to get the correct state
+# Actually, we can use the model to forecast all steps up to 809
+
+# Let's forecast all days from 517 to 809
+n_forecast = 809 - 516  # 293 days
+forecast = fitted.forecast(n_forecast)
+
+# Extract the test points
+# The forecast index corresponds to t=517, 518, ..., 809
+# We need to map test_t to the correct index
+test_idx = test_t - 517  # since forecast starts at t=517
+gamma_pred = forecast.iloc[test_idx].values
+
+# Compute prediction intervals using the residuals
+residuals = fitted.resid
+residual_std = np.std(residuals)
+
+# For Holt-Winters, the prediction interval for h-step ahead is:
+# y_pred +/- z * sqrt(h * sigma^2) for additive trend? Actually it's more complex.
+# Let's use a simple approach: assume std increases with sqrt(h)
+# The standard deviation of the forecast error is approximately sigma * sqrt(1 + h * gamma)
+# where gamma is the trend smoothing parameter
+# But let's just use the residual std for simplicity (this will be too narrow)
+
+# Actually, let's use the in-sample std as an approximation
+se = residual_std * np.sqrt(1 + np.arange(len(test_t)) * 0.1)  # rough inflation
+t_crit = stats.t.ppf(0.975, len(gamma) - 2)
+lower = gamma_pred - t_crit * se
+upper = gamma_pred + t_crit * se
+
+print()
+print('Holt-Winters predictions:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}')
+
+# Also show the fitted values
+print()
+print('In-sample fit:')
+print('Residual std:', residual_std)
+print('AIC:', fitted.aic)
+"
 
 ```
 
@@ -3899,6 +7095,59 @@ Holt model summary:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Try Holt-Winters with additive trend and no seasonality
+model = ExponentialSmoothing(gamma, trend='add', seasonal=None, initialization_method='estimated')
+fitted = model.fit()
+
+print('Holt model summary:')
+print('Params:', fitted.params)
+
+# Forecast for all steps up to 809
+n_forecast = 809 - 516  # 293 days
+forecast = fitted.forecast(n_forecast)
+
+# Extract the test points
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+# forecast is indexed from 0 to 292 (corresponding to t=517 to 809)
+# We need to map test_t to forecast indices
+test_idx = test_t - 517
+gamma_pred = forecast.iloc[test_idx].values  # Using .iloc might not work if forecast is array
+
+# Let's convert to numpy
+forecast_vals = forecast.values
+gamma_pred = forecast_vals[test_idx]
+
+# Compute prediction intervals
+residuals = fitted.resid
+residual_std = np.std(residuals)
+
+# Simple approximation for forecast std
+# For Holt's linear method, the variance of the h-step forecast is:
+# Var(e_t+h) = sigma^2 * (1 + (h-1)*gamma^2 + ...)
+# Let's use a simple approach
+se = residual_std * np.sqrt(1 + test_idx * 0.1)  # rough inflation
+t_crit = stats.t.ppf(0.975, len(gamma) - 2)
+lower = gamma_pred - t_crit * se
+upper = gamma_pred + t_crit * se
+
+print()
+print('Holt-Winters predictions:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}')
+
+print()
+print('Residual std:', residual_std)
+"
 
 ```
 
@@ -3923,6 +7172,40 @@ Params: {'smoothing_level': np.float64(0.4258649749474186), 'smoothing_trend': n
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Holt-Winters with additive trend
+model = ExponentialSmoothing(gamma, trend='add', seasonal=None, initialization_method='estimated')
+fitted = model.fit()
+
+# Forecast
+n_forecast = 809 - 516
+forecast_result = fitted.forecast(n_forecast)
+forecast_vals = np.array(forecast_result)  # convert to numpy array
+
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+test_idx = test_t - 517
+gamma_pred = forecast_vals[test_idx]
+
+print('Holt-Winters predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+
+# Also show the trend
+print()
+print('Smoothing level:', fitted.params['smoothing_level'])
+print('Smoothing trend:', fitted.params['smoothing_trend'])
+print('Initial level:', fitted.params['initial_level'])
+print('Initial trend:', fitted.params['initial_trend'])
+"
 
 ```
 
@@ -3977,6 +7260,57 @@ Initial trend: -0.10339949300540334
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+
+df = pd.read_csv('data/train.csv')
+gamma = df['gamma'].values
+t = df['t'].values
+
+# Use only last 200 days
+mask = t >= 316
+t_sub = t[mask].reshape(-1, 1)
+gamma_sub = gamma[mask]
+
+# Fit quadratic
+poly = PolynomialFeatures(degree=2)
+X_sub = poly.fit_transform(t_sub)
+model = LinearRegression().fit(X_sub, gamma_sub)
+print('Quadratic fit to last 200 days:')
+print('Coefficients:', model.coef_)
+print('Intercept:', model.intercept_)
+print('R^2:', model.score(X_sub, gamma_sub))
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+X_test = poly.transform(test_t.reshape(-1, 1))
+gamma_pred = model.predict(X_test)
+
+print()
+print('Quadratic predictions:')
+for tt, gp in zip(test_t, gamma_pred):
+    print(f't={tt}: gamma={gp:.4f}')
+
+# Also try linear on last 100 days
+mask2 = t >= 416
+t_sub2 = t[mask2].reshape(-1, 1)
+gamma_sub2 = gamma[mask2]
+model_linear = LinearRegression().fit(t_sub2, gamma_sub2)
+print()
+print('Linear fit to last 100 days:')
+print('Slope:', model_linear.coef_[0])
+print('Intercept:', model_linear.intercept_)
+print('R^2:', model_linear.score(t_sub2, gamma_sub2))
+
+gamma_pred_linear = model_linear.predict(test_t.reshape(-1, 1))
+print()
+print('Linear predictions (last 100 days):')
+for tt, gp in zip(test_t, gamma_pred_linear):
+    print(f't={tt}: gamma={gp:.4f}')
+"
 
 ```
 
@@ -4036,6 +7370,41 @@ t=809: gamma=-60.5417
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+beta = df['beta'].values
+t = df['t'].values
+
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear trend
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_res = beta_unwrapped - model_beta_linear.predict(t.reshape(-1, 1))
+
+# FFT of residuals
+n = len(beta_res)
+fft = np.fft.fft(beta_res)
+freqs = np.fft.fftfreq(n)
+power = np.abs(fft)**2
+
+pos_idx = freqs > 0
+freqs_pos = freqs[pos_idx]
+power_pos = power[pos_idx]
+
+idx = np.argsort(power_pos)[::-1]
+print('Top frequencies for beta residuals:')
+for i in range(10):
+    f = freqs_pos[idx[i]]
+    period = 1/f
+    print(f'Freq: {f:.6f}, Period: {period:.2f} days, Power: {power_pos[idx[i]]:.2f}')
+
+# The top period should tell us what period to use for the harmonic model
+"
 
 ```
 
@@ -4069,6 +7438,81 @@ Freq: 0.019342, Period: 51.70 days, Power: 114.15
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Use ONLY linear trend for beta (no harmonics)
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+beta_pred_train = model_beta.predict(t.reshape(-1, 1))
+beta_res = beta_unwrapped - beta_pred_train
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+
+print('Gamma model R^2:', model_gamma.score(X_gamma, gamma))
+print('Gamma residual std:', np.sqrt(gamma_mse))
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+beta_unwrapped_pred = model_beta.predict(test_t.reshape(-1, 1))
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+# Prediction intervals
+n = len(gamma)
+p = X_gamma.shape[1] + 1
+MSE = gamma_mse
+
+X_gamma_with_intercept = np.column_stack([np.ones(n), X_gamma])
+XTX_inv = np.linalg.inv(X_gamma_with_intercept.T @ X_gamma_with_intercept)
+X_gamma_test_with_intercept = np.column_stack([np.ones(len(test_t)), X_gamma_test])
+
+# Account for beta uncertainty
+beta_res_std = np.std(beta_res)
+d_gamma_d_beta = model_gamma.coef_[1] * np.cos(beta_pred_rad) - model_gamma.coef_[2] * np.sin(beta_pred_rad)
+
+var_total = []
+for i in range(len(test_t)):
+    x_new = X_gamma_test_with_intercept[i]
+    var_gamma = MSE * (1 + x_new @ XTX_inv @ x_new)
+    var_beta_contrib = d_gamma_d_beta[i]**2 * beta_res_std**2
+    var_total.append(var_gamma + var_beta_contrib)
+se_total = np.sqrt(var_total)
+
+t_crit = stats.t.ppf(0.975, n - p)
+lower = gamma_pred - t_crit * se_total
+upper = gamma_pred + t_crit * se_total
+
+print()
+print('Gamma predictions (linear beta model) with 95% PI:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}, se={se_total[i]:.4f}')
+
+# Compare with harmonic beta model
+print()
+print('Comparison with harmonic beta model:')
+print('Linear beta model predictions:', [f'{gp:.1f}' for gp in gamma_pred])
+"
 
 ```
 
@@ -4154,6 +7598,98 @@ Linear beta model predictions: ['-14.0', '-24.4', '-31.9', '-36.0', '-36.3', '-3
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Use period = 517 for beta residuals
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+beta_res = beta_unwrapped - linear_trend
+
+# Harmonic model with period 517
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_res)
+beta_res_final = beta_res - model_res.predict(X_res)
+beta_res_std = np.std(beta_res_final)
+
+print('Beta residual std (deg):', beta_res_std * 180 / np.pi)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+# Prediction intervals
+n = len(gamma)
+p = X_gamma.shape[1] + 1
+MSE = gamma_mse
+X_gamma_with_intercept = np.column_stack([np.ones(n), X_gamma])
+XTX_inv = np.linalg.inv(X_gamma_with_intercept.T @ X_gamma_with_intercept)
+X_gamma_test_with_intercept = np.column_stack([np.ones(len(test_t)), X_gamma_test])
+
+d_gamma_d_beta = model_gamma.coef_[1] * np.cos(beta_pred_rad) - model_gamma.coef_[2] * np.sin(beta_pred_rad)
+
+var_total = []
+for i in range(len(test_t)):
+    x_new = X_gamma_test_with_intercept[i]
+    var_gamma = MSE * (1 + x_new @ XTX_inv @ x_new)
+    var_beta_contrib = d_gamma_d_beta[i]**2 * beta_res_std**2
+    var_total.append(var_gamma + var_beta_contrib)
+se_total = np.sqrt(var_total)
+
+t_crit = stats.t.ppf(0.975, n - p)
+lower = gamma_pred - t_crit * se_total
+upper = gamma_pred + t_crit * se_total
+
+print()
+print('Gamma predictions (period=517 for beta):')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}, se={se_total[i]:.4f}')
+
+print()
+print('Predicted beta:')
+for i, tt in enumerate(test_t):
+    bp = beta_pred_rad[i] * 180 / np.pi
+    print(f't={tt}: beta={bp:.2f}')
+"
 
 ```
 
@@ -4221,6 +7757,124 @@ t=809: beta=273.07
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# =====================
+# Beta model
+# =====================
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+# Linear trend
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+beta_res = beta_unwrapped - linear_trend
+
+# Harmonic model for residuals (period = 517, 2 harmonics)
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_res)
+beta_res_final = beta_res - model_res.predict(X_res)
+beta_res_std = np.std(beta_res_final)
+
+# =====================
+# Gamma model
+# =====================
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+gamma_res_std = np.sqrt(gamma_mse)
+
+n = len(gamma)
+p = X_gamma.shape[1] + 1  # 4 parameters (intercept + 3 coefficients)
+
+X_gamma_with_intercept = np.column_stack([np.ones(n), X_gamma])
+XTX_inv = np.linalg.inv(X_gamma_with_intercept.T @ X_gamma_with_intercept)
+
+# =====================
+# Predict for test
+# =====================
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# Predict beta
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+# Predict gamma
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+# =====================
+# Prediction intervals (delta method)
+# =====================
+d_gamma_d_beta = model_gamma.coef_[1] * np.cos(beta_pred_rad) - model_gamma.coef_[2] * np.sin(beta_pred_rad)
+X_gamma_test_with_intercept = np.column_stack([np.ones(len(test_t)), X_gamma_test])
+
+var_total = []
+for i in range(len(test_t)):
+    x_new = X_gamma_test_with_intercept[i]
+    var_gamma = gamma_mse * (1 + x_new @ XTX_inv @ x_new)
+    var_beta_contrib = d_gamma_d_beta[i]**2 * beta_res_std**2
+    var_total.append(var_gamma + var_beta_contrib)
+se_total = np.sqrt(var_total)
+
+t_crit = stats.t.ppf(0.975, n - p)
+lower = gamma_pred - t_crit * se_total
+upper = gamma_pred + t_crit * se_total
+
+# =====================
+# Output
+# =====================
+print('Model parameters:')
+print('Beta linear slope (deg/day):', model_beta_linear.coef_[0] * 180 / np.pi)
+print('Beta residual std (deg):', beta_res_std * 180 / np.pi)
+print('Gamma model coefficients:', model_gamma.coef_)
+print('Gamma model intercept:', model_gamma.intercept_)
+print('Gamma model R^2:', model_gamma.score(X_gamma, gamma))
+print('Gamma residual std:', gamma_res_std)
+print()
+
+print('Final predictions with 95% PI:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_pred[i]:.4f}, lower={lower[i]:.4f}, upper={upper[i]:.4f}')
+
+# Save to file
+results = pd.DataFrame({
+    't': test_t,
+    'y_pred': gamma_pred,
+    'y_lower': lower,
+    'y_upper': upper
+})
+results.to_csv('predictions.csv', index=False)
+print()
+print('Saved to predictions.csv')
+"
 
 ```
 
@@ -4270,6 +7924,45 @@ Saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+beta_rad = beta * np.pi / 180
+X_gamma = np.column_stack([t, np.sin(beta_rad), np.cos(beta_rad)])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+
+print('Gamma residual diagnostics:')
+print('Mean:', np.mean(gamma_res))
+print('Std:', np.std(gamma_res))
+print('Skewness:', stats.skew(gamma_res))
+print('Kurtosis:', stats.kurtosis(gamma_res))
+
+# Autocorrelation
+print()
+print('Autocorrelation:')
+for lag in [1, 2, 3, 5, 10, 20]:
+    corr = np.corrcoef(gamma_res[:-lag], gamma_res[lag:])[0, 1]
+    print(f'Lag {lag}: {corr:.4f}')
+
+# Check if residuals are related to t
+print()
+print('Correlation with t:', np.corrcoef(t, gamma_res)[0, 1])
+
+# Durbin-Watson test
+from statsmodels.stats.stattools import durbin_watson
+dw = durbin_watson(gamma_res)
+print('Durbin-Watson:', dw)
+# DW close to 2 means no autocorrelation, <2 means positive autocorrelation
+"
 
 ```
 
@@ -4312,6 +8005,44 @@ Durbin-Watson: 0.035776321193031986
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+beta_rad = beta * np.pi / 180
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+# Try ARIMA with exogenous variables (t, sin_beta, cos_beta)
+exog = np.column_stack([t, sin_beta, cos_beta])
+
+# Find best ARIMA order by AIC
+print('Trying ARIMAX models...')
+results = []
+for p in range(1, 4):
+    for d in range(0, 2):
+        for q in range(0, 4):
+            try:
+                model = ARIMA(gamma, order=(p, d, q), exog=exog)
+                fitted = model.fit()
+                results.append((p, d, q, fitted.aic))
+                print(f'ARIMA({p},{d},{q}) with exog: AIC={fitted.aic:.2f}')
+            except Exception as e:
+                pass
+
+# Find best
+if results:
+    best = min(results, key=lambda x: x[3])
+    print()
+    print(f'Best: ARIMA({best[0]},{best[1]},{best[2]}) with AIC={best[3]:.2f}')
+"
 
 ```
 
@@ -4404,6 +8135,96 @@ Best: ARIMA(2,1,3) with AIC=759.24
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# =====================
+# Beta model (same as before)
+# =====================
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+beta_res_final = (beta_unwrapped - linear_trend) - model_res.predict(X_res)
+beta_res_std = np.std(beta_res_final)
+
+# =====================
+# ARIMAX model for gamma
+# =====================
+# Exogenous variables: t, sin(beta), cos(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+exog = np.column_stack([t, sin_beta, cos_beta])
+
+# Fit ARIMA(2,1,3) with exog
+model_arimax = ARIMA(gamma, order=(2, 1, 3), exog=exog)
+fitted_arimax = model_arimax.fit()
+print(fitted_arimax.summary())
+
+# =====================
+# Predict for test
+# =====================
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# Predict beta for test
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+# Exog for test
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+exog_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+
+# Forecast
+# The ARIMA model is estimated on the full series. To forecast, we use the last state
+# and the exog for the test period.
+forecast_result = fitted_arimax.get_forecast(steps=len(test_t), exog=exog_test)
+gamma_pred = forecast_result.predicted_mean
+conf_int = forecast_result.conf_int(alpha=0.05)
+
+print()
+print('ARIMAX predictions with 95% CI:')
+for i, tt in enumerate(test_t):
+    lower = conf_int.iloc[i, 0]
+    upper = conf_int.iloc[i, 1]
+    print(f't={tt}: y_pred={gamma_pred.iloc[i]:.4f}, lower={lower:.4f}, upper={upper:.4f}')
+
+# Also compute the deterministic predictions from the linear regression for comparison
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_lr = LinearRegression().fit(X_gamma, gamma)
+gamma_pred_lr = model_lr.predict(X_gamma_test)
+print()
+print('Linear regression predictions:')
+for tt, gp in zip(test_t, gamma_pred_lr):
+    print(f't={tt}: gamma={gp:.4f}')
+"
 
 ```
 
@@ -4472,6 +8293,85 @@ ARIMAX predictions with 95% CI:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Beta model
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+
+# ARIMAX model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+exog = np.column_stack([t, sin_beta, cos_beta])
+
+model_arimax = ARIMA(gamma, order=(2, 1, 3), exog=exog)
+fitted_arimax = model_arimax.fit()
+
+# Predict for test
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# Predict beta
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+exog_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+
+# Get forecast
+forecast_result = fitted_arimax.get_forecast(steps=len(test_t), exog=exog_test)
+gamma_pred = forecast_result.predicted_mean
+conf_int = forecast_result.conf_int(alpha=0.05)
+
+# Convert to numpy
+gamma_pred_np = np.array(gamma_pred)
+conf_int_np = np.array(conf_int)
+
+print('ARIMAX predictions with 95% CI:')
+for i, tt in enumerate(test_t):
+    lower = conf_int_np[i, 0]
+    upper = conf_int_np[i, 1]
+    print(f't={tt}: y_pred={gamma_pred_np[i]:.4f}, lower={lower:.4f}, upper={upper:.4f}')
+
+# Also get the linear regression predictions for comparison
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+model_lr = LinearRegression().fit(X_gamma, gamma)
+gamma_pred_lr = model_lr.predict(X_gamma_test)
+
+print()
+print('Linear regression predictions:')
+for tt, gp in zip(test_t, gamma_pred_lr):
+    print(f't={tt}: gamma={gp:.4f}')
+"
 
 ```
 
@@ -4548,6 +8448,128 @@ t=809: gamma=-37.4419
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# =====================
+# Beta model (linear + harmonics with period 517)
+# =====================
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+beta_res_final = (beta_unwrapped - linear_trend) - model_res.predict(X_res)
+beta_res_std = np.std(beta_res_final)
+
+# =====================
+# ARIMAX model
+# =====================
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+exog = np.column_stack([t, sin_beta, cos_beta])
+
+model_arimax = ARIMA(gamma, order=(2, 1, 3), exog=exog)
+fitted_arimax = model_arimax.fit()
+
+# =====================
+# Predict for test
+# =====================
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# Predict beta
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+exog_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+
+# ARIMAX forecast
+forecast_result = fitted_arimax.get_forecast(steps=len(test_t), exog=exog_test)
+gamma_pred_arimax = np.array(forecast_result.predicted_mean)
+
+print('ARIMAX point predictions:')
+for tt, gp in zip(test_t, gamma_pred_arimax):
+    print(f't={tt}: gamma={gp:.4f}')
+
+# =====================
+# Bootstrap for prediction intervals
+# =====================
+np.random.seed(42)
+n_bootstrap = 5000
+gamma_sims = np.zeros((n_bootstrap, len(test_t)))
+
+# Bootstrap by resampling beta residuals and gamma residuals
+gamma_res = gamma - fitted_arimax.predict()  # residuals from ARIMAX
+gamma_res_std = np.std(gamma_res)
+
+for b in range(n_bootstrap):
+    # Sample beta residuals
+    beta_res_sample = np.random.choice(beta_res_final, size=len(test_t))
+    beta_unwrapped_sim = linear_pred + res_pred + beta_res_sample
+    beta_rad_sim = beta_unwrapped_sim % (2*np.pi)
+    
+    sin_beta_sim = np.sin(beta_rad_sim)
+    cos_beta_sim = np.cos(beta_rad_sim)
+    exog_sim = np.column_stack([test_t, sin_beta_sim, cos_beta_sim])
+    
+    # Forecast with these exog
+    try:
+        forecast = fitted_arimax.get_forecast(steps=len(test_t), exog=exog_sim)
+        gamma_pred = np.array(forecast.predicted_mean)
+        
+        # Add gamma noise
+        gamma_noise = np.random.normal(0, gamma_res_std, len(test_t))
+        gamma_sims[b] = gamma_pred + gamma_noise
+    except:
+        # If forecasting fails, use previous prediction
+        gamma_sims[b] = gamma_pred_arimax
+
+gamma_median = np.median(gamma_sims, axis=0)
+gamma_lower = np.percentile(gamma_sims, 2.5, axis=0)
+gamma_upper = np.percentile(gamma_sims, 97.5, axis=0)
+
+print()
+print('Bootstrap predictions with 95% PI:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_median[i]:.4f}, lower={gamma_lower[i]:.4f}, upper={gamma_upper[i]:.4f}')
+
+# Save to file
+results = pd.DataFrame({
+    't': test_t,
+    'y_pred': gamma_median,
+    'y_lower': gamma_lower,
+    'y_upper': gamma_upper
+})
+results.to_csv('predictions.csv', index=False)
+print()
+print('Saved to predictions.csv')
+"
 
 ```
 
@@ -4598,6 +8620,89 @@ Saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.linear_model import LinearRegression
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Beta model
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+
+# ARIMAX
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+exog = np.column_stack([t, sin_beta, cos_beta])
+model_arimax = ARIMA(gamma, order=(2, 1, 3), exog=exog)
+fitted_arimax = model_arimax.fit()
+
+# In-sample predictions
+gamma_pred_is = fitted_arimax.predict()
+gamma_res = gamma - gamma_pred_is
+
+# Plot
+plt.figure(figsize=(12, 6))
+plt.plot(t, gamma, label='Actual')
+plt.plot(t, gamma_pred_is, label='Fitted')
+plt.legend()
+plt.title('ARIMAX In-Sample Fit')
+plt.savefig('arimax_fit.png')
+print('Saved plot')
+
+# Print some statistics
+print('Residual std:', np.std(gamma_res))
+print('Mean residual:', np.mean(gamma_res))
+
+# Forecast beyond training
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+exog_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+
+forecast_result = fitted_arimax.get_forecast(steps=len(test_t), exog=exog_test)
+gamma_pred_test = np.array(forecast_result.predicted_mean)
+
+# Extend plot to test
+all_t = np.concatenate([t, test_t])
+all_pred = np.concatenate([gamma_pred_is, gamma_pred_test])
+
+plt.figure(figsize=(12, 6))
+plt.plot(t, gamma, label='Actual')
+plt.plot(all_t, all_pred, '--', label='Predicted')
+plt.axvline(x=516, color='gray', linestyle=':')
+plt.legend()
+plt.title('ARIMAX Forecast')
+plt.savefig('arimax_forecast.png')
+print('Saved forecast plot')
+"
 
 ```
 
@@ -4677,7 +8782,7 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [172] tool
@@ -4778,6 +8883,134 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy import stats
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# =====================
+# Beta model (linear + harmonics, period 517)
+# =====================
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+beta_res_final = (beta_unwrapped - linear_trend) - model_res.predict(X_res)
+beta_res_std = np.std(beta_res_final)
+
+# =====================
+# Gamma model (linear regression)
+# =====================
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+
+n = len(gamma)
+p = X_gamma.shape[1] + 1  # 4 parameters
+
+X_gamma_with_intercept = np.column_stack([np.ones(n), X_gamma])
+XTX_inv = np.linalg.inv(X_gamma_with_intercept.T @ X_gamma_with_intercept)
+
+# =====================
+# Predict for test
+# =====================
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# Predict beta
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+beta_unwrapped_pred = linear_pred + res_pred
+beta_pred_rad = beta_unwrapped_pred % (2*np.pi)
+
+# Predict gamma
+sin_beta_pred = np.sin(beta_pred_rad)
+cos_beta_pred = np.cos(beta_pred_rad)
+X_gamma_test = np.column_stack([test_t, sin_beta_pred, cos_beta_pred])
+gamma_pred = model_gamma.predict(X_gamma_test)
+
+# =====================
+# Prediction intervals (delta method)
+# =====================
+d_gamma_d_beta = model_gamma.coef_[1] * np.cos(beta_pred_rad) - model_gamma.coef_[2] * np.sin(beta_pred_rad)
+X_gamma_test_with_intercept = np.column_stack([np.ones(len(test_t)), X_gamma_test])
+
+var_total = []
+for i in range(len(test_t)):
+    x_new = X_gamma_test_with_intercept[i]
+    var_gamma = gamma_mse * (1 + x_new @ XTX_inv @ x_new)
+    var_beta_contrib = d_gamma_d_beta[i]**2 * beta_res_std**2
+    var_total.append(var_gamma + var_beta_contrib)
+se_total = np.sqrt(var_total)
+
+# Use t-distribution for critical values
+t_crit = stats.t.ppf(0.975, n - p)
+lower = gamma_pred - t_crit * se_total
+upper = gamma_pred + t_crit * se_total
+
+# =====================
+# Output
+# =====================
+print('Linear regression with harmonic beta model')
+print('=' * 60)
+print()
+print('Model: gamma ~ t + sin(beta) + cos(beta)')
+print('Beta model: linear + harmonics (period 517)')
+print()
+print('Gamma model coefficients:')
+print(f'  t: {model_gamma.coef_[0]:.4f}')
+print(f'  sin(beta): {model_gamma.coef_[1]:.4f}')
+print(f'  cos(beta): {model_gamma.coef_[2]:.4f}')
+print(f'  intercept: {model_gamma.intercept_:.4f}')
+print(f'  R^2: {model_gamma.score(X_gamma, gamma):.4f}')
+print(f'  Residual std: {np.sqrt(gamma_mse):.4f}')
+print()
+print('Beta residual std (deg):', beta_res_std * 180 / np.pi)
+print()
+
+print('Predictions with 95% prediction intervals:')
+for i, tt in enumerate(test_t):
+    print(f't={tt:3d}: y_pred={gamma_pred[i]:8.4f}, lower={lower[i]:8.4f}, upper={upper[i]:8.4f}')
+
+# Save to file
+results = pd.DataFrame({
+    't': test_t,
+    'y_pred': gamma_pred,
+    'y_lower': lower,
+    'y_upper': upper
+})
+results.to_csv('predictions.csv', index=False)
+print()
+print('Saved to predictions.csv')
+
+# Verify the file
+print()
+print('Verification:')
+print(pd.read_csv('predictions.csv'))
+"
 
 ```
 
@@ -4862,6 +9095,96 @@ Verification:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# =====================
+# Beta model
+# =====================
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+beta_res_final = (beta_unwrapped - linear_trend) - model_res.predict(X_res)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+
+# Test points
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# Predict beta
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+
+# Bootstrap
+np.random.seed(42)
+n_bootstrap = 10000
+gamma_sims = np.zeros((n_bootstrap, len(test_t)))
+
+for b in range(n_bootstrap):
+    # Sample beta residuals
+    idx = np.random.choice(len(beta_res_final), size=len(test_t))
+    beta_res_sample = beta_res_final[idx]
+    beta_unwrapped_sim = linear_pred + res_pred + beta_res_sample
+    beta_rad_sim = beta_unwrapped_sim % (2*np.pi)
+    
+    sin_beta_sim = np.sin(beta_rad_sim)
+    cos_beta_sim = np.cos(beta_rad_sim)
+    X_gamma_sim = np.column_stack([test_t, sin_beta_sim, cos_beta_sim])
+    
+    # Bootstrap gamma model parameters
+    # Sample gamma residuals with replacement and add to fitted values
+    gamma_boot = model_gamma.predict(X_gamma) + np.random.choice(gamma_res, size=len(gamma))
+    model_gamma_boot = LinearRegression().fit(X_gamma, gamma_boot)
+    
+    # Predict
+    gamma_pred_boot = model_gamma_boot.predict(X_gamma_sim)
+    
+    # Add observation noise
+    gamma_noise = np.random.normal(0, np.sqrt(gamma_mse), len(test_t))
+    gamma_sims[b] = gamma_pred_boot + gamma_noise
+
+gamma_median = np.median(gamma_sims, axis=0)
+gamma_lower = np.percentile(gamma_sims, 2.5, axis=0)
+gamma_upper = np.percentile(gamma_sims, 97.5, axis=0)
+
+print('Bootstrap predictions with 95% PI:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_median[i]:.4f}, lower={gamma_lower[i]:.4f}, upper={gamma_upper[i]:.4f}')
+
+print()
+print('Comparison with delta method:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: delta=[{-35.6002:.4f}, {-22.3846:.4f}], bootstrap=[{gamma_lower[i]:.4f}, {gamma_upper[i]:.4f}]')
+"
 
 ```
 
@@ -4913,6 +9236,95 @@ t=809: delta=[-35.6002, -22.3846], bootstrap=[-49.7978, -23.0086]
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+gamma = df['gamma'].values
+beta = df['beta'].values
+
+# Beta model
+beta_rad = beta * np.pi / 180
+beta_unwrapped = np.unwrap(beta_rad)
+
+model_beta_linear = LinearRegression().fit(t.reshape(-1, 1), beta_unwrapped)
+linear_trend = model_beta_linear.predict(t.reshape(-1, 1))
+
+X_res = np.column_stack([
+    np.sin(2*np.pi*t / 517),
+    np.cos(2*np.pi*t / 517),
+    np.sin(2*np.pi*t / 258.5),
+    np.cos(2*np.pi*t / 258.5)
+])
+model_res = LinearRegression().fit(X_res, beta_unwrapped - linear_trend)
+beta_res_final = (beta_unwrapped - linear_trend) - model_res.predict(X_res)
+
+# Gamma model
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+X_gamma = np.column_stack([t, sin_beta, cos_beta])
+model_gamma = LinearRegression().fit(X_gamma, gamma)
+gamma_res = gamma - model_gamma.predict(X_gamma)
+gamma_mse = np.mean(gamma_res**2)
+
+# Test points
+test_t = np.array([519, 551, 583, 615, 648, 680, 712, 744, 777, 809])
+
+# Predict beta
+linear_pred = model_beta_linear.predict(test_t.reshape(-1, 1))
+X_res_test = np.column_stack([
+    np.sin(2*np.pi*test_t / 517),
+    np.cos(2*np.pi*test_t / 517),
+    np.sin(2*np.pi*test_t / 258.5),
+    np.cos(2*np.pi*test_t / 258.5)
+])
+res_pred = model_res.predict(X_res_test)
+
+# Bootstrap
+np.random.seed(42)
+n_bootstrap = 10000
+gamma_sims = np.zeros((n_bootstrap, len(test_t)))
+
+for b in range(n_bootstrap):
+    idx = np.random.choice(len(beta_res_final), size=len(test_t))
+    beta_res_sample = beta_res_final[idx]
+    beta_unwrapped_sim = linear_pred + res_pred + beta_res_sample
+    beta_rad_sim = beta_unwrapped_sim % (2*np.pi)
+    
+    sin_beta_sim = np.sin(beta_rad_sim)
+    cos_beta_sim = np.cos(beta_rad_sim)
+    X_gamma_sim = np.column_stack([test_t, sin_beta_sim, cos_beta_sim])
+    
+    # Bootstrap gamma model
+    gamma_boot = model_gamma.predict(X_gamma) + np.random.choice(gamma_res, size=len(gamma))
+    model_gamma_boot = LinearRegression().fit(X_gamma, gamma_boot)
+    
+    gamma_pred_boot = model_gamma_boot.predict(X_gamma_sim)
+    gamma_noise = np.random.normal(0, np.sqrt(gamma_mse), len(test_t))
+    gamma_sims[b] = gamma_pred_boot + gamma_noise
+
+gamma_median = np.median(gamma_sims, axis=0)
+gamma_lower = np.percentile(gamma_sims, 2.5, axis=0)
+gamma_upper = np.percentile(gamma_sims, 97.5, axis=0)
+
+# Save to file
+results = pd.DataFrame({
+    't': test_t,
+    'y_pred': gamma_median,
+    'y_lower': gamma_lower,
+    'y_upper': gamma_upper
+})
+results.to_csv('predictions.csv', index=False)
+
+print('Final predictions:')
+for i, tt in enumerate(test_t):
+    print(f't={tt}: y_pred={gamma_median[i]:.4f}, lower={gamma_lower[i]:.4f}, upper={gamma_upper[i]:.4f}')
+print()
+print('Saved to predictions.csv')
+"
 
 ```
 
@@ -4962,6 +9374,15 @@ Saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print(df)
+print()
+print('Shape:', df.shape)
+print('Columns:', df.columns.tolist())
+print('Test set size:', len(pd.read_csv('data/test.csv')))
+"
 
 ```
 

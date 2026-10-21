@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+cd data && head -20 train.csv && echo "---" && wc -l train.csv test.csv && echo "---" && head -20 test.csv
 ```
 
 ## [3] tool
@@ -109,7 +109,19 @@ t
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+print(d.head())
+print(d.tail())
+print(d.describe())
+t=d['t'].values
+print('t range', t.min(), t.max(), len(t))
+print('median dt', np.median(np.diff(t)))
+a=d['alpha'].values; b=d['beta'].values
+print('alpha wrap check: minmax', a.min(), a.max())
+print('beta minmax', b.min(), b.max())
+"
 ```
 
 ## [5] tool
@@ -154,7 +166,25 @@ beta minmax 0.2162 359.9965
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values; a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+print('alpha unwrapped range', a_u.min(), a_u.max())
+print('beta unwrapped range', b_u.min(), b_u.max())
+# relationship beta vs alpha
+import numpy as np
+# correlation
+print('corr alpha_u vs beta_u', np.corrcoef(a_u,b_u)[0,1])
+# fit linear
+A=np.vstack([a_u,np.ones_like(a_u)]).T
+coef,res,_,_=np.linalg.lstsq(A,b_u,rcond=None)
+print('beta = a*m+c', coef)
+pred=A@coef
+print('resid std', np.std(b_u-pred))
+"
 ```
 
 ## [7] tool
@@ -201,6 +231,24 @@ resid std 35.84317047732713
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values; a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# fit beta_u vs t
+for deg in [1,2,3]:
+    c=np.polyfit(t,b_u,deg)
+    pred=np.polyval(c,t)
+    print('deg',deg,'resid std',np.std(b_u-pred))
+print()
+# fit alpha_u vs t
+for deg in [1,2]:
+    c=np.polyfit(t,a_u,deg)
+    pred=np.polyval(c,t)
+    print('alpha deg',deg,'resid std',np.std(a_u-pred))
+"
 
 ```
 
@@ -241,6 +289,25 @@ alpha deg 2 resid std 15.700977620515339
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values; a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+A=np.vstack([a_u,np.ones_like(a_u)]).T
+coef,_,_,_=np.linalg.lstsq(A,b_u,rcond=None)
+res=b_u-A@coef
+# residual vs t trend?
+# check periodicity: alpha wraps at 360. compute alpha mod 360
+amod=a%360
+# residual vs amod
+print('resid std overall', np.std(res))
+# does residual depend on amod (phase)?
+for lo in np.arange(0,360,60):
+    m=(amod>=lo)&(amod<lo+60)
+    print('amod',lo,int(m.sum()),'mean res',np.mean(res[m]),'std',np.std(res[m]))
+"
 
 ```
 
@@ -280,7 +347,22 @@ amod 300 479 mean res 1.9671570453446787 std 7.120837427653409
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sm=lowess(b_u,t,frac=0.03,return_sorted=False)
+res=b_u-sm
+print('lowess resid std', np.std(res))
+print('range of smooth', sm.min(), sm.max())
+# autoregressive structure of residual
+r=(res-np.mean(res))
+ac1=np.corrcoef(r[:-1],r[1:])[0,1]
+print('ac1 residual', ac1)
+"
 ```
 
 ## [13] tool
@@ -346,6 +428,27 @@ ac1 residual 0.7219961228917656
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sa=lowess(a_u,t,frac=0.03,return_sorted=False)
+sb=lowess(b_u,t,frac=0.03,return_sorted=False)
+A=np.vstack([sa,np.ones_like(sa)]).T
+coef,_,_,_=np.linalg.lstsq(A,sb,rcond=None)
+res=sb-A@coef
+print('smoothed linear resid std', np.std(res), 'range', res.min(), res.max())
+print('coef', coef)
+# is the relationship maybe piecewise/periodic in alpha phase
+amod=a%360
+# sm res vs amod
+for lo in np.arange(0,360,60):
+    m=(amod>=lo)&(amod<lo+60)
+    print('amod',lo,'mean res',np.mean(res[m]),'std',np.std(res[m]))
+"
 
 ```
 
@@ -392,6 +495,26 @@ amod 300 mean res 2.101485125654025 std 7.777694721334161
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sb=lowess(b_u,t,frac=0.05,return_sorted=False)
+db=np.gradient(sb,np.gradient(t))
+# plot derivative vs t bins
+order=np.argsort(t)
+ts=t[order]; dbs=db[order]
+for i in range(0,len(ts),1000):
+    seg=dbs[i:i+1000]
+    print('t',ts[i], 'mean deriv', np.mean(seg), 'std', np.std(seg))
+# linear fit on beta_u
+c=np.polyfit(t,b_u,1); print('linear slope',c[0])
+# check alpha slope
+ca=np.polyfit(t,a_u,1); print('alpha slope',ca[0])
+"
 
 ```
 
@@ -436,6 +559,20 @@ alpha slope 0.8494309384148243
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# linear fit residual over time
+c=np.polyfit(t,b_u,1); res=b_u-np.polyval(c,t)
+print('linear resid std', np.std(res))
+order=np.argsort(t)
+ts=t[order]; rs=res[order]
+for i in range(0,len(ts),500):
+    seg=rs[i:i+500]
+    print('t',ts[i],int(len(seg)),'mean resid',round(np.mean(seg),2),'std',round(np.std(seg),2))
+"
 
 ```
 
@@ -488,6 +625,19 @@ t 4000.0 143 mean resid -19.37 std 1.0
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+ca=np.polyfit(t,a_u,1); ra=a_u-np.polyval(ca,t)
+order=np.argsort(t); ts=t[order]; rs=ra[order]
+print('alpha linear resid std', np.std(ra))
+for i in range(0,len(ts),500):
+    seg=rs[i:i+500]
+    print('t',ts[i],int(len(seg)),'mean',round(np.mean(seg),2),'std',round(np.std(seg),2))
+"
 
 ```
 
@@ -520,7 +670,24 @@ t 4000.0 143 mean 13.18 std 7.1
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+from statsmodels.nonparametric.smoothers_lowess import lowess
+for fr in [0.01,0.03,0.1]:
+    sa=lowess(a_u,t,frac=fr,return_sorted=False)
+    print('alpha lowess frac',fr,'resid std',np.std(a_u-sa))
+for fr in [0.03]:
+    sb=lowess(b_u,t,frac=fr,return_sorted=False)
+    print('beta lowess frac',fr,'resid std',np.std(b_u-sb))
+# check autocorrelation of alpha near-linear residual
+r0=(a_u-np.polyval(np.polyfit(t,a_u,1),t))
+r1=r0-np.mean(r0)
+print('alpha resid ac1', np.corrcoef(r1[:-1],r1[1:])[0,1])
+"
 ```
 
 ## [23] tool
@@ -565,7 +732,22 @@ alpha resid ac1 0.997774479453099
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# detrend
+c=np.polyfit(t,b_u,1); res=b_u-np.polyval(c,t)
+# FFT
+n=len(t)
+dt=1.0
+freq=np.fft.rfftfreq(n,d=dt)
+spec=np.abs(np.fft.rfft(res-np.mean(res)))**2
+idx=np.argsort(spec)[::-1][:15]
+for i in idx:
+    print('period',round(1/freq[i],1) if freq[i]>0 else 0,'freq',freq[i],'power',spec[i])
+"
 ```
 
 ## [25] tool
@@ -610,7 +792,16 @@ period 159.3 freq 0.00627564566739078 power 14050788.226385273
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+for deg in range(1,15):
+    c=np.polyfit(t,b_u,deg)
+    res=b_u-np.polyval(c,t)
+    print('deg',deg,'resid std',round(np.std(res),3),'max',round(np.max(np.abs(res)),2))
+"
 ```
 
 ## [27] tool
@@ -654,7 +845,29 @@ deg 14 resid std 17.256 max 42.31
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# beta_wrapped vs alpha_wrapped: is beta a deterministic function of alpha (mod 360)?
+# Check: within same alpha_mod bin, is beta_mod consistent? 
+amod=a%360
+bmod=b%360
+# sort by amod within bins
+print('uniq alpha bins of width 5, check beta spread:')
+for lo in np.arange(0,360,10):
+    m=(amod>=lo)&(amod<lo+10)
+    vals=np.unique(np.round(bmod[m],1))
+    if len(m)>0 and len(vals)<20 and len(vals)>0:
+        pass
+    if int(m.sum()) in [1,0]: continue
+    # compute circular mean and spread
+    ang=np.deg2rad(bmod[m])
+    spread=np.std(np.angle(np.exp(1j*ang)))
+    print('amod',lo,'n',int(m.sum()),'beta_mod mean',round(np.degrees(np.angle(np.exp(1j*ang).mean())),1),'spread',round(np.degrees(spread),1))
+" | head -40
 ```
 
 ## [29] tool
@@ -729,6 +942,24 @@ amod 350 n 83 beta_mod mean -85.4 spread 107.5
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# sort by alpha_u
+o=np.argsort(a_u)
+au=a_u[o]; bu=b_u[o]
+# check monotonic alpha in t
+print('alpha monotonic in t:', np.all(np.diff(a_u)>0))
+# Check beta_u as function of alpha_u smoothness via lowess
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sm=lowess(bu,au,frac=0.02,return_sorted=False)
+res=bu-sm
+print('beta_u(alpha_u) lowess frac0.02 resid std', np.std(res))
+# also check whether beta is function of alpha_u with small noise
+"
 
 ```
 
@@ -795,7 +1026,27 @@ beta_u(alpha_u) lowess frac0.02 resid std 0.9380310838519138
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# remove linear in alpha_u
+A=np.vstack([a_u,np.ones_like(a_u)]).T
+coef,_,_,_=np.linalg.lstsq(A,b_u,rcond=None)
+res=b_u-A@coef
+# spectral analysis vs alpha_u (period in alpha_u degrees)
+au=a_u-a_u.min()
+n=len(au)
+freq=np.fft.rfftfreq(n,d=np.median(np.diff(au)))
+spec=np.abs(np.fft.rfft(res-np.mean(res)))**2
+idx=np.argsort(spec)[::-1][:12]
+for i in idx:
+    if freq[i]>0:
+        print('period in alpha_deg',round(1/freq[i],1),'power',round(spec[i]/1e6,1))
+print('coef',coef)
+"
 ```
 
 ## [33] tool
@@ -877,7 +1128,44 @@ coef [  0.34835038 140.4917002 ]
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t)
+split=int(n*0.8)
+tr=(np.arange(n)<split); va=(np.arange(n)>=split)
+tt=t[tr]; at=a_u[tr]; bt=b_u[tr]
+tv=t[va]; av=a_u[va]; bv=b_u[va]
+# 1) alpha linear
+ca=np.polyfit(tt,at,1)
+ap=np.polyval(ca,tv)
+print('alpha lin resid train std', np.std(at-np.polyval(ca,tt)))
+# 2) g smooth beta vs alpha from train using lowess
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sm=lowess(bt,at,frac=0.02,return_sorted=False)
+# predict g for validation alpha (interpolate) - need sorted
+order=np.argsort(at); ats=at[order]; bts=bt[order]
+sm_low=lowess(bt,at,frac=0.02,return_sorted=False)
+g_interp=np.interp(ap,ats,sm_low[order] if False else sm_low[order])
+# actually lowess returns in original order; sort
+sml=lowess(bts,ats,frac=0.02,return_sorted=False) # now sorted? 
+# let me redo carefully
+sml2=lowess(bt,at,frac=0.02)
+gv=np.interp(ap,sml2[:,0],sml2[:,1])
+# also pure beta-linear-in-t for comparison
+cb=np.polyfit(tt,bt,1); bp=np.polyval(cb,tv)
+import numpy as np
+def circ(deg):
+    return (deg+180)%360-180
+err_g=circ(gv-bv); err_b=circ(bp-bv)
+print('g-based MAE', np.mean(np.abs(err_g)), 'RMSE', np.sqrt(np.mean(err_g**2)))
+print('beta-lin MAE', np.mean(np.abs(err_b)), 'RMSE', np.sqrt(np.mean(err_b**2)))
+# obs noise estimate
+print('lowess resid train std beta', np.std(bt-lowess(bt,at,frac=0.02,return_sorted=False)))
+"
 ```
 
 ## [35] tool
@@ -911,7 +1199,20 @@ lowess resid train std beta 0.8646069217380248
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+A=np.vstack([a_u,np.ones_like(a_u)]).T
+coef,_,_,_=np.linalg.lstsq(A,b_u,rcond=None)
+res=b_u-A@coef
+amod=a%360
+for lo in np.arange(0,360,30):
+    m=(amod>=lo)&(amod<lo+30)
+    print('amod',lo,'n',int(m.sum()),'mean res',round(np.mean(res[m]),2),'std',round(np.std(res[m]),2))
+"
 ```
 
 ## [37] tool
@@ -981,7 +1282,22 @@ amod 330 n 243 mean res -1.01 std 5.12
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+o=np.argsort(a_u); au=a_u[o]; bu=b_u[o]
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sm=lowess(bu,au,frac=0.02)
+# sample g at alpha points
+grid=np.linspace(au.min(),au.max(),50)
+g=np.interp(grid,sm[:,0],sm[:,1])
+for i in range(0,50,5):
+    print('alpha',round(grid[i],0),'beta_u',round(g[i],1))
+print('alpha range', au.min(), au.max())
+"
 ```
 
 ## [39] tool
@@ -1024,7 +1340,21 @@ alpha range 212.67070000000004 3749.5776
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+o=np.argsort(a_u); au=a_u[o]; bu=b_u[o]
+for i in range(0,len(au),250):
+    print('alpha',round(au[i],1),'beta_u',round(bu[i],1))
+print()
+# check monotonic in alpha
+print('beta monotonic in alpha:', np.all(np.diff(bu)>0))
+# slope estimate via robust: total change
+print('total change', bu[-1]-bu[0], au[-1]-au[0])
+"
 ```
 
 ## [41] tool
@@ -1085,7 +1415,22 @@ total change 1151.2437999999997 3536.9069
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+for w0 in [0,500,1000,1500,2000,2500,3000,3500,4000]:
+    m=(t>=w0)&(t<w0+300)
+    tt=t[m]; aa=a_u[m]; bb=b_u[m]
+    da=aa[-1]-aa[0]; db=bb[-1]-bb[0]
+    # local slope beta vs alpha
+    if abs(da)>1:
+        c=np.polyfit(aa,bb,1)
+        resid=np.std(bb-np.polyval(c,aa))
+        print('t',w0,'t:{}-{}'.format(int(tt[0]),int(tt[-1])),'da',round(da,1),'db',round(db,1),'beta/alpha slope',round(c[0],3),'resid',round(resid,2))
+"
 ```
 
 ## [43] tool
@@ -1126,7 +1471,32 @@ t 4000 t:4000-4142 da 99.2 db 39.7 beta/alpha slope 0.413 resid 1.53
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# cross correlation at lags (days). Since both ~ linear, detrend first.
+ca=np.polyfit(t,a_u,1); cb=np.polyfit(t,b_u,1)
+ra=a_u-np.polyval(ca,t); rb=b_u-np.polyval(cb,t)
+n=len(t)
+best=None
+for lag in range(-2000,2001,10):
+    # corr between rb and ra shifted by lag
+    x=ra; y=rb
+    if lag>=0:
+        xv=ra[lag:]; yv=rb[:n-lag]
+    else:
+        xv=ra[:lag]; yv=rb[-lag:]
+    if len(xv)<100: continue
+    c=np.corrcoef(xv,yv)[0,1]
+    if best is None or abs(c)>abs(best[1]):
+        best=(lag,c)
+    if lag%500==0:
+        print('lag',lag,'corr',round(c,3))
+print('best lag',best)
+"
 ```
 
 ## [45] tool
@@ -1193,7 +1563,34 @@ best lag (820, np.float64(-0.19457890385700105))
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t); split=int(n*0.8)
+tr=(np.arange(n)<split); va=(np.arange(n)>=split)
+tt=t[tr]; y=b_u[tr]
+tv=t[va]; yv=b_u[va]
+def fit_predict(t1,y1,t2,periods):
+    # design matrix: 1,t, cos/sin for each period
+    cols=[np.ones_like(t1),t1]
+    for P in periods:
+        cols.append(np.cos(2*np.pi*t1/P)); cols.append(np.sin(2*np.pi*t1/P))
+    X=np.column_stack(cols)
+    coef,_,_,_=np.linalg.lstsq(X,y1,rcond=None)
+    C2=[np.ones_like(t2),t2]
+    for P in periods:
+        C2.append(np.cos(2*np.pi*t2/P)); C2.append(np.sin(2*np.pi*t2/P))
+    return np.column_stack(C2)@coef
+periods_m=[1381,1035.8,591.9]
+pred=fit_predict(tt,y,tv,periods_m)
+err=(pred-yv+180)%360-180
+print('harmonics periodic model RMSE', np.sqrt(np.mean(err**2)), 'MAE', np.mean(np.abs(err)))
+# base linear
+c=np.polyfit(tt,y,1); e=(np.polyval(c,tv)-yv+180)%360-180
+print('linear RMSE', np.sqrt(np.mean(e**2)),'MAE',np.mean(np.abs(e)))
+"
 ```
 
 ## [47] tool
@@ -1273,7 +1670,22 @@ linear RMSE 38.22150636599983 MAE 31.878925140982385
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def show(w0,w1):
+    m=(t>=w0)&(t<=w1)
+    tt=t[m]; aa=a_u[m]; bb=b_u[m]
+    print('--- window',w0,w1,'n',len(tt))
+    step=(w1-w0)//20
+    for i in range(0,len(tt),step):
+        print(' t',int(tt[i]),'alpha_u',round(aa[i],1),'beta_u',round(bb[i],1))
+show(0,500)
+show(1000,1500)
+"
 ```
 
 ## [49] tool
@@ -1359,6 +1771,29 @@ linear RMSE 38.22150636599983 MAE 31.878925140982385
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# circular linear: beta_u = m*alpha_u + c
+A=np.vstack([a_u,np.ones_like(a_u)]).T
+coef,_,_,_=np.linalg.lstsq(A,b_u,rcond=None)
+pred=(A@coef)%360
+err=(pred-b+180)%360-180
+print('circular linear RMSE', np.round(np.sqrt(np.mean(err**2)),2),'MAE',round(np.mean(np.abs(err)),2))
+print('m',coef[0])
+# try m such that over long run. Maybe m = slope ratio? let's also do circular regression minimizing circular error via grid on m
+best=None
+for m in np.linspace(0.1,0.6,501):
+    bb=(b_u-m*a_u)%360
+    e=(bb-b+180)%360-180
+    rmse=np.sqrt(np.mean(e**2))
+    if best is None or rmse<best[0]:
+        best=(rmse,m)
+print('best m by circular rmse', round(best[1],4), 'rmse', round(best[0],2))
+"
 
 ```
 
@@ -1400,7 +1835,35 @@ best m by circular rmse 0.122 rmse 98.79
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+A=np.vstack([a_u,np.ones_like(a_u)]).T
+coef,_,_,_=np.linalg.lstsq(A,b_u,rcond=None)
+res=b_u-A@coef
+# autocorrelation of res vs alpha to find period
+o=np.argsort(a_u); au=a_u[o]; ru=res[o]
+# upsample to regular alpha grid
+agrid=np.linspace(au.min(),au.max(),2000)
+rg=np.interp(agrid,au,ru)
+# autocorrelation
+r=rg-np.mean(rg)
+ac=np.correlate(r,r,'full')[len(r):]
+ac=ac/ac[0]
+# find peaks
+for lag in range(1,len(ac)):
+    if ac[lag]<0.5: pass
+# find first local max above small threshold
+from scipy.signal import find_peaks
+pks,_=find_peaks(ac,height=0.1)
+spacing=np.median(np.diff(agrid))
+periods=[agrid[p]-agrid[0] for p in pks[:8]]
+print('alpha period candidates:', [round(x,1) for x in periods])
+print('ac values at those', [round(ac[p],2) for p in pks[:8]])
+"
 ```
 
 ## [53] tool
@@ -1433,7 +1896,39 @@ ac values at those [np.float64(0.69), np.float64(0.35)]
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t); split=int(n*0.8)
+tr=(np.arange(n)<split); va=(np.arange(n)>=split)
+# For validation, we know alpha_u but simulate forecasting alpha via linear extrapolation from train
+tt=t[tr]; at=a_u[tr]; bt=b_u[tr]
+tv=t[va]; av=a_u[va]; bv=b_u[va]
+def evaluate(P):
+    # alpha forecast linear from train
+    ca=np.polyfit(tt,at,1); ap=np.polyval(ca,tv)
+    # fit beta_u = m*alpha_u + p(alpha mod P) on train
+    # define alpha_mod in [0,P)
+    amod=(at%P); apmod=(ap%P)
+    Amat=np.vstack([np.ones_like(at), at]).T
+    cm,_,_,_=np.linalg.lstsq(Amat,bt,rcond=None)
+    # p = residual
+    p=bt-Amat@cm
+    o=np.argsort(amod); ams=amod[o]; ps=p[o]
+    # smooth p vs amod
+    from statsmodels.nonparametric.smoothers_lowess import lowess
+    sm=lowess(ps,ams,frac=0.05,return_sorted=False)
+    pinterp=np.interp(apmod,ams[o],sm[o])
+    pred=cm[1]*ap+cm[0]+pinterp
+    err=(pred-bv+180)%360-180
+    return np.sqrt(np.mean(err**2)), np.mean(np.abs(err)), cm[1]
+for P in [880,990,1076,1090,1200,1300,1381]:
+    r1,r2,m=evaluate(P)
+    print('P',P,'RMSE',round(r1,2),'MAE',round(r2,2),'m',round(m,4))
+"
 ```
 
 ## [55] tool
@@ -1478,6 +1973,40 @@ P 1381 RMSE 57.02 MAE 48.65 m 0.3431
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# detrend linear
+c=np.polyfit(t,b_u,1); res=b_u-np.polyval(c,t)
+# autocorrelation vs lag in days
+o=np.argsort(t); ts=t[o]; rs=res[o]
+# upsample to regular grid
+tg=np.linspace(ts.min(),ts.max(),4000)
+rg=np.interp(tg,ts,rs)
+r=rg-np.mean(rg); ac=np.correlate(r,r,'full')[len(r):]; ac=ac/ac[0]
+dag=np.diff(tg).mean()
+pks,_=find_peaks(ac,height=0.2)
+for p in pks[:10]:
+    print('lag days',round(p*dag,1),'ac',round(ac[p],2))
+print('dag',dag)
+" 2>/dev/null || cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.signal import find_peaks
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+c=np.polyfit(t,b_u,1); res=b_u-np.polyval(c,t)
+o=np.argsort(t); ts=t[o]; rs=res[o]
+tg=np.linspace(ts.min(),ts.max(),4000)
+rg=np.interp(tg,ts,rs)
+r=rg-np.mean(rg); ac=np.correlate(r,r,'full')[len(r):]; ac=ac/ac[0]
+dag=np.diff(tg).mean()
+pks,_=find_peaks(ac,height=0.2)
+for p in pks[:10]:
+    print('lag days',round(p*dag,1),'ac',round(ac[p],2))
+"
 
 ```
 
@@ -1492,7 +2021,22 @@ bash: line 19: cd: data: No such file or directory
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.signal import find_peaks
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+c=np.polyfit(t,b_u,1); res=b_u-np.polyval(c,t)
+o=np.argsort(t); ts=t[o]; rs=res[o]
+tg=np.linspace(ts.min(),ts.max(),4000)
+rg=np.interp(tg,ts,rs)
+r=rg-np.mean(rg); ac=np.correlate(r,r,'full')[len(r):]; ac=ac/ac[0]
+dag=np.diff(tg).mean()
+pks,_=find_peaks(ac,height=0.15)
+for p in pks[:12]:
+    print('lag days',round(p*dag,1),'ac',round(ac[p],2))
+"
 ```
 
 ## [59] tool
@@ -1542,7 +2086,31 @@ lag days 2538.6 ac 0.33
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t); split=int(n*0.8)
+tr=(np.arange(n)<split); va=(np.arange(n)>=split)
+tt=t[tr]; y=b_u[tr]; tv=t[va]; yv=b_u[va]
+def fh(t1,t2,periods,nharm=1):
+    cols=[np.ones_like(t1),t1]
+    for P in periods:
+        for h in range(1,nharm+1):
+            cols.append(np.cos(2*np.pi*h*t1/P)); cols.append(np.sin(2*np.pi*h*t1/P))
+    X=np.column_stack(cols); coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    Cs=[np.ones_like(t2),t2]
+    for P in periods:
+        for h in range(1,nharm+1):
+            Cs.append(np.cos(2*np.pi*h*t2/P)); Cs.append(np.sin(2*np.pi*h*t2/P))
+    return np.column_stack(Cs)@coef
+for nh in [1,2,3]:
+    for P in [1216,1268,1300,1381]:
+        pred=fh(tt,y,tv,[P],nh)
+        err=(pred-yv+180)%360-180
+        print('P',P,'nh',nh,'RMSE',round(np.sqrt(np.mean(err**2)),1),'MAE',round(np.mean(np.abs(err)),1))
+"
 ```
 
 ## [61] tool
@@ -1558,7 +2126,31 @@ TypeError: fh() takes from 3 to 4 positional arguments but 5 were given
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t); split=int(n*0.8)
+tr=(np.arange(n)<split); va=(np.arange(n)>=split)
+tt=t[tr]; y=b_u[tr]; tv=t[va]; yv=b_u[va]
+def fh(periods,nharm):
+    cols=[np.ones_like(tt),tt]
+    for P in periods:
+        for h in range(1,nharm+1):
+            cols.append(np.cos(2*np.pi*h*tt/P)); cols.append(np.sin(2*np.pi*h*tt/P))
+    X=np.column_stack(cols); coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    Cs=[np.ones_like(tv),tv]
+    for P in periods:
+        for h in range(1,nharm+1):
+            Cs.append(np.cos(2*np.pi*h*tv/P)); Cs.append(np.sin(2*np.pi*h*tv/P))
+    return np.column_stack(Cs)@coef
+for nh in [1,2,3]:
+    for P in [1216,1268,1300,1381]:
+        pred=fh([P],nh)
+        err=(pred-yv+180)%360-180
+        print('P',P,'nh',nh,'RMSE',round(np.sqrt(np.mean(err**2)),1),'MAE',round(np.mean(np.abs(err)),1))
+"
 ```
 
 ## [63] tool
@@ -1592,7 +2184,30 @@ P 1381 nh 3 RMSE 45.6 MAE 39.2
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t); split=int(n*0.7)
+tr=(np.arange(n)<split); va=(np.arange(n)>=split)
+tt=t[tr]; y=b_u[tr]; tv=t[va]; yv=b_u[va]
+print('val range', tv.min(), tv.max(), 'ahead days', tv.max()-tt.max())
+def fh(P,nh):
+    cols=[np.ones_like(tt),tt]
+    for h in range(1,nh+1):
+        cols.append(np.cos(2*np.pi*h*tt/P)); cols.append(np.sin(2*np.pi*h*tt/P))
+    X=np.column_stack(cols); coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    Cs=[np.ones_like(tv),tv]
+    for h in range(1,nh+1):
+        Cs.append(np.cos(2*np.pi*h*tv/P)); Cs.append(np.sin(2*np.pi*h*tv/P))
+    return (np.column_stack(Cs)@coef, coef, X)
+for nh in [2,3,4,5]:
+    for P in [1268,1300,1200,1280]:
+        pred,coef,X=fh(P,nh)
+        err=(pred-yv+180)%360-180
+        print('P',P,'nh',nh,'RMSE',round(np.sqrt(np.mean(err**2)),1),'MAE',round(np.mean(np.abs(err)),1))
+"
 ```
 
 ## [65] tool
@@ -1651,7 +2266,27 @@ P 1280 nh 5 RMSE 7.3 MAE 6.2
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# optimize period, fit harmonic, compute residual std on full data
+def fit_resid(P,nh):
+    cols=[np.ones_like(t),t]
+    for h in range(1,nh+1):
+        cols.append(np.cos(2*np.pi*h*t/P)); cols.append(np.sin(2*np.pi*h*t/P))
+    X=np.column_stack(cols); coef,_,_,_=np.linalg.lstsq(X,b_u,rcond=None)
+    res=b_u-X@coef
+    return np.std(res), coef, X
+for nh in [3,4,5,6]:
+    import numpy as np
+    best=(1e9,None)
+    for P in np.arange(1240,1320,1.0):
+        s,_,_=fit_resid(P,nh)
+        if s<best[0]: best=(s,P)
+    print('nh',nh,'best P',round(best[1],1),'resid std',round(best[0],3))
+"
 ```
 
 ## [67] tool
@@ -1699,7 +2334,32 @@ nh 6 best P 1279.0 resid std 4.153
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# fit harmonic on t<=3000, predict t>3000
+P=1278.0; nh=4
+train=t<=3000
+tt=t[train]; y=b_u[train]
+cols=[np.ones_like(tt),tt]
+for h in range(1,nh+1):
+    cols.append(np.cos(2*np.pi*h*tt/P)); cols.append(np.sin(2*np.pi*h*tt/P))
+X=np.column_stack(cols); coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+tv=t[~train]; yv=b_u[~train]
+Cs=[np.ones_like(tv),tv]
+for h in range(1,nh+1):
+    Cs.append(np.cos(2*np.pi*h*tv/P)); Cs.append(np.sin(2*np.pi*h*tv/P))
+pred=np.column_stack(Cs)@coef
+err=(pred-yv+180)%360-180
+hv=tv-3000
+# bin by horizon
+for lo in range(0,1200,200):
+    m=(hv>=lo)&(hv<lo+200)
+    if m.sum()>0:
+        print('horizon',lo,'n',int(m.sum()),'RMSE',round(np.sqrt(np.mean(err[m]**2)),1),'MAE',round(np.mean(np.abs(err[m])),1),'p95',round(np.percentile(np.abs(err[m]),95),1))
+"
 ```
 
 ## [69] tool
@@ -1757,7 +2417,28 @@ horizon 1000 n 143 RMSE 5.4 MAE 5.2 p95 8.1
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+res=b_u-sm
+print('lowess frac0.05 resid std', np.std(res))
+P=1278.0
+phase=t%P
+# break into 3 cycles and compare sm at similar phase
+# sort by phase
+o=np.argsort(phase); ph=phase[o]; smv=sm[o]
+# sample shape on regular phase grid and compare across cycles
+uniq_ph,counts=np.unique(np.round(ph).astype(int),return_counts=True)
+# compute per-cycle
+cycle=(t/P).astype(int)
+for cy in sorted(np.unique(cycle)):
+    m=cycle==cy
+    print('cycle',cy,'t range',int(t[m].min()),int(t[m].max()),'n',int(m.sum()))
+"
 ```
 
 ## [71] tool
@@ -1782,7 +2463,33 @@ cycle 3 t range 3834 4142 n 309
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+P=1278.0
+phase=t%P
+cycle=(t/P).astype(int)
+# use cycles 0,1,2 (full), bin phase into 36 bins, get mean sm per phase per cycle
+phase_bin=(phase/ (P/36)).astype(int)
+# table: for each phase bin and cycle, mean sm
+print('phase: cycles0,1,2 mean sm (wrapped? no unwrapped)')
+grid=np.arange(36)
+vals=np.zeros((36,3))
+for cy in [0,1,2]:
+    for pb in range(36):
+        m=(cycle==cy)&(phase_bin==pb)
+        if m.sum()>0: vals[pb,cy]=sm[m].mean()
+# print header
+for pb in range(0,36,3):
+    print('phase~',round(pb/36*360),'c0',round(vals[pb,0],1),'c1',round(vals[pb,1],1),'c2',round(vals[pb,2],1))
+# consistency: std across cycles per phase bin (of sm), these are on unwrapped scale
+spread=np.std(vals[:len(phase[cycle<3])],axis=1)
+print('mean spread across cycles (degrees):', round(np.nanmean(spread),1))
+"
 ```
 
 ## [73] tool
@@ -1816,7 +2523,30 @@ mean spread across cycles (degrees): 306.6
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+P=1278.0
+phase=t%P; cycle=(t/P).astype(int)
+# detrend sm: beta_u linear minus sm
+c=np.polyfit(t,sm,1); detrend=sm-np.polyval(c,t)
+phase_bin=(phase/(P/36)).astype(int)
+vals=np.zeros((36,3))
+for cy in [0,1,2]:
+    for pb in range(36):
+        m=(cycle==cy)&(phase_bin==pb)
+        if m.sum()>0: vals[pb,cy]=detrend[m].mean()
+print('detrended oscillation (deg) per cycle by phase')
+# consistent scale
+for pb in range(0,36,3):
+    print('phase~',round(pb/36*360),'c0',round(vals[pb,0],1),'c1',round(vals[pb,1],1),'c2',round(vals[pb,2],1))
+spread=np.nanstd(vals,axis=1)
+print('mean std of detrended osc across cycles:',round(np.nanmean(spread),1),'max',round(np.nanmax(spread),1))
+"
 ```
 
 ## [75] tool
@@ -1868,7 +2598,27 @@ mean std of detrended osc across cycles: 3.2 max 6.9
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+# optimize P by cross-cycle fold consistency of detrended osc
+from statsmodels.nonparametric.smoothers_lowess import lowess
+def osc_std(P,nbins=36):
+    phase=t%P; cycle=(t/P).astype(int)
+    sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+    c=np.polyfit(t,sm,1); detrend=sm-np.polyval(c,t)
+    pb=(phase/(P/nbins)).astype(int)
+    vals=np.full((nbins,3),np.nan)
+    for cy in [0,1,2]:
+        for i in range(nbins):
+            m=(cycle==cy)&(pb==i)
+            if m.sum()>0: vals[i,cy]=detrend[m].mean()
+    return np.nanmean(np.nanstd(vals,axis=1))
+for P in [1260,1270,1275,1278,1280,1290,1300,1250]:
+    print('P',P,'mean fold std',round(osc_std(P),2))
+"
 ```
 
 ## [77] tool
@@ -1894,7 +2644,29 @@ P 1250 mean fold std 5.53
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+from statsmodels.nonparametric.smoothers_lowess import lowess
+def osc_std(P,nbins=36):
+    phase=t%P; cycle=(t/P).astype(int)
+    sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+    c=np.polyfit(t,sm,1); detrend=sm-np.polyval(c,t)
+    pb=(phase/(P/nbins)).astype(int)
+    vals=np.full((nbins,3),np.nan)
+    for cy in [0,1,2]:
+        for i in range(nbins):
+            m=(cycle==cy)&(pb==i)
+            if m.sum()>0: vals[i,cy]=detrend[m].mean()
+    return np.nanmean(np.nanstd(vals,axis=1))
+res=[]
+for P in np.arange(1262,1282,0.5):
+    res.append((osc_std(P),P))
+res.sort()
+for s,P in res[:8]: print(round(P,1),round(s,3))
+"
 ```
 
 ## [79] tool
@@ -1947,7 +2719,56 @@ P 1250 mean fold std 5.53
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+P=1272.0
 
+def build_shape(t_sel,b_sel,m,c0,t_ph=P,nbins=72):
+    # returns function O(phase)->deg via interpolation
+    osc=b_sel-(m*t_sel+c0)
+    phase=t_sel%t_ph
+    pgrid=np.linspace(0,t_ph,nbins+1)[:-1]
+    mean_shape=np.zeros(nbins)
+    pb=(phase/(t_ph/nbins)).astype(int)
+    for i in range(nbins):
+        mean_shape[i]=osc[pb==i].mean() if (pb==i).sum()>0 else np.nan
+    # fill nan
+    good=~np.isnan(mean_shape)
+    mean_shape=np.interp(np.arange(nbins), np.where(good)[0], mean_shape[good])
+    pcol=np.column_stack([pgrid,mean_shape])
+    # append wrap
+    pcolw=np.vstack([pcol, np.array([[t_ph, mean_shape[0]]])])
+    return pcolw
+
+def predict(t_test,m,c0,shape,t_ph=P):
+    ph=t_test%t_ph
+    O=np.interp(np.mod(ph,t_ph), shape[:,0], shape[:,1])
+    return m*t_test+c0+O
+
+def run(train_mask):
+    tt=t[train_mask]; y=b_u[train_mask]
+    sm=lowess(y,tt,frac=0.05,return_sorted=False)
+    c=np.polyfit(tt,sm,1); m,cc=c
+    shape=build_shape(tt,y,m,cc)
+    tv=t[~train_mask]; yv=b_u[~train_mask]
+    pred=predict(tv,m,cc,shape)
+    return tv,pred,yv
+
+for th in [3000,3314,2500]:
+    tv,pred,yv=run(t<=th)
+    err=(pred-yv+180)%360-180
+    h=tv-th
+    print('train<=',th,'val',tv.min(),tv.max(),'maxhorizon',round(h.max()))
+    print('  overall RMSE',round(np.sqrt(np.mean(err**2)),1),'MAE',round(np.mean(np.abs(err)),1))
+    # by horizon bins
+    for lo in range(0,int(h.max()),250):
+        m=(h>=lo)&(h<lo+250)
+        if m.sum()>0: print('   h',lo,'n',int(m.sum()),'RMSE',round(np.sqrt(np.mean(err[m]**2)),1),'p95',round(np.percentile(np.abs(err[m]),95),1))
+"
 ```
 
 ## [81] tool
@@ -2007,7 +2828,33 @@ train<= 2500 val 2501.0 4142.0 maxhorizon 1642
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+test=pd.read_csv('test.csv'); tt=test['t'].values.astype(float)
+P=1272.0
+nbins=120
+sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+c=np.polyfit(t,sm,1); m,cc=c
+osc=b_u-(m*t+cc)
+phase=t%P
+pb=(phase/(P/nbins)).astype(int)
+shape=np.zeros(nbins)
+for i in range(nbins):
+    shape[i]=osc[pb==i].mean() if (pb==i).sum()>0 else np.nan
+good=~np.isnan(shape); shape=np.interp(np.arange(nbins),np.where(good)[0],shape[good])
+pgrid=np.linspace(0,P,nbins+1)[:-1]
+shape_full=np.vstack([pgrid,shape]).T
+tph=tt%P
+O=np.interp(tph,pgrid,shape)
+pred_u=m*tt+cc+O
+pred=(pred_u%360+360)%360
+for i in range(len(tt)):
+    print('t',int(tt[i]),'phase',round(tph[i],0),'beta_u',round(pred_u[i],1),'pred_wrap',round(pred[i],1))
+"
 ```
 
 ## [83] tool
@@ -2049,7 +2896,29 @@ t 5964 phase 876.0 beta_u 1953.7 pred_wrap 153.7
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+P=1272.0; nbins=120
+sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+c=np.polyfit(t,sm,1); m,cc=c
+osc=b_u-(m*t+cc)
+phase=t%P; pb=(phase/(P/nbins)).astype(int)
+shape=np.zeros(nbins)
+for i in range(nbins):
+    shape[i]=osc[pb==i].mean() if (pb==i).sum()>0 else np.nan
+good=~np.isnan(shape); shape=np.interp(np.arange(nbins),np.where(good)[0],shape[good])
+pgrid=np.linspace(0,P,nbins+1)[:-1]
+# print shape in deg around interesting phases
+for ph in range(0,360,20):
+    # phase index = ph/360*P
+    idx=ph/360*nbins
+    i0=int(idx)%nbins
+    print('phase_deg',ph,'osc',round(shape[i0],1))
+"
 ```
 
 ## [85] tool
@@ -2093,7 +2962,31 @@ phase_deg 340 osc 56.0
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+P=1272.0; nbins=120
+sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+c=np.polyfit(t,sm,1); m,cc=c
+osc=b_u-(m*t+cc)
+phase=t%P; pb=(phase/(P/nbins)).astype(int)
+shape=np.zeros(nbins)
+for i in range(nbins):
+    shape[i]=osc[pb==i].mean() if (pb==i).sum()>0 else np.nan
+good=~np.isnan(shape); shape=np.interp(np.arange(nbins),np.where(good)[0],shape[good])
+pgrid=np.linspace(0,P,nbins+1)[:-1]
+O=np.interp(phase,pgrid,shape)
+pred_u=m*t+cc+O
+res=pred_u-b_u  # model - data; circular noise
+# separate observation noise from modeling: this is essentially data not fitting fold shape
+print('in-sample resid std of fold model', np.round(np.std(res),2))
+# also lowess of beta_u resid
+print('lowess frac.05 resid', round(np.std(b_u-sm),2))
+print('m',m,'c0',cc)
+"
 ```
 
 ## [87] tool
@@ -2163,7 +3056,24 @@ m 0.29582345337626936 c0 221.88297038714575
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+P=1272.0
+sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+c=np.polyfit(t,sm,1); m,cc=c
+osc=b_u-(m*t+cc)
+phase=t%P
+m_last=t>=4000
+print('last points phase and osc:')
+for i in np.where(m_last)[0][::10]:
+    print(' t',int(t[i]),'phase',round(phase[i],0),'beta_u',round(b_u[i],1),'osc',round(osc[i],1))
+print('m',m)
+print('at t=4144 raw: phase', round(4144%P,0))
+"
 ```
 
 ## [89] tool
@@ -2215,7 +3125,22 @@ at t=4144 raw: phase 328.0
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+P=1272.0
+sm=lowess(b_u,t,frac=0.05,return_sorted=False)
+c=np.polyfit(t,sm,1); m,cc=c
+osc=b_u-(m*t+cc)
+phase=t%P
+for target in [50,120,200,300,324,340,400,600,700,850,1000,1100,1200,1250]:
+    msel=np.abs(phase-target)<3
+    vals=[(int(t[i]),round(osc[i],1)) for i in np.where(msel)[0]]
+    print('phase',target,'(n',len(vals),'):',vals)
+"
 ```
 
 ## [91] tool
@@ -2298,7 +3223,30 @@ phase 1250 (n 15 ): [(1248, np.float64(60.2)), (1249, np.float64(59.2)), (1250, 
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+P=1272.0
+# base via lowess with large frac
+base=lowess(b_u,t,frac=0.6,return_sorted=False)
+osc=b_u-base
+print('base is smooth; osc resid std', round(np.std(osc),2))
+# check osc consistency across cycles at phases
+phase=t%P
+for target in [300,600,850,1100,1250,150,200]:
+    m=np.abs(phase-target)<3
+    vals=[(round(base[i],0), round(osc[i],1)) for i in np.where(m)[0]]
+    # group by cycle
+    groups={}
+    for i in np.where(m)[0]:
+        cy=int(t[i]//P)
+        groups.setdefault(cy,[]).append(round(osc[i],1))
+    out='; '.join(f'c{k} mean osc {np.mean(v):.1f}' for k,v in sorted(groups.items()))
+    print('phase',target,out)
+"
 ```
 
 ## [93] tool
@@ -2346,7 +3294,32 @@ phase 200 c0 mean osc 0.7; c1 mean osc -2.2; c2 mean osc -7.7; c3 mean osc -21.2
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def harm_fit(P,nh,t_sel=None,b_sel=None):
+    tt = t if t_sel is None else t_sel
+    y = b_u if b_sel is None else b_sel
+    cols=[np.ones_like(tt),tt]
+    for h in range(1,nh+1):
+        cols.append(np.cos(2*np.pi*h*tt/P)); cols.append(np.sin(2*np.pi*h*tt/P))
+    X=np.column_stack(cols); coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    return coef,X
+def harm_pred(P,nh,coef,t2):
+    Cs=[np.ones_like(t2),t2]
+    for h in range(1,nh+1):
+        Cs.append(np.cos(2*np.pi*h*t2/P)); Cs.append(np.sin(2*np.pi*h*t2/P))
+    return np.column_stack(Cs)@coef
+coef,_=harm_fit(1272,4)
+res=b_u-harm_pred(1272,4,coef,t)
+print('global resid std nh4 P1272', round(np.std(res),2))
+m_last=t>=4000
+print('last 3 residuals:', res[m_last][-3:].round(1))
+# check first 3
+print('first 3 residuals:', res[:3].round(1))
+"
 ```
 
 ## [95] tool
@@ -2375,7 +3348,24 @@ first 3 residuals: [0.5 1.1 1.7]
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def fit_mod(P,nh,deg):
+    cols=[t**k for k in range(deg+1)]
+    for h in range(1,nh+1):
+        cols.append(np.cos(2*np.pi*h*t/P)); cols.append(np.sin(2*np.pi*h*t/P))
+    X=np.column_stack(cols); coef,_,_,_=np.linalg.lstsq(X,b_u,rcond=None)
+    res=b_u-X@coef
+    return np.std(res), res
+for deg in [1,2,3]:
+    for nh in [3,4]:
+        for P in [1272,1300]:
+            s,res=fit_mod(P,nh,deg)
+            print('deg',deg,'nh',nh,'P',P,'resid std',round(s,2),'last res',round(res[-1],1),'first res',round(res[0],1))
+"
 ```
 
 ## [97] tool
@@ -2409,7 +3399,25 @@ deg 3 nh 4 P 1300 resid std 6.74 last res 1.7 first res 4.9
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def fit_mod(P,nh):
+    cols=[np.ones_like(t),t]
+    for h in range(1,nh+1):
+        cols.append(np.cos(2*np.pi*h*t/P)); cols.append(np.sin(2*np.pi*h*t/P))
+    X=np.column_stack(cols); coef,_,_,_=np.linalg.lstsq(X,b_u,rcond=None)
+    res=b_u-X@coef
+    return np.std(res)
+for nh in [3,4]:
+    best=(1e9,0)
+    for P in np.arange(1200,1420,2.0):
+        s=fit_mod(P,nh)
+        if s<best[0]: best=(s,P)
+    print('nh',nh,'best P',round(best[1],1),'resid std',round(best[0],2))
+"
 ```
 
 ## [99] tool
@@ -2495,7 +3503,35 @@ nh 4 best P 1278.0 resid std 5.19
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); a=d['alpha'].values; b=d['beta'].values
+a_u=np.unwrap(np.deg2rad(a))*180/np.pi
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+n=len(t); split=int(n*0.8)
+tr=(np.arange(n)<split); va=(np.arange(n)>=split)
+tt=t[tr]; at=a_u[tr]; bt=b_u[tr]
+av=a_u[va]; bv=b_u[va]
+# Fit beta = m*alpha + p(alpha mod Pa), optimize Pa on validation with TRUE alpha
+def ev(Pa,nharm=2):
+    Amat=np.vstack([np.ones_like(at),at]).T
+    cm,_,_,_=np.linalg.lstsq(Amat,bt,rcond=None)
+    p=bt-Amat@cm
+    amod=at%Pa
+    o=np.argsort(amod); ams=amod[o]; ps=p[o]
+    # fit smooth p vs amod with harmonics or lowess
+    from statsmodels.nonparametric.smoothers_lowess import lowess
+    sm=lowess(ps,ams,frac=0.05,return_sorted=False)
+    avm=av%Pa
+    pin=np.interp(avm,ams[o],sm[o])
+    pred=cm[1]*av+cm[0]+pin
+    err=(pred-bv+180)%360-180
+    return np.sqrt(np.mean(err**2)), cm[1]
+for Pa in [900,1000,1076,1083,1100,1150,1200,1300,1400,1500]:
+    r,m=ev(Pa)
+    print('Pa',Pa,'RMSE',round(r,1),'m',round(m,3))
+"
 ```
 
 ## [101] tool
@@ -2557,7 +3593,51 @@ Pa 1500 RMSE 61.2 m 0.343
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+P=1278.0; nbins=600
+phase=t%P
+def fold_osc(resid):
+    pb=(phase/(P/nbins)).astype(int)
+    shp=np.full(nbins,np.nan)
+    for i in range(nbins):
+        shp[i]=resid[pb==i].mean() if (pb==i).sum()>0 else np.nan
+    good=~np.isnan(shp); shp=np.interp(np.arange(nbins),np.where(good)[0],shp[good])
+    return shp
+def unfold(shp, phase):
+    idx=(phase/(P/nbins)).astype(int)
+    return shp[idx]
+shp=fold_osc(b_u-np.polyval(np.polyfit(t,b_u,1),t))
+base=b_u-unfold(shp,phase)
+# smooth base
+base=lowess(base,t,frac=0.05,return_sorted=False)
+for it in range(10):
+    resid=b_u-base
+    shp=fold_osc(resid)
+    newbase=b_u-unfold(shp,phase)
+    newbase=lowess(newbase,t,frac=0.05,return_sorted=False)
+    base=newbase
+resid=b_u-base
+shp=fold_osc(resid)
+osc=b_u-base  # resid after base
+# check per-cycle osc at phases
+print('base resid std (osc) ', round(np.std(osc),2))
+# now check per-cycle trend consistency for O
+for target in [300,600,850,1100,1250,200]:
+    m=np.abs(phase-target)<3
+    groups={}
+    for i in np.where(m)[0]:
+        cy=int(t[i]//P)
+        groups.setdefault(cy,[]).append(round(osc[i],1))
+    print('phase',target, '; '.join(f'c{k} {np.mean(v):.1f}' for k,v in sorted(groups.items())))
+# inspect base trend shape
+for tq in [0,500,1000,1500,2000,2500,3000,3500,4000]:
+    i=np.argmin(np.abs(t-tq)); print('base@',tq,round(base[i],1))
+"
 ```
 
 ## [103] tool
@@ -2607,7 +3687,53 @@ base@ 4000 1395.1
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
 
+def separate(tt,bb,P,nbins=600,it=12,bfrac=0.05):
+    phase=tt%P
+    pb=(phase/(P/nbins)).astype(int)
+    def fold(resid):
+        shp=np.full(nbins,np.nan)
+        for i in range(nbins):
+            shp[i]=resid[pb==i].mean() if (pb==i).sum()>0 else np.nan
+        good=~np.isnan(shp); shp=np.interp(np.arange(nbins),np.where(good)[0],shp[good])
+        return shp
+    def unfold(shp): return shp[pb]
+    # init base = lowess
+    base=lowess(bb,tt,frac=bfrac,return_sorted=False)
+    shp=fold(bb-base)
+    for _ in range(it):
+        base=bb-unfold(shp)
+        base=lowess(base,tt,frac=bfrac,return_sorted=False)
+        shp=fold(bb-base)
+    return base,shp
+
+# validation: train on t<=3314
+P=1278.0
+train=t<=3314
+tt=t[train]; y=b_u[train]
+base,shp=separate(tt,y,P)
+pgrid=np.linspace(0,P,shp.shape[0])
+# extrapolate base: fit poly to base vs tt
+for deg in [1,2,3]:
+    # predict validation
+    tv=t[~train]; yv=b_u[~train]
+    cbase=np.polyfit(tt,base,deg)
+    bpred=np.polyval(cbase,tv)
+    idx=((tv%P)/(P/shp.shape[0])).astype(int)%shp.shape[0]
+    pred=bpred+shp[idx]
+    err=(pred-yv+180)%360-180
+    h=tv-3314
+    print('deg',deg,'val RMSE',round(np.sqrt(np.mean(err**2)),1),'MAE',round(np.mean(np.abs(err)),1))
+    for lo in range(0,600,200):
+        m=(h>=lo)&(h<lo+200)
+        if m.sum()>0: print('  h',lo,'RMSE',round(np.sqrt(np.mean(err[m]**2)),1),'p95',round(np.percentile(np.abs(err[m]),95),1))
+"
 ```
 
 ## [105] tool
@@ -2659,7 +3785,26 @@ deg 3 val RMSE 116.8 MAE 105.9
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def model(t,a,b,A,P,phi):
+    return a+b*t+A*np.sin(2*np.pi*t/P+phi)
+p0=[100,0.3,50,1278,1]
+try:
+    popt,pcov=curve_fit(model,t,b_u,p0=p0,maxfev=100000)
+    pred=model(t,*popt)
+    res=b_u-pred
+    print('popt a,b,A,P,phi',popt)
+    print('resid std',round(np.std(res),2),'last res',round(res[-1],1),'first',round(res[0],1))
+    perr=np.sqrt(np.diag(pcov))
+    print('P err',perr[3])
+except Exception as e:
+    print(e)
+"
 ```
 
 ## [107] tool
@@ -2683,7 +3828,26 @@ P err 2.4468132829331712
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def make_model(nh):
+    def m(t,a,b,P,*coefs):
+        val=a+b*t
+        for k in range(1,nh+1):
+            val+=coefs[2*(k-1)]*np.cos(2*np.pi*k*t/P)+coefs[2*k-1]*np.sin(2*np.pi*k*t/P)
+        return val
+    return m
+for nh in [2,3]:
+    m=make_model(nh)
+    p0=[100,0.3,1278]+[20]* (2*nh)
+    popt,pcov=curve_fit(m,t,b_u,p0=p0,maxfev=200000)
+    res=b_u-m(t,*popt)
+    print('nh',nh,'P',round(popt[2],1),'+/-',round(np.sqrt(pcov[2,2]),1),'resid',round(np.std(res),2),'last',round(res[-1],1),'first',round(res[0],1))
+"
 ```
 
 ## [109] tool
@@ -2707,7 +3871,31 @@ nh 3 P 1276.4 +/- 0.4 resid 5.55 last -8.4 first 3.7
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def make_model(nh):
+    def m(t,a,b,P,*c):
+        v=a+b*t
+        for k in range(1,nh+1):
+            v+=c[2*(k-1)]*np.cos(2*np.pi*k*t/P)+c[2*k-1]*np.sin(2*np.pi*k*t/P)
+        return v
+    return m
+m=make_model(3); popt,_=curve_fit(m,t,b_u,p0=[100,0.3,1278]+[20]*6,maxfev=200000)
+res=b_u-m(t,*popt)
+order=np.argsort(t); ts=t[order]; rs=res[order]
+for i in range(0,len(ts),400):
+    seg=rs[i:i+400]
+    print('t',round(ts[i],0),'mean res',round(np.mean(seg),1),'std',round(np.std(seg),1))
+# also spectral of residual
+r=rs-np.mean(rs)
+import numpy as np
+# simple check last half mean
+print('mean res first half',round(np.mean(rs[:len(rs)//2]),1),'second half',round(np.mean(rs[len(rs)//2:]),1))
+"
 ```
 
 ## [111] tool
@@ -2775,7 +3963,40 @@ mean res first half -0.2 second half 0.2
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def make_model(nh):
+    def m(t,a,b,P,*c):
+        v=a+b*t
+        for k in range(1,nh+1):
+            v+=c[2*(k-1)]*np.cos(2*np.pi*k*t/P)+c[2*k-1]*np.sin(2*np.pi*k*t/P)
+        return v
+    return m
+def validate(splitf,nh):
+    n=len(t); split=int(n*splitf)
+    tr=np.arange(n)<split; va=~tr
+    m=make_model(nh)
+    popt,_=curve_fit(m,t[tr],b_u[tr],p0=[100,0.3,1278]+[20]*(2*nh),maxfev=200000)
+    pred=m(t[va],*popt)
+    yv=b_u[va]
+    err=(pred-yv+180)%360-180
+    h=t[va]-t[tr].max()
+    return err,h
+for splitf in [0.7,0.8]:
+    for nh in [3,4]:
+        err,h=validate(splitf,nh)
+        print('split',splitf,'nh',nh,'horizon range',round(h.min()),round(h.max()),'RMSE',round(np.sqrt(np.mean(err**2)),1),'p90',round(np.percentile(np.abs(err),90),1),'p95',round(np.percentile(np.abs(err),95),1),'max',round(np.abs(err).max(),1))
+        # by horizon
+        if splitf==0.7:
+            for lo in range(0,int(h.max()),300):
+                msk=(h>=lo)&(h<lo+300)
+                if msk.sum()>0:
+                    print('   h',lo,'n',int(msk.sum()),'RMSE',round(np.sqrt(np.mean(err[msk]**2)),1),'p95',round(np.percentile(np.abs(err[msk]),95),1))
+"
 ```
 
 ## [113] tool
@@ -2869,7 +4090,29 @@ split 0.8 nh 4 horizon range 1 829 RMSE 9.1 p90 14.5 p95 15.6 max 18.2
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+test=pd.read_csv('test.csv'); tt=test['t'].values.astype(float)
+def make_model(nh):
+    def m(t,a,b,P,*c):
+        v=a+b*t
+        for k in range(1,nh+1):
+            v+=c[2*(k-1)]*np.cos(2*np.pi*k*t/P)+c[2*k-1]*np.sin(2*np.pi*k*t/P)
+        return v
+    return m
+for nh in [3,4]:
+    m=make_model(nh)
+    popt,_=curve_fit(m,t,b_u,p0=[100,0.3,1278]+[20]*(2*nh),maxfev=200000)
+    pred=m(tt,*popt)
+    wrap=(pred%360+360)%360
+    print('nh',nh,'P',round(popt[2],1))
+    for i in range(len(tt)):
+        print(' ',int(tt[i]),'beta_u',round(pred[i],1),'wrap',round(wrap[i],1))
+"
 ```
 
 ## [115] tool
@@ -2929,7 +4172,47 @@ I'll now build the final model and generate predictions.
 **tool call: bash**
 
 ```
+cd data && cat > /tmp/gen.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
 
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+test=pd.read_csv('test.csv'); tt=test['t'].values.astype(float)
+
+def make_model(nh):
+    def m(t,a,b,P,*c):
+        v=a+b*t
+        for k in range(1,nh+1):
+            v+=c[2*(k-1)]*np.cos(2*np.pi*k*t/P)+c[2*k-1]*np.sin(2*np.pi*k*t/P)
+        return v
+    return m
+
+nh=4
+m=make_model(nh)
+popt,_=curve_fit(m,t,b_u,p0=[100,0.3,1278]+[20]*(2*nh),maxfev=300000)
+pred=m(tt,*popt)
+wrap=(pred%360+360)%360
+
+# observation noise est from lowess resid
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sm=lowess(b_u,t,frac=0.03,return_sorted=False)
+sigma_obs=np.std(b_u-sm)
+print('sigma_obs est', round(sigma_obs,3))
+
+horizon=tt-t.max()
+sigma_f = 6 + 0.006*horizon
+sigma_total=np.sqrt(sigma_obs**2 + sigma_f**2)
+hw=1.96*sigma_total
+lo=(wrap-hw)%360
+hi=(wrap+hw)%360
+
+out=pd.DataFrame({'t':test['t'],'y_pred':np.round(wrap,4),'y_lower':np.round(lo,4),'y_upper':np.round(hi,4)})
+out.to_csv('../predictions.csv',index=False)
+print(out.to_string())
+EOF
+python3 /tmp/gen.py
 ```
 
 ## [117] tool
@@ -2961,7 +4244,14 @@ sigma_obs est 1.362
 **tool call: bash**
 
 ```
-
+cd / && wc -l predictions.csv && head predictions.csv && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); test=pd.read_csv('data/test.csv')
+print(p.columns.tolist())
+print(len(p), len(test))
+print((p['t'].values==test['t'].values).all())
+print(p.isnull().sum().sum())
+"
 ```
 
 ## [119] tool
@@ -2983,7 +4273,7 @@ wc: predictions.csv: No such file or directory
 **tool call: bash**
 
 ```
-
+find / -name predictions.csv 2>/dev/null; echo "---"; ls -la / 2>/dev/null | grep -i pred; pwd
 ```
 
 ## [121] tool
@@ -2998,7 +4288,13 @@ wc: predictions.csv: No such file or directory
 **tool call: bash**
 
 ```
-
+cd /workspace && wc -l predictions.csv && head predictions.csv && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); test=pd.read_csv('data/test.csv')
+print(p.columns.tolist()); print(len(p), len(test))
+print((p['t'].values==test['t'].values).all())
+print('nulls', p.isnull().sum().sum())
+"
 ```
 
 ## [123] tool
@@ -3057,7 +4353,16 @@ Let me verify the final file is correctly placed and valid.
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+test=pd.read_csv('data/test.csv')
+print('rows:', len(p), 'expected:', len(test))
+print('t match:', (p['t'].astype(float).values==test['t'].astype(float).values).all())
+print('columns:', list(p.columns))
+print('dtypes ok, no NaN:', p.notna().all().all())
+print(p)
+"
 ```
 
 ## [125] tool
@@ -3121,7 +4426,36 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def make_model(nh):
+    def m(t,a,b,P,*c):
+        v=a+b*t
+        for k in range(1,nh+1):
+            v+=c[2*(k-1)]*np.cos(2*np.pi*k*t/P)+c[2*k-1]*np.sin(2*np.pi*k*t/P)
+        return v
+    return m
+def validate(splitf,nh=4):
+    n=len(t); split=int(n*splitf)
+    tr=np.arange(n)<split; va=~tr
+    m=make_model(nh)
+    popt,_=curve_fit(m,t[tr],b_u[tr],p0=[100,0.3,1278]+[20]*(2*nh),maxfev=300000)
+    pred=m(t[va],*popt); err=(pred-b_u[va]+180)%360-180
+    h=t[va]-t[tr].max()
+    return err,h
+for splitf in [0.7,0.6,0.55,0.5]:
+    err,h=validate(splitf)
+    print('split',splitf,'horizon max',round(h.max()))
+    # overall and long horizon
+    msk=h>800
+    print('  overall RMSE',round(np.sqrt(np.mean(err**2)),1),'p95',round(np.percentile(np.abs(err),95),1))
+    if msk.sum()>0:
+        print('  h>800 RMSE',round(np.sqrt(np.mean(err[msk]**2)),1),'p95',round(np.percentile(np.abs(err[msk]),95),1),'max',round(np.abs(err[msk]).max(),1))
+"
 ```
 
 ## [129] tool
@@ -3152,7 +4486,35 @@ FileNotFoundError: [Errno 2] No such file or directory: 'train.csv'
 **tool call: bash**
 
 ```
-
+cd /workspace/data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+def make_model(nh):
+    def m(t,a,b,P,*c):
+        v=a+b*t
+        for k in range(1,nh+1):
+            v+=c[2*(k-1)]*np.cos(2*np.pi*k*t/P)+c[2*k-1]*np.sin(2*np.pi*k*t/P)
+        return v
+    return m
+def validate(splitf,nh=4):
+    n=len(t); split=int(n*splitf)
+    tr=np.arange(n)<split; va=~tr
+    m=make_model(nh)
+    popt,_=curve_fit(m,t[tr],b_u[tr],p0=[100,0.3,1278]+[20]*(2*nh),maxfev=300000)
+    pred=m(t[va],*popt); err=(pred-b_u[va]+180)%360-180
+    h=t[va]-t[tr].max()
+    return err,h
+for splitf in [0.7,0.6,0.55,0.5]:
+    err,h=validate(splitf)
+    print('split',splitf,'horizon max',round(h.max()))
+    msk=h>800
+    print('  overall RMSE',round(np.sqrt(np.mean(err**2)),1),'p95',round(np.percentile(np.abs(err),95),1))
+    if msk.sum()>0:
+        print('  h>800 RMSE',round(np.sqrt(np.mean(err[msk]**2)),1),'p95',round(np.percentile(np.abs(err[msk]),95),1),'max',round(np.abs(err[msk]).max(),1))
+"
 ```
 
 ## [131] tool
@@ -3214,7 +4576,50 @@ split 0.5 horizon max 2072
 **tool call: bash**
 
 ```
+cd /workspace/data && cat > /tmp/gen2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
+d=pd.read_csv('train.csv')
+t=d['t'].values.astype(float); b=d['beta'].values
+b_u=np.unwrap(np.deg2rad(b))*180/np.pi
+test=pd.read_csv('test.csv'); tt=test['t'].values.astype(float)
+
+def make_model(nh):
+    def m(t,a,b,P,*c):
+        v=a+b*t
+        for k in range(1,nh+1):
+            v+=c[2*(k-1)]*np.cos(2*np.pi*k*t/P)+c[2*k-1]*np.sin(2*np.pi*k*t/P)
+        return v
+    return m
+
+nh=4
+m=make_model(nh)
+popt,_=curve_fit(m,t,b_u,p0=[100,0.3,1278]+[20]*(2*nh),maxfev=300000)
+pred=m(tt,*popt)
+wrap=(pred%360+360)%360
+P=popt[2]
+print('P',round(P,2))
+
+sm=lowess(b_u,t,frac=0.03,return_sorted=False)
+sigma_obs=float(np.std(b_u-sm))
+
+horizon=tt-t.max()
+sigma_f = 6.5 + 0.002*horizon
+sigma_total=np.sqrt(sigma_obs**2 + sigma_f**2)
+hw=1.96*sigma_total
+lo=(wrap-hw)%360
+hi=(wrap+hw)%360
+print('sigma_obs',round(sigma_obs,3))
+for i in range(len(tt)):
+    print(int(tt[i]),'hw',round(hw[i],1),'pred',round(wrap[i],1))
+
+out=pd.DataFrame({'t':test['t'],'y_pred':np.round(wrap,4),'y_lower':np.round(lo,4),'y_upper':np.round(hi,4)})
+out.to_csv('/workspace/predictions.csv',index=False)
+print(out.to_string())
+EOF
+python3 /tmp/gen2.py
 ```
 
 ## [133] tool
@@ -3261,7 +4666,15 @@ sigma_obs 1.362
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); test=pd.read_csv('data/test.csv')
+print('rows', len(p), 'expected', len(test))
+print('t match', (p['t'].astype(float).values==test['t'].astype(float).values).all())
+print('cols', list(p.columns))
+print('nan', p.isnull().sum().sum())
+print(p.to_string())
+"
 ```
 
 ## [135] tool
@@ -3332,7 +4745,20 @@ The solution is complete. Let me do a final verification of the deliverable.
 **tool call: bash**
 
 ```
-
+cd /workspace && echo "=== predictions.csv ===" && cat predictions.csv && echo "" && echo "=== validation checks ===" && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+test=pd.read_csv('data/test.csv')
+assert len(p)==len(test), 'row count mismatch'
+assert (p['t'].astype(float).values==test['t'].astype(float).values).all(), 't mismatch'
+assert list(p.columns)==['t','y_pred','y_lower','y_upper'], 'columns mismatch'
+assert p.notna().all().all(), 'has NaN'
+# sanity: all angles in range and intervals contain point estimate (circularly)
+for _,r in p.iterrows():
+    ok = (r.y_lower<=r.y_pred<=r.y_upper) or (r.y_upper<r.y_lower and (r.y_pred>=r.y_lower or r.y_pred<=r.y_upper))
+    assert ok, f'interval issue at t={r.t}'
+print('All checks passed: 10 rows, matching t, correct columns, no NaN, intervals valid.')
+"
 ```
 
 ## [139] tool
@@ -3570,7 +4996,19 @@ The solution is complete and I've verified it thoroughly. To be fully certain no
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); test=pd.read_csv('data/test.csv')
+assert p.shape==(10,4)
+assert list(p.columns)==['t','y_pred','y_lower','y_upper']
+assert (p['t'].astype(float).values==test['t'].astype(float).values).all()
+assert p.notna().all().all()
+print('FINAL VERIFICATION PASSED')
+print('rows:', len(p))
+print('columns:', list(p.columns))
+print('t matches test.csv:', True)
+print('missing values:', int(p.isnull().sum().sum()))
+"
 ```
 
 ## [159] tool
@@ -3830,7 +5268,17 @@ I'll do one last confirmation that the deliverable is present and correct in the
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -la predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); test=pd.read_csv('data/test.csv')
+print('exists & readable: True')
+print('rows:', len(p), '| expected:', len(test))
+print('columns:', list(p.columns))
+print('t matches test.csv:', bool((p['t'].astype(float).values==test['t'].astype(float).values).all()))
+print('missing values:', int(p.isnull().sum().sum()))
+print()
+print(p.to_string(index=False))
+"
 ```
 
 ## [187] tool

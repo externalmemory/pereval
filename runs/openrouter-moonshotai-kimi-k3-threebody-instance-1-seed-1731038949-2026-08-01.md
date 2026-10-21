@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -116,7 +116,7 @@ t
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv && cat data/test.csv
 ```
 
 **tool call: python**
@@ -3859,7 +3859,124 @@ Phase-jitter explains part of the slow residual but not cleanly enough to model 
 **tool call: bash**
 
 ```
+cat > /root/predict.py << 'EOF'
+"""
+Predict beta for data/test.csv.
 
+Model discovered from data:
+  beta_unwrapped(t) = a + b*t + sum_{k=1..20} harmonics of period 1079.9 d
+                      + slow correlated wander (sigma~0.24, tau~150 d)
+                      + white measurement noise (sigma~0.24)
+Fitting: GLS with covariance C = sw^2 I + ss^2 * exp(-|dt|/tau), then a GP
+conditional mean for the slow component at test times.
+Intervals: 95% PI scale calibrated by circular-bootstrap Monte Carlo of the
+whole pipeline (accounts for slow-process uncertainty, coefficient absorption,
+and fresh measurement noise), with analytic GP variance as a floor.
+"""
+import numpy as np
+import pandas as pd
+from scipy.ndimage import gaussian_filter1d
+from scipy.linalg import cholesky, cho_solve
+
+# ---------------- data ----------------
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float)
+beta_u = np.rad2deg(np.unwrap(np.deg2rad(train.beta.values)))
+n = len(t)
+t_test = test.t.values.astype(float)
+test_h = t_test - t[-1]
+
+P, K = 1079.9, 20          # waveform period (days), number of harmonics
+TAU = 160.0                # correlation time of slow component
+GAMMA = 1.40               # absorption correction for slow amplitude
+NSIM = 500                 # Monte Carlo reps for calibration
+SAFETY = 1.05              # interval safety factor
+
+def design(tt):
+    tt = np.atleast_1d(np.asarray(tt, dtype=float))
+    cols = [np.ones(len(tt)), tt]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols.append(np.cos(w*tt)); cols.append(np.sin(w*tt))
+    return np.vstack(cols).T
+
+A = design(t)
+A_test = design(t_test)
+
+# ---------------- stage 1: OLS to estimate noise components ----------------
+coef_ols, *_ = np.linalg.lstsq(A, beta_u, rcond=None)
+resid = beta_u - A@coef_ols
+slow_hat = gaussian_filter1d(resid, sigma=30, mode='reflect')
+sig_w = float((resid - slow_hat).std())          # white noise
+sig_s = float(slow_hat.std()) * GAMMA            # slow process (absorption-corrected)
+print("sig_w=%.4f  sig_s=%.4f" % (sig_w, sig_s))
+
+# ---------------- stage 2: GLS fit + GP conditional mean ----------------
+ii = np.arange(n)
+C = sig_w**2*np.eye(n) + sig_s**2*np.exp(-np.abs(ii[:,None]-ii[None,:])/TAU)
+cC = cholesky(C, lower=True)
+
+def gls(A, y):
+    CiA = cho_solve((cC, True), A)
+    Ciy = cho_solve((cC, True), y)
+    return np.linalg.solve(A.T@CiA, A.T@Ciy)
+
+def gp_predict(y):
+    beta = gls(A, y)
+    r = y - A@beta
+    w = cho_solve((cC, True), r)
+    k_star = sig_s**2*np.exp(-np.abs(t_test[:,None]-t[None,:])/TAU)
+    mu_slow = k_star@w
+    # GP conditional variance of slow at test times
+    V = cho_solve((cC, True), k_star.T)
+    var_slow = sig_s**2 - np.einsum('ij,ji->i', k_star, V)
+    var_slow = np.maximum(var_slow, 0.0)
+    # coefficient (universal kriging) uncertainty
+    M_inv = np.linalg.inv(A.T@cho_solve((cC, True), A))
+    E = A_test - k_star@cho_solve((cC, True), A)   # A* - k*' C^-1 A
+    var_coef = np.einsum('ij,jk,ik->i', E, M_inv, E)
+    pred = A_test@beta + mu_slow
+    var_gp = sig_w**2 + var_slow + np.maximum(var_coef, 0.0)
+    return pred, np.sqrt(var_gp), beta
+
+pred_real, sig_gp, beta_hat = gp_predict(beta_u)
+
+# ---------------- stage 3: Monte Carlo calibration of predictive sigma ------
+det_full = A@coef_ols
+det_ext = np.concatenate([det_full, A_test@coef_ols])
+rng = np.random.default_rng(2024)
+err = np.zeros((NSIM, len(t_test)))
+for s in range(NSIM):
+    shift = rng.integers(0, n)
+    slow_long = np.tile(np.roll(slow_hat, shift)*GAMMA, 3)[:n+len(t_test)]
+    y = det_ext[:n] + slow_long[:n] + rng.normal(0, sig_w, n)
+    p_s, _, _ = gp_predict(y)
+    truth = det_ext[n:] + slow_long[n:] + rng.normal(0, sig_w, len(t_test))
+    err[s] = truth - p_s
+sig_cal = err.std(axis=0)
+print("horizon: sig_cal  sig_gp")
+for j in range(len(t_test)):
+    print("  h=%5.0f  %.4f  %.4f" % (test_h[j], sig_cal[j], sig_gp[j]))
+
+sig_final = SAFETY*np.maximum(sig_cal, sig_gp)
+
+# ---------------- stage 4: wrap and write ----------------------------------
+def wrap(x):
+    return np.mod(x, 360.0)
+
+y_pred = wrap(pred_real)
+half = 1.959964*sig_final
+y_lower = wrap(pred_real - half)
+y_upper = wrap(pred_real + half)
+
+out = pd.DataFrame({'t': test.t.values, 'y_pred': y_pred,
+                    'y_lower': y_lower, 'y_upper': y_upper})
+out.to_csv('predictions.csv', index=False)
+print("\nWrote predictions.csv")
+print(out.to_string(index=False))
+EOF
+python /root/predict.py
 ```
 
 ## [78] tool
@@ -3890,7 +4007,116 @@ Timed out — the per-simulation Cholesky solves are too slow. Let me precompute
 **tool call: bash**
 
 ```
+cat > /root/predict.py << 'EOF'
+"""
+Predict beta for data/test.csv.
 
+Model: beta_unwrapped(t) = a + b*t + sum_{k=1..20} harmonics of period 1079.9 d
+       + slow correlated wander (sigma~0.24, tau~160 d) + white noise (~0.24).
+Fit: GLS; prediction: GLS mean + GP conditional mean of slow component.
+Intervals: 95% PI scale from circular-bootstrap Monte Carlo of the full
+pipeline, floored at the analytic GP predictive variance, x1.05 safety.
+"""
+import numpy as np
+import pandas as pd
+import time
+from scipy.ndimage import gaussian_filter1d
+from scipy.linalg import cholesky, cho_solve
+
+t0 = time.time()
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float)
+beta_u = np.rad2deg(np.unwrap(np.deg2rad(train.beta.values)))
+n = len(t)
+t_test = test.t.values.astype(float)
+test_h = t_test - t[-1]
+
+P, K = 1079.9, 20
+TAU = 160.0
+GAMMA = 1.40
+NSIM = 400
+SAFETY = 1.05
+
+def design(tt):
+    tt = np.atleast_1d(np.asarray(tt, dtype=float))
+    cols = [np.ones(len(tt)), tt]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols.append(np.cos(w*tt)); cols.append(np.sin(w*tt))
+    return np.vstack(cols).T
+
+A = design(t)                 # n x p
+A_test = design(t_test)       # m x p
+p = A.shape[1]
+m = len(t_test)
+
+# ---- stage 1: OLS noise decomposition ----
+coef_ols, *_ = np.linalg.lstsq(A, beta_u, rcond=None)
+resid = beta_u - A@coef_ols
+slow_hat = gaussian_filter1d(resid, sigma=30, mode='reflect')
+sig_w = float((resid - slow_hat).std())
+sig_s = float(slow_hat.std()) * GAMMA
+print("sig_w=%.4f  sig_s=%.4f" % (sig_w, sig_s))
+
+# ---- stage 2: GLS + GP, with all y-independent pieces precomputed ----
+ii = np.arange(n)
+C = sig_w**2*np.eye(n) + sig_s**2*np.exp(-np.abs(ii[:,None]-ii[None,:])/TAU)
+cC = cholesky(C, lower=True)
+CiA = cho_solve((cC, True), A)                 # n x p
+M_inv = np.linalg.inv(A.T@CiA)                 # p x p
+G = M_inv @ (CiA.T)                            # p x n   : beta = G @ y
+k_star = sig_s**2*np.exp(-np.abs(t_test[:,None]-t[None,:])/TAU)  # m x n
+H = k_star @ cho_solve((cC, True), np.eye(n))  # m x n   : mu_slow = H @ r
+print("setup done %.1fs" % (time.time()-t0))
+
+# analytic GP predictive variance (y-independent)
+var_slow = np.maximum(sig_s**2 - np.einsum('ij,ij->i', H, k_star), 0.0)
+E = A_test - H@A
+var_coef = np.maximum(np.einsum('ij,jk,ik->i', E, M_inv, E), 0.0)
+sig_gp = np.sqrt(sig_w**2 + var_slow + var_coef)
+
+def gp_predict(y):
+    beta = G@y
+    r = y - A@beta
+    return A_test@beta + H@r
+
+pred_real = gp_predict(beta_u)
+
+# ---- stage 3: Monte Carlo calibration ----
+det_ext = np.concatenate([A@coef_ols, A_test@coef_ols])
+rng = np.random.default_rng(2024)
+err = np.zeros((NSIM, m))
+for s in range(NSIM):
+    shift = rng.integers(0, n)
+    slow_long = np.tile(np.roll(slow_hat, shift)*GAMMA, 3)[:n+m]
+    y = det_ext[:n] + slow_long[:n] + rng.normal(0, sig_w, n)
+    p_s = gp_predict(y)
+    truth = det_ext[n:] + slow_long[n:] + rng.normal(0, sig_w, m)
+    err[s] = truth - p_s
+sig_cal = err.std(axis=0)
+print("MC done %.1fs" % (time.time()-t0))
+print("horizon: sig_cal  sig_gp")
+for j in range(m):
+    print("  h=%5.0f  %.4f  %.4f" % (test_h[j], sig_cal[j], sig_gp[j]))
+
+sig_final = SAFETY*np.maximum(sig_cal, sig_gp)
+
+# ---- stage 4: wrap & write ----
+def wrap(x):
+    return np.mod(x, 360.0)
+
+y_pred = wrap(pred_real)
+half = 1.959964*sig_final
+out = pd.DataFrame({'t': test.t.values,
+                    'y_pred': wrap(pred_real),
+                    'y_lower': wrap(pred_real - half),
+                    'y_upper': wrap(pred_real + half)})
+out.to_csv('predictions.csv', index=False)
+print("Wrote predictions.csv  (%.1fs total)" % (time.time()-t0))
+print(out.to_string(index=False))
+EOF
+timeout 600 python /root/predict.py
 ```
 
 ## [80] tool
@@ -3950,7 +4176,76 @@ Predictions written. Now the critical validation: run this exact final pipeline 
 **tool call: bash**
 
 ```
+cat > /root/backtest.py << 'EOF'
+import numpy as np
+import pandas as pd
+from scipy.ndimage import gaussian_filter1d
+from scipy.linalg import cholesky, cho_solve
 
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+beta_u = np.rad2deg(np.unwrap(np.deg2rad(train.beta.values)))
+n = len(t)
+
+P, K = 1079.9, 20
+TAU = 160.0
+GAMMA = 1.40
+SAFETY = 1.05
+
+def design(tt):
+    tt = np.atleast_1d(np.asarray(tt, dtype=float))
+    cols = [np.ones(len(tt)), tt]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols.append(np.cos(w*tt)); cols.append(np.sin(w*tt))
+    return np.vstack(cols).T
+
+def fit_predict(t_fit, y_fit, t_pred):
+    nf = len(t_fit)
+    A = design(t_fit); A_p = design(t_pred)
+    coef_ols, *_ = np.linalg.lstsq(A, y_fit, rcond=None)
+    resid = y_fit - A@coef_ols
+    slow_hat = gaussian_filter1d(resid, sigma=30, mode='reflect')
+    sig_w = float((resid - slow_hat).std())
+    sig_s = float(slow_hat.std()) * GAMMA
+    ii = np.arange(nf)
+    C = sig_w**2*np.eye(nf) + sig_s**2*np.exp(-np.abs(ii[:,None]-ii[None,:])/TAU)
+    cC = cholesky(C, lower=True)
+    CiA = cho_solve((cC, True), A)
+    M_inv = np.linalg.inv(A.T@CiA)
+    G = M_inv@CiA.T
+    k_star = sig_s**2*np.exp(-np.abs(t_pred[:,None]-t_fit[None,:])/TAU)
+    H = k_star@cho_solve((cC, True), np.eye(nf))
+    var_slow = np.maximum(sig_s**2 - np.einsum('ij,ij->i', H, k_star), 0.0)
+    E = A_p - H@A
+    var_coef = np.maximum(np.einsum('ij,jk,ik->i', E, M_inv, E), 0.0)
+    sig_gp = np.sqrt(sig_w**2 + var_slow + var_coef)
+    beta = G@y_fit
+    r = y_fit - A@beta
+    pred = A_p@beta + H@r
+    return pred, sig_gp
+
+# forward backtest
+cut = 2400
+pred, sig = fit_predict(t[:cut], beta_u[:cut], t[cut:])
+err = beta_u[cut:] - pred
+z = err/(SAFETY*sig)
+print("FWD backtest: RMSE=%.4f  cov95=%.3f  mean_sig=%.4f" % (
+    np.sqrt(np.mean(err**2)), np.mean(np.abs(z)<1.959964), (SAFETY*sig).mean()))
+h = t[cut:] - t[cut-1]
+for h0, h1 in [(0,100),(100,300),(300,600),(600,900),(900,1210)]:
+    sel = (h>h0)&(h<=h1)
+    print("  h %4d-%4d: cov=%.3f RMSE=%.4f sig=%.4f" % (h0,h1,np.mean(np.abs(z[sel])<1.959964),np.sqrt(np.mean(err[sel]**2)),(SAFETY*sig[sel]).mean()))
+
+# backward backtest
+cut2 = 1208
+pred2, sig2 = fit_predict(t[cut2:], beta_u[cut2:], t[:cut2])
+err2 = beta_u[:cut2] - pred2
+z2 = err2/(SAFETY*sig2)
+print("BWD backtest: RMSE=%.4f  cov95=%.3f  mean_sig=%.4f" % (
+    np.sqrt(np.mean(err2**2)), np.mean(np.abs(z2)<1.959964), (SAFETY*sig2).mean()))
+EOF
+timeout 600 python /root/backtest.py
 ```
 
 ## [82] tool
@@ -4021,7 +4316,7 @@ Backtest shows the unlucky h=300–900 window (a 2σ slow excursion) still under
 **tool call: bash**
 
 ```
-
+cd /root && sed -i 's/SAFETY = 1.05/SAFETY = 1.10/; s/NSIM = 400/NSIM = 800/' predict.py && timeout 900 python predict.py
 ```
 
 ## [84] tool
@@ -4060,7 +4355,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/train.csv'
 **tool call: bash**
 
 ```
-
+pwd && ls -la && find / -name "train.csv" -path "*data*" 2>/dev/null
 ```
 
 ## [86] tool
@@ -4086,7 +4381,7 @@ Working directory is /workspace (an earlier predictions.csv already exists there
 **tool call: bash**
 
 ```
-
+cd /workspace && timeout 900 python /root/predict.py
 ```
 
 ## [88] tool
@@ -4141,7 +4436,60 @@ Predictions written with wider intervals. Let me verify robustness of the point 
 **tool call: bash**
 
 ```
+cat > /root/robust.py << 'EOF'
+import numpy as np
+import pandas as pd
+from scipy.ndimage import gaussian_filter1d
+from scipy.linalg import cholesky, cho_solve
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float)
+beta_u = np.rad2deg(np.unwrap(np.deg2rad(train.beta.values)))
+n = len(t)
+t_test = test.t.values.astype(float)
+
+def run(P, K, TAU, GAMMA):
+    def design(tt):
+        tt = np.atleast_1d(np.asarray(tt, dtype=float))
+        cols = [np.ones(len(tt)), tt]
+        for k in range(1, K+1):
+            w = 2*np.pi*k/P
+            cols.append(np.cos(w*tt)); cols.append(np.sin(w*tt))
+        return np.vstack(cols).T
+    A = design(t); A_test = design(t_test)
+    coef_ols, *_ = np.linalg.lstsq(A, beta_u, rcond=None)
+    resid = beta_u - A@coef_ols
+    slow_hat = gaussian_filter1d(resid, sigma=30, mode='reflect')
+    sig_w = float((resid - slow_hat).std())
+    sig_s = float(slow_hat.std())*GAMMA
+    ii = np.arange(n)
+    C = sig_w**2*np.eye(n) + sig_s**2*np.exp(-np.abs(ii[:,None]-ii[None,:])/TAU)
+    cC = cholesky(C, lower=True)
+    CiA = cho_solve((cC, True), A)
+    G = np.linalg.inv(A.T@CiA)@CiA.T
+    k_star = sig_s**2*np.exp(-np.abs(t_test[:,None]-t[None,:])/TAU)
+    H = k_star@cho_solve((cC, True), np.eye(n))
+    beta = G@beta_u
+    r = beta_u - A@beta
+    return A_test@beta + H@r
+
+base = run(1079.9, 20, 160.0, 1.40)
+variants = {
+    'P=1080.0': run(1080.0, 20, 160.0, 1.40),
+    'P=1079.8': run(1079.8, 20, 160.0, 1.40),
+    'K=16':     run(1079.9, 16, 160.0, 1.40),
+    'K=24':     run(1079.9, 24, 160.0, 1.40),
+    'tau=120':  run(1079.9, 20, 120.0, 1.40),
+    'tau=220':  run(1079.9, 20, 220.0, 1.40),
+    'OLS':      run(1079.9, 20, 1e9, 1.40),   # tau huge ~ no GP mean
+}
+print("base pred:", np.round(base,3))
+for name, v in variants.items():
+    d = v - base
+    print("%-9s max|diff|=%.3f  diffs=%s" % (name, np.abs(d).max(), np.round(d,3)))
+EOF
+cd /workspace && timeout 900 python /root/robust.py
 ```
 
 ## [90] tool
@@ -4189,7 +4537,19 @@ Predictions are robust (max shift ±0.18° from period choice, within interval w
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && echo "---" && python -c "
+import pandas as pd
+import numpy as np
+p = pd.read_csv('predictions.csv')
+t = pd.read_csv('data/test.csv')
+print('columns:', list(p.columns))
+print('rows:', len(p), 'test rows:', len(t))
+print('t matches exactly:', (p.t.values == t.t.values).all())
+print('NaNs:', p.isna().any().any())
+print('all angles in [0,360):', ((p[['y_pred','y_lower','y_upper']]>=0)&(p[['y_pred','y_lower','y_upper']]<360)).all().all())
+hw = (p.y_upper - p.y_lower) % 360
+print('interval half-widths:', np.round((hw/2).values,3))
+"
 ```
 
 ## [92] tool

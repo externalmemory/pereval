@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && wc -l data/train.csv data/test.csv && head -20 data/test.csv && tail -20 data/test.csv
 ```
 
 ## [3] tool
@@ -119,7 +119,15 @@ t
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.tail(30).to_string())
+print('beta present:', df.beta.notna().sum(), 'gamma present:', df.gamma.notna().sum())
+print('gamma rows t range:', df.t[df.gamma.notna()].min(), df.t[df.gamma.notna()].max())
+print('beta rows t range:', df.t[df.beta.notna()].min(), df.t[df.beta.notna()].max())
+print(df[df.gamma.notna()].head(40).to_string())
+"
 ```
 
 ## [5] tool
@@ -214,7 +222,25 @@ beta rows t range: 380 544
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+# alpha trajectory rough shape: linear? quadratic?
+import numpy as np
+t = df.t.values; a = df.alpha.values
+c = np.polyfit(t, a, 1); print('alpha linear fit resid std:', np.std(a - np.polyval(c, t)), c)
+c2 = np.polyfit(t,a,2); print('alpha quad resid std:', np.std(a - np.polyval(c2,t)))
+c3 = np.polyfit(t,a,3); print('alpha cubic resid std:', np.std(a - np.polyval(c3,t)))
+m = df.gamma.notna()
+t2, al, ga, be = df.t[m].values, df.alpha[m].values, df.gamma[m].values, df.beta[m].values
+# correlations
+print('corr gamma vs alpha:', np.corrcoef(ga, al))
+print('corr gamma vs beta:', np.corrcoef(ga, be))
+for deg in [1,2,3]:
+    c = np.polyfit(al, ga, deg); print(f'gamma~alpha deg{deg} resid std:', np.std(ga-np.polyval(c,al)), c)
+c = np.polyfit(t2, ga, 1); print('gamma~t lin resid std:', np.std(ga-np.polyval(c,t2)))
+print('gamma std:', ga.std())
+"
 ```
 
 ## [7] tool
@@ -270,7 +296,20 @@ Strong correlations with alpha and beta. Now let me understand alpha's own traje
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+a = df.alpha.values; t = df.t.values
+print('alpha min/max:', a.min(), a.max())
+print('monotonic increasing?', np.all(np.diff(a)>0))
+diff = np.diff(a)
+print('diff min/max:', diff.min(), diff.max())
+# print alpha every 25 days
+print(a[::25])
+# noisy? estimate noise via second differences
+sd = np.diff(a,2)
+print('approx noise std of alpha:', np.std(sd)/np.sqrt(6))
+"
 ```
 
 ## [9] tool
@@ -323,7 +362,26 @@ approx noise std of alpha: 19.911947355917647
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+c = np.polyfit(t, au, 1)
+resid = au - np.polyval(c, t)
+print('unwrapped alpha ~ t linear: rate=%.6f deg/day, resid std=%.4f' % (c[0], resid.std()))
+print('resid (every 15th):', resid[::15].round(3))
+sd = np.diff(aun:=au, 2)
+print('2nd diff std/sqrt6 (alpha noise):', np.std(sd)/np.sqrt(6))
+m = df.gamma.notna()
+be = df.beta[m].values; t2 = df.t[m].values; ga = df.gamma[m].values
+cb = np.polyfit(t2, be, 1)
+rb = be - np.polyval(cb, t2)
+print('beta ~ t linear: rate=%.4f, resid std=%.3f' % (cb[0], rb.std()))
+print('beta resid (every 15th):', rb[::15].round(3))
+print('beta 2diff noise:', np.std(np.diff(be,2))/np.sqrt(6))
+print('gamma 2diff noise:', np.std(np.diff(ga,2))/np.sqrt(6))
+"
 ```
 
 ## [11] tool
@@ -347,7 +405,37 @@ gamma 2diff noise: 0.96921439675974
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+rate = 0.84
+detc = au - rate*t
+# find dominant periodic length of detc
+Y = np.fft.rfft(detc - detc.mean())
+freqs = np.fft.rfftfreq(len(detc), d=1.0)
+idx = np.argsort(np.abs(Y))[-6:]
+for i in sorted(idx):
+    print('period=%.1f amp=%.2f' % (1/freqs[i] if freqs[i]>0 else np.inf, 2*np.abs(Y[i])/len(detc)))
+m = df.gamma.notna()
+be = df.beta[m].values; t2 = df.t[m].values; ga = df.gamma[m].values
+detc_b = be - 0.79*t2
+Yb = np.fft.rfft(detc_b - detc_b.mean())
+fb = np.fft.rfftfreq(len(t2))
+ib = np.argsort(np.abs(Yb))[-5:]
+for i in sorted(ib): print('beta detrend period=%.1f amp=%.2f' % (1/fb[i] if fb[i]>0 else np.inf, 2*np.abs(Yb[i])/len(t2)))
+# check beta vs cos(alpha_u) type relation
+aun = au[m]
+# maybe beta = drift + A*cos(au + phi)
+X = np.column_stack([np.ones(m.sum()), t2, np.cos(np.deg2rad(aun)), np.sin(np.deg2rad(aun)), np.cos(2*np.deg2rad(aun)), np.sin(2*np.deg2rad(aun))])
+coef, res, *_ = np.linalg.lstsq(X, be, rcond=None)
+pred = X@coef
+print('beta harmonic model resid std:', pred.std(), np.std(be-pred), 'coef:', coef.round(3))
+Xg = X
+cg, *_ = np.linalg.lstsq(Xg, ga, rcond=None)
+print('gamma same features resid std:', np.std(ga - Xg@cg), cg.round(3))
+"
 ```
 
 ## [13] tool
@@ -382,7 +470,57 @@ gamma same features resid std: 1.0562666504379319 [100.584  -0.196   3.827 -14.5
 **tool call: bash**
 
 ```
+cat > /tmp/backtest.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.interpolate import UnivariateSpline
 
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values; be = df.beta[m].values
+
+def alpha_pred_spline(ttrain, au_train, tq, s_fac=1.0):
+    n = len(ttrain)
+    spl = UnivariateSpline(ttrain, au_train, s=n*s_fac)  # smoothing
+    return spl(tq)
+
+# Backtest: cut at t<=489, predict gamma at 490..544
+cut = 490
+tr = t < cut; tr2 = t2 < cut
+tq = t2[~tr2]; gq = ga[~tr2]
+
+# Method A: linear in t for gamma
+c = np.polyfit(t2[tr2], ga[tr2], 1)
+predA = np.polyval(c, tq)
+print('A gamma~t linear: rmse=%.2f' % np.sqrt(np.mean((predA-gq)**2)))
+
+# Method B: alpha spline extrapolation + harmonic model for gamma
+apq = alpha_pred_spline(t[tr], au[tr], tq)
+ap2 = alpha_pred_spline(t[tr], au[tr], t2[tr2])
+Xf = lambda tt, aa: np.column_stack([np.ones(len(tt)), tt, np.cos(np.deg2rad(aa)), np.sin(np.deg2rad(aa)), np.cos(2*np.deg2rad(aa)), np.sin(2*np.deg2rad(aa))])
+X2 = Xf(t2[tr2], ap2); Xq = Xf(tq, apq)
+coef, *_ = np.linalg.lstsq(X2, ga[tr2], rcond=None)
+predB = Xq@coef
+print('B alpha-spline+harmonic: rmse=%.2f' % np.sqrt(np.mean((predB-gq)**2)))
+
+# Method C: same but true alpha at query (upper bound)
+Xq2 = Xf(tq, au[t2[~tr2].astype(int)])
+predC = Xq2@coef
+print('C true-alpha+harmonic: rmse=%.2f' % np.sqrt(np.mean((predC-gq)**2)))
+
+# Method D: gamma spline in t extrapolation (expected bad)
+splg = UnivariateSpline(t2[tr2], ga[tr2], s=len(ga[tr2]))
+try:
+    predD = splg(tq); print('D gamma spline in t: rmse=%.2f' % np.sqrt(np.mean((predD-gq)**2)))
+except Exception as e: print(e)
+
+# alpha extrapolation error alone
+erra = apq - au[tq.astype(int)]
+print('alpha extrap err: bias=%.2f rmse=%.2f max|.|=%.2f' % (erra.mean(), np.sqrt(np.mean(erra**2)), np.abs(erra).max()))
+print('alpha extrap err by day:', list(zip(tq[::11].astype(int), erra[::11].round(2))))
+EOF
+python3 /tmp/backtest.py
 ```
 
 ## [15] tool
@@ -402,7 +540,56 @@ Spline extrapolation of alpha is decent but degrading. Let me try physically-str
 **tool call: bash**
 
 ```
+cat > /tmp/backtest2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.interpolate import UnivariateSpline
 
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values; be = df.beta[m].values
+
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+
+def feat(tt, nM=0):
+    cols = [np.ones(len(tt)), tt]
+    for k in range(1, nM+1):
+        M = 2*np.pi*0.84*tt/360.0
+        cols += [np.cos(k*M), np.sin(k*M)]
+    return np.column_stack(cols)
+
+def feat_ab(tt, aa, bb, nM=3):
+    c = feat(tt, nM)
+    extra = [np.cos(np.deg2rad(aa)), np.sin(np.deg2rad(aa))]
+    if bb is not None:
+        extra += [np.cos(np.deg2rad(bb)), np.sin(np.deg2rad(bb))]
+    return np.column_stack([c]+extra)
+
+for cut in [450, 490]:
+    tr = t < cut; tr2 = t2 < cut
+    tq = t2[~tr2]; gq = ga[~tr2]; bq = be[~tr2]
+    # alpha model: fit feat(nM) to au on tr, extrapolate
+    for nM in [0,2,3]:
+        X = feat(t[tr], nM)
+        ca, *_ = np.linalg.lstsq(X, au[tr], rcond=None)
+        apq = feat(tq, nM)@ca
+        ap2 = feat(t2[tr2], nM)@ca
+        # beta model similar
+        Xb = feat(t2[tr2], nM)
+        cb, *_ = np.linalg.lstsq(Xb, be[tr2], rcond=None)
+        bpq = feat(tq, nM)@cb
+        bp2 = feat(t2[tr2], nM)@cb
+        # gamma model variants
+        X2 = feat_ab(t2[tr2], ap2, bp2, nM); Xq = feat_ab(tq, apq, bpq, nM)
+        cg,*_ = np.linalg.lstsq(X2, ga[tr2], rcond=None)
+        print(f'cut={cut} nM={nM} harmonic full: rmse={rmse(Xq@cg,gq):.2f} | alpha err={rmse(apq, au[tq.astype(int)]):.2f} beta err={rmse(bpq,bq):.2f}')
+        # simpler: t poly(1) + cos/sin alpha + cos/sin beta
+        X2s = feat_ab(t2[tr2], ap2, bp2, 0); Xqs = feat_ab(tq, apq, bpq, 0)
+        cgs,*_ = np.linalg.lstsq(X2s, ga[tr2], rcond=None)
+        print(f'   simple(1 + ph_a + ph_b): rmse={rmse(Xqs@cgs,gq):.2f}')
+EOF
+python3 /tmp/backtest2.py
 ```
 
 ## [17] tool
@@ -482,7 +669,54 @@ The feature collinearity causes extrapolation blow-ups — needs regularization 
 **tool call: bash**
 
 ```
+cat > /tmp/backtest3.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.interpolate import UnivariateSpline
 
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+
+def alpha_spline(tr_mask, tq, s_fac=0.5):
+    spl = UnivariateSpline(t[tr_mask], au_full[tr_mask], s=tr_mask.sum()*s_fac)
+    return spl(tq)
+
+def makefeat(tt, aa, n_a):
+    cols=[np.ones(len(tt)), tt]
+    for k in range(1,n_a+1):
+        cols += [np.cos(np.deg2rad(k*aa)), np.sin(np.deg2rad(k*aa))]
+    return np.column_stack(cols)
+
+def ridge_fit(X, y, lam):
+    XtX = X.T@X; d = X.shape[1]
+    D = np.eye(d); D[0,0]=0; D[1,1]=0
+    return np.linalg.solve(XtX + lam*D, X.T@y)
+
+for s_fac in [0.3, 0.5, 1.0]:
+  for n_a, lam in [(1,0.0),(1,0.1),(2,0.1),(2,1.0),(2,10.0),(3,10.0)]:
+    errs=[]; hs=[]
+    for cut in [440, 460, 480, 500]:
+        tr = t < cut; tr2 = t2 < cut
+        if (~tr2).sum() < 10: continue
+        tq = t2[~tr2]; gq = ga[~tr2]
+        apq = alpha_spline(tr, tq, s_fac); ap2 = alpha_spline(tr, t2[tr2], s_fac)
+        X2 = makefeat(t2[tr2], ap2, n_a); Xq = makefeat(tq, apq, n_a)
+        c = ridge_fit(X2, ga[tr2], lam)
+        p = Xq@c
+        errs += list(p-gq); hs += list(tq-cut)
+    errs=np.array(errs); hs=np.array(hs)
+    # rmse overall and at large horizon
+    big = hs>60
+    print(f's={s_fac} n_a={n_a} lam={lam}: rmse={rmse(errs,0):.2f} rmse(h>60)={rmse(errs[big],0):.2f} bias(h>60)={errs[big].mean():+.2f} n={len(errs)}')
+print('--- reference: gamma~t linear ---')
+for cut in [440,460,480,500]:
+    tr2 = t2<cut; c = np.polyfit(t2[tr2],ga[tr2],1)
+    p=np.polyval(c,t2[~tr2]); print(f'cut={cut}: rmse={rmse(p,ga[~tr2]):.2f}')
+EOF
+python3 /tmp/backtest3.py
 ```
 
 ## [19] tool
@@ -569,7 +803,50 @@ The system is clearly multi-body orbital: everything is a smooth function of tim
 **tool call: bash**
 
 ```
+cat > /tmp/backtest4.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
 
+# === alpha model: au = a0 + w*t + sum_k A_k cos(2pi k t/P) + B_k sin(...) with P=360/w*factor
+def alpha_periodic(tt, au, tq, nh=3, prange=np.linspace(380,560,37)):
+    best=None
+    for P in prange:
+        w = 360.0/P
+        cols=[np.ones(len(tt)), tt]
+        for k in range(1,nh+1):
+            cols += [np.cos(2*np.pi*k*tt/P), np.sin(2*np.pi*k*tt/P)]
+        X=np.column_stack(cols)
+        lam=0.5; D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+        c=np.linalg.solve(X.T@X+lam*D, X.T@au)
+        r=np.std(au-X@c)
+        if best is None or r<best[0]: best=(r,c,P)
+    r,c,P=best
+    cols=[np.ones(len(tq)), tq]
+    for k in range(1,nh+1):
+        cols += [np.cos(2*np.pi*k*tq/P), np.sin(2*np.pi*k*tq/P)]
+    Xq=np.column_stack(cols)
+    return Xq@c, P, r
+
+# full-data alpha fit
+for nh in [1,2,3,4]:
+    pred,P,r = alpha_periodic(t, au_full, t, nh)
+    print(f'nh={nh}: P={P:.1f} resid={r:.2f}')
+
+# backtest extrapolation quality of alpha
+for nh in [2,3]:
+    errs=[]
+    for cut in [440,460,480,500]:
+        tr = t<cut
+        pred,P,r = alpha_periodic(t[tr], au_full[tr], t[~tr], nh)
+        errs.append((cut, rmse(pred, au_full[~tr]), P))
+    print('nh',nh, errs)
+EOF
+python3 /tmp/backtest4.py
 ```
 
 ## [21] tool
@@ -589,7 +866,74 @@ Excellent — alpha extrapolates with ~1° RMSE using a global periodic model (p
 **tool call: bash**
 
 ```
+cat > /tmp/backtest5.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
 
+def alpha_periodic(tt, au, tq, w=360.0/420.0, lam_h=0.5):
+    def mk(tt):
+        cols=[np.ones(len(tt)), tt]
+        for k in (1,2,3):
+            cols += [np.cos(np.deg2rad(k*w*tt)), np.sin(np.deg2rad(k*w*tt))]
+        return np.column_stack(cols)
+    X=mk(tt); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X.T@X+lam_h*D, X.T@au)
+    return mk(tq)@c
+
+def gfeat(tt, aa, deg=2):
+    ar=np.deg2rad(aa)
+    cols=[np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar)]
+    if deg>=2:
+        cols += [tt, np.cos(3*ar), np.sin(3*ar)]
+    return np.column_stack(cols)
+
+w = 360.0/420.0
+res_all=[]; hs_all=[]; gam_coefs=[]
+for cut in [430,440,450,460,470,480,490,500]:
+    tr = t<cut; tr2 = t2<cut
+    tq = t2[~tr2]; gq = ga[~tr2]
+    apq = alpha_periodic(t[tr], au_full[tr], tq, w)
+    ap2 = alpha_periodic(t[tr], au_full[tr], t2[tr2], w)
+    for deg in [1,2]:
+        X2=gfeat(t2[tr2], ap2, deg); Xq=gfeat(tq, apq, deg)
+        lam=0.1; D=np.eye(X2.shape[1]); D[0,0]=0
+        c=np.linalg.solve(X2.T@X2+lam*D, X2.T@ga[tr2])
+        p=Xq@c
+        if cut==490 and deg==2: pass
+        res_all.append((deg, cut, p-gq)); hs_all.append((deg,cut,tq-cut))
+# aggregate by deg
+for deg in [1,2]:
+    e=[];h=[]
+    for (d,c,r),(d2,c2,hh) in zip(res_all,hs_all):
+        if d==deg: e.append(r); h.append(hh)
+    e=np.concatenate(e); h=np.concatenate(h)
+    for hb in [0,30,60,90]:
+        sel=h>hb
+        print(f'deg={deg} h>{hb}: rmse={rmse(e[sel],0):.2f} bias={e[sel].mean():+.2f} n={sel.sum()}')
+
+# Compare: gamma model on t only with periodic features (no alpha at all)
+def gfeat_t(tt, w, nh):
+    cols=[np.ones(len(tt)), tt]
+    for k in range(1,nh+1):
+        cols += [np.cos(np.deg2rad(k*w*tt)), np.sin(np.deg2rad(k*w*tt))]
+    return np.column_stack(cols)
+for nhg in [1,2,3]:
+    e=[]
+    for cut in [440,460,480,500]:
+        tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+        X2=gfeat_t(t2[tr2],w,nhg); Xq=gfeat_t(tq,w,nhg)
+        lam=1.0; D=np.eye(X2.shape[1]); D[0,0]=0; D[1,1]=0
+        c=np.linalg.solve(X2.T@X2+lam*D, X2.T@ga[tr2])
+        e.append(Xq@c-gq)
+    e=np.concatenate(e)
+    print(f'gamma-t-only nh={nhg}: rmse={rmse(e,0):.2f}')
+EOF
+python3 /tmp/backtest5.py
 ```
 
 ## [23] tool
@@ -614,7 +958,57 @@ The trend feature is misfiring. Let me compare models on *in-sample* residuals v
 **tool call: bash**
 
 ```
+cat > /tmp/backtest6.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w = 360.0/420.0
 
+def alpha_periodic(tt, au, tq, lam_h=0.5):
+    def mk(tt):
+        cols=[np.ones(len(tt)), tt]
+        for k in (1,2,3):
+            cols += [np.cos(np.deg2rad(k*w*tt)), np.sin(np.deg2rad(k*w*tt))]
+        return np.column_stack(cols)
+    X=mk(tt); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X.T@X+lam_h*D, X.T@au)
+    return mk(tq)@c, mk(tt)@c
+
+# in-sample gamma fits with various feature sets (full data)
+ap2,_ = alpha_periodic(t, au_full, t2)
+ar = np.deg2rad(ap2)
+def make(tq, aa, kind):
+    arq = np.deg2rad(aa)
+    F={'A':[np.ones(len(tq)), np.cos(arq), np.sin(arq), np.cos(2*arq), np.sin(2*arq)],
+       'B':[np.ones(len(tq)), np.cos(arq), np.sin(arq), np.cos(2*arq), np.sin(2*arq), tq],
+       'C':[np.ones(len(tq)), np.cos(arq), np.sin(arq), np.cos(2*arq), np.sin(2*arq), np.cos(3*arq), np.sin(3*arq)]}
+    return np.column_stack(F[kind])
+for kind in 'ABC':
+    X=make(t2, ap2, kind); lam=0.1; D=np.eye(X.shape[1]); D[0,0]=0
+    c=np.linalg.solve(X.T@X+lam*D, X.T@ga)
+    print(kind, 'in-sample resid std=%.3f'%np.std(ga-X@c), 'coef:', np.round(c,3))
+
+# backtest without trend (kind A) vs with (B)
+for kind in ['A','B','C']:
+    e=[];h=[]
+    for cut in [440,460,480,500]:
+        tr=t<cut; tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+        apq,_ = alpha_periodic(t[tr], au_full[tr], tq)
+        ap2c,_ = alpha_periodic(t[tr], au_full[tr], t2[tr2])
+        X2=make(t2[tr2], ap2c, kind); Xq=make(tq, apq, kind)
+        lam=0.1; D=np.eye(X2.shape[1]); D[0,0]=0
+        c=np.linalg.solve(X2.T@X2+lam*D, X2.T@ga[tr2])
+        e.append(Xq@c-gq); h.append(tq-cut)
+    e=np.concatenate(e); h=np.concatenate(h)
+    for hb in [0,40,70]:
+        s=h>hb
+        print(f'kind={kind} h>{hb}: rmse={rmse(e[s],0):.2f} bias={e[s].mean():+.2f} n={s.sum()}')
+EOF
+python3 /tmp/backtest6.py
 ```
 
 ## [25] tool
@@ -644,7 +1038,68 @@ kind=C h>70: rmse=35.18 bias=+35.03 n=48
 **tool call: bash**
 
 ```
+cat > /tmp/backtest7.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w = 360.0/420.0
 
+def alpha_periodic(tt, au, tq, lam_h=0.5):
+    def mk(tt):
+        cols=[np.ones(len(tt)), tt]
+        for k in (1,2,3):
+            cols += [np.cos(np.deg2rad(k*w*tt)), np.sin(np.deg2rad(k*w*tt))]
+        return np.column_stack(cols)
+    X=mk(tt); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X.T@X+lam_h*D, X.T@au)
+    return mk(tq)@c, mk(tt)@c
+
+def alpha_spline(tt, au, tq, s):
+    from scipy.interpolate import UnivariateSpline
+    return UnivariateSpline(tt, au, s=s)(tq)
+
+def gfeat(tt, aa):
+    ar = np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
+
+# two-stage backtest
+for ap_strat, name in [('periodic',None),('spline0.3',0.3),('spline1',1.0)]:
+    e1=[];e2=[];h=[]
+    for cut in [440,460,480,500]:
+        tr=t<cut; tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+        if ap_strat=='periodic':
+            apq,_ = alpha_periodic(t[tr], au_full[tr], tq); ap2c,_ = alpha_periodic(t[tr], au_full[tr], t2[tr2])
+            e1.append(apq - au_full[tq.astype(int)])
+        else:
+            apq = alpha_spline(t[tr], au_full[tr], tq, ap_strat*tr.sum()); ap2c = alpha_spline(t[tr], au_full[tr], t2[tr2], ap_strat*tr.sum())
+            e2.append(apq - au_full[tq.astype(int)])
+        h.append(tq-cut)
+    if e1: e=np.concatenate(e1)
+    else: e=np.concatenate(e2)
+    h=np.concatenate(h)
+    for hb in [0,40,70]:
+        s=h>hb
+        print(f'alpha {ap_strat}: h>{hb} rmse={rmse(e[s],0):.2f} bias={e[s].mean():+.2f}')
+
+# gamma two-stage: alpha periodic; gamma features [1,cos,sin,cos2,sin2,t]; ridge lam sweep
+for lam in [0.01,0.1,1,10,100]:
+    e=[];h=[]
+    for cut in [440,460,480,500]:
+        tr=t<cut; tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+        apq,_ = alpha_periodic(t[tr], au_full[tr], tq); ap2c,_ = alpha_periodic(t[tr], au_full[tr], t2[tr2])
+        X2=gfeat(t2[tr2], ap2c); Xq=gfeat(tq, apq)
+        D=np.eye(X2.shape[1]); D[0,0]=0
+        c=np.linalg.solve(X2.T@X2+lam*D, X2.T@ga[tr2])
+        e.append(Xq@c-gq); h.append(tq-cut)
+    e=np.concatenate(e); h=np.concatenate(h)
+    r=[f'h>{hb}: rmse={rmse(e[h>hb],0):.2f} bias={e[h>hb].mean():+.2f}' for hb in [0,40,70]]
+    print(f'lam={lam}: '+' | '.join(r))
+EOF
+python3 /tmp/backtest7.py
 ```
 
 ## [27] tool
@@ -680,7 +1135,62 @@ alpha periodic: h>70 rmse=1.16 bias=+0.58
 **tool call: bash**
 
 ```
+cat > /tmp/backtest8.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w = 360.0/420.0
 
+def alpha_periodic(tt, au, tq, lam_h=0.5):
+    def mk(tt):
+        cols=[np.ones(len(tt)), tt]
+        for k in (1,2,3):
+            cols += [np.cos(np.deg2rad(k*w*tt)), np.sin(np.deg2rad(k*w*tt))]
+        return np.column_stack(cols)
+    X=mk(tt); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X.T@X+lam_h*D, X.T@au)
+    return mk(tq)@c, mk(tt)@c
+
+def gfeat(tt, aa):
+    ar = np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
+
+for lam in [0.01,0.1,1,10,100]:
+    e=[];h=[]
+    for cut in [440,460,480,500]:
+        tr=t<cut; tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+        apq,_ = alpha_periodic(t[tr], au_full[tr], tq); ap2c,_ = alpha_periodic(t[tr], au_full[tr], t2[tr2])
+        X2=gfeat(t2[tr2], ap2c); Xq=gfeat(tq, apq)
+        D=np.eye(X2.shape[1]); D[0,0]=0
+        c=np.linalg.solve(X2.T@X2+lam*D, X2.T@ga[tr2])
+        e.append(Xq@c-gq); h.append(tq-cut)
+    e=np.concatenate(e); h=np.concatenate(h)
+    r=[f'h>{hb}: rmse={rmse(e[h>hb],0):.2f} bias={e[h>hb].mean():+.2f}' for hb in [0,40,70]]
+    print(f'lam={lam}: '+' | '.join(r))
+
+# also try dropping t feature from gamma
+print('--- no t in gamma features ---')
+def gfeat2(tt, aa):
+    ar = np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar)])
+for lam in [0.1,1,10]:
+    e=[];h=[]
+    for cut in [440,460,480,500]:
+        tr=t<cut; tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+        apq,_ = alpha_periodic(t[tr], au_full[tr], tq); ap2c,_ = alpha_periodic(t[tr], au_full[tr], t2[tr2])
+        X2=gfeat2(t2[tr2], ap2c); Xq=gfeat2(tq, apq)
+        D=np.eye(X2.shape[1]); D[0,0]=0
+        c=np.linalg.solve(X2.T@X2+lam*D, X2.T@ga[tr2])
+        e.append(Xq@c-gq); h.append(tq-cut)
+    e=np.concatenate(e); h=np.concatenate(h)
+    r=[f'h>{hb}: rmse={rmse(e[h>hb],0):.2f} bias={e[h>hb].mean():+.2f}' for hb in [0,40,70]]
+    print(f'lam={lam}: '+' | '.join(r))
+EOF
+python3 /tmp/backtest8.py
 ```
 
 ## [29] tool
@@ -703,7 +1213,29 @@ Consistent +bias in backtests suggests the model misses a decline in gamma devel
 **tool call: bash**
 
 ```
-
+cat > /tmp/inspect.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+# windowed mean of gamma (10-day)
+for i in range(0, len(t2), 20):
+    seg=slice(i,i+20)
+    print(f't={t2[seg].mean():.0f} mean gamma={ga[seg].mean():7.2f} min={ga[seg].min():7.2f} max={ga[seg].max():6.2f}')
+print('last 10 gamma:', ga[-10:])
+# correlate gamma decline with declines in alpha harmonics? check sin(phase) drift
+# gamma vs alpha_u polyfit resid across time
+c = np.polyfit(au_full[t2.astype(int)], ga, 2)
+r = ga - np.polyval(c, au_full[t2.astype(int)])
+import numpy as np
+print('poly2(alpha) resid binned means:')
+for i in range(0, len(t2), 20):
+    seg=slice(i,i+20); print(f'  t={t2[seg].mean():.0f}: {r[seg].mean():+.2f}')
+print('poly2 resid std:', r.std())
+EOF
+python3 /tmp/inspect.py
 ```
 
 ## [31] tool
@@ -741,7 +1273,25 @@ AttributeError: partially initialized module 'pandas' has no attribute 'read_csv
 **tool call: bash**
 
 ```
-
+rm /tmp/inspect.py && cat > /tmp/inspectdata.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+for i in range(0, len(t2), 20):
+    seg=slice(i,i+20)
+    print(f't={t2[seg].mean():.0f} mean gamma={ga[seg].mean():7.2f} min={ga[seg].min():7.2f} max={ga[seg].max():6.2f}')
+print('last 10 gamma:', np.round(ga[-10:],2))
+c = np.polyfit(au_full[t2.astype(int)], ga, 2)
+r = ga - np.polyval(c, au_full[t2.astype(int)])
+print('poly2(alpha) resid binned means:')
+for i in range(0, len(t2), 20):
+    seg=slice(i,i+20); print(f'  t={t2[seg].mean():.0f}: {r[seg].mean():+.2f}')
+print('poly2 resid std:', r.std())
+EOF
+python3 /tmp/inspectdata.py
 ```
 
 ## [33] tool
@@ -776,7 +1326,47 @@ gamma is flattening near a minimum around t~544 (~ -23). Now let me test gamma m
 **tool call: bash**
 
 ```
+cat > /tmp/backtest9.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
 
+def tfeat(tt, w, nh):
+    cols=[np.ones(len(tt)), tt]
+    for k in range(1,nh+1):
+        ang = np.deg2rad(k*w*tt)
+        cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+
+def fit_ridge(X, y, lam, pen_t=True):
+    D=np.eye(X.shape[1]); D[0,0]=0
+    if not pen_t: D[1,1]=0
+    return np.linalg.solve(X.T@X+lam*D, X.T@y)
+
+# gamma ~ t features, various w, nh, lam
+results=[]
+for w in [360/420., 360/430., 360/430.*2, 360/165., 360/210.0]:
+    for nh in [1,2,3]:
+        for lam in [0.1, 1, 10]:
+            e=[];h=[]
+            for cut in [440,460,480,500]:
+                tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+                X2=tfeat(t2[tr2],w,nh); Xq=tfeat(tq,w,nh)
+                c=fit_ridge(X2, ga[tr2], lam, pen_t=False)
+                e.append(Xq@c-gq); h.append(tq-cut)
+            e=np.concatenate(e); h=np.concatenate(h)
+            r70 = rmse(e[h>70],0); r40 = rmse(e[h>40],0); r0=rmse(e,0)
+            b70 = e[h>70].mean()
+            results.append((w,nh,lam,r0,r40,r70,b70))
+results.sort(key=lambda x:x[5])
+for r in results[:15]:
+    print(f'w={r[0]:.4f} (P={360/r[0]:.0f}) nh={r[1]} lam={r[2]}: rmse(h>0)={r[3]:.2f} (h>40)={r[4]:.2f} (h>70)={r[5]:.2f} bias70={r[6]:+.2f}')
+EOF
+python3 /tmp/backtest9.py
 ```
 
 ## [35] tool
@@ -805,7 +1395,30 @@ Let me check the persistent bias — it appeared in every model. Maybe it's an a
 **tool call: bash**
 
 ```
+cat > /tmp/backtest10.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w = 360/420.
+def tfeat(tt, nh=2):
+    cols=[np.ones(len(tt)), tt]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*tt); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
 
+for cut in [430,440,450,460,470,480,490,500,510]:
+    tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+    if len(tq)<8: continue
+    X2=tfeat(t2[tr2]); Xq=tfeat(tq)
+    D=np.eye(X2.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X2.T@X2+0.1*D, X2.T@ga[tr2])
+    p=Xq@c
+    print(f'cut={cut}: hmax={tq.max()-cut:.0f} rmse={rmse(p,gq):.2f} bias={np.mean(p-gq):+.2f} | pred@end={p[-1]:.2f} true@end={gq[-1]:.2f}')
+EOF
+python3 /tmp/backtest10.py
 ```
 
 ## [37] tool
@@ -828,7 +1441,40 @@ The bias is horizon-driven (physics unknown beyond the window). Best extrapolati
 **tool call: bash**
 
 ```
+cat > /tmp/backtest11.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
 
+def fit_alpha(tt, au, w, nh, lam):
+    def mk(x):
+        cols=[np.ones(len(x)), x]
+        for k in range(1,nh+1):
+            ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+        return np.column_stack(cols)
+    X=mk(tt); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X.T@X+lam*D, X.T@au)
+    return mk, c
+
+# 1) alpha extrapolation error per backtest cut (true comparison)
+for nh in [1,2,3,4]:
+    for w in [360/420., 360/430., 360/400.]:
+        errs=[]
+        for cut in [430,460,490]:
+            tr=t<cut
+            mk,c = fit_alpha(t[tr], au_full[tr], w, nh, 1.0)
+            apq = mk(t[~tr])@c
+            errs.append(rmse(apq, au_full[~tr]))
+        # in-sample resid full data
+        mk,c = fit_alpha(t, au_full, w, nh, 1.0)
+        r = rmse(mk(t)@c, au_full)
+        print(f'nh={nh} P={360/w:.0f}: extrap rmse cuts430/460/490 = {errs[0]:.2f}/{errs[1]:.2f}/{errs[2]:.2f}, insample={r:.2f}')
+EOF
+python3 /tmp/backtest11.py
 ```
 
 ## [39] tool
@@ -852,7 +1498,65 @@ nh=4 P=400: extrap rmse cuts430/460/490 = 3.32/2.82/2.46, insample=1.11
 **tool call: bash**
 
 ```
+cat > /tmp/backtest12.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au_full = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w = 360/420.
 
+def fit_alpha(tt, au, nh=2, lam=1.0):
+    def mk(x):
+        cols=[np.ones(len(x)), x]
+        for k in range(1,nh+1):
+            ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+        return np.column_stack(cols)
+    X=mk(tt); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X.T@X+lam*D, X.T@au)
+    return mk, c
+
+def gf(tt, aa, with_t):
+    ar=np.deg2rad(aa)
+    cols=[np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar)]
+    if with_t: cols.append(tt)
+    return np.column_stack(cols)
+
+# final backtest at cut=500 (mimics real task: 46d of gamma missing vs 94d real)
+for with_t in [True]:
+  for lam in [0.01,0.05,0.1,0.3]:
+    e=[];h=[]
+    for cut in [490,500,510,520]:
+        tr=t<cut; tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+        if len(tq)<6: continue
+        mk,c = fit_alpha(t[tr], au_full[tr])
+        apq = mk(tq)@c; ap2 = mk(t2[tr2])@c
+        X2=gf(t2[tr2], ap2, with_t); Xq=gf(tq, apq, with_t)
+        D=np.eye(X2.shape[1]); D[0,0]=0
+        cg=np.linalg.solve(X2.T@X2+lam*D, X2.T@ga[tr2])
+        p=Xq@cg
+        e.append(p-gq); h.append(tq-cut)
+    e=np.concatenate(e); h=np.concatenate(h)
+    print(f'with_t={with_t} lam={lam}: rmse={rmse(e,0):.2f} bias={e.mean():+.2f} | at h>30: rmse={rmse(e[h>30],0):.2f}')
+
+# FINAL full-data fit, predict test
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+mk,c_a = fit_alpha(t, au_full)
+ap_test = mk(tt)@c_a
+Xtr = gf(t2, mk(t2)@c_a, True)
+D=np.eye(Xtr.shape[1]); D[0,0]=0
+lam=0.1
+cg=np.linalg.solve(Xtr.T@Xtr+lam*D, Xtr.T@ga)
+pred = gf(tt, ap_test, True)@cg
+resid = ga - Xtr@cg
+print('final in-sample resid std:', resid.std())
+print('pd.Series(pred).round(2).values:', np.round(pred,2))
+print('alpha_pred test:', np.round(ap_test % 360,1))
+print('au at 544:', au_full[-1], au_full[-1]%360)
+EOF
+python3 /tmp/backtest12.py
 ```
 
 ## [41] tool
@@ -874,7 +1578,46 @@ The model now has small bias at realistic horizons (RMSE ~2.4-3 at 44-54 days). 
 **tool call: bash**
 
 ```
+cat > /tmp/gen1.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w = 360/420.
 
+def mk(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+X=mk(t); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+ca=np.linalg.solve(X.T@X+1.0*D, X.T@au)
+print('alpha resid std:', np.std(au - X@ca))
+
+def gf(tt, aa):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
+ap2 = mk(t2)@ca
+Xtr=gf(t2, ap2); D2=np.eye(Xtr.shape[1]); D2[0,0]=0
+cg=np.linalg.solve(Xtr.T@Xtr+0.1*D2, Xtr.T@ga)
+resid = ga - Xtr@cg
+
+test = pd.read_csv('data/test.csv'); tt=test.t.values.astype(float)
+apq = mk(tt)@ca
+pred = gf(tt, apq)@cg
+
+# rough interval: half-width grows with horizon
+h = tt - t.max()
+sig0 = 1.0
+sig_grow = 0.08  # per day
+hw = 1.96*np.sqrt(sig0**2 + (sig_grow*h)**2)
+out = pd.DataFrame({'t': test.t, 'y_pred': pred, 'y_lower': pred-hw, 'y_upper': pred+hw})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+EOF
+python3 /tmp/gen1.py && cp predictions.csv /tmp/predictions_backup.csv
 ```
 
 ## [43] tool
@@ -900,7 +1643,41 @@ A valid predictions.csv exists now. Let me refine: calibrate the period better a
 **tool call: bash**
 
 ```
+cat > /tmp/calib.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
 
+def fit_alpha_P(tt, au, P, nh=2, lam=1.0):
+    w=360.0/P
+    def mk(x):
+        cols=[np.ones(len(x)), x]
+        for k in range(1,nh+1):
+            ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+        return np.column_stack(cols)
+    X=mk(tt); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X.T@X+lam*D, X.T@au)
+    return mk, c
+
+# fine grid over P by full-data fit, then stability via backtests
+scan=[]
+for P in np.arange(400, 441, 2.0):
+    mk,c = fit_alpha_P(t, au, P)
+    r_ins = rmse(mk(t)@c, au)
+    e=[]
+    for cut in [430,460,490,510]:
+        tr=t<cut
+        mk2,c2 = fit_alpha_P(t[tr], au[tr], P)
+        e.append(rmse(mk2(t[~tr])@c2, au[~tr]))
+    scan.append((P, r_ins, np.mean(e), np.max(e)))
+scan.sort(key=lambda x: x[2])
+for s in scan[:12]: print(f'P={s[0]:.0f} insample={s[1]:.3f} extrap_mean={s[2]:.3f} extrap_max={s[3]:.3f}')
+EOF
+python3 /tmp/calib.py
 ```
 
 ## [45] tool
@@ -924,7 +1701,52 @@ P=412 insample=0.986 extrap_mean=1.503 extrap_max=1.828
 **tool call: bash**
 
 ```
+cat > /tmp/noise.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+P=423.0; w=360.0/P
+def mk_a(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+Xa=mk_a(t); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au)
+resid_a = au - Xa@ca
+print('alpha resid std=%.3f, lag1 autocorr=%.3f' % (resid_a.std(), np.corrcoef(resid_a[:-1],resid_a[1:])[0,1]))
 
+def gf(tt, aa, with_t=True):
+    ar=np.deg2rad(aa)
+    cols=[np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar)]
+    if with_t: cols.append(tt)
+    return np.column_stack(cols)
+ap2 = mk_a(t2)@ca
+Xg = gf(t2, ap2); Dg=np.eye(Xg.shape[1]); Dg[0,0]=0
+cg=np.linalg.solve(Xg.T@Xg+0.1*Dg, Xg.T@ga)
+rm = ga - Xg@cg
+lag1 = np.corrcoef(rm[:-1], rm[1:])[0,1]
+print('gamma model resid std=%.3f lag1=%.3f' % (rm.std(), lag1))
+sig0 = rm.std()*np.sqrt((1+1/len(rm)))  # rough
+# effective white noise sigma from model residual
+sig_w = np.std(np.diff(rm))/np.sqrt(2)
+print('implied white noise sigma from diffs:', sig_w)
+# how correlated: estimate AR(1) phi
+phi = lag1
+print('phi~', phi, 'white sigma~', rm.std()*np.sqrt(1-phi**2))
+
+# Next: does gamma correlate with time beyond alpha? check if gamma min timing
+# deriv of model at test ts
+test_t = np.arange(546,639)
+apq = mk_a(test_t)@ca
+pred = gf(test_t, apq)@cg
+imin = np.argmin(pred)
+print('model gamma min %.2f at t=%d; at ends: %s' % (pred.min(), test_t[imin], np.round(pred[[0,-1]],2)))
+EOF
+python3 /tmp/noise.py
 ```
 
 ## [47] tool
@@ -943,7 +1765,62 @@ Residuals are white, so ~1.05 is the true noise floor and any larger backtest er
 **tool call: bash**
 
 ```
+cat > /tmp/final_check.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+P=423.0; w=360.0/P
 
+def pipeline(tr_mask, t2_tr, ga_tr, tq, P, lam, bias_slope):
+    w=360.0/P
+    def mk_a(x, nh=2):
+        cols=[np.ones(len(x)), x]
+        for k in range(1,nh+1):
+            ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+        return np.column_stack(cols)
+    Xa=mk_a(t[tr_mask]); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+    ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au[tr_mask])
+    def gf(tt, aa):
+        ar=np.deg2rad(aa)
+        return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
+    ap2 = mk_a(t2_tr)@ca
+    Xg=gf(t2_tr, ap2); Dg=np.eye(Xg.shape[1]); Dg[0,0]=0
+    cg=np.linalg.solve(Xg.T@Xg+lam*Dg, Xg.T@ga_tr)
+    apq = mk_a(tq)@ca
+    pred = gf(tq, apq)@cg
+    pred = pred - bias_slope*(tq - t[tr_mask].max())
+    return pred
+
+def sim(cut, P, lam, bias_slope):
+    tr = t<cut; tr2 = t2<cut
+    tq = t2[~tr2]
+    return pipeline(tr, t2[tr2], ga[tr2], tq, P, lam, bias_slope), ga[~tr2]
+
+# bias measurement per P (cut=500 mimics our horizon closely; others added for the offset tuning)
+for P in [420., 423., 426., 430.]:
+    bs=[]
+    for cut in [490,500,510,520]:
+        p,g = sim(cut, P, 0.1, 0.0)
+        slope = np.polyfit(t2[t2>=cut]-cut, (p-g), 1)[0]
+        bs.append(slope)
+    print(f'P={P}: err-slope per cut (deg/day): {np.round(bs,3)} mean={np.mean(bs):.3f}')
+
+# final check with correction
+for P in [420.,423.,426.]:
+    for lam in [0.05,0.1,0.2]:
+        slope = {420.:0.10, 423.:0.085, 426.:0.075}[P]
+        e=[];h=[]
+        for cut in [490,500,510,520]:
+            p,g = sim(cut, P, lam, slope)
+            e.append(p-g); h.append(t2[t2>=cut]-cut)
+        e=np.concatenate(e); h=np.concatenate(h)
+        print(f'P={P} lam={lam} slope={slope}: rmse={rmse(e,0):.2f} bias={e.mean():+.2f} maxabs={np.abs(e).max():.2f}')
+EOF
+python3 /tmp/final_check.py
 ```
 
 ## [49] tool
@@ -984,7 +1861,52 @@ P=426.0 lam=0.2 slope=0.075: rmse=3.17 bias=-1.69 maxabs=9.74
 **tool call: bash**
 
 ```
+cat > /tmp/final_check2.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
 
+def mk_a(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def gf(tt, aa):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
+def gt_feat(tt):
+    return mk_a(tt)  # same structure for gamma-direct
+
+def run(cut, lam, corr, blend):
+    tr=t<cut; tr2=t2<cut; tq=t2[~tr2]; gq=ga[~tr2]
+    Xa=mk_a(t[tr]); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+    ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au[tr])
+    ap2=mk_a(t2[tr2])@ca; apq=mk_a(tq)@ca
+    Xg=gf(t2[tr2],ap2); Dg=np.eye(Xg.shape[1]); Dg[0,0]=0
+    cg=np.linalg.solve(Xg.T@Xg+lam*Dg, Xg.T@ga[tr2])
+    pA = gf(tq,apq)@cg
+    # gamma-direct model
+    Xd=gt_feat(t2[tr2]); Dd=np.eye(Xd.shape[1]); Dd[0,0]=0; Dd[1,1]=0
+    cd=np.linalg.solve(Xd.T@Xd+1.0*Dd, Xd.T@ga[tr2])
+    pB = gt_feat(tq)@cd
+    p = (1-blend)*pA + blend*pB + corr*(tq-cut)
+    return p, gq, tq-cut
+
+# per-cut view with modest correction
+for corr in [0.0, 0.05, 0.1]:
+  for blend in [0.0, 0.3]:
+    rows=[]
+    for cut in [440,460,480,500,510,520]:
+        p,g,h = run(cut, 0.2, corr, blend)
+        rows.append(f'{cut}:{rmse(p,g):.1f}')
+    print(f'corr={corr} blend={blend}: '+' '.join(rows))
+EOF
+python3 /tmp/final_check2.py
 ```
 
 ## [51] tool
@@ -1002,7 +1924,47 @@ corr=0.1 blend=0.3: 440:15.5 460:12.0 480:8.6 500:2.6 510:1.5 520:1.8
 **tool call: bash**
 
 ```
+cat > /tmp/coverage.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
+def mk_a(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def gf(tt, aa):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
 
+def predict(cut, lam, corr):
+    tr=t<cut; tr2=t2<cut; tq=t2[~tr2]
+    Xa=mk_a(t[tr]); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+    ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au[tr])
+    ap2=mk_a(t2[tr2])@ca; apq=mk_a(tq)@ca
+    Xg=gf(t2[tr2],ap2); Dg=np.eye(Xg.shape[1]); Dg[0,0]=0
+    cg=np.linalg.solve(Xg.T@Xg+lam*Dg, Xg.T@ga[tr2])
+    return gf(tq,apq)@cg + corr*(tq-cut), ga[~tr2], tq-cut
+
+SIG0=1.0
+for vp in [0.004, 0.008, 0.012]:
+  for corr in [0.0, 0.05]:
+    cov=0; n=0; errs=[]
+    for cut in [440,450,460,470,480,490,500,510,520]:
+        p,g,h = predict(cut, 0.2, corr)
+        sig = np.sqrt(SIG0**2 + vp*h)
+        lo, hi = p-1.96*sig, p+1.96*sig
+        cov += int(((g>=lo)&(g<=hi)).sum()); n += len(g)
+        errs.append(p-g)
+    e=np.concatenate(errs)
+    print(f'vp={vp} corr={corr}: coverage={cov/n:.3f} rmse={rmse(e,0):.2f}')
+EOF
+python3 /tmp/coverage.py
 ```
 
 ## [53] tool
@@ -1022,7 +1984,60 @@ Coverage is low — my sigma growth is too weak. Let me measure the actual error
 **tool call: bash**
 
 ```
+cat > /tmp/coverage2.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
+def mk_a(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def gf(tt, aa):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
 
+def predict(cut, lam, corr):
+    tr=t<cut; tr2=t2<cut; tq=t2[~tr2]
+    Xa=mk_a(t[tr]); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+    ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au[tr])
+    ap2=mk_a(t2[tr2])@ca; apq=mk_a(tq)@ca
+    Xg=gf(t2[tr2],ap2); Dg=np.eye(Xg.shape[1]); Dg[0,0]=0
+    cg=np.linalg.solve(Xg.T@Xg+lam*Dg, Xg.T@ga[tr2])
+    return gf(tq,apq)@cg + corr*(tq-cut), ga[~tr2], tq-cut
+
+errs=[]; hs=[]
+for cut in [385,400,420,440,450,460,470,480,490,500,510,520,530]:
+    p,g,h = predict(cut, 0.2, 0.0)
+    errs.append(p-g); hs.append(h)
+e=np.concatenate(errs); h=np.concatenate(hs)
+print('n =', len(e))
+# sigma(h) empirical: bin h
+bins=[0,10,20,30,40,50,60,70,85,100,115]
+for lo,hi in zip(bins[:-1],bins[1:]):
+    s=(h>=lo)&(h<hi)
+    if s.sum()>3:
+        print(f'h in [{lo},{hi}): n={s.sum():3d} rmse={rmse(e[s],0):5.2f} bias={e[s].mean():+5.2f} std={e[s].std():5.2f} q95={np.percentile(np.abs(e[s]),95):5.2f}')
+# calibrate: coverage with sig = sqrt(s0^2 + vp*h^2) and with vp*h linear
+for form in ['lin','quad','mix']:
+  for c1 in [0.08, 0.12, 0.16]:
+    for corr in [0.0,0.05]:
+        cov=0;n=0
+        for cut in [400,420,440,450,460,470,480,490,500,510,520,530]:
+            p,g,hh = predict(cut, 0.2, corr)
+            if form=='lin': sig = np.sqrt(1.0 + (c1*hh)**2)
+            elif form=='quad': sig = np.sqrt(1.0 + c1*c1*hh**2/4)
+            else: sig = np.sqrt(1.0 + (c1*hh)**2 + 0.002*hh**3)
+            lo_,hi_ = p-1.96*sig, p+1.96*sig
+            cov += int(((g>=lo_)&(g<=hi_)).sum()); n+=len(g)
+        print(f'{form} c1={c1} corr={corr}: cov={cov/n:.3f}')
+EOF
+python3 /tmp/coverage2.py
 ```
 
 ## [55] tool
@@ -1065,7 +2080,52 @@ Let me use polynomial chaos propagation through the exact model — a principled
 **tool call: bash**
 
 ```
+cat > /tmp/gen2.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w = 360.0/423.0
 
+def mk_a(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def gf(tt, aa):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
+
+# alpha fit
+Xa=mk_a(t); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au)
+ap2 = mk_a(t2)@ca
+# gamma fit
+Xg=gf(t2, ap2); Dg=np.eye(Xg.shape[1]); Dg[0,0]=0
+cg=np.linalg.solve(Xg.T@Xg+0.2*Dg, Xg.T@ga)
+resid = ga - Xg@cg
+from scipy.stats import t as tdist
+sig0 = resid.std() * np.sqrt((1+1/len(resid)))
+print('gamma resid std', resid.std())
+
+test = pd.read_csv('data/test.csv'); tt=test.t.values.astype(float)
+apq = mk_a(tt)@ca
+pred = gf(tt, apq)@cg
+h = tt - t.max()  # 2,12,23,...,94
+# interval: sigma(h) = sqrt(sig0^2 + (g*h)^2)
+for g in [0.05, 0.07]:
+    sig = np.sqrt(sig0**2 + (g*h)**2)
+    lo, hi = pred - 1.96*sig, pred + 1.96*sig
+    print(f'g={g}: widths at h=2..94:', np.round((hi-lo),1))
+out = pd.DataFrame({'t': test.t, 'y_pred': pred,
+                    'y_lower': pred - 1.96*np.sqrt(sig0**2 + (0.06*h)**2),
+                    'y_upper': pred + 1.96*np.sqrt(sig0**2 + (0.06*h)**2)})
+out.to_csv('predictions.csv', index=False)
+print(out.round(3).to_string())
+EOF
+python3 /tmp/gen2.py
 ```
 
 ## [57] tool
@@ -1093,7 +2153,34 @@ Wait — the P=423 alpha fit now predicts gamma keeps declining to -29 instead o
 **tool call: bash**
 
 ```
+cat > /tmp/alpha_diag.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
 
+def fit(t, au, P, lam):
+    w=360.0/P
+    def mk(x, nh=2):
+        cols=[np.ones(len(x)), x]
+        for k in range(1,nh+1):
+            ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+        return np.column_stack(cols)
+    X=mk(t); D=np.eye(X.shape[1]); D[0,0]=0; D[1,1]=0
+    c=np.linalg.solve(X.T@X+lam*D, X.T@au)
+    return mk, c, w
+
+test_t = np.array([546,567,597,628,638])
+print('alpha_unwrapped at end (t=535..544):', np.round(au[-10:],2))
+# raw values
+print('raw alpha last 10:', df.alpha.values[-10:])
+for P in [410,415,420,423,426,430,435,440,445,450]:
+    mk,c,w = fit(t, au, P, 1.0)
+    r = np.std(au - mk(t)@c)
+    pred = mk(test_t)@c
+    print(f'P={P}: resid={r:.3f} drift={c[1]:+.3f} pred@546/597/638={pred[0]%360:.1f}/{pred[2]%360:.1f}/{pred[4]%360:.1f}')
+EOF
+python3 /tmp/alpha_diag.py
 ```
 
 ## [59] tool
@@ -1120,7 +2207,59 @@ Alpha predictions are stable across P. The gamma prediction variance must come f
 **tool call: bash**
 
 ```
+cat > /tmp/trace.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
 
+def build(lam, w):
+    def mk_a(x, nh=2):
+        cols=[np.ones(len(x)), x]
+        for k in range(1,nh+1):
+            ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+        return np.column_stack(cols)
+    def gf(tt, aa):
+        ar=np.deg2rad(aa)
+        return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
+    Xa=mk_a(t); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+    ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au)
+    ap2 = mk_a(t2)@ca
+    Xg=gf(t2, ap2); Dg=np.eye(Xg.shape[1]); Dg[0,0]=0
+    cg=np.linalg.solve(Xg.T@Xg+lam*Dg, Xg.T@ga)
+    print('gamma coef:', np.round(cg,3))
+    return mk_a, gf, ca, cg
+
+for lam, w in [(0.1,360/420.),(0.2,360/423.)]:
+    mk_a, gf, ca, cg = build(lam, w)
+    test_t = np.arange(546,639)
+    apq = mk_a(test_t)@ca
+    # decompose contributions
+    ar = np.deg2rad(apq)
+    contrib = {
+      'const': cg[0],
+      'cos': cg[1]*np.cos(ar),
+      'sin': cg[2]*np.sin(ar),
+      'cos2': cg[3]*np.cos(2*ar),
+      'sin2': cg[4]*np.sin(2*ar),
+      't': cg[5]*test_t,
+    }
+    pred = gf(test_t, apq)@cg
+    print(f'--- lam={lam} P={360/w:.0f}: pred@546/597/638 = {pred[0]:.2f}/{pred[51]:.2f}/{pred[92]:.2f}')
+    for k,v in contrib.items():
+        v = np.atleast_1d(v)
+        print(f'   {k}: @546={v[0]:+.2f} @597={v[51]:+.2f} @638={v[92]:+.2f}')
+    # what is alpha mod 360 at those?
+    print('   alpha%360 @546/597/638:', round(apq[0]%360,1), round(apq[51]%360,1), round(apq[92]%360,1))
+    # in-sample gamma at similar phases historically
+    auw = ap2%360
+    for target in [apq[0]%360, apq[92]%360]:
+        idx = np.where(np.abs(((auw-target+180)%360)-180)<3)[0]
+        print(f'   alpha~{target:.0f} seen at t={t2[idx[:5]]} gamma={np.round(ga[idx[:5]],1)}')
+EOF
+python3 /tmp/trace.py
 ```
 
 ## [61] tool
@@ -1140,7 +2279,44 @@ gamma coef: [114.553   0.952  -7.337  -5.508   4.073  -0.236]
 **tool call: bash**
 
 ```
-
+cat > /tmp/trace2.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w = 360/423.0
+def mk_a(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def gf(tt, aa):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt])
+Xa=mk_a(t); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au)
+ap2 = mk_a(t2)@ca
+Xg=gf(t2, ap2)
+for lam in [0.01, 0.1, 0.2, 1.0]:
+    Dg=np.eye(Xg.shape[1]); Dg[0,0]=0
+    cg=np.linalg.solve(Xg.T@Xg+lam*Dg, Xg.T@ga)
+    test_t = np.arange(546,639)
+    apq = mk_a(test_t)@ca
+    pred = gf(test_t, apq)@cg
+    r = np.std(ga - Xg@cg)
+    print(f'lam={lam}: resid={r:.3f} pred@546={pred[0]:.2f} 597={pred[51]:.2f} 638={pred[92]:.2f} coef={np.round(cg,3)}')
+# Where does gamma reach minimum in-sample vs alpha?
+idx_min = np.argmin(ga)
+print('in-sample gamma min:', ga[idx_min], 'at t=', t2[idx_min])
+# gamma vs phase: for the test range alpha 159-245, what do we see historically
+auw = ap2 % 360
+for lo in range(160, 250, 10):
+    idx = np.where((auw>=lo)&(auw<lo+10))[0]
+    if len(idx): print(f'  alpha%360 in [{lo},{lo+10}): t={t2[idx[0]]:.0f}..{t2[idx[-1]]:.0f} gamma mean={ga[idx].mean():.2f} n={len(idx)}')
+EOF
+python3 /tmp/trace2.py
 ```
 
 ## [63] tool
@@ -1159,7 +2335,72 @@ The ridge penalty collapses the sin component, forcing the trend term to fit the
 **tool call: bash**
 
 ```
+cat > /tmp/split_feat.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
+def mk_a(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def gf_split(tt, aa, t0, scale=100.0):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), (tt-t0)/scale])
 
+def fit_predict(cut, lam_harm, lam_t, t0, scale=100.0):
+    tr=t<cut; tr2=t2<cut; tq=t2[~tr2]
+    Xa=mk_a(t[tr]); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+    ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au[tr])
+    ap2=mk_a(t2[tr2])@ca; apq=mk_a(tq)@ca
+    Xg=gf_split(t2[tr2],ap2,t0)
+    # penalize harmonics and trend differently; trend in scaled units
+    Dg=np.diag([0, lam_harm, lam_harm, lam_harm, lam_harm, lam_t])
+    cg=np.linalg.solve(Xg.T@Xg+Dg, Xg.T@ga[tr2])
+    return gf_split(tq,apq,t0)@cg, ga[~tr2], tq-cut, cg
+
+# in-sample t0=450
+print('in-sample resid + coefs for ridge strengths:')
+for lam_h in [0.05,0.1,0.2]:
+  for lam_t in [0,0.001,0.01]:
+    p,g,h,c = fit_predict(545.0, lam_h, lam_t, 450.0)  # ~ full window
+    # note cut 545 > all t2 so tq empty; instead compute resid manually
+    pass
+# quick: fit on full gamma window, check residual
+def full(lam_h, lam_t, t0, scale=100.0):
+    Xa=mk_a(t); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+    ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au)
+    ap2=mk_a(t2)@ca
+    Xg=gf_split(t2,ap2,t0)
+    Dg=np.diag([0,lam_h,lam_h,lam_h,lam_h,lam_t])
+    cg=np.linalg.solve(Xg.T@Xg+Dg, Xg.T@ga)
+    return ca, cg, np.std(ga - Xg@cg)
+for lam_h in [0.05,0.1,0.2]:
+  row=[]
+  for lam_t in [0.,0.001,0.01]:
+    ca,cg,r = full(lam_h, lam_t, 450.0)
+    # param-free gamma drift in deg/day:
+    drift = cg[5]/100.0
+    row.append(f'lam_t={lam_t}: r={r:.3f} drift={drift:+.4f}')
+  print(f'lam_h={lam_h}: '+' | '.join(row))
+
+# backtest
+print('backtest:')
+for lam_h in [0.05,0.1,0.2]:
+  for lam_t in [0.,0.001,0.01]:
+    e=[];h=[]
+    for cut in [440,460,480,500,510,520]:
+        p,g,hh,c = fit_predict(cut, lam_h, lam_t, 450.0)
+        e.append(p-g); h.append(hh)
+    e=np.concatenate(e); h=np.concatenate(h)
+    print(f'lam_h={lam_h} lam_t={lam_t}: rmse={rmse(e,0):.2f} rmse(h>35)={rmse(e[h>35],0):.2f} bias(h>35)={e[h>35].mean():+.2f}')
+EOF
+python3 /tmp/split_feat.py
 ```
 
 ## [65] tool
@@ -1187,7 +2428,46 @@ Let me look for a stable gamma(alpha) relation and find the true gamma-minimum t
 **tool call: bash**
 
 ```
+cat > /tmp/explore_fit.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
 
+# gamma vs alpha_u raw polynomials
+for deg in [1,2,3,4]:
+    idx = t2.astype(int)
+    c = np.polyfit(au[idx], ga, deg)
+    r = ga - np.polyval(c, au[idx])
+    # residual autocorr to see time-structure left over
+    print(f'poly{deg}(au): resid std={r.std():.3f} lag1={np.corrcoef(r[:-1],r[1:])[0,1]:.3f}')
+# gamma vs both alpha_u and t linear
+idx=t2.astype(int)
+A = np.column_stack([np.ones(len(idx)), au[idx], au[idx]**2, au[idx]**3, t2])
+c,*_ = np.linalg.lstsq(A, ga, rcond=None)
+r = ga - A@c
+print('poly3(au)+t: resid=%.3f t-coef=%.4f' % (r.std(), c[4]))
+# sin/cos harmonics of alpha + t with tiny ridge, coefficients:
+ar = np.deg2rad(au[idx])
+X = np.column_stack([np.ones(len(idx)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), np.cos(3*ar), np.sin(3*ar), t2])
+c,*_ = np.linalg.lstsq(X, ga, rcond=None)
+r = ga - X@c
+print('harm3(au)+t: resid=%.3f coef=%s' % (r.std(), np.round(c,3)))
+# cross-validated gamma-mean at the last segment: estimate gamma min location via smooth fit vs t
+from scipy.interpolate import UnivariateSpline
+spl = UnivariateSpline(t2, ga, s=len(t2)*4.0)
+tt = np.arange(380, 545)
+# find min of smooth spline
+i = np.argmin(spl(tt))
+print('spline gamma min %.2f at t=%d; slope at 544=%.3f deg/day' % (spl(tt[i]), tt[i], spl.derivative()(544)))
+# extrapolation of spline derivative: gamma at 546.. -> flat?
+# what if gamma truly flattens and rises? curvature at end:
+d2 = spl.derivative(2)
+print('spline curv at 535-540:', [round(d2(x),4) for x in range(530,545,3)])
+EOF
+python3 /tmp/explore_fit.py
 ```
 
 ## [67] tool
@@ -1214,7 +2494,56 @@ Key insight: gamma relates to *unwrapped* alpha (ã) — a mono-directional prox
 **tool call: bash**
 
 ```
+cat > /tmp/backtest_poly.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
+def mk_a(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
 
+def make_feat_poly(aa, deg, tt=None):
+    cols=[np.ones(len(aa))]
+    for k in range(1,deg+1): cols.append(aa**k)
+    if tt is not None: cols.append((tt-450.0)/100.0)
+    return np.column_stack(cols)
+
+def run(cut, deg, lam, use_t=False, t_lam=0.0):
+    tr=t<cut; tr2=t2<cut; tq=t2[~tr2]
+    Xa=mk_a(t[tr]); D=np.eye(Xa.shape[1]); D[0,0]=0; D[1,1]=0
+    ca=np.linalg.solve(Xa.T@Xa+1.0*D, Xa.T@au[tr])
+    ap2=mk_a(t2[tr2])@ca; apq=mk_a(tq)@ca
+    t_arg = t2[tr2] if use_t else None
+    tq_arg = tq if use_t else None
+    Xg=make_feat_poly(ap2, deg, t_arg); Xq=make_feat_poly(apq, deg, tq_arg)
+    Dg=np.zeros(Xg.shape[1]); Dg[1:deg+1]=lam
+    if use_t: Dg[-1]=t_lam
+    cg=np.linalg.solve(Xg.T@Xg+np.diag(Dg), Xg.T@ga[tr2])
+    return Xq@cg, ga[~tr2], tq-cut
+
+for deg in [3,4]:
+    for lam in [1e-6, 1e-5]:
+        e=[];h=[]
+        for cut in [430,440,450,460,470,480,490,500,510,520]:
+            p,g,hh = run(cut, deg, lam)
+            e.append(p-g); h.append(hh)
+        e=np.concatenate(e); h=np.concatenate(h)
+        print(f'poly{deg} lam={lam:g}: rmse={rmse(e,0):.2f} rmse(h>35)={rmse(e[h>35],0):.2f} bias(h>35)={e[h>35].mean():+.2f} | details per cut:')
+        # per cut
+        ee=[];hh2=[]
+        for cut in [440,460,480,500]:
+            p,g,hh = run(cut, deg, lam)
+            ee.append(rmse(p,g))
+        print('   ', np.round(ee,2))
+EOF
+python3 /tmp/backtest_poly.py
 ```
 
 ## [69] tool
@@ -1236,7 +2565,66 @@ Raw polynomial ã powers extrapolate wildly. Let me try gamma on alpha *and beta
 **tool call: bash**
 
 ```
+cat > /tmp/backtest_ab.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values; be = df.beta[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
+def per_feats(x, w, nh):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def ridge_fit(X, y, lam, pen_mask):
+    D=np.diag(pen_mask*lam + (1-pen_mask)*0.0)
+    return np.linalg.solve(X.T@X+D, X.T@y)
 
+# alpha model & beta model (beta observed only t2)
+def alpha_pred(tr_mask, tq):
+    X=per_feats(t[tr_mask], w, 2); pen=np.array([0,0,1,1,1,1])
+    c=ridge_fit(X, au[tr_mask], 1.0, pen)
+    return per_feats(tq,w,2)@c
+def beta_pred(tr2_mask, tq):
+    X=per_feats(t2[tr2_mask], w, 2); pen=np.array([0,0,1,1,1,1])
+    c=ridge_fit(X, be[tr2_mask], 1.0, pen)
+    return per_feats(tq,w,2)@c
+
+def gamma_feats(tt, aa, bb, nh_a=2, nh_b=1, use_t=False, t0=450.):
+    cols=[np.ones(len(tt))]
+    ar=np.deg2rad(aa)
+    for k in range(1,nh_a+1): cols += [np.cos(k*ar), np.sin(k*ar)]
+    if bb is not None:
+        br=np.deg2rad(bb)
+        for k in range(1,nh_b+1): cols += [np.cos(k*br), np.sin(k*br)]
+    if use_t: cols.append((tt-t0))
+    return np.column_stack(cols)
+
+def run(cut, nh_a, nh_b, use_t, lam, t0=450.):
+    tr=t<cut; tr2=t2<cut; tq=t2[~tr2]
+    ap2=alpha_pred(tr, t2[tr2]); apq=alpha_pred(tr, tq)
+    bp2=beta_pred(tr2, t2[tr2]); bpq=beta_pred(tr2, tq)
+    Xg=gamma_feats(t2[tr2], ap2, bp2, nh_a, nh_b, use_t, t0)
+    Xq=gamma_feats(tq, apq, bpq, nh_a, nh_b, use_t, t0)
+    n=Xg.shape[1]
+    pen=np.ones(n)*lam; pen[0]=0.0
+    if use_t: pen[-1]=lam*0.0  # don't penalize trend? try
+    cg=np.linalg.solve(Xg.T@Xg+np.diag(pen), Xg.T@ga[tr2])
+    return Xq@cg, ga[~tr2], tq-cut
+
+print('variant: nh_a nh_b use_t lam')
+for (nh_a,nh_b,use_t,lam) in [(2,1,False,1.0),(2,1,True,1.0),(1,1,True,1.0),(2,2,True,1.0),(2,1,True,0.1),(1,1,True,0.1),(2,0,True,1.0)]:
+    e=[];h=[];per=[]
+    for cut in [440,460,480,500,510,520]:
+        p,g,hh = run(cut, nh_a, nh_b, use_t, lam)
+        e.append(p-g); h.append(hh); per.append(rmse(p,g))
+    e=np.concatenate(e); h=np.concatenate(h)
+    print(f'({nh_a},{nh_b},{use_t},{lam}): rmse={rmse(e,0):.2f} rmse(h>35)={rmse(e[h>35],0):.2f} bias(h>35)={e[h>35].mean():+.2f} perCut={np.round(per,1)}')
+EOF
+python3 /tmp/backtest_ab.py
 ```
 
 ## [71] tool
@@ -1258,7 +2646,61 @@ Beta adds nothing. The systematic error is a deterministic gamma-decline drift (
 **tool call: bash**
 
 ```
+cat > /tmp/drift.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w=360.0/423.0
+def per_feats(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
 
+# gamma-DIRECT model in t: fit on t2<=cut, extrapolate; measure error slope vs horizon
+def gam_direct(cut):
+    tr2 = t2<=cut; tq=t2[~tr2]
+    X=per_feats(t2[tr2]); Dg=np.diag([0.,0.,1,1,1,1])
+    c=np.linalg.solve(X.T@X+1.0*Dg, X.T@ga[tr2])
+    p = per_feats(tq)@c
+    return p, ga[~tr2], tq-cut
+print('gamma-direct in t: err slope (deg/day) per cut:')
+slopes=[]
+for cut in [440,450,460,470,480,490,500,510,520,530]:
+    p,g,h = gam_direct(cut)
+    if len(h)<5: continue
+    s = np.polyfit(h, p-g, 1)[0]
+    slopes.append(s)
+    print(f'  cut={cut}: err(t=544 end pred)={p[-1]-g[-1]:+.2f} slope={s:+.3f}, pred end={p[-1]:.2f} vs g end={g[-1]:.2f}')
+print('slope median:', np.median(slopes))
+
+# And with the alpha-based model
+def alpha_pred(tr_mask, tq):
+    X=per_feats(t[tr_mask]); c=np.linalg.solve(X.T@X+np.diag([0.,0,1,1,1,1]), X.T@au[tr_mask])
+    return per_feats(tq)@c
+def gf(tt, aa, t0=450.):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), (tt-t0)])
+def gam_alpha(cut, lam=0.1):
+    tr=t<cut; tr2=t2<cut; tq=t2[~tr2]
+    ap2=alpha_pred(tr,t2[tr2]); apq=alpha_pred(tr,tq)
+    Xg=gf(t2[tr2],ap2); Dg=np.diag([0,lam,lam,lam,lam,0.0])
+    cg=np.linalg.solve(Xg.T@Xg+Dg, Xg.T@ga[tr2])
+    return gf(tq,apq)@cg, ga[~tr2], tq-cut
+print('alpha-based: err slope per cut:')
+slopes2=[]
+for cut in [440,450,460,470,480,490,500,510,520,530]:
+    p,g,h = gam_alpha(cut)
+    if len(h)<5: continue
+    s = np.polyfit(h, p-g, 1)[0]
+    slopes2.append(s)
+    print(f'  cut={cut}: slope={s:+.3f} pred end err={p[-1]-g[-1]:+.2f}')
+print('slope median:', np.median(slopes2))
+EOF
+python3 /tmp/drift.py
 ```
 
 ## [73] tool
@@ -1296,7 +2738,64 @@ The alpha-based model tracks gamma's true path well at long cuts — the trend a
 **tool call: bash**
 
 ```
+cat > /tmp/final_backtest.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
+def per_feats(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def alpha_pred(tr_mask, tq, lam_h=1.0):
+    X=per_feats(t[tr_mask]); pen=np.array([0,0,1,1,1,1],float)
+    c=np.linalg.solve(X.T@X+lam_h*np.diag(pen), X.T@au[tr_mask])
+    return per_feats(tq)@c
 
+def gamma_model(t2tr, ga_tr, ap_tr, tq, ap_q, cfg):
+    t0 = t2tr.mean()
+    # design matrix
+    def design(tt, aa):
+        ar=np.deg2rad(aa)
+        cols=[np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar)]
+        if cfg.get('nh3'): cols += [np.cos(3*ar), np.sin(3*ar)]
+        if cfg.get('use_t'): cols += [(tt-t0)]
+        return np.column_stack(cols)
+    X=design(t2tr, ap_tr); Xq=design(tq, ap_q)
+    n=X.shape[1]
+    pen=np.ones(n)*cfg['lam']; pen[0]=0.0
+    if cfg.get('use_t'): pen[-1]=cfg.get('lam_t', 0.0)
+    c=np.linalg.solve(X.T@X+np.diag(pen), X.T@ga_tr)
+    return Xq@c
+
+def backtest(cfg, cuts=(440,450,460,470,480,490,500,510,520)):
+    e=[]; h=[]; per=[]
+    for cut in cuts:
+        tr=t<cut; tr2=t2<cut; tq=t2[~tr2]
+        ap2=alpha_pred(tr, t2[tr2]); apq=alpha_pred(tr, tq)
+        p = gamma_model(t2[tr2], ga[tr2], ap2, tq, apq, cfg)
+        g = ga[~tr2]
+        e.append(p-g); h.append(tq-cut); per.append(rmse(p,g))
+    e=np.concatenate(e); h=np.concatenate(h)
+    return e, h, per
+
+cfgs = {
+ 'A nh2+t lam0.1 tfree': {'lam':0.1,'use_t':True,'lam_t':0.0},
+ 'B nh2+t lam0.5 tfree': {'lam':0.5,'use_t':True,'lam_t':0.0},
+ 'C nh2+t lam1 tfree': {'lam':1.0,'use_t':True,'lam_t':0.0},
+ 'D nh3+t lam0.5': {'lam':0.5,'use_t':True,'nh3':True},
+ 'E nh2+t lam0.5 lamt0.5': {'lam':0.5,'use_t':True,'lam_t':0.5},
+}
+for name,cfg in cfgs.items():
+    e,h,per = backtest(cfg)
+    print(f'{name}: rmse={rmse(e,0):.2f} h>35: rmse={rmse(e[h>35],0):.2f} bias={e[h>35].mean():+.2f} meanwidth check | per-cut={np.round(per,1)}')
+EOF
+python3 /tmp/final_backtest.py
 ```
 
 ## [75] tool
@@ -1315,7 +2814,24 @@ Let me check the gamma–alpha phase relationship and fit gamma directly as a fu
 **tool call: bash**
 
 ```
-
+cat > /tmp/phase.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w=360.  # plot vs wrapped alpha
+aw = au % 360
+idx = t2.astype(int)
+# gamma max in first segment (t<300, aw spans?)
+seg1 = t2 < 300
+print('seg1 t<300: n=%d, aw range %s, gamma range %s' % (seg1.sum(), (aw[t2[seg1].astype(int)].min(), aw[t2[seg1].astype(int)].max()), (ga[seg1].min(), ga[seg1].max())))
+for deg in range(0,360,30):
+    sel = seg1 & (np.abs(((aw[t2.astype(int)]-deg+180)%360)-180)<15)
+    if sel.sum()>0: print(f'  aw~{deg}: t={t2[sel][0]:.0f}..{t2[sel][-1]:.0f} gamma mean={ga[sel].mean():6.2f} std={ga[sel].std():4.2f} n={sel.sum()}')
+EOF
+python3 /tmp/phase.py
 ```
 
 ## [77] tool
@@ -1338,7 +2854,64 @@ Let me verify that a local model (random-walk trend + harmonics) collapses to th
 **tool call: bash**
 
 ```
+cat > /tmp/kalman.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w=360.0/423.0
+def per_feats(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
 
+# Flexible gamma(t): RW trend + harmonics fitted with tiny lam on full data -> flat-end model
+X = per_feats(t2)
+Dg = np.diag([0., 0., 0.5, 0.5, 0.5, 0.5])
+cfl = np.linalg.solve(X.T@X + Dg, X.T@ga)
+print('full gamma(t) flat-end: slope=%.4f resid=%.3f' % (cfl[1], np.std(ga - X@cfl)))
+
+# alpha based: predicted alpha
+Xa = per_feats(t); pen=np.array([0,0,1,1,1,1],float)
+ca = np.linalg.solve(Xa.T@Xa + 1.0*np.diag(pen), Xa.T@au)
+ap2 = per_feats(t2)@ca
+
+# gamma(alpha harmonics + t), flat end calibration
+t0 = t2.mean()
+def gf(tt, aa):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt-t0])
+Xg = gf(t2, ap2)
+for lam in [0.3, 0.6, 1.0]:
+    Dg = np.diag([0., lam, lam, lam, lam, 0.0])
+    cg = np.linalg.solve(Xg.T@Xg + Dg, Xg.T@ga)
+    # at cut 500:
+    print(f'lam={lam}: gamma trend={cg[5]:+.4f} resid={np.std(ga-Xg@cg):.3f}')
+
+# Validate at cut=500 (h=44) style extrapolation: predict 501..544 using model fit to t2<=500
+def predict_at(cut, lam):
+    tr = t<cut; tr2 = t2<cut
+    Xa_tr = per_feats(t[tr]); ca2 = np.linalg.solve(Xa_tr.T@Xa_tr + 1.0*np.diag(pen), Xa_tr.T@au[tr])
+    apq = per_feats(t2[~tr2])@ca2; ap2r = per_feats(t2[tr2])@ca2
+    Xgr = gf(t2[tr2], ap2r)
+    Dg = np.diag([0., lam, lam, lam, lam, 0.0])
+    c2 = np.linalg.solve(Xgr.T@Xgr + Dg, Xgr.T@ga[tr2])
+    p = gf(t2[~tr2], apq)@c2
+    return p, ga[~tr2]
+def rmse(a,b): return np.sqrt(np.mean((a-b)**2))
+# RW-flat-end for gamma: blend of flexible gamma(t) and alpha model?
+for lam in [0.3, 0.6]:
+    p,g = predict_at(500, lam)
+    # flexible gamma(t) fit to <=500, extrapolate
+    X2 = per_feats(t2[t2<=500]); cfl2 = np.linalg.solve(X2.T@X2 + Dg, X2.T@ga[t2<=500])
+    pfl = per_feats(t2[t2>500])@cfl2
+    for name, pp in [('alpha-model', p), ('flat-flex', pfl), ('blend0.5', 0.5*p+0.5*pfl)]:
+        print(f'lam={lam} cut=500 {name}: rmse={rmse(pp,g):.2f} bias={np.mean(pp-g):+.2f} endpred={pp[-1]:.1f} vs {g[-1]:.1f}')
+EOF
+python3 /tmp/kalman.py
 ```
 
 ## [79] tool
@@ -1360,7 +2933,55 @@ lam=1.0: gamma trend=-0.2512 resid=1.128
 **tool call: bash**
 
 ```
+cd /tmp && python3 - << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('/data/train.csv') if False else pd.read_csv('data/train.csv') if False else None
+EOF
+echo "---"; cat > /tmp/kalman2.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w=360.0/423.0
+def per_feats(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def rmse(a,b): return np.sqrt(np.mean((a-b)**2))
+pen_a=np.array([0,0,1,1,1,1],float)
 
+def gf(tt, aa, t0):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt-t0])
+
+def predict_at(cut, lam, blend):
+    tr = t<cut; tr2 = t2<cut
+    Xa_tr = per_feats(t[tr]); ca2 = np.linalg.solve(Xa_tr.T@Xa_tr + 1.0*np.diag(pen_a), Xa_tr.T@au[tr])
+    tq = t2[~tr2]
+    apq = per_feats(tq)@ca2; ap2r = per_feats(t2[tr2])@ca2
+    t0 = t2[tr2].mean()
+    Xgr = gf(t2[tr2], ap2r, t0)
+    Dg = np.diag([0., lam, lam, lam, lam, 0.0])
+    c2 = np.linalg.solve(Xgr.T@Xgr + Dg, Xgr.T@ga[tr2])
+    pa = gf(tq, apq, t0)@c2
+    # flat-end flexible gamma(t)
+    X2 = per_feats(t2[tr2]); cfl2 = np.linalg.solve(X2.T@X2 + np.diag([0,0,.5,.5,.5,.5]), X2.T@ga[tr2])
+    pfl = per_feats(tq)@cfl2
+    p = (1-blend)*pa + blend*pfl
+    return p, ga[~tr2], tq-cut
+
+for cut in [440,460,480,490,500,510,520,530]:
+    for lam in [0.4]:
+        res=[]
+        for blend in [0.0,0.25,0.5,0.75,1.0]:
+            p,g,h = predict_at(cut, lam, blend)
+            res.append(f'b{blend}: {rmse(p,g):.1f}')
+        print(f'cut={cut}: '+' '.join(res))
+EOF
+python3 /tmp/kalman2.py
 ```
 
 ## [81] tool
@@ -1394,7 +3015,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/train.csv'
 **tool call: bash**
 
 ```
-
+pwd && ls data/ && python3 /tmp/kalman2.py
 ```
 
 ## [83] tool
@@ -1419,7 +3040,46 @@ Models agree closely at realistic horizons; the alpha-based one edges out. Let m
 **tool call: bash**
 
 ```
-
+cat > /tmp/lam_cv.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w=360.0/423.0
+def per_feats(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+pen_a=np.array([0,0,1,1,1,1],float)
+Xa=per_feats(t); ca=np.linalg.solve(Xa.T@Xa + 1.0*np.diag(pen_a), Xa.T@au)
+ap2 = per_feats(t2)@ca
+t0 = t2.mean()
+def gf(tt, aa):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt-t0])
+Xg = gf(t2, ap2)
+# CV: 5-fold by contiguous blocks AND by random thinning; criterion: pred MSE on gamma
+def cv_mse(lam, mode='block', nfold=5):
+    errs=[]
+    n=len(t2)
+    idx = np.arange(n)
+    for f in range(nfold):
+        if mode=='block':
+            te = idx[int(f*n/nfold):int((f+1)*n/nfold)]
+        else:
+            rng=np.random.RandomState(f); te = rng.choice(idx, n//nfold, replace=False)
+        trm = np.setdiff1d(idx, te)
+        Dg=np.diag([0., lam,lam,lam,lam,0.0])
+        c=np.linalg.solve(Xg[trm].T@Xg[trm]+Dg, Xg[trm].T@ga[trm])
+        errs.append(Xg[te]@c - ga[te])
+    return np.sqrt(np.mean(np.concatenate(errs)**2))
+for lam in [0.05,0.1,0.2,0.3,0.5,0.8,1.2,2.0]:
+    print(f'lam={lam}: block-cv={cv_mse(lam,"block"):.3f} rand-cv={cv_mse(lam,"rand"):.3f}')
+EOF
+python3 /tmp/lam_cv.py
 ```
 
 ## [85] tool
@@ -1441,7 +3101,71 @@ Let me do a final robust design: keep flexible trend (needed for the gamma well)
 **tool call: bash**
 
 ```
+cat > /tmp/validate_final.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
+LAM_HARM=0.8; LAM_H=1.0; SIG0=1.05; G=0.065
 
+def feat_per(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def fit_alpha(tt_, aau):
+    X=feat_per(tt_); pen=np.array([0,0,1,1,1,1],float)
+    return np.linalg.solve(X.T@X+LAM_H*np.diag(pen), X.T@aau)
+def gf(tt, aa, t0):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt-t0])
+
+def final_predict(tq, cut=None):
+    """cut: pretend only data <=cut available (for validation)"""
+    if cut is None:
+        trt=np.ones(len(t),bool); trg=np.ones(len(t2),bool)
+    else:
+        trt = t<cut; trg = t2<cut
+    t0 = t2[trg].mean()
+    ca = fit_alpha(t[trt], au[trt])
+    ap_tr = feat_per(t2[trg])@ca
+    Xg = gf(t2[trg], ap_tr, t0)
+    Dg = np.diag([0.,LAM_HARM,LAM_HARM,LAM_HARM,LAM_HARM,0.0])
+    cg = np.linalg.solve(Xg.T@Xg+Dg, Xg.T@ga[trg])
+    ap_q = feat_per(tq)@ca
+    pred = gf(tq, ap_q, t0)@cg
+    return pred
+
+# validation: cuts 470..520, look at h<=50 errors and coverage with sigma(h)
+print('cut  | rmse(h<=50) bias | coverage(95%) | max|err|')
+allcov=[]
+for cut in [470,480,490,500,510,520]:
+    tq = t2[t2>=cut]
+    tq = tq[tq-cut<=50]
+    p = final_predict(tq, cut)
+    g = ga[(t2>=cut)&(t2<=cut+50)]
+    h = tq-cut
+    sig = np.sqrt(SIG0**2 + (G*h)**2)
+    lo,hi = p-1.96*sig, p+1.96*sig
+    cov = np.mean((g>=lo)&(g<=hi))
+    allcov.append(cov)
+    print(f'{cut}  |   {rmse(p,g):.2f}      {np.mean(p-g):+.2f}  |   {cov:.2f}        |  {np.abs(p-g).max():.2f}')
+print('mean coverage (h<=50):', np.mean(allcov))
+
+# Final predictions
+test = pd.read_csv('data/test.csv'); tt=test.t.values.astype(float)
+pred = final_predict(tt, None)
+h = tt - t.max()
+sig = np.sqrt(SIG0**2 + (G*h)**2)
+out = pd.DataFrame({'t': test.t, 'y_pred': pred, 'y_lower': pred-1.96*sig, 'y_upper': pred+1.96*sig})
+out.to_csv('predictions.csv', index=False)
+print(out.round(3).to_string())
+EOF
+python3 /tmp/validate_final.py
 ```
 
 ## [87] tool
@@ -1474,7 +3198,37 @@ This flexible-trend model is unstable — it overshoots steeply (-37 at 638). Le
 **tool call: bash**
 
 ```
-
+cat > /tmp/trend_slope.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+# observed windowed means with dates
+nw = 15
+for i in range(0, len(t2)-nw+1, nw):
+    s=slice(i,i+nw)
+    print(f't={t2[s].mean():6.1f}: gamma_mean={ga[s].mean():7.2f}')
+s=slice(len(t2)-nw,len(t2))
+print(f't={t2[s].mean():6.1f}: gamma_mean={ga[s].mean():7.2f} (last window)')
+# slopes between consecutive window means
+means=[]; tmids=[]
+for i in range(0, len(t2), nw):
+    s=slice(i,min(i+nw,len(t2)))
+    means.append(ga[s].mean()); tmids.append(t2[s].mean())
+means=np.array(means); tmids=np.array(tmids)
+sl = np.diff(means)/np.diff(tmids)
+print('window-mean slopes:', np.round(sl,3))
+# linear fit to last 44 days (t>=500): slope end-behavior
+sel = t2>=500
+c = np.polyfit(t2[sel], ga[sel], 1)
+print('linear fit t>=500: slope=%.4f, gamma at 544=%.2f' % (c[0], np.polyval(c,544)))
+sel = t2>=480
+c2 = np.polyfit(t2[sel], ga[sel], 1)
+print('linear fit t>=480: slope=%.4f' % c2[0])
+EOF
+python3 /tmp/trend_slope.py
 ```
 
 ## [89] tool
@@ -1503,7 +3257,57 @@ The data shows gamma decelerating (a potential well), while the model projects a
 **tool call: bash**
 
 ```
+cat > /tmp/scan.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
 
+def feat_per(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+pen_a=np.array([0,0,1,1,1,1],float)
+
+def run(cut, lam, lam_t, nh=2):
+    tr=t<cut; tr2=t2<cut; tq=t2[~tr2]
+    ca=np.linalg.solve(feat_per(t[tr]).T@feat_per(t[tr])+1.0*np.diag(pen_a), feat_per(t[tr]).T@au[tr])
+    t0=t2[tr2].mean()
+    def gf(tt, aa):
+        ar=np.deg2rad(aa)
+        cols=[np.ones(len(tt))]
+        for k in range(1,nh+1): cols += [np.cos(k*ar), np.sin(k*ar)]
+        cols += [tt-t0]
+        return np.column_stack(cols)
+    Xg = gf(t2[tr2], feat_per(t2[tr2])@ca)
+    n = Xg.shape[1]
+    pen = np.array([0.]+[lam]*(n-2)+[lam_t])
+    cg = np.linalg.solve(Xg.T@Xg + np.diag(pen), Xg.T@ga[tr2])
+    return gf(tq, feat_per(tq)@ca)@cg, ga[~tr2], tq-cut
+
+results=[]
+for nh in [1,2]:
+  for lam in [0.1,0.3,0.6,1.0,2.0]:
+    for lam_t in [0.0, 0.5, 2.0, 10.0]:
+        e=[];h=[]
+        for cut in [475,490,500,510,520]:
+            p,g,hh = run(cut, lam, lam_t, nh)
+            sel = hh<=55
+            e.append((p-g)[sel]); h.append(hh[sel])
+        e=np.concatenate(e); h=np.concatenate(h)
+        # error at far end only
+        e_far = e[h>30]
+        results.append((nh,lam,lam_t, rmse(e,0), rmse(e_far,0), np.abs(e).max()))
+results.sort(key=lambda r: r[4])
+for r in results:
+    print(f'nh={r[0]} lam={r[1]} lam_t={r[2]}: rmse(h<=55)={r[3]:.2f} rmse(h>30)={r[4]:.2f} maxabs={r[5]:.2f}')
+EOF
+python3 /tmp/scan.py
 ```
 
 ## [91] tool
@@ -1557,7 +3361,66 @@ Found it — with LAM_HARM=0.1 the harmonics dominate and behave monotonically. 
 **tool call: bash**
 
 ```
+cat > /tmp/gen_final.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+def rmse(a,b): return np.sqrt(np.mean((np.asarray(a)-np.asarray(b))**2))
+w=360.0/423.0
+LAM_HARM=0.1
 
+def feat_per(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+pen_a=np.array([0,0,1,1,1,1],float)
+def gf(tt, aa, t0):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt-t0])
+
+def predict(tq, cut=None):
+    tr = np.ones(len(t),bool) if cut is None else t<cut
+    tr2 = np.ones(len(t2),bool) if cut is None else t2<cut
+    t0 = t2[tr2].mean()
+    ca = np.linalg.solve(feat_per(t[tr]).T@feat_per(t[tr]) + 1.0*np.diag(pen_a), feat_per(t[tr]).T@au[tr])
+    Xg = gf(t2[tr2], feat_per(t2[tr2])@ca, t0)
+    Dg = np.diag([0., LAM_HARM,LAM_HARM,LAM_HARM,LAM_HARM, 0.0])
+    cg = np.linalg.solve(Xg.T@Xg+Dg, Xg.T@ga[tr2])
+    pred = gf(tq, feat_per(tq)@ca, t0)@cg
+    if cut is None:
+        print('gamma coef:', np.round(cg,3), 'trend deg/day:', round(cg[5],4))
+        print('resid std:', np.std(ga[tr2]-Xg@cg))
+    return pred
+
+# validate across many short-horizon cuts incl coverage
+errs=[]; covs=[]
+SIG0=1.05; G=0.065
+for cut in [455,465,475,485,495,500,505,510,515,520,525]:
+    tq_all = t2[t2>cut]; hq = tq_all-cut
+    sel = hq<=55
+    if sel.sum()<6: continue
+    p = predict(tq_all[sel], cut)
+    g = ga[(t2>cut)][sel]
+    h = hq[sel]
+    errs.append(p-g)
+    sig = np.sqrt(SIG0**2 + (G*h)**2)
+    covs.append(np.mean((g>=p-1.96*sig)&(g<=p+1.96*sig)))
+e=np.concatenate(errs)
+print(f'validation h<=55: rmse={rmse(e,0):.2f} bias={e.mean():+.2f} coverage={np.mean(covs):.2f} n={len(e)}')
+
+test = pd.read_csv('data/test.csv'); tt=test.t.values.astype(float)
+pred = predict(tt, None)
+h = tt - t.max()
+sig = np.sqrt(SIG0**2 + (G*h)**2)
+out = pd.DataFrame({'t': test.t, 'y_pred': pred, 'y_lower': pred-1.96*sig, 'y_upper': pred+1.96*sig})
+out.to_csv('predictions.csv', index=False)
+print(out.round(3).to_string())
+EOF
+python3 /tmp/gen_final.py
 ```
 
 ## [93] tool
@@ -1585,7 +3448,61 @@ Predictions look physical (gamma well then slow rise). Let me refine interval ca
 **tool call: bash**
 
 ```
+cat > /tmp/cal_sig.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w=360.0/423.0
+def feat_per(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+pen_a=np.array([0,0,1,1,1,1],float)
+def gf(tt, aa, t0):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt-t0])
+def predict(tq, cut):
+    tr=t<cut; tr2=t2<cut
+    t0=t2[tr2].mean()
+    ca=np.linalg.solve(feat_per(t[tr]).T@feat_per(t[tr])+1.0*np.diag(pen_a), feat_per(t[tr]).T@au[tr])
+    Xg=gf(t2[tr2], feat_per(t2[tr2])@ca, t0)
+    Dg=np.diag([0.,.1,.1,.1,.1,0.])
+    cg=np.linalg.solve(Xg.T@Xg+Dg, Xg.T@ga[tr2])
+    return gf(tq, feat_per(tq)@ca, t0)@cg
 
+errs=[]; hs=[]
+for cut in list(range(400, 531, 10)):
+    tq_all=t2[t2>cut]; hq=tq_all-cut
+    sel=hq<=55
+    p=predict(tq_all[sel], cut)
+    g=ga[t2>cut][sel]
+    errs.append(p-g); hs.append(hq[sel])
+e=np.concatenate(errs); h=np.concatenate(hs)
+# error std in 10-day horizon bins
+print('empirical |err| distribution by horizon:')
+for lo in range(0,56,10):
+    s=(h>=lo)&(h<lo+10)
+    if s.sum()>=5:
+        print(f'  h~{lo+5}: n={s.sum():3d} std={e[s].std():.2f} q68={np.percentile(np.abs(e[s]),68):.2f} q90={np.percentile(np.abs(e[s]),90):.2f} max={np.abs(e[s]).max():.2f}')
+# fit sigma(h): want ~ x s.t. e/sigma has std ~1. Try sigma=sqrt(a+b*h+c*h^2)
+import scipy.optimize as opt
+def loss(v):
+    a,b,c_=v
+    sig=np.sqrt(np.maximum(a+b*h+c_*h*h, 0.4))
+    z=e/sig
+    return (np.std(z)-1)**2
+res=opt.minimize(loss, [1.0, 0.0, 0.004])
+a,b,c_=res.x
+print('fitted sigma(h)=sqrt(%.2f + %.3f h + %.4f h^2)' % (a,b,c_))
+test = pd.read_csv('data/test.csv'); tt=test.t.values.astype(float)
+hh = tt-544
+print('at test h:', np.round(np.sqrt(a+b*hh+c_*hh*hh),2))
+EOF
+python3 /tmp/cal_sig.py
 ```
 
 ## [95] tool
@@ -1608,7 +3525,53 @@ Empirical error distribution is heavy-tailed and grows with horizon. Quadratic s
 **tool call: bash**
 
 ```
+cat > /tmp/cal_sig2.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w=360.0/423.0
+def feat_per(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+pen_a=np.array([0,0,1,1,1,1],float)
+def gf(tt, aa, t0):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt-t0])
+def predict(tq, cut):
+    tr=t<cut; tr2=t2<cut
+    t0=t2[tr2].mean()
+    ca=np.linalg.solve(feat_per(t[tr]).T@feat_per(t[tr])+1.0*np.diag(pen_a), feat_per(t[tr]).T@au[tr])
+    Xg=gf(t2[tr2], feat_per(t2[tr2])@ca, t0)
+    Dg=np.diag([0.,.1,.1,.1,.1,0.])
+    cg=np.linalg.solve(Xg.T@Xg+Dg, Xg.T@ga[tr2])
+    return gf(tq, feat_per(tq)@ca, t0)@cg
 
+errs=[]; hs=[]
+for cut in list(range(400, 531, 5)):
+    tq_all=t2[t2>cut]; hq=tq_all-cut
+    sel=hq<=60
+    if sel.sum()<5: continue
+    p=predict(tq_all[sel], cut)
+    errs.append(p-ga[t2>cut][sel]); hs.append(hq[sel])
+e=np.concatenate(errs); h=np.concatenate(hs)
+print('n=',len(e))
+# grid search sigma(h)=sqrt(a+c*h^2) for 95% empirical coverage with z=1.96
+best=None
+for a in [0.8,1.0,1.2,1.5]:
+    for c_ in [0.004,0.006,0.008,0.010,0.013,0.016]:
+        sig=np.sqrt(a+c_*h**2)
+        cov=np.mean(np.abs(e)<=1.96*sig)
+        # also mean sigma
+        if best is None or abs(cov-0.95)<best[0]: best=(abs(cov-0.95),a,c_,cov,np.mean(1.96*sig))
+        print(f'a={a} c={c_}: cov={cov:.3f} mean half-width={np.mean(1.96*sig):.2f}')
+print('best:', best)
+EOF
+python3 /tmp/cal_sig2.py
 ```
 
 ## [97] tool
@@ -1648,7 +3611,48 @@ Coverage calibrated at h≤60: sigma(h)=sqrt(1.0+0.01h²). But test extends to h
 **tool call: bash**
 
 ```
+cat > /tmp/gen_final2.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna()
+t2 = df.t[m].values.astype(float); ga = df.gamma[m].values
+w = 360.0/423.0
 
+def feat_per(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1,nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def gf(tt, aa, t0):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar), np.cos(2*ar), np.sin(2*ar), tt-t0])
+
+pen_a=np.array([0,0,1,1,1,1],float)
+t0 = t2.mean()
+ca = np.linalg.solve(feat_per(t).T@feat_per(t) + 1.0*np.diag(pen_a), feat_per(t).T@au)
+Xg = gf(t2, feat_per(t2)@ca, t0)
+Dg = np.diag([0.,0.1,0.1,0.1,0.1,0.0])
+cg = np.linalg.solve(Xg.T@Xg+Dg, Xg.T@ga)
+
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+pred = gf(tt, feat_per(tt)@ca, t0)@cg
+
+h = tt - t.max()
+# sigma: calibration to 60d sqrt(1+0.01 h^2); beyond 60, add growing physics uncertainty
+# smooth: sigma^2 = 1 + 0.01 * h^2  for h<=60 ; for h>60 add extra (0.12*(h-60))^2
+extra = np.where(h>60, (0.14*(h-60))**2, 0.0)
+sig = np.sqrt(1.0 + 0.01*np.minimum(h,60)**2 + extra)
+out = pd.DataFrame({'t': test.t, 'y_pred': pred,
+                    'y_lower': pred-1.96*sig, 'y_upper': pred+1.96*sig})
+out.to_csv('predictions.csv', index=False)
+print('sigma per test point:', np.round(sig,2))
+print(out.round(3).to_string())
+# sanity
+print('rows:', len(out), 'cols:', list(out.columns))
+EOF
+python3 /tmp/gen_final2.py
 ```
 
 ## [99] tool
@@ -1673,7 +3677,59 @@ rows: 10 cols: ['t', 'y_pred', 'y_lower', 'y_upper']
 **tool call: bash**
 
 ```
+cat > /tmp/predict.py << 'EOF'
+"""Final prediction pipeline for gamma.
 
+Model:
+  1. alpha(t): unwrap alpha; fit a0 + b*t + 2 harmonics of a ~423d period
+     (equivalent-anomaly cycle), harmonics ridge-penalized (lam=1).
+  2. gamma(t): 1st & 2nd harmonics of predicted-alpha phase + linear trend in t,
+     ridge lam=0.1 on harmonics, trend free. (Selected by backtests at horizons~50d.)
+  3. Prediction intervals: sigma(h) calibrated from rolling-origin backtests
+     (coverage~95% on h<=60): sigma^2 = 1 + 0.01*min(h,60)^2, plus an added
+     physics-drift term (0.14*(h-60))^2 beyond 60 days (turnaround-timing risk).
+"""
+import pandas as pd, numpy as np
+
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+mg = df.gamma.notna().values
+t2 = df.t.values[mg].astype(float); ga = df.gamma.values[mg]
+w = 360.0/423.0
+
+def feat_per(x, nh=2):
+    cols=[np.ones(len(x)), x]
+    for k in range(1, nh+1):
+        ang=np.deg2rad(k*w*x); cols += [np.cos(ang), np.sin(ang)]
+    return np.column_stack(cols)
+def gf(tt, aa, t0):
+    ar=np.deg2rad(aa)
+    return np.column_stack([np.ones(len(tt)), np.cos(ar), np.sin(ar),
+                            np.cos(2*ar), np.sin(2*ar), tt-t0])
+
+t0 = t2.mean()
+Xa = feat_per(t)
+ca = np.linalg.solve(Xa.T@Xa + np.diag([0,0,1,1,1,1]), Xa.T@au)
+Xg = gf(t2, feat_per(t2)@ca, t0)
+cg = np.linalg.solve(Xg.T@Xg + np.diag([0,.1,.1,.1,.1,0.]), Xg.T@ga)
+
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+pred = gf(tt, feat_per(tt)@ca, t0)@cg
+h = tt - t.max()
+extra = np.where(h > 60, (0.14*(h-60))**2, 0.0)
+sig = np.sqrt(1.0 + 0.01*np.minimum(h,60)**2 + extra)
+
+out = pd.DataFrame({'t': test.t, 'y_pred': pred,
+                    'y_lower': pred - 1.96*sig, 'y_upper': pred + 1.96*sig})
+assert len(out) == len(test) and list(out.columns) == ['t','y_pred','y_lower','y_upper']
+assert np.all(out.t.values == test.t.values)
+assert np.all(out.y_lower < out.y_pred) and np.all(out.y_pred < out.y_upper)
+out.to_csv('predictions.csv', index=False)
+print(out.round(3).to_string())
+print('OK: %d rows written' % len(out))
+EOF
+python3 /tmp/predict.py && cat predictions.csv
 ```
 
 ## [101] tool

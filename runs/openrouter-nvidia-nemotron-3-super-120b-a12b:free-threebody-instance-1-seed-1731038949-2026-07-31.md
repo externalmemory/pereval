@@ -90,7 +90,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+head -5 /home/user/data/train.csv
 ```
 
 ## [3] tool
@@ -111,7 +111,7 @@ head: cannot open '/home/user/data/train.csv' for reading: No such file or direc
 **tool call: bash**
 
 ```
-
+ls -la /home/user/
 ```
 
 ## [5] tool
@@ -133,7 +133,7 @@ ls: cannot access '/home/user/': No such file or directory
 **tool call: bash**
 
 ```
-
+ls -la
 ```
 
 ## [7] tool
@@ -158,7 +158,7 @@ drwxr-xr-x 2 root root 4096 Jul 31 23:08 data
 **tool call: bash**
 
 ```
-
+ls -la /home/user/data/
 ```
 
 ## [9] tool
@@ -180,7 +180,7 @@ ls: cannot access '/home/user/data/': No such file or directory
 **tool call: bash**
 
 ```
-
+pwd
 ```
 
 ## [11] tool
@@ -202,7 +202,7 @@ ls: cannot access '/home/user/data/': No such file or directory
 **tool call: bash**
 
 ```
-
+ls -la /workspace/data/
 ```
 
 ## [13] tool
@@ -229,7 +229,7 @@ drwxr-xr-x 1 root root  4096 Jul 31 23:08 ..
 **tool call: bash**
 
 ```
-
+head -5 /workspace/data/train.csv
 ```
 
 ## [15] tool
@@ -252,7 +252,7 @@ t,alpha,beta
 **tool call: bash**
 
 ```
-
+head -5 /workspace/data/test.csv
 ```
 
 ## [17] tool
@@ -281,7 +281,7 @@ t
 **tool call: bash**
 
 ```
-
+tail -5 /workspace/data/train.csv
 ```
 
 ## [19] tool
@@ -317,7 +317,7 @@ t
 **tool call: bash**
 
 ```
-
+wc -l /workspace/data/train.csv
 ```
 
 ## [21] tool
@@ -341,7 +341,7 @@ t
 **tool call: bash**
 
 ```
-
+cd /workspace
 ```
 
 ## [23] tool
@@ -360,7 +360,40 @@ t
 **tool call: bash**
 
 ```
+cat > explore.py << 'EOF'
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 
+train = pd.read_csv('data/train.csv')
+print(train.head())
+print(train.describe())
+print(train['t'].min(), train['t'].max())
+
+# plot alpha and beta vs t
+plt.figure(figsize=(12,4))
+plt.subplot(1,2,1)
+plt.scatter(train['t'], train['alpha'], s=1)
+plt.xlabel('t')
+plt.ylabel('alpha')
+plt.subplot(1,2,2)
+plt.scatter(train['t'], train['beta'], s=1)
+plt.xlabel('t')
+plt.ylabel('beta')
+plt.show()
+
+# check if angles wrap
+print('alpha min,max:', train['alpha'].min(), train['alpha'].max())
+print('beta min,max:', train['beta'].min(), train['beta'].max())
+# compute differences
+alpha_diff = np.diff(train['alpha'])
+beta_diff = np.diff(train['beta'])
+print('alpha diff min,max:', alpha_diff.min(), alpha_diff.max())
+print('beta diff min,max:', beta_diff.min(), beta_diff.max())
+# check for wraps
+print('alpha wraps:', np.sum(np.abs(np.diff(train['alpha'])) > 180))
+print('beta wraps:', np.sum(np.abs(np.diff(train['beta'])) > 180))
+EOF
 ```
 
 ## [25] tool
@@ -380,7 +413,7 @@ t
 **tool call: bash**
 
 ```
-
+python explore.py
 ```
 
 ## [27] tool
@@ -410,7 +443,37 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
+cat > explore.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+print('Shape:', train.shape)
+print(train.head())
+print('t range:', train['t'].min(), train['t'].max())
+print('alpha min,max:', train['alpha'].min(), train['alpha'].max())
+print('beta min,max:', train['beta'].min(), train['beta'].max())
+
+# compute diffs accounting for wrap
+def angle_diff(a, b):
+    diff = (b - a + 180) % 360 - 180
+    return diff
+
+alpha_diff = angle_diff(train['alpha'].shift(), train['alpha']).dropna()
+beta_diff = angle_diff(train['beta'].shift(), train['beta']).dropna()
+print('alpha diff min,max:', alpha_diff.min(), alpha_diff.max())
+print('beta diff min,max:', beta_diff.min(), beta_diff.max())
+print('alpha wrap count:', np.sum(np.abs(alpha_diff) > 180))
+print('beta wrap count:', np.sum(np.abs(beta_diff) > 180))
+
+# check if angles increase monotonically (maybe with wrap)
+print('alpha monotonic increasing?', np.all(alpha_diff > -1e-9))  # allow small noise
+print('beta monotonic increasing?', np.all(beta_diff > -1e-9))
+
+# Let's see t increments
+t_diff = np.diff(train['t'])
+print('t diff unique:', np.unique(t_diff))
+EOF
 ```
 
 ## [29] tool
@@ -429,7 +492,7 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+python explore.py
 ```
 
 ## [31] tool
@@ -465,7 +528,33 @@ t diff unique: [1]
 **tool call: bash**
 
 ```
+cat > explore.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+print('Shape:', train.shape)
+print(train.head())
+print('t range:', train['t'].min(), train['t'].max())
+print('alpha min,max:', train['alpha'].min(), train['alpha'].max())
+print('beta min,max:', train['beta'].min(), train['beta'].max())
+alpha_diff = np.diff(train['alpha'])
+beta_diff = np.diff(train['beta'])
+print('alpha diff min,max:', alpha_diff.min(), alpha_diff.max())
+print('beta diff min,max:', beta_diff.min(), beta_diff.max())
+# wrap count: count when diff < -180 (wrap forward) or >180 (wrap backward)
+alpha_wrap = ((alpha_diff < -180) | (alpha_diff > 180)).sum()
+beta_wrap = ((beta_diff < -180) | (beta_diff > 180)).sum()
+print('alpha wrap count:', alpha_wrap)
+print('beta wrap count:', beta_wrap)
+# monotonic increasing? check if diff > -1e-9 (allow tiny decrease)
+alpha_mono = np.all(alpha_diff > -1e-9)
+beta_mono = np.all(beta_diff > -1e-9)
+print('alpha monotonic increasing?', alpha_mono)
+print('beta monotonic increasing?', beta_mono)
+t_diff = np.diff(train['t'])
+print('t diff unique:', np.unique(t_diff))
+EOF
 ```
 
 ## [33] tool
@@ -483,7 +572,7 @@ t diff unique: [1]
 **tool call: bash**
 
 ```
-
+python explore.py
 ```
 
 ## [35] tool
@@ -562,7 +651,42 @@ t diff unique: [1]
 **tool call: bash**
 
 ```
+cat > analyze.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+beta = train['beta'].values
+# Convert to radians
+beta_rad = np.deg2rad(beta)
+# Unwrap
+beta_unwrap_rad = np.unwrap(beta_rad)
+beta_unwrap = np.rad2deg(beta_unwrap_rad)
+print('beta first 10:', beta[:10])
+print('beta_unwrap first 10:', beta_unwrap[:10])
+print('beta diff:', np.diff(beta)[:10])
+print('beta_unwrap diff:', np.diff(beta_unwrap)[:10])
+print('beta range:', beta.min(), beta.max())
+print('beta_unwrap range:', beta_unwrap.min(), beta_unwrap.max())
+# Plot? Not needed
+# Check monotonic
+print('beta_unwrap monotonic increasing?', np.all(np.diff(beta_unwrap) > 0))
+# Fit linear regression
+t = train['t'].values
+from sklearn.linear_model import LinearRegression
+reg = LinearRegression().fit(t.reshape(-1,1), beta_unwrap)
+print('R^2:', reg.score(t.reshape(-1,1), beta_unwrap))
+print('coef:', reg.coef_[0], 'intercept:', reg.intercept_)
+pred = reg.predict(t.reshape(-1,1))
+residuals = beta_unwrap - pred
+print('residual std:', np.std(residuals))
+print('residual mean:', np.mean(residuals))
+# Check if residuals are normal-ish
+import scipy.stats as stats
+print('skew:', stats.skew(residuals))
+print('kurtosis:', stats.kurtosis(residuals))
+# Plot histogram? Not needed
+EOF
 ```
 
 ## [37] tool
@@ -581,7 +705,7 @@ t diff unique: [1]
 **tool call: bash**
 
 ```
-
+python analyze.py
 ```
 
 ## [39] tool
@@ -629,7 +753,29 @@ kurtosis: -0.8727799304130137
 **tool call: bash**
 
 ```
-
+cat > check_corr.py << 'EOF'
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+print('Correlation matrix:')
+print(train.corr())
+print('\\nAlpha vs beta scatter?')
+# compute circular correlation? but linear correlation may be misleading due to wrap.
+# Let's compute sin/cos
+alpha_rad = np.deg2rad(train['alpha'])
+beta_rad = np.deg2rad(train['beta'])
+alpha_s = np.sin(alpha_rad)
+alpha_c = np.cos(alpha_rad)
+beta_s = np.sin(beta_rad)
+beta_c = np.cos(beta_rad)
+print('corr(alpha_s, beta_s):', np.corrcoef(alpha_s, beta_s)[0,1])
+print('corr(alpha_c, beta_c):', np.corrcoef(alpha_c, beta_c)[0,1])
+print('corr(alpha, beta) linear:', np.corrcoef(train['alpha'], train['beta'])[0,1])
+# Also compute alpha - beta difference
+diff = (train['beta'] - train['alpha'] + 180) % 360 - 180
+print('diff beta-alpha mean:', diff.mean())
+print('diff std:', diff.std())
+EOF
 ```
 
 ## [41] tool
@@ -649,7 +795,7 @@ kurtosis: -0.8727799304130137
 **tool call: bash**
 
 ```
-
+python check_corr.py
 ```
 
 ## [43] tool
@@ -699,7 +845,58 @@ diff std: 124.4916860574559
 **tool call: bash**
 
 ```
-
+cat > analyze2.py << 'EOF'
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+beta = train['beta'].values
+beta_rad = np.deg2rad(beta)
+beta_unwrap_rad = np.unwrap(beta_rad)
+beta_unwrap = np.rad2deg(beta_unwrap_rad)
+from sklearn.linear_model import LinearRegression
+reg = LinearRegression().fit(t.reshape(-1,1), beta_unwrap)
+pred = reg.predict(t.reshape(-1,1))
+residual = beta_unwrap - pred
+print('Linear trend slope:', reg.coef_[0])
+print('Residual std:', np.std(residual))
+# Look at residual vs t for periodicity
+# Compute FFT
+from scipy.fft import rfft, rfftfreq
+N = len(residual)
+yf = rfft(residual)
+xf = rfftfreq(N, d=1.0)  # sample spacing 1 day
+# Find peak frequencies
+idx = np.argmax(np.abs(yf)[1:]) + 1  # skip zero freq
+freq = xf[idx]
+amplitude = np.abs(yf[idx]) / (N/2)
+print('Dominant frequency (cycles per day):', freq)
+print('Period (days):', 1/freq if freq>0 else 'inf')
+print('Amplitude:', amplitude)
+# Plot? Not possible without matplotlib, but we can print top frequencies
+# Get top 5 frequencies
+magnitude = np.abs(yf)
+top5 = np.argsort(magnitude)[-6:-1][::-1]  # exclude zero
+for i in top5:
+    if xf[i]==0: continue
+    print(f'freq {xf[i]:.6f} 1/d, period {1/xf[i]:.2f} days, amp {magnitude[i]/(N/2):.2f}')
+# Also check alpha similarly
+alpha = train['alpha'].values
+alpha_rad = np.deg2rad(alpha)
+alpha_unwrap_rad = np.unwrap(alpha_rad)
+alpha_unwrap = np.rad2deg(alpha_unwrap_rad)
+reg_a = LinearRegression().fit(t.reshape(-1,1), alpha_unwrap)
+pred_a = reg_a.predict(t.reshape(-1,1))
+residual_a = alpha_unwrap - pred_a
+print('\\nAlpha linear slope:', reg_a.coef_[0])
+print('Alpha residual std:', np.std(residual_a))
+# FFT of alpha residual
+yf_a = rfft(residual_a)
+idx_a = np.argmax(np.abs(yf_a)[1:]) + 1
+freq_a = xf[idx_a]
+amp_a = np.abs(yf_a[idx_a]) / (N/2)
+print('Alpha dominant freq:', freq_a, 'period', 1/freq_a if freq_a>0 else 'inf', 'amp', amp_a)
+EOF
 ```
 
 ## [45] tool
@@ -720,7 +917,7 @@ diff std: 124.4916860574559
 **tool call: bash**
 
 ```
-
+python analyze2.py
 ```
 
 ## [47] tool
@@ -768,7 +965,7 @@ Alpha dominant freq: 0.002770850651149903 period 360.9 amp 38.15586771491706
 **tool call: bash**
 
 ```
-
+tail -5 /workspace/data/test.csv
 ```
 
 ## [49] tool
@@ -860,7 +1057,101 @@ Alpha dominant freq: 0.002770850651149903 period 360.9 amp 38.15586771491706
 **tool call: bash**
 
 ```
+cat > model_beta.py << 'EOF'
+import pandas as pd
+import numpy as np
+import os
 
+# Load data
+train = pd.read_csv('data/train.csv')
+t_train = train['t'].values
+beta_train = train['beta'].values
+
+# Unwrap beta
+beta_rad = np.deg2rad(beta_train)
+beta_unwrap_rad = np.unwrap(beta_rad)
+beta_unwrap = np.rad2deg(beta_unwrap_rad)
+
+# Features: t, sin/cos for periods
+def make_features(t):
+    # t as column
+    t = np.asarray(t)
+    features = [t]  # linear
+    periods = [360.0, 900.0, 1200.0]  # days
+    for p in periods:
+        features.append(np.sin(2 * np.pi * t / p))
+        features.append(np.cos(2 * np.pi * t / p))
+    # optionally add t^2
+    # features.append(t**2)
+    return np.column_stack(features)
+
+X_train = make_features(t_train)
+print('Feature shape:', X_train.shape)
+
+# OLS
+# Add intercept? Already we have t term but not constant. Let's add column of ones.
+X_train = np.hstack([np.ones((len(t_train),1)), X_train])
+print('Feature shape with intercept:', X_train.shape)
+
+# Solve normal equations
+theta = np.linalg.lstsq(X_train, beta_unwrap, rcond=None)[0]
+print('Coefficients:', theta)
+# Predictions
+y_pred_train = X_train @ theta
+residuals = beta_unwrap - y_pred_train
+sigma2 = np.var(residuals, ddof=X_train.shape[1])  # unbiased estimate
+print('Residual variance (sigma^2):', sigma2)
+print('Residual std:', np.sqrt(sigma2))
+
+# Covariance matrix of coefficients
+XTX_inv = np.linalg.inv(X_train.T @ X_train)
+cov_theta = sigma2 * XTX_inv
+# Standard errors
+se = np.sqrt(np.diag(cov_theta))
+print('Coefficient std errors:', se)
+
+# Load test data
+test = pd.read_csv('data/test.csv')
+t_test = test['t'].values
+X_test = make_features(t_test)
+X_test = np.hstack([np.ones((len(t_test),1)), X_test])
+
+# Predict
+mu_test = X_test @ theta
+# Variance of prediction for each point: sigma2 * (1 + x0 @ XTX_inv @ x0.T)
+var_pred = sigma2 * (1 + np.sum(X_test @ XTX_inv * X_test, axis=1))
+std_pred = np.sqrt(var_pred)
+
+# 95% interval
+z = 1.96
+lower = mu_test - z * std_pred
+upper = mu_test + z * std_pred
+
+# Wrap to [0,360)
+def wrap_angle(angle):
+    return ((angle % 360) + 360) % 360
+
+y_pred_wrapped = wrap_angle(mu_test)
+lower_wrapped = wrap_angle(lower)
+upper_wrapped = wrap_angle(upper)
+
+# If lower_wrapped > upper_wrapped, adjust by adding 360 to upper? We'll keep as is but ensure lower <= upper by adding 360 to upper if needed.
+# Actually we want interval on circle; we'll just ensure lower <= upper by possibly adding 360 to upper.
+for i in range(len(lower_wrapped)):
+    if lower_wrapped[i] > upper_wrapped[i]:
+        upper_wrapped[i] += 360.0
+
+# Build dataframe
+pred_df = pd.DataFrame({
+    't': t_test,
+    'y_pred': y_pred_wrapped,
+    'y_lower': lower_wrapped,
+    'y_upper': upper_wrapped
+})
+pred_df.to_csv('predictions.csv', index=False)
+print('Saved predictions.csv')
+print(pred_df.head())
+EOF
 ```
 
 ## [51] tool
@@ -881,7 +1172,7 @@ Alpha dominant freq: 0.002770850651149903 period 360.9 amp 38.15586771491706
 **tool call: bash**
 
 ```
-
+python model_beta.py
 ```
 
 ## [53] tool
@@ -944,7 +1235,91 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
+cat > model_beta.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+beta_train = train['beta'].values
+
+# Unwrap beta to avoid discontinuities
+beta_rad = np.deg2rad(beta_train)
+beta_unwrap_rad = np.unwrap(beta_rad)
+beta_unwrap = np.rad2deg(beta_unwrap_rad)
+
+# Define periods for sinusoidal components (from earlier analysis)
+periods = [360.9, 902.25, 1203.0]  # days
+# Build design matrix
+def make_features(t):
+    features = [t]  # linear term
+    for p in periods:
+        features.append(np.sin(2 * np.pi * t / p))
+        features.append(np.cos(2 * np.pi * t / p))
+    return np.column_stack(features)
+
+X = make_features(t_train)
+X = np.hstack([np.ones((len(t_train), 1)), X])  # add intercept
+
+# Solve linear regression using normal equation
+theta = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+y_pred = X @ theta
+residuals = beta_unwrap - y_pred
+sigma2 = np.var(residuals, ddof=X.shape[1])  # unbiased estimate
+print(f'Residual variance (sigma^2): {sigma2:.3f}')
+print(f'Residual std: {np.sqrt(sigma2):.3f}')
+
+# Covariance matrix of theta
+XTX_inv = np.linalg.inv(X.T @ X)
+cov_theta = sigma2 * XTX_inv
+
+# Prepare test features
+t_test = test['t'].values
+X_test = make_features(t_test)
+X_test = np.hstack([np.ones((len(t_test), 1)), X_test])
+
+# Predictive mean
+mu_test = X_test @ theta  # shape (n_test,)
+# Predictive variance for each test point: sigma2 * (1 + x0.T @ cov_theta @ x0)
+var_pred = np.zeros(len(t_test))
+for i in range(len(t_test)):
+    x0 = X_test[i:i+1].T  # column vector
+    var_pred[i] = sigma2 * (1.0 + (x0.T @ cov_theta @ x0).item())
+std_pred = np.sqrt(var_pred)
+
+# 95% prediction interval (assuming normal)
+z = 1.960  # approx 97.5% quantile of N(0,1)
+lower = mu_test - z * std_pred
+upper = mu_test + z * std_pred
+
+# Wrap angles to [0, 360)
+def wrap_angle(a):
+    return ((a % 360) + 360) % 360
+
+y_pred_wrapped = wrap_angle(mu_test)
+lower_wrapped = wrap_angle(lower)
+upper_wrapped = wrap_angle(upper)
+
+# Ensure lower <= upper in circular sense: if lower_wrapped > upper_wrapped,
+# we keep them as is (indicating interval wraps around 0).
+# We'll output as is.
+
+# Build output dataframe
+out = pd.DataFrame({
+    't': t_test,
+    'y_pred': y_pred_wrapped,
+    'y_lower': lower_wrapped,
+    'y_upper': upper_wrapped
+})
+out.to_csv('predictions.csv', index=False)
+print('Saved predictions.csv')
+print(out.head())
+print('...')
+print(out.tail())
+EOF
 ```
 
 ## [55] tool
@@ -962,7 +1337,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+python model_beta.py
 ```
 
 ## [57] tool
@@ -1011,7 +1386,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [59] tool
@@ -1035,7 +1410,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+wc -l data/test.csv
 ```
 
 ## [61] tool
@@ -1073,7 +1448,48 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+cat > check.py << 'EOF'
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+# Load model from model_beta.py? Let's recompute quickly.
+# Unwrap beta
+beta_rad = np.deg2rad(train['beta'])
+beta_unwrap = np.rad2deg(np.unwrap(beta_rad))
+t = train['t'].values
+def make_features(t):
+    t = np.asarray(t)
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+X = make_features(t)
+X = np.hstack([np.ones((len(t),1)), X])
+theta = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+# Predict on train
+mu_train = X @ theta
+# Predict on test
+t_test = test['t'].values
+X_test = make_features(t_test)
+X_test = np.hstack([np.ones((len(t_test),1)), X_test])
+mu_test = X_test @ theta
+print('Train beta unwrapped range:', beta_unwrap.min(), beta_unwrap.max())
+print('Model train pred range:', mu_train.min(), mu_train.max())
+print('Model test pred range:', mu_test.min(), mu_test.max())
+# Wrap predictions
+def wrap(a): return ((a%360)+360)%360
+print('First few wrapped predictions:', wrap(mu_test[:5]))
+print('Actual beta at t=0..4:', train['beta'][:5].values)
+# Compare with test predictions from file
+preds = pd.read_csv('predictions.csv')
+print('Saved predictions head:')
+print(preds.head())
+print('Difference between our mu_wrapped and saved y_pred:')
+diff = wrap(mu_test) - preds['y_pred'].values
+print('max abs diff:', np.abs(diff).max())
+EOF
 ```
 
 ## [63] tool
@@ -1100,7 +1516,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+python check.py
 ```
 
 ## [65] tool
@@ -1166,7 +1582,85 @@ max abs diff: 2.877668822122132
 **tool call: bash**
 
 ```
+cat > predict_beta.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+beta_train = train['beta'].values
+
+# Unwrap beta
+beta_rad = np.deg2rad(beta_train)
+beta_unwrap_rad = np.unwrap(beta_rad)
+beta_unwrap = np.rad2deg(beta_unwrap_rad)
+
+# Periods determined from earlier FFT analysis
+periods = [360.9, 902.25, 1203.0]  # days
+
+def make_features(t):
+    feats = [t]  # linear term
+    for p in periods:
+        feats.append(np.sin(2 * np.pi * t / p))
+        feats.append(np.cos(2 * np.pi * t / p))
+    return np.column_stack(feats)
+
+X = make_features(t_train)
+X = np.hstack([np.ones((len(t_train), 1)), X])  # add intercept
+
+# OLS solution
+theta = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+y_pred = X @ theta
+residuals = beta_unwrap - y_pred
+sigma2 = np.var(residuals, ddof=X.shape[1])  # unbiased variance estimate
+print(f'Residual std: {np.sqrt(sigma2):.3f} degrees')
+
+# Covariance of coefficients
+XTX_inv = np.linalg.inv(X.T @ X)
+cov_theta = sigma2 * XTX_inv
+
+# Test features
+t_test = test['t'].values
+X_test = make_features(t_test)
+X_test = np.hstack([np.ones((len(t_test), 1)), X_test])
+
+# Predictive mean and variance
+mu_test = X_test @ theta
+# Variance for each prediction: sigma2 * (1 + x0 @ XTX_inv @ x0.T)
+var_pred = sigma2 * (1 + np.sum(X_test @ XTX_inv * X_test, axis=1))
+std_pred = np.sqrt(var_pred)
+
+# 95% interval (z=1.96)
+z = 1.96
+lower = mu_test - z * std_pred
+upper = mu_test + z * std_pred
+
+# Wrap to [0, 360)
+def wrap(angle):
+    return ((angle % 360) + 360) % 360
+
+mu_wrapped = wrap(mu_test)
+lower_wrapped = wrap(lower)
+upper_wrapped = wrap(upper)
+
+# If interval wraps around (lower > upper), we keep as is (indicates wrapping)
+# Build output DataFrame
+out = pd.DataFrame({
+    't': t_test,
+    'y_pred': mu_wrapped,
+    'y_lower': lower_wrapped,
+    'y_upper': upper_wrapped
+})
+out.to_csv('predictions.csv', index=False)
+print('Saved predictions.csv')
+print(out.head())
+print(f'Number of rows: {len(out)}')
+# Quick sanity: ensure no NaNs
+print('Any NaN?', out.isnull().any().any())
+EOF
 ```
 
 ## [67] tool
@@ -1187,7 +1681,7 @@ max abs diff: 2.877668822122132
 **tool call: bash**
 
 ```
-
+python predict_beta.py
 ```
 
 ## [69] tool
@@ -1247,7 +1741,7 @@ Any NaN? False
 **tool call: bash**
 
 ```
-
+head -5 predictions.csv
 ```
 
 ## [71] tool
@@ -1297,7 +1791,7 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
-
+ls -l predictions.csv
 ```
 
 ## [73] tool
@@ -1322,7 +1816,7 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
-
+echo 'Predictions saved to predictions.csv'
 ```
 
 ## [75] tool
@@ -1440,7 +1934,93 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
+cat > evaluate.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Load data
+train = pd.read_csv('data/train.csv')
+t_all = train['t'].values
+alpha_all = train['alpha'].values
+beta_all = train['beta'].values
+
+# Unwrap
+def unwrap(angle):
+    return np.rad2deg(np.unwrap(np.deg2rad(angle)))
+alpha_u = unwrap(alpha_all)
+beta_u = unwrap(beta_all)
+
+# Split: first 3000 for train, rest for validation
+n_train = 3000
+t_train = t_all[:n_train]
+alpha_train = alpha_all[:n_train]
+beta_train = beta_all[:n_train]
+alpha_u_train = alpha_u[:n_train]
+beta_u_train = beta_u[:n_train]
+t_val = t_all[n_train:]
+alpha_val = alpha_all[n_train:]
+beta_val = beta_all[n_train:]
+alpha_u_val = alpha_u[n_train:]
+beta_u_val = beta_u[n_train:]
+
+def make_features(t):
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+
+# Model 1: beta from t only (unwrapped)
+X1_train = make_features(t_train)
+X1_train = np.hstack([np.ones((len(t_train),1)), X1_train])
+theta1 = np.linalg.lstsq(X1_train, beta_u_train, rcond=None)[0]
+X1_val = make_features(t_val)
+X1_val = np.hstack([np.ones((len(t_val),1)), X1_val])
+beta_u_pred1 = X1_val @ theta1
+
+# Model 2: alpha from t only (unwrapped) -> then beta from t and predicted alpha
+# Step 2a: alpha model
+Xa_train = make_features(t_train)
+Xa_train = np.hstack([np.ones((len(t_train),1)), Xa_train])
+theta_a = np.linalg.lstsq(Xa_train, alpha_u_train, rcond=None)[0]
+Xa_val = make_features(t_val)
+Xa_val = np.hstack([np.ones((len(t_val),1)), Xa_val]
+alpha_u_pred_val = Xa_val @ theta_a
+# Step 2b: beta model using t and predicted alpha (we'll also include sinusoidal for t)
+# We'll build features: t, sin/cos, and predicted_alpha_u
+X2_train = make_features(t_train)
+# Add predicted alpha from training (we can use actual alpha in training for building this model? Actually we want to use predicted alpha from t, but for training we can use actual alpha to learn the relationship, then at test time we use predicted alpha.)
+# So for building beta model on training, we use actual alpha_u_train.
+X2_train = np.column_stack([X2_train, alpha_u_train])
+X2_train = np.hstack([np.ones((len(t_train),1)), X2_train])
+theta2 = np.linalg.lstsq(X2_train, beta_u_train, rcond=None)[0]
+# For validation, we need predicted alpha from the alpha model
+X2_val = make_features(t_val)
+X2_val = np.column_stack([X2_val, alpha_u_pred_val])
+X2_val = np.hstack([np.ones((len(t_val),1)), X2_val])
+beta_u_pred2 = X2_val @ theta2
+
+# Wrap predictions to [0,360) for comparison
+def wrap(angle):
+    return ((angle % 360) + 360) % 360
+beta_pred1_wrap = wrap(beta_u_pred1)
+beta_pred2_wrap = wrap(beta_u_pred2)
+beta_val_wrap = wrap(beta_val)
+
+# Compute errors (circular)
+def circular_err(pred, true):
+    diff = (pred - true + 180) % 360 - 180
+    return np.mean(np.abs(diff))
+err1 = circular_err(beta_pred1_wrap, beta_val_wrap)
+err2 = circular_err(beta_pred2_wrap, beta_val_wrap)
+print(f'MAE (t-only): {err1:.2f} degrees')
+print(f'MAE (t + predicted alpha): {err2:.2f} degrees')
+# Also compute RMSE on unwrapped? Might be easier to interpret
+rmse1 = np.sqrt(np.mean((beta_u_pred1 - beta_u_val)**2))
+rmse2 = np.sqrt(np.mean((beta_u_pred2 - beta_u_val)**2))
+print(f'RMSE unwrapped (t-only): {rmse1:.2f}')
+print(f'RMSE unwrapped (t + predicted alpha): {rmse2:.2f}')
+EOF
 ```
 
 ## [79] tool
@@ -1458,7 +2038,93 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
+cat > evaluate.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Load data
+train = pd.read_csv('data/train.csv')
+t_all = train['t'].values
+alpha_all = train['alpha'].values
+beta_all = train['beta'].values
+
+# Unwrap
+def unwrap(angle):
+    return np.rad2deg(np.unwrap(np.deg2rad(angle)))
+alpha_u = unwrap(alpha_all)
+beta_u = unwrap(beta_all)
+
+# Split: first 3000 for train, rest for validation
+n_train = 3000
+t_train = t_all[:n_train]
+alpha_train = alpha_all[:n_train]
+beta_train = beta_all[:n_train]
+alpha_u_train = alpha_u[:n_train]
+beta_u_train = beta_u[:n_train]
+t_val = t_all[n_train:]
+alpha_val = alpha_all[n_train:]
+beta_val = beta_all[n_train:]
+alpha_u_val = alpha_u[n_train:]
+beta_u_val = beta_u[n_train:]
+
+def make_features(t):
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+
+# Model 1: beta from t only (unwrapped)
+X1_train = make_features(t_train)
+X1_train = np.hstack([np.ones((len(t_train),1)), X1_train])
+theta1 = np.linalg.lstsq(X1_train, beta_u_train, rcond=None)[0]
+X1_val = make_features(t_val)
+X1_val = np.hstack([np.ones((len(t_val),1)), X1_val])
+beta_u_pred1 = X1_val @ theta1
+
+# Model 2: alpha from t only (unwrapped) -> then beta from t and predicted alpha
+# Step 2a: alpha model
+Xa_train = make_features(t_train)
+Xa_train = np.hstack([np.ones((len(t_train),1)), Xa_train])
+theta_a = np.linalg.lstsq(Xa_train, alpha_u_train, rcond=None)[0]
+Xa_val = make_features(t_val)
+Xa_val = np.hstack([np.ones((len(t_val),1)), Xa_val])
+alpha_u_pred_val = Xa_val @ theta_a
+# Step 2b: beta model using t and predicted alpha (we'll also include sinusoidal for t)
+# We'll build features: t, sin/cos, and predicted_alpha_u
+X2_train = make_features(t_train)
+# Add predicted alpha from training (we can use actual alpha in training for building this model? Actually we want to use predicted alpha from t, but for training we can use actual alpha to learn the relationship, then at test time we use predicted alpha.)
+# So for building beta model on training, we use actual alpha_u_train.
+X2_train = np.column_stack([X2_train, alpha_u_train])
+X2_train = np.hstack([np.ones((len(t_train),1)), X2_train])
+theta2 = np.linalg.lstsq(X2_train, beta_u_train, rcond=None)[0]
+# For validation, we need predicted alpha from the alpha model
+X2_val = make_features(t_val)
+X2_val = np.column_stack([X2_val, alpha_u_pred_val])
+X2_val = np.hstack([np.ones((len(t_val),1)), X2_val])
+beta_u_pred2 = X2_val @ theta2
+
+# Wrap predictions to [0,360) for comparison
+def wrap(angle):
+    return ((angle % 360) + 360) % 360
+beta_pred1_wrap = wrap(beta_u_pred1)
+beta_pred2_wrap = wrap(beta_u_pred2)
+beta_val_wrap = wrap(beta_val)
+
+# Compute errors (circular)
+def circular_err(pred, true):
+    diff = (pred - true + 180) % 360 - 180
+    return np.mean(np.abs(diff))
+err1 = circular_err(beta_pred1_wrap, beta_val_wrap)
+err2 = circular_err(beta_pred2_wrap, beta_val_wrap)
+print(f'MAE (t-only): {err1:.2f} degrees')
+print(f'MAE (t + predicted alpha): {err2:.2f} degrees')
+# Also compute RMSE on unwrapped? Might be easier to interpret
+rmse1 = np.sqrt(np.mean((beta_u_pred1 - beta_u_val)**2))
+rmse2 = np.sqrt(np.mean((beta_u_pred2 - beta_u_val)**2))
+print(f'RMSE unwrapped (t-only): {rmse1:.2f}')
+print(f'RMSE unwrapped (t + predicted alpha): {rmse2:.2f}')
+EOF
 ```
 
 ## [81] tool
@@ -1475,7 +2141,7 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
-
+python evaluate.py
 ```
 
 ## [83] tool
@@ -1509,7 +2175,77 @@ RMSE unwrapped (t + predicted alpha): 23.91
 **tool call: bash**
 
 ```
+cat > check_intervals.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+t_all = train['t'].values
+beta_all = train['beta'].values
+beta_u_all = np.rad2deg(np.unwrap(np.deg2rad(beta_all)))
+
+n_train = 3000
+t_train = t_all[:n_train]
+beta_u_train = beta_u_all[:n_train]
+t_val = t_all[n_train:]
+beta_u_val = beta_u_all[n_train:]
+beta_val = beta_all[n_train:]
+
+def make_features(t):
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+
+X = make_features(t_train)
+X = np.hstack([np.ones((len(t_train),1)), X])
+theta = np.linalg.lstsq(X, beta_u_train, rcond=None)[0]
+y_pred_train = X @ theta
+residuals = beta_u_train - y_pred_train
+sigma2 = np.var(residuals, ddof=X.shape[1])
+XTX_inv = np.linalg.inv(X.T @ X)
+cov_theta = sigma2 * XTX_inv
+
+# Validation
+X_val = make_features(t_val)
+X_val = np.hstack([np.ones((len(t_val),1)), X_val])
+mu_val = X_val @ theta
+var_pred = sigma2 * (1 + np.sum(X_val @ XTX_inv * X_val, axis=1))
+std_pred = np.sqrt(var_pred)
+z = 1.96
+lower = mu_val - z * std_pred
+upper = mu_val + z * std_pred
+
+# Wrap to [0,360)
+def wrap(angle):
+    return ((angle % 360) + 360) % 360
+mu_wrap = wrap(mu_val)
+lower_wrap = wrap(lower)
+upper_wrap = wrap(upper)
+beta_val_wrap = wrap(beta_val)
+
+# Check coverage: need to handle wrapping intervals.
+# For each point, check if beta_val_wrap lies in interval [lower_wrap, upper_wrap] considering wrap.
+# If lower_wrap <= upper_wrap: normal interval.
+# If lower_wrap > upper_wrap: interval wraps around 0, i.e., [lower_wrap, 360) U [0, upper_wrap]
+covered = []
+for i in range(len(t_val)):
+    lo = lower_wrap[i]
+    up = upper_wrap[i]
+    val = beta_val_wrap[i]
+    if lo <= up:
+        covered.append(lo <= val <= up)
+    else:
+        covered.append(val >= lo or val <= up)
+coverage = np.mean(covered)
+print(f'Coverage: {coverage*100:.1f}%')
+print(f'Average interval width: {np.mean(np.abs(upper - lower)):.2f} degrees (unwrapped)')
+# Also compute width after wrapping? Not needed.
+# Print a few examples
+for i in range(5):
+    print(f't={t_val[i]}: beta={beta_val_wrap[i]:.1f}, pred={mu_wrap[i]:.1f}, interval=[{lower_wrap[i]:.1f}, {upper_wrap[i]:.1f}]')
+EOF
 ```
 
 ## [85] tool
@@ -1527,7 +2263,7 @@ RMSE unwrapped (t + predicted alpha): 23.91
 **tool call: bash**
 
 ```
-
+python check_intervals.py
 ```
 
 ## [87] tool
@@ -1564,7 +2300,79 @@ t=3004: beta=314.9, pred=293.9, interval=[251.5, 336.4]
 **tool call: bash**
 
 ```
+cat > calibrate.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+t_all = train['t'].values
+beta_all = train['beta'].values
+beta_u_all = np.rad2deg(np.unwrap(np.deg2rad(beta_all)))
+
+n_train = 3000
+t_train = t_all[:n_train]
+beta_u_train = beta_u_all[:n_train]
+t_val = t_all[n_train:]
+beta_u_val = beta_u_all[n_train:]
+beta_val = beta_all[n_train:]
+
+def make_features(t):
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+
+X = make_features(t_train)
+X = np.hstack([np.ones((len(t_train),1)), X])
+theta = np.linalg.lstsq(X, beta_u_train, rcond=None)[0]
+y_pred_train = X @ theta
+residuals = beta_u_train - y_pred_train
+sigma2 = np.var(residuals, ddof=X.shape[1])
+XTX_inv = np.linalg.inv(X.T @ X)
+cov_theta = sigma2 * XTX_inv
+
+# Validation
+X_val = make_features(t_val)
+X_val = np.hstack([np.ones((len(t_val),1)), X_val])
+mu_val = X_val @ theta
+var_pred = sigma2 * (1 + np.sum(X_val @ XTX_inv * X_val, axis=1))
+std_pred = np.sqrt(var_pred)
+
+# Compute normalized absolute errors
+z_abs = np.abs(beta_u_val - mu_val) / std_pred
+print(f'Mean |z|: {np.mean(z_abs):.3f}')
+print(f'90th percentile |z|: {np.percentile(z_abs, 90):.3f}')
+print(f'95th percentile |z|: {np.percentile(z_abs, 95):.3f}')
+print(f'97.5th percentile |z|: {np.percentile(z_abs, 97.5):.3f}')
+print(f'99th percentile |z|: {np.percentile(z_abs, 99):.3f}')
+# Ideal 97.5th percentile for standard normal is 1.96
+# So scaling factor s = (empirical 97.5th percentile) / 1.96
+s = np.percentile(z_abs, 97.5) / 1.96
+print(f'Suggested scale factor for std: {s:.3f}')
+# Apply scaling to get calibrated intervals
+z = 1.96
+lower_cal = mu_val - z * s * std_pred
+upper_cal = mu_val + z * s * std_pred
+# Wrap and check coverage
+def wrap(angle):
+    return ((angle % 360) + 360) % 360
+lower_wrap = wrap(lower_cal)
+upper_wrap = wrap(upper_cal)
+beta_val_wrap = wrap(beta_val)
+covered = []
+for i in range(len(t_val)):
+    lo = lower_wrap[i]
+    up = upper_wrap[i]
+    val = beta_val_wrap[i]
+    if lo <= up:
+        covered.append(lo <= val <= up)
+    else:
+        covered.append(val >= lo or val <= up)
+coverage = np.mean(covered)
+print(f'Calibrated coverage: {coverage*100:.1f}%')
+print(f'Average interval width (calibrated): {np.mean(np.abs(upper_cal - lower_cal)):.2f} degrees')
+EOF
 ```
 
 ## [89] tool
@@ -1580,7 +2388,7 @@ t=3004: beta=314.9, pred=293.9, interval=[251.5, 336.4]
 **tool call: bash**
 
 ```
-
+python calibrate.py
 ```
 
 ## [91] tool
@@ -1635,7 +2443,89 @@ Average interval width (calibrated): 112.51 degrees
 **tool call: bash**
 
 ```
+cat > final_model.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# Unwrap beta
+def unwrap(angle):
+    return np.rad2deg(np.unwrap(np.deg2rad(angle)))
+beta_u_train = unwrap(beta_train)
+
+# Features: t and sinusoidal components
+def make_features(t):
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+
+X_train = make_features(t_train)
+X_train = np.hstack([np.ones((len(t_train),1)), X_train])  # add intercept
+
+# OLS
+theta = np.linalg.lstsq(X_train, beta_u_train, rcond=None)[0]
+y_pred_train = X_train @ theta
+residuals = beta_u_train - y_pred_train
+
+# Predictive variance for each training point
+XTX_inv = np.linalg.inv(X_train.T @ X_train)
+sigma2 = np.var(residuals, ddof=X_train.shape[1])  # unbiased variance
+# Variance of prediction for each training point: sigma2 * (1 + x_i^T (X'X)^{-1} x_i)
+var_pred_train = sigma2 * (1 + np.sum(X_train @ XTX_inv * X_train, axis=1))
+std_pred_train = np.sqrt(var_pred_train)
+
+# Compute scaling factor to achieve 95% coverage
+z_abs = np.abs(residuals) / std_pred_train
+# We want the 97.5th percentile of |z| to be 1.96 after scaling.
+# So compute scaling factor s such that percentile(z_abs, 97.5) = s * 1.96
+# => s = percentile(z_abs, 97.5) / 1.96
+s = np.percentile(z_abs, 97.5) / 1.96
+print(f'Scale factor for std: {s:.4f}')
+print(f'This implies variance multiplier: {s**2:.4f}')
+
+# Now predict for test
+X_test = make_features(t_test)
+X_test = np.hstack([np.ones((len(t_test),1)), X_test])
+mu_test = X_test @ theta
+var_pred_test = sigma2 * (1 + np.sum(X_test @ XTX_inv * X_test, axis=1))
+std_pred_test = np.sqrt(var_pred_test)
+# Scale
+std_pred_test_scaled = s * std_pred_test
+
+# 95% interval
+z = 1.96
+lower = mu_test - z * std_pred_test_scaled
+upper = mu_test + z * std_pred_test_scaled
+
+# Wrap to [0, 360)
+def wrap(angle):
+    return ((angle % 360) + 360) % 360
+y_pred_wrapped = wrap(mu_test)
+lower_wrapped = wrap(lower)
+upper_wrapped = wrap(upper)
+
+# Build output
+out = pd.DataFrame({
+    't': t_test,
+    'y_pred': y_pred_wrapped,
+    'y_lower': lower_wrapped,
+    'y_upper': upper_wrapped
+})
+out.to_csv('predictions.csv', index=False)
+print('Saved predictions.csv')
+print(out.head())
+print('...')
+print(out.tail())
+EOF
 ```
 
 ## [93] tool
@@ -1653,7 +2543,7 @@ Average interval width (calibrated): 112.51 degrees
 **tool call: bash**
 
 ```
-
+python final_model.py
 ```
 
 ## [95] tool
@@ -1696,7 +2586,81 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
+cat > verify.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+t_all = train['t'].values
+beta_all = train['beta'].values
+beta_u_all = np.rad2deg(np.unwrap(np.deg2rad(beta_all)))
+
+n_train = 3000
+t_train = t_all[:n_train]
+beta_u_train = beta_u_all[:n_train]
+t_val = t_all[n_train:]
+beta_u_val = beta_u_all[n_train:]
+beta_val = beta_all[n_train:]
+
+def unwrap(angle):
+    return np.rad2deg(np.unwrap(np.deg2rad(angle)))
+def wrap(angle):
+    return ((angle % 360) + 360) % 360
+
+def make_features(t):
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+
+X_train = make_features(t_train)
+X_train = np.hstack([np.ones((len(t_train),1)), X_train])
+theta = np.linalg.lstsq(X_train, beta_u_train, rcond=None)[0]
+y_pred_train = X_train @ theta
+residuals = beta_u_train - y_pred_train
+XTX_inv = np.linalg.inv(X_train.T @ X_train)
+sigma2 = np.var(residuals, ddof=X_train.shape[1])
+
+# Compute scaling factor from training residuals
+z_abs = np.abs(residuals) / np.sqrt(sigma2 * (1 + np.sum(X_train @ XTX_inv * X_train, axis=1)))
+s = np.percentile(z_abs, 97.5) / 1.96
+print(f'Scale factor s = {s:.4f}')
+
+# Validation
+X_val = make_features(t_val)
+X_val = np.hstack([np.ones((len(t_val),1)), X_val])
+mu_val = X_val @ theta
+var_val = sigma2 * (1 + np.sum(X_val @ XTX_inv * X_val, axis=1))
+std_val = np.sqrt(var_val)
+std_val_scaled = s * std_val
+z = 1.96
+lower = mu_val - z * std_val_scaled
+upper = mu_val + z * std_val_scaled
+
+mu_wrap = wrap(mu_val)
+lower_wrap = wrap(lower)
+upper_wrap = wrap(upper)
+beta_val_wrap = wrap(beta_val)
+
+covered = []
+for i in range(len(t_val)):
+    lo = lower_wrap[i]
+    up = upper_wrap[i]
+    val = beta_val_wrap[i]
+    if lo <= up:
+        covered.append(lo <= val <= up)
+    else:
+        covered.append(val >= lo or val <= up)
+coverage = np.mean(covered)
+print(f'Coverage on validation: {coverage*100:.1f}%')
+# Average width
+width = np.mean(np.abs(upper - lower))
+print(f'Average interval width: {width:.2f} degrees')
+# Check a few
+for i in range(5):
+    print(f't={t_val[i]:4d}, beta={beta_val_wrap[i]:6.2f}, pred={mu_wrap[i]:6.2f}, interval=[{lower_wrap[i]:6.2f}, {upper_wrap[i]:6.2f}]')
+EOF
 ```
 
 ## [97] tool
@@ -1715,7 +2679,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+python verify.py
 ```
 
 ## [99] tool
@@ -1747,7 +2711,40 @@ t=3004, beta=314.88, pred=293.94, interval=[255.68, 332.20]
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+t_all = train['t'].values
+beta_all = train['beta'].values
+beta_u_all = np.rad2deg(np.unwrap(np.deg2rad(beta_all)))
+n_train = 3000
+t_train = t_all[:n_train]
+beta_u_train = beta_u_all[:n_train]
+t_val = t_all[n_train:]
+beta_u_val = beta_u_all[n_train:]
+def make_features(t):
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+X = make_features(t_train)
+X = np.hstack([np.ones((len(t_train),1)), X])
+theta = np.linalg.lstsq(X, beta_u_train, rcond=None)[0]
+X_val = make_features(t_val)
+X_val = np.hstack([np.ones((len(t_val),1)), X_val])
+mu_val = X_val @ theta
+residuals = beta_u_train - (X @ theta)
+sigma2 = np.var(residuals, ddof=X.shape[1])
+XTX_inv = np.linalg.inv(X.T @ X)
+var_pred = sigma2 * (1 + np.sum(X_val @ XTX_inv * X_val, axis=1))
+std_pred = np.sqrt(var_pred)
+z_abs = np.abs(beta_u_val - mu_val) / std_pred
+print('97.5th percentile of |z|:', np.percentile(z_abs, 97.5))
+print('Mean |z|:', np.mean(z_abs))
+print('Median |z|:', np.median(z_abs))
+"
 ```
 
 ## [101] tool
@@ -1789,7 +2786,99 @@ Median |z|: 0.5079836112503623
 **tool call: bash**
 
 ```
+cat > final_model2.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_all = train['t'].values
+beta_all = train['beta'].values
+beta_u_all = np.rad2deg(np.unwrap(np.deg2rad(beta_all)))
+
+# Split for validation
+n_train_part = 3000  # same as before
+t_train_part = t_all[:n_train_part]
+beta_u_train_part = beta_u_all[:n_train_part]
+t_val = t_all[n_train_part:]
+beta_u_val = beta_u_all[n_train_part:]
+beta_val = beta_all[n_train_part:]
+
+def make_features(t):
+    feats = [t]
+    for p in [360., 900., 1200.]:
+        feats.append(np.sin(2*np.pi*t/p))
+        feats.append(np.cos(2*np.pi*t/p))
+    return np.column_stack(feats)
+
+# --- Fit on training part ---
+X_train_part = make_features(t_train_part)
+X_train_part = np.hstack([np.ones((len(t_train_part),1)), X_train_part])
+theta_part = np.linalg.lstsq(X_train_part, beta_u_train_part, rcond=None)[0]
+y_pred_train_part = X_train_part @ theta_part
+residuals_part = beta_u_train_part - y_pred_train_part
+sigma2_part = np.var(residuals_part, ddof=X_train_part.shape[1])
+XTX_inv_part = np.linalg.inv(X_train_part.T @ X_train_part)
+
+# Validation predictions and std
+X_val = make_features(t_val)
+X_val = np.hstack([np.ones((len(t_val),1)), X_val])
+mu_val = X_val @ theta_part
+var_val = sigma2_part * (1 + np.sum(X_val @ XTX_inv_part * X_val, axis=1))
+std_val = np.sqrt(var_val)
+# Compute scaling factor to achieve 95% coverage
+z_abs = np.abs(beta_u_val - mu_val) / std_val
+s = np.percentile(z_abs, 97.5) / 1.96
+print(f'Scale factor s (from validation): {s:.4f}')
+
+# --- Refit on full training data ---
+X_train_full = make_features(t_all)
+X_train_full = np.hstack([np.ones((len(t_all),1)), X_train_full])
+theta_full = np.linalg.lstsq(X_train_full, beta_u_all, rcond=None)[0]
+y_pred_train_full = X_train_full @ theta_full
+residuals_full = beta_u_all - y_pred_train_full
+sigma2_full = np.var(residuals_full, ddof=X_train_full.shape[1])
+# Note: we could recompute sigma2_full, but we'll keep sigma2_part? Actually we should use sigma2_full for final predictions.
+# However the scale factor s was computed using sigma2_part. To be consistent, we should use the same sigma2 for scaling?
+# The idea is that our uncertainty estimate is proportional to sigma. If we change sigma, we should adjust s accordingly.
+# Simpler: we keep sigma2_full and compute std using sigma2_full, then scale by s (which was derived from sigma2_part).
+# Since sigma2_part and sigma2_full should be similar, it's okay.
+# Let's compute sigma2_full anyway.
+XTX_inv_full = np.linalg.inv(X_train_full.T @ X_train_full)
+
+# Predict for test
+X_test = make_features(test['t'].values)
+X_test = np.hstack([np.ones((len(test),1)), X_test])
+mu_test = X_test @ theta_full
+var_test = sigma2_full * (1 + np.sum(X_test @ XTX_inv_full * X_test, axis=1))
+std_test = np.sqrt(var_test)
+std_test_scaled = s * std_test
+
+# 95% interval
+z = 1.96
+lower = mu_test - z * std_test_scaled
+upper = mu_test + z * std_test_scaled
+
+# Wrap
+def wrap(angle):
+    return ((angle % 360) + 360) % 360
+y_pred_wrapped = wrap(mu_test)
+lower_wrapped = wrap(lower)
+upper_wrapped = wrap(upper)
+
+out = pd.DataFrame({
+    't': test['t'].values,
+    'y_pred': y_pred_wrapped,
+    'y_lower': lower_wrapped,
+    'y_upper': upper_wrapped
+})
+out.to_csv('predictions.csv', index=False)
+print('Saved predictions.csv')
+print('Scale factor used:', s)
+print('Average interval width:', np.mean(np.abs(upper - lower)))
+print(out.head())
+EOF
 ```
 
 ## [103] tool
@@ -1808,7 +2897,7 @@ Median |z|: 0.5079836112503623
 **tool call: bash**
 
 ```
-
+python final_model2.py
 ```
 
 ## [105] tool
@@ -1838,7 +2927,7 @@ Average interval width: 110.58596068393729
 **tool call: bash**
 
 ```
-
+head -5 predictions.csv
 ```
 
 ## [107] tool
@@ -1867,7 +2956,7 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [109] tool
@@ -1932,7 +3021,45 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
+cat > verify_final.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('predictions.csv')
+print('Shape:', df.shape)
+print('Columns:', df.columns.tolist())
+print()
+print('First few rows:')
+print(df.head())
+print()
+print('Checking for missing values:')
+print(df.isnull().sum())
+print()
+# Check that t matches test.csv
+test = pd.read_csv('data/test.csv')
+print('Test shape:', test.shape)
+print('t matches?', np.all(df['t'].values == test['t'].values))
+print()
+# Check intervals: compute width accounting for wrap
+def interval_width(low, high):
+    if low <= high:
+        return high - low
+    else:
+        return (360 - low) + high
+widths = [interval_width(low, high) for low, high in zip(df['y_lower'], df['y_upper'])]
+print('Interval width stats:')
+print('  mean:', np.mean(widths))
+print('  std:', np.std(widths))
+print('  min:', np.min(widths))
+print('  max:', np.max(widths))
+print()
+# Check that y_pred is within [0,360)
+print('y_pred min,max:', df['y_pred'].min(), df['y_pred'].max())
+print('All in [0,360)?', ((df['y_pred'] >= 0) & (df['y_pred'] < 360)).all())
+# Check bounds similarly
+print('y_lower min,max:', df['y_lower'].min(), df['y_lower'].max())
+print('y_upper min,max:', df['y_upper'].min(), df['y_upper'].max())
+EOF
 ```
 
 ## [113] tool
@@ -1949,7 +3076,7 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
-
+python verify_final.py
 ```
 
 ## [115] tool
@@ -2047,7 +3174,7 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
-
+echo 'Final predictions.csv:' && cat predictions.csv
 ```
 
 ## [119] tool
@@ -2115,7 +3242,7 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv && echo "Lines in test.csv:" && wc -l data/test.csv
 ```
 
 ## [123] tool
@@ -2142,7 +3269,36 @@ Lines in test.csv:
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('predictions.csv')
+print('Rows:', len(df))
+print('Columns:', list(df.columns))
+print('Any missing?', df.isnull().any().any())
+print('y_pred range:', df['y_pred'].min(), df['y_pred'].max())
+# Check if intervals are valid (accounting for wrap)
+def angle_diff(a, b): return (b - a + 180) % 360 - 180
+# For each row, compute if y_pred is within interval (considering wrap)
+def in_interval(pred, low, high):
+    if low <= high:
+        return low <= pred <= high
+    else:
+        return pred >= low or pred <= high
+inside = [in_interval(p, l, u) for p, l, u in zip(df['y_pred'], df['y_lower'], df['y_upper'])]
+print('Predictions within their intervals:', sum(inside), '/', len(inside))
+# Widths
+widths = []
+for l, u in zip(df['y_lower'], df['y_upper']):
+    if l <= u:
+        w = u - l
+    else:
+        w = (360 - l) + u
+    widths.append(w)
+print('Average interval width:', np.mean(widths))
+print('Min width:', np.min(widths))
+print('Max width:', np.max(widths))
+"
 ```
 
 ## [125] tool
@@ -2177,7 +3333,7 @@ Max width: 110.65486791571217
 **tool call: bash**
 
 ```
-
+echo 'Task completed: predictions.csv generated.'
 ```
 
 ## [127] tool

@@ -1,4 +1,4 @@
-"""Regression tests for three defects found by independent review.
+"""Regression tests for defects found by independent review.
 
 Each test names the defect it guards. They are the tests that would have caught the
 problems, which is the only useful kind.
@@ -19,6 +19,21 @@ problems, which is the only useful kind.
    branch nearest the truth independently, which rewrote the interval. Widening an
    equally wrong answer could cut its penalty 14-fold, so the score was not monotone in
    how wrong the answer was.
+
+5. The transcript archive silently dropped the agent's work. Tool-call bodies were read
+   from `code`, `cmd` or `answer`, and Inspect's own bash() and python() tools name that
+   argument `command`, so 259 of 281 calls in one run archived as an empty code block.
+   291 of 365 transcripts in `runs/` were affected, across every task: a record of what
+   each model was thinking with what it actually did removed. The repair recovered 151
+   of them from surviving logs; the rest were from logs already deleted.
+
+6. The flyby task took `repeats` and threw it away. Two-body and three-body get their
+   epochs from a shared builder; the hyperbolic task builds its Task inline and omitted
+   them, so `-T repeats=3` ran one draw per instance and still reported `runs` 1 and
+   `regret_spread` 0, which reads as perfect stability rather than as a single draw. A
+   seven hour run was void as a cell because of it. The guard below is a cross-task
+   invariant rather than a test of that one task, since the defect was a task building
+   its own Task and forgetting a shared argument, and any future task can repeat it.
 """
 
 from __future__ import annotations
@@ -466,3 +481,99 @@ def test_epochs_helper_is_inert_for_a_single_run():
     assert epochs(None) is None
     e = epochs(5)
     assert e is not None and e.epochs == 5
+
+
+def test_a_tool_call_body_is_archived_whatever_its_argument_is_called():
+    """The defect was a silent fallthrough to the empty string, not a missing key.
+
+    Reading only the names it already knew meant an unrecognised tool signature
+    cost evidence rather than tidiness, and nothing failed when it did. Known
+    names are still preferred in order, so a submit call reports its answer
+    rather than a JSON wrapper, but an unknown one is now dumped whole.
+    """
+    import json
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "scripts"))
+    from save_transcript import _call_text
+
+    assert _call_text({"command": "ls -la"}) == "ls -la"       # the dropped one
+    assert _call_text({"code": "print(1)"}) == "print(1)"
+    assert _call_text({"answer": "done"}) == "done"
+    assert _call_text({}) == ""                                 # nothing to say
+    # preference order, so a call carrying both is reported as the tool meant it
+    assert _call_text({"command": "a", "code": "b"}) == "a"
+    # whitespace is not a body: fall through rather than archive a blank block
+    assert _call_text({"command": "  ", "code": "real"}) == "real"
+    # an unknown signature survives as data instead of vanishing
+    out = _call_text({"script": "x = 1", "timeout": 30})
+    assert json.loads(out) == {"script": "x = 1", "timeout": 30}
+
+
+# --- 6. a repeats argument that does not reach the harness -------------------
+
+#: Every task entry point in the suite, with the cheapest arguments that still build a
+#: real dataset. oracle_n is cut because the ballistic and flyby oracles integrate
+#: trajectories: at the shipped 2000 the two of them alone take three minutes.
+TASK_ENTRY_POINTS = [
+    ("pereval.tasks.ballistic.task", "ballistic", {"oracle_n": 50}),
+    ("pereval.tasks.ccar.task", "ccar", {}),
+    ("pereval.tasks.cecl.task", "cecl", {}),
+    ("pereval.tasks.migration.task", "migration", {}),
+    ("pereval.tasks.orbit.task", "twobody", {"oracle_n": 50}),
+    ("pereval.tasks.orbit.task", "threebody", {"oracle_n": 50}),
+    ("pereval.tasks.orbit.task", "hyperbolic", {"oracle_n": 50}),
+    ("pereval.tasks.quantile.task", "quantile", {}),
+]
+
+
+@pytest.mark.parametrize("module,name,extra", TASK_ENTRY_POINTS,
+                         ids=[n for _, n, _ in TASK_ENTRY_POINTS])
+def test_repeats_reaches_the_harness_on_every_task(module, name, extra):
+    """A task that advertises `repeats` must actually run the agent that many times.
+
+    The defect was silent in both directions: the dataset was the right length for one
+    draw, the run reported success, and the stability reducer still emitted `runs` and
+    `regret_spread` from a single score. Nothing in the output said the argument had
+    been ignored. So this asserts on the Task object, where the wiring either exists or
+    does not, rather than on anything downstream of it.
+    """
+    import importlib
+    import inspect as _inspect
+
+    fn = getattr(importlib.import_module(module), name)
+    params = _inspect.signature(fn).parameters
+    assert "repeats" in params, f"{name} no longer advertises repeats"
+
+    kwargs = {"n_instances": 1, "seed": 1, **extra}
+    kwargs = {k: v for k, v in kwargs.items() if k in params}
+
+    task = fn(repeats=3, **kwargs)
+    assert task.epochs == 3, f"{name} accepted repeats=3 and built {task.epochs} epochs"
+    assert task.epochs_reducer, f"{name} runs 3 epochs with no stability reducer"
+
+    single = fn(**kwargs)
+    assert single.epochs is None, f"{name} forces epochs when repeats is not asked for"
+    assert not single.epochs_reducer
+
+
+def test_the_reducer_cannot_report_a_spread_it_did_not_measure():
+    """`runs` is the witness that makes the flyby defect visible after the fact.
+
+    One draw must report runs 1, so a table can tell a stable model from an unrepeated
+    one. This is what let the void run be identified from its log alone.
+    """
+    one = stability()([_score({"winkler_regret": 0.5})])
+    assert one.value["runs"] == 1
+    assert one.value["regret_spread"] == 0.0
+    assert one.value["regret_worst"] == 0.5
+
+    three = stability()([_score({"winkler_regret": x}) for x in (0.5, 0.1, 0.9)])
+    assert three.value["runs"] == 3
+    assert three.value["regret_worst"] == 0.9
+    assert three.value["regret_spread"] == pytest.approx(0.8)
+
+    assert epochs(1) is None
+    assert epochs(3).epochs == 3

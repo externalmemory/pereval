@@ -23,6 +23,7 @@ from pereval.tasks.migration.generator import (
     CHECKPOINTS,
     D,
     LIVE,
+    MACRO_COLUMNS,
     N_OBLIGORS,
     _withdrawal_adjusted_annual,
     conditional_matrix,
@@ -39,12 +40,12 @@ SCEN = ("baseline", "adverse", "severe")
 
 @pytest.fixture(scope="module")
 def bundle():
-    return generate(1, n_years=20, scenario="adverse")
+    return generate(1, n_years=20)
 
 
 def test_deterministic():
-    a = generate(3, n_years=12, scenario="adverse")
-    b = generate(3, n_years=12, scenario="adverse")
+    a = generate(3, n_years=12)
+    b = generate(3, n_years=12)
     assert a["annual_counts"] == b["annual_counts"]
     assert a["truth"] == b["truth"]
 
@@ -113,18 +114,42 @@ def test_annual_counts_are_whole_cohorts_and_only_public_files_leak(bundle):
         # driver NAMES are column headers, so only the drawn numbers must not leak
         assert isinstance(value, str)
     assert f"{bundle['dgp']['rho']:.6f}" not in blob
-    assert json.loads(files["data/policy.json"])["checkpoints"] == list(CHECKPOINTS)
+    policy = json.loads(files["data/policy.json"])
+    assert policy["checkpoints"] == list(CHECKPOINTS)
+    assert policy["scenarios"] == list(SCEN)
+
+
+def test_history_and_scenario_ship_the_same_nine_series(bundle):
+    """The prompt promises nine macro series, so exactly nine must arrive.
+
+    The history rows are adopted from the CCAR generator, which appends a tenth
+    column holding the default rate of ITS portfolio. Passed through, it named a
+    series `default_rate` that this portfolio did not produce: eight times too
+    large, and correlated 0.03 to 0.78 with the shipped counts depending on the
+    instance, so an agent regressing on it chased noise or found a shortcut by
+    luck of the draw. Both files now carry the same nine.
+    """
+    files = public_files(bundle)
+    header = {name: files[f"data/{name}.csv"].splitlines()[0].split(",")
+              for name in ("macro_history", "scenario")}
+    assert header["scenario"] == ["scenario", *header["macro_history"]]
+    assert header["macro_history"] == ["quarter", *MACRO_COLUMNS]
+    assert len(MACRO_COLUMNS) == 9
+    assert "default_rate" not in files["data/macro_history.csv"]
+    assert all("default_rate" not in row for row in bundle["history_rows"])
 
 
 def test_truth_distributions_are_cohort_shares_including_default(bundle):
-    for q in CHECKPOINTS:
-        d = bundle["truth"]["rating_distribution"][str(q)]
-        assert set(d) == set(ORDER)
-        assert sum(d.values()) == pytest.approx(1.0, abs=1e-9)
-    early = bundle["truth"]["rating_distribution"][str(min(CHECKPOINTS))]
-    late = bundle["truth"]["rating_distribution"][str(max(CHECKPOINTS))]
-    # default is absorbing, so its share cannot fall between checkpoints
-    assert late["D"] >= early["D"]
+    for name in SCEN:
+        dist = bundle["truth"]["scenarios"][name]["rating_distribution"]
+        for q in CHECKPOINTS:
+            d = dist[str(q)]
+            assert set(d) == set(ORDER)
+            assert sum(d.values()) == pytest.approx(1.0, abs=1e-9)
+        early = dist[str(min(CHECKPOINTS))]
+        late = dist[str(max(CHECKPOINTS))]
+        # default is absorbing, so its share cannot fall between checkpoints
+        assert late["D"] >= early["D"]
 
 
 def test_default_is_visible_to_ks_only_in_the_cohort_view():
@@ -147,10 +172,12 @@ def test_default_is_visible_to_ks_only_in_the_cohort_view():
 
 
 def _oracle_csv(truth):
-    rows = ["quarter,state,share"]
-    for q in CHECKPOINTS:
-        for s in ORDER:
-            rows.append(f"{q},{s},{truth['rating_distribution'][str(q)][s]}")
+    rows = ["scenario,quarter,state,share"]
+    for name in truth["scenario_names"]:
+        dist = truth["scenarios"][name]["rating_distribution"]
+        for q in CHECKPOINTS:
+            for s in ORDER:
+                rows.append(f"{name},{q},{s},{dist[str(q)][s]}")
     return "\n".join(rows) + "\n"
 
 
@@ -169,39 +196,51 @@ def test_each_component_is_a_fraction_of_the_degenerate(bundle):
     """Equal weighting comes from the normalisation, not from chosen constants."""
     truth = bundle["truth"]
     perfect = score_predictions(truth, _oracle_csv(truth))
-    for k in ("ks_q4", "ks_q9", "default_q4", "default_q9"):
+    keys = [f"{c}_{n}_q{q}" for n in SCEN for c in ("ks", "default") for q in (4, 9)]
+    assert len(keys) == 12
+    for k in keys:
         assert perfect[f"{k}_norm"] == pytest.approx(0.0, abs=1e-9)
     missing = score_predictions(truth, None)
-    for k in ("ks_q4", "ks_q9", "default_q4", "default_q9"):
+    for k in keys:
         assert missing[f"{k}_norm"] == pytest.approx(1.0)
 
 
 def test_shape_and_default_are_scored_independently(bundle):
     """Getting the grades right while claiming no defaults must not score well."""
     truth = bundle["truth"]
-    rows = ["quarter,state,share"]
-    for q in CHECKPOINTS:
-        d = truth["rating_distribution"][str(q)]
-        live_total = sum(d[s] for s in ORDER[:-1])
-        for s in ORDER:
-            share = 0.0 if s == "D" else d[s] / live_total
-            rows.append(f"{q},{s},{share}")
+    rows = ["scenario,quarter,state,share"]
+    for name in SCEN:
+        dist = truth["scenarios"][name]["rating_distribution"]
+        for q in CHECKPOINTS:
+            d = dist[str(q)]
+            live_total = sum(d[s] for s in ORDER[:-1])
+            for s in ORDER:
+                share = 0.0 if s == "D" else d[s] / live_total
+                rows.append(f"{name},{q},{s},{share}")
     r = score_predictions(truth, "\n".join(rows) + "\n")
-    # the live-grade shape is exact, so both KS components vanish
-    assert r["ks_q4_norm"] == pytest.approx(0.0, abs=1e-9)
-    assert r["ks_q9_norm"] == pytest.approx(0.0, abs=1e-9)
-    # but both default components are maximally wrong, pinning the score near 0.5
-    assert r["default_q4_norm"] == pytest.approx(1.0, rel=1e-6)
-    assert r["default_q9_norm"] == pytest.approx(1.0, rel=1e-6)
+    for name in SCEN:
+        # the live-grade shape is exact, so both KS components vanish
+        assert r[f"ks_{name}_q4_norm"] == pytest.approx(0.0, abs=1e-9)
+        assert r[f"ks_{name}_q9_norm"] == pytest.approx(0.0, abs=1e-9)
+        # but both default components are maximally wrong
+        assert r[f"default_{name}_q4_norm"] == pytest.approx(1.0, rel=1e-6)
+        assert r[f"default_{name}_q9_norm"] == pytest.approx(1.0, rel=1e-6)
+        assert r[f"score_{name}"] == pytest.approx(0.5, abs=1e-6)
+    # twelve components, half of them exact, so the composite pins at 0.5
     assert r["score"] == pytest.approx(0.5, abs=1e-6)
 
 
+HEAD = "scenario,quarter,state,share\n"
+
+
 @pytest.mark.parametrize("text", [
-    "quarter,state,share\n4,AAA,0.5\n",                       # incomplete states
-    "quarter,state,share\n4,AAA,-0.1\n" + "\n".join(
-        f"4,{s},0.2" for s in ORDER[1:]),                     # negative share
-    "quarter,state,share\n" + "\n".join(f"4,{s},50" for s in ORDER),  # percent, not share
-    "quarter,state,share\n" + "\n".join(f"4,{s},0.125" for s in ORDER) * 2,  # duplicates
+    HEAD + "adverse,4,AAA,0.5\n",                            # incomplete states
+    HEAD + "adverse,4,AAA,-0.1\n" + "\n".join(
+        f"adverse,4,{s},0.2" for s in ORDER[1:]),             # negative share
+    HEAD + "\n".join(f"adverse,4,{s},50" for s in ORDER),     # percent, not share
+    HEAD + "\n".join(f"adverse,4,{s},0.125" for s in ORDER) * 2,  # duplicates
+    "quarter,state,share\n" + "\n".join(                     # no scenario column
+        f"4,{s},0.125" for s in ORDER),
 ])
 def test_malformed_submissions_cannot_gain_credit(bundle, text):
     r = score_predictions(bundle["truth"], text)
@@ -212,14 +251,15 @@ def test_malformed_submissions_cannot_gain_credit(bundle, text):
 def test_reference_beats_the_degenerate_by_a_wide_margin():
     """The anchor that makes the column readable.
 
-    Measured at 0.303 against the degenerate's 1.000 over these eighteen
-    instances, a separation of 3.3x, at the task's shipped n_years=20. The bar
-    is deliberately looser than the measurement so ordinary generator drift does
-    not fail it, but a change that collapses the separation will.
+    Measured at 0.309 against the degenerate's 1.000 over these six instances,
+    a separation of 3.2x, at the task's shipped n_years=20. Over twelve it is
+    0.285 and 3.5x. The bar is deliberately looser than the measurement so
+    ordinary generator drift does not fail it, but a change that collapses the
+    separation will.
 
     Six seeds rather than the module's three, because seed 3 is the worst of the
-    first eight and a three-seed sample containing it reads 0.417, which is not
-    the number the doc reports.
+    first eight and a three-seed sample containing it reads high. Each instance
+    now carries all three scenarios, so six seeds is eighteen projections.
 
     Twenty years is where the shrinkage earns its place. Unshrunk, the reference
     loses to the degenerate on five of twenty-four draws, reaching 1.48. See
@@ -227,12 +267,11 @@ def test_reference_beats_the_degenerate_by_a_wide_margin():
     projection.
     """
     ref, deg = [], []
-    for scen in SCEN:
-        for seed in (1, 2, 3, 4, 5, 6):
-            b = generate(seed, n_years=20, scenario=scen)
-            f = public_files(b)
-            ref.append(score_predictions(b["truth"], predict(f, "onefactor")[0])["score"])
-            deg.append(score_predictions(b["truth"], predict(f, "no_migration")[0])["score"])
+    for seed in (1, 2, 3, 4, 5, 6):
+        b = generate(seed, n_years=20)
+        f = public_files(b)
+        ref.append(score_predictions(b["truth"], predict(f, "onefactor")[0])["score"])
+        deg.append(score_predictions(b["truth"], predict(f, "no_migration")[0])["score"])
     assert np.mean(ref) < 0.5 * np.mean(deg)
     assert np.mean(ref) > 0.0          # the reference is not the oracle
 
@@ -290,7 +329,7 @@ def test_reference_shrinks_harder_on_a_shorter_history():
 
 def test_no_migration_baseline_reproduces_the_anchor_exactly():
     """The anchor must be reachable from the integer counts the agent can see."""
-    b = generate(2, n_years=20, scenario="adverse")
+    b = generate(2, n_years=20)
     r = score_predictions(b["truth"], predict(public_files(b), "no_migration")[0])
     assert r["score"] == pytest.approx(1.0, rel=1e-6)
     assert r["completion"] == 1.0
@@ -340,7 +379,7 @@ def test_finite_portfolio_sampling_dominates_the_non_embeddability():
 def test_expected_distributions_match_a_direct_propagation(bundle):
     base = quarterly_base()
     dgp = bundle["dgp"]
-    z = bundle["truth"]["z_scenario"]
+    z = bundle["truth"]["scenarios"]["adverse"]["z_scenario"]
     mix = np.array([bundle["holdout_mix"][r] for r in LIVE])
     got = expected_distributions(base, dgp, z, mix, CHECKPOINTS)
     v = np.concatenate([mix, [0.0]])
@@ -364,11 +403,11 @@ def test_matrix_diagnostics_are_clean_for_the_reference():
         parse_predictions,
     )
 
-    b = generate(1, n_years=20, scenario="adverse")
+    b = generate(1, n_years=20)
     f = public_files(b)
     preds, mats, _ = predict(f, "onefactor")
     start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
-    cps = [int(q) for q in b["truth"]["rating_distribution"]]
+    cps = list(CHECKPOINTS)
     d = matrix_diagnostics(mats, start, parse_predictions(preds), cps)
     assert d["matrix_provided"] == 1.0
     assert d["matrix_rows_off_one"] == 0.0
@@ -389,17 +428,18 @@ def test_matrix_diagnostics_detect_each_pathology():
         score_predictions,
     )
 
-    b = generate(1, n_years=20, scenario="adverse")
+    b = generate(1, n_years=20)
     preds, mats, _ = predict(public_files(b), "onefactor")
     rows = mats.splitlines()
     header, body = rows[0], rows[1:]
     # break the first live row: negative mass, rows off one, and a default
     # probability that improves as credit quality worsens
     broken = header + "\n" + "\n".join(
-        ["1,AAA," + ",".join(["0.5", "0.6", "-0.2", "0.0", "0.0", "0.0", "0.0", "0.9"]),
-         "1,AA," + ",".join(["0.0"] * 7 + ["0.1"])] + body[2:])
+        ["baseline,1,AAA," + ",".join(
+            ["0.5", "0.6", "-0.2", "0.0", "0.0", "0.0", "0.0", "0.9"]),
+         "baseline,1,AA," + ",".join(["0.0"] * 7 + ["0.1"])] + body[2:])
     start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
-    cps = [int(q) for q in b["truth"]["rating_distribution"]]
+    cps = list(CHECKPOINTS)
     d = matrix_diagnostics(broken, start, {}, cps)
     assert parse_matrices(broken)          # parsed, not rejected
     assert d["matrix_negative_cells"] >= 1
@@ -420,7 +460,7 @@ def test_missing_matrices_are_recorded_without_affecting_score():
 
     from pereval.scorers.migration import matrix_diagnostics
 
-    b = generate(1, n_years=20, scenario="adverse")
+    b = generate(1, n_years=20)
     start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
     d = matrix_diagnostics(None, start, {}, [4, 9])
     assert d == {"matrix_provided": 0.0}
@@ -455,10 +495,10 @@ def test_admissibility_is_immaterial_to_accuracy_so_it_breaks_ties_only():
         q[:D] /= q[:D].sum(axis=1, keepdims=True)
         return q
 
-    b = generate(1, n_years=20, scenario="adverse")
+    b = generate(1, n_years=20)
     f, t = public_files(b), b["truth"]
     start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
-    cps = [int(q) for q in t["rating_distribution"]]
+    cps = list(CHECKPOINTS)
 
     good_preds, good_mats, _ = predict(f, "onefactor")
     original = B.pooled_quarterly_base
@@ -477,8 +517,8 @@ def test_admissibility_is_immaterial_to_accuracy_so_it_breaks_ties_only():
     s_good = score_predictions(t, good_preds)["score"]
     s_bad = score_predictions(t, bad_preds)["score"]
     # Orthogonal: wholly different admissibility, indistinguishable accuracy.
-    # Measured at 0.45% of the score on this instance and under 0.01% averaged
-    # over twelve, where the per-instance differences cancel. The bound is 5%,
+    # Measured at 0.15% of the score on this instance, 0.03% averaged over
+    # twelve and 0.18% at worst over those twelve. The bound is 5%,
     # which is still far inside the factor-of-a-few resolution this suite
     # claims, so the test fails only if admissibility becomes genuinely
     # material rather than on ordinary instance variation.
@@ -498,10 +538,10 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
 
     from pereval.scorers.migration import matrix_diagnostics, parse_predictions
 
-    b = generate(1, n_years=20, scenario="adverse")
+    b = generate(1, n_years=20)
     f, t = public_files(b), b["truth"]
     start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
-    cps = [int(q) for q in t["rating_distribution"]]
+    cps = list(CHECKPOINTS)
     preds, mats, _ = predict(f, "onefactor")
     head, *body = mats.splitlines()
 
@@ -512,7 +552,7 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
 
     def scaled(line, k):
         parts = line.split(",")
-        return ",".join(parts[:2] + [repr(float(x) * k) for x in parts[2:]])
+        return ",".join(parts[:3] + [repr(float(x) * k) for x in parts[3:]])
 
     off = matrix_diagnostics(head + "\n" + "\n".join(scaled(x, 1.2) for x in body),
                              start, parse_predictions(preds), cps)
@@ -521,8 +561,8 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
     assert off["matrix_submission_gap"] > 1.0      # mass loss compounds
 
     parts = body[0].split(",")
-    parts[2] = repr(float(parts[2]) + 0.05)
-    parts[9] = repr(float(parts[9]) - 0.05)
+    parts[3] = repr(float(parts[3]) + 0.05)
+    parts[10] = repr(float(parts[10]) - 0.05)
     neg = matrix_diagnostics(head + "\n" + "\n".join([",".join(parts)] + body[1:]),
                              start, parse_predictions(preds), cps)
     assert neg["matrix_rows_valid"] == 1.0         # mass still conserved
@@ -547,7 +587,7 @@ def test_backtest_diagnostics_detect_insufficient_macro_sensitivity():
     from pereval.scorers.migration import fit_diagnostics
     from pereval.tasks.migration import baselines as _B
 
-    b = generate(1, n_years=20, scenario="severe")
+    b = generate(1, n_years=20)
     f = public_files(b)
     mats = _B._annual_matrices(f["data/transitions.csv"])
     base = _B.pooled_quarterly_base(mats)
@@ -577,12 +617,13 @@ def test_shipped_reference_is_flagged_for_damped_macro_response():
 
     The shrinkage that stops the reference blowing out on the projection also
     damps its macro response, so it under-fits the stressed years by about a
-    third. An agent that beats 0.287 while keeping this ratio near one is doing
-    something the score alone cannot see.
+    third: 0.695 on this instance and 0.637 averaged over twelve. An agent that
+    beats the reference's 0.285 composite while keeping this ratio near one is
+    doing something the score alone cannot see.
     """
     from pereval.tasks.migration.baselines import backtest_diagnostics
 
-    d = backtest_diagnostics(public_files(generate(1, n_years=20, scenario="severe")))
+    d = backtest_diagnostics(public_files(generate(1, n_years=20)))
     assert 0.5 < d["stress_mean_ratio"] < 0.85
     assert d["factor_swing_retained"] < 0.9
     # the band still clears the worst observed year for a correctly specified fit
@@ -595,7 +636,7 @@ def test_degenerate_floors_every_one_sided_statistic():
         fit_diagnostics, parse_predictions, stress_diagnostics,
     )
 
-    b = generate(2, n_years=20, scenario="adverse")
+    b = generate(2, n_years=20)
     f, t = public_files(b), b["truth"]
     preds, mats, back = predict(f, "no_migration")
     start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
@@ -609,10 +650,12 @@ def test_degenerate_floors_every_one_sided_statistic():
 
 def test_true_loss_path_reconciles_with_the_scored_checkpoint():
     """The quarterly increments must sum to the cohort default share at quarter 9."""
-    b = generate(1, n_years=20, scenario="severe")
-    t = b["truth"]
-    assert sum(t["default_increments"]) == pytest.approx(
-        t["rating_distribution"]["9"]["D"], abs=1e-9)
+    t = generate(1, n_years=20)["truth"]
+    for name in SCEN:
+        ts = t["scenarios"][name]
+        assert sum(ts["default_increments"]) == pytest.approx(
+            ts["rating_distribution"]["9"]["D"], abs=1e-9)
+    # one history, so one observed series shared by all three
     assert len(t["observed_annual_default_rate"]) == 20
 
 
@@ -679,7 +722,7 @@ def test_every_reported_key_survives_aggregation():
 
     from pereval.scorers.migration import REPORTED_KEYS, score_value
 
-    b = generate(1, n_years=20, scenario="severe")
+    b = generate(1, n_years=20)
     t = b["truth"]
     preds, mats, back = predict(public_files(b), "onefactor")
     cases = {
@@ -693,3 +736,392 @@ def test_every_reported_key_survives_aggregation():
         missing = [k for k in REPORTED_KEYS if k not in v]
         assert not missing, f"{label}: absent at aggregation: {missing}"
         assert not math.isnan(v["score"]), f"{label}: the score itself is never NaN"
+
+
+# --- one history, three scenarios -------------------------------------------
+
+def test_one_history_is_shared_by_every_scenario():
+    """The property the task's shape exists for.
+
+    A bank fits one model to one history and runs it under each supervisory
+    scenario. So everything the agent estimates on has to be identical across
+    the three, and only the future path may differ. Generating with one scenario
+    or another must therefore leave the counts, the macro history and the
+    holdout cohort untouched.
+    """
+    a = generate(1, n_years=20, scenarios=("baseline",))
+    b = generate(1, n_years=20, scenarios=("severe",))
+    assert a["annual_counts"] == b["annual_counts"]
+    assert a["history_rows"] == b["history_rows"]
+    assert a["holdout_counts"] == b["holdout_counts"]
+    assert (a["truth"]["observed_annual_default_rate"]
+            == b["truth"]["observed_annual_default_rate"])
+    # and the future does differ, otherwise there would be nothing to compare
+    assert a["scenario_rows"] != b["scenario_rows"]
+
+    full = generate(1, n_years=20)
+    rows = {name: [r for r in full["scenario_rows"] if r["scenario"] == name]
+            for name in SCEN}
+    assert all(len(v) == 9 for v in rows.values())
+    assert rows["baseline"] != rows["adverse"] != rows["severe"]
+    # the single history is the one the single-scenario bundles carry
+    assert full["history_rows"] == a["history_rows"]
+    assert full["annual_counts"] == a["annual_counts"]
+
+
+def test_severity_is_ordered_within_an_instance():
+    """Baseline, adverse and severe must get worse in that order, every instance.
+
+    The severity bands the CCAR generator draws from are disjoint, so this holds
+    by construction rather than by luck, and the test is here because the hump
+    reshaping draws its own peak and recovery per scenario and could in principle
+    undo the ordering.
+    """
+    for seed in (1, 2, 3, 4, 5, 6):
+        t = generate(seed, n_years=20)["truth"]["scenarios"]
+        pdr = [t[name]["portfolio_default_rate"] for name in SCEN]
+        assert pdr[0] < pdr[1] < pdr[2], f"seed {seed} out of order: {pdr}"
+        # and the factor itself is pushed further out of sample each time
+        peak = [max(t[name]["z_scenario"]) for name in SCEN]
+        assert peak[0] < peak[1] < peak[2], f"seed {seed} factor order: {peak}"
+
+
+def test_the_scenario_leak_through_the_equity_siblings_is_closed():
+    """One history is not constructible on the shipped CCAR sibling setting.
+
+    sp500 and djia are built by standardising NASDAQ returns, and on the default
+    setting that standardisation runs over the whole path, so the stress
+    window's own volatility reaches back into the historical values of two
+    published columns. Holding the seed and changing only the scenario moved 49
+    of 80 history rows. Migration therefore asks for pre-stress standardisation,
+    and this pins both halves: the leak exists, and the setting closes it.
+    """
+    from pereval.tasks.ccar.generator import _simulate
+
+    leaky = [_simulate(1835504127, 80, 50, None, s)["train_rows"]
+             for s in ("baseline", "severe")]
+    assert leaky[0] != leaky[1], "the leak this setting exists for is gone"
+    differing = [i for i, (x, y) in enumerate(zip(*leaky)) if x != y]
+    assert len(differing) > 10
+    # only the siblings move, which is why it went unnoticed
+    changed = {k for i in differing for k in leaky[0][i]
+               if leaky[0][i][k] != leaky[1][i][k]}
+    assert changed == {"sp500", "djia"}
+
+    clean = [_simulate(1835504127, 80, 50, None, s, sibling_ref="pre_stress")
+             ["train_rows"] for s in ("baseline", "severe")]
+    assert clean[0] == clean[1]
+
+
+def test_rating_monotonicity_is_checked_inside_each_scenario():
+    """PD must rise as the grade worsens, within a scenario quarter.
+
+    The check cannot pool grades across scenarios: a severe quarter's AAA can
+    carry more default risk than a baseline quarter's CCC/C, and that is correct
+    rather than a violation. So a submission that is monotone inside every
+    matrix reads zero even when its levels overlap across scenarios, and an
+    inversion inside one matrix is counted once.
+    """
+    from pereval.scorers.migration import matrix_diagnostics
+
+    cols = ["scenario", "quarter", "from_rating"] + [
+        f"to_{s.replace('/', '_')}" for s in ORDER]
+
+    def rows(scen, pds):
+        out = []
+        for grade, pd in zip(LIVE, pds):
+            cells = [0.0] * len(ORDER)
+            cells[LIVE.index(grade)] = 1.0 - pd
+            cells[-1] = pd
+            out.append(",".join([scen, "1", grade] + [repr(c) for c in cells]))
+        return out
+
+    # severe sits entirely above baseline, and each is internally ordered
+    ordered = [0.001, 0.002, 0.004, 0.008, 0.02, 0.06, 0.2]
+    severe = [0.3 + x for x in ordered]
+    text = ",".join(cols) + "\n" + "\n".join(
+        rows("baseline", ordered) + rows("severe", severe))
+    start = np.full(len(ORDER), 1.0 / len(ORDER))
+    d = matrix_diagnostics(text, start, {}, list(CHECKPOINTS))
+    assert d["matrix_default_monotonicity_violations"] == 0.0
+    assert d["matrix_monotonicity_checks"] == 2 * (len(LIVE) - 1)
+
+    # one inversion inside the baseline matrix, and only one
+    swapped = list(ordered)
+    swapped[4], swapped[5] = swapped[5], swapped[4]
+    text = ",".join(cols) + "\n" + "\n".join(
+        rows("baseline", swapped) + rows("severe", severe))
+    d = matrix_diagnostics(text, start, {}, list(CHECKPOINTS))
+    assert d["matrix_default_monotonicity_violations"] == 1.0
+
+
+def test_a_change_of_model_form_per_scenario_shows_but_a_refit_does_not():
+    """What the one-model diagnostic can and cannot see, measured both ways.
+
+    The reference estimates once and projects three times, so it reads exactly
+    zero and any violation is a finding. Re-estimating the base matrix on the
+    severe scenario alone shows up. Re-estimating only the macro coefficients
+    does NOT, because the one-factor family is comonotone whatever the factor
+    path does, and that blind spot covers the likeliest form of a per-scenario
+    refit. The statistic detects a change of form, not a change of fit.
+    """
+    from scipy.optimize import brentq
+
+    from pereval.scorers.migration import one_model_discordance, parse_matrices
+    from pereval.tasks.migration import baselines as _B
+
+    b = generate(1, n_years=20)
+    f = public_files(b)
+    mats = parse_matrices(_B.predict(f, "onefactor")[1])
+    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+    base = _B.pooled_quarterly_base(_B._annual_matrices(f["data/transitions.csv"]))
+
+    clean, pairs = one_model_discordance(mats, start)
+    assert clean == 0.0 and pairs > 1000
+
+    def implied_z(m):
+        return brentq(lambda z: conditional_matrix(
+            base, z, _B.RHO_ASSUMED)[3, D] - m[3, D], -8.0, 8.0)
+
+    # a different base matrix on severe only: a change of form, so it shows
+    steeper = base.copy()
+    steeper[:D, D] *= np.array([3.0, 2.5, 2.0, 1.5, 1.2, 1.1, 1.0])
+    steeper[:D, :D] *= ((1 - steeper[:D, D])
+                        / steeper[:D, :D].sum(axis=1))[:, None]
+    reformed = {s: dict(v) for s, v in mats.items()}
+    for q, m in mats["severe"].items():
+        reformed["severe"][q] = conditional_matrix(steeper, implied_z(m),
+                                                  _B.RHO_ASSUMED)
+    assert one_model_discordance(reformed, start)[0] > 0.0
+
+    # the same family with a rescaled factor: invisible, and that is the limit
+    refit = {s: dict(v) for s, v in mats.items()}
+    for q, m in mats["severe"].items():
+        refit["severe"][q] = conditional_matrix(base, implied_z(m) * 0.6,
+                                                _B.RHO_ASSUMED)
+    assert one_model_discordance(refit, start)[0] == 0.0
+
+
+def test_the_one_model_check_survives_a_rounded_submission():
+    """An agent writes its matrices at whatever precision it likes.
+
+    Six decimals on a default probability of a tenth of a percent leaves
+    adjacent quarters separated by the rounding step, so without a relative
+    near-tie tolerance a compliant submission would read a non-zero discordance
+    from rounding alone.
+    """
+    from pereval.scorers.migration import one_model_discordance, parse_matrices
+    from pereval.tasks.migration.baselines import predict as _predict
+
+    b = generate(1, n_years=20)
+    mats = _predict(public_files(b), "onefactor")[1]
+    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+    head, *body = mats.splitlines()
+    for places in (4, 6, 8):
+        rounded = [",".join(p[:3] + [f"{float(x):.{places}f}" for x in p[3:]])
+                   for p in (line.split(",") for line in body)]
+        d, pairs = one_model_discordance(
+            parse_matrices(head + "\n" + "\n".join(rounded)), start)
+        assert d == 0.0, f"{places} dp invented {d:.2%} discordance"
+        assert pairs > 1000
+
+
+def _matrices_text(by_scen: dict[str, dict[int, np.ndarray]]) -> str:
+    """A matrices.csv for a dict of {scenario: {quarter: 8x8}}."""
+    cols = ["scenario", "quarter", "from_rating"] + [
+        f"to_{s.replace('/', '_')}" for s in ORDER]
+    out = [",".join(cols)]
+    for scen in sorted(by_scen):
+        for q in sorted(by_scen[scen]):
+            for i, grade in enumerate(LIVE):
+                out.append(",".join([scen, str(q), grade]
+                                    + [repr(float(x)) for x in by_scen[scen][q][i]]))
+    return "\n".join(out) + "\n"
+
+
+def _oracle_matrices(bundle: dict) -> dict[str, dict[int, np.ndarray]]:
+    """The exact conditional law, scenario by scenario, from truth."""
+    t = bundle["truth"]
+    base = quarterly_base()
+    return {n: {q + 1: conditional_matrix(base, float(z), t["rho"])
+                for q, z in enumerate(t["scenarios"][n]["z_scenario"])}
+            for n in t["scenario_names"]}
+
+
+def _thin_far(m: np.ndarray, keep: float) -> np.ndarray:
+    """Keep `keep` of the three-or-worse notch mass, fold the rest in at two.
+
+    Rows still sum to one and the default column is untouched, so this isolates
+    the far corner from every other property the scorer looks at.
+    """
+    out = m.copy()
+    for i in range(D - 3):
+        far = out[i, i + 3:D].copy()
+        out[i, i + 3:D] = far * keep
+        out[i, i + 2] += far.sum() * (1.0 - keep)
+    return out
+
+
+def _freeze_body(m: np.ndarray, base: np.ndarray) -> np.ndarray:
+    """Unconditional migration shape, with only the default column conditioned.
+
+    What a model does when it fits a PD by rating and leaves the rest of the
+    matrix at its long-run average. One real submission recovered from an agent
+    transcript had exactly this structure: its live block varied by 0.0001
+    relative across the nine quarters of a severe path while its default column
+    moved by a factor of five.
+    """
+    out = base.copy()
+    out[D, D] = 1.0
+    for i in range(D):
+        out[i, D] = m[i, D]
+        live = base[i, :D].copy()
+        live *= (1.0 - m[i, D]) / live.sum()
+        out[i, :D] = live
+    return out
+
+
+def test_the_far_downgrade_corner_is_measured_exactly():
+    """`matrix_down3_ratio` reads back the fraction of far mass retained.
+
+    The point of the diagnostic is that it is a measurement, not a proxy: a
+    submission that keeps a quarter of its three-notch-or-worse mass reads 0.25,
+    and the adjacent-grade control stays at one so the distortion cannot be
+    mistaken for a model that is uniformly too mild.
+    """
+    from pereval.scorers.migration import notch_diagnostics
+
+    b = generate(1, n_years=20)
+    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+    orc = _oracle_matrices(b)
+
+    for keep in (1.0, 0.5, 0.25, 0.0):
+        mats = {n: {q: _thin_far(m, keep) for q, m in v.items()}
+                for n, v in orc.items()}
+        d = notch_diagnostics(_matrices_text(mats), start, b["truth"])
+        assert d["matrix_down3_ratio"] == pytest.approx(keep, abs=1e-9)
+        assert d["matrix_down3_shape"] == pytest.approx(keep, abs=1e-9)
+        assert d["matrix_down1_ratio"] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_collapsing_the_far_corner_is_invisible_to_the_score():
+    """Why the far corner needs a diagnostic of its own rather than a component.
+
+    Abolishing every three-notch-or-worse downgrade, with the factor path and
+    the default column exactly right, costs almost nothing in the twelve scored
+    components. It has to stay below the reference composite by a wide margin,
+    because that gap is the whole argument for reporting the shape separately.
+    """
+    from pereval.scorers.migration import score_value
+
+    b = generate(1, n_years=20)
+    t = b["truth"]
+    start = np.array([t["start_mix"].get(s, 0.0) for s in ORDER], float)
+    mix = start[:D] / start[:D].sum()
+    orc = _oracle_matrices(b)
+    cps = [int(q) for q in t["scenarios"][t["scenario_names"][0]]["rating_distribution"]]
+
+    def submission(mats):
+        rows = ["scenario,quarter,state,share"]
+        for scen in sorted(mats):
+            v = np.concatenate([mix, [0.0]])
+            for q in sorted(mats[scen]):
+                v = v @ mats[scen][q]
+                if q in cps:
+                    rows += [f"{scen},{q},{s},{float(x)!r}"
+                             for s, x in zip(ORDER, v)]
+        return "\n".join(rows) + "\n"
+
+    flat = {n: {q: _thin_far(m, 0.0) for q, m in v.items()} for n, v in orc.items()}
+    clean = score_value(t, submission(orc), _matrices_text(orc), None)
+    thin = score_value(t, submission(flat), _matrices_text(flat), None)
+    assert clean["score"] < 0.01
+    assert thin["score"] < 0.05           # far below the reference's 0.285
+    assert thin["matrix_down3_ratio"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_frozen_migration_body_reads_zero_concordance():
+    """The second diagnostic catches what the first cannot, and the reverse.
+
+    A model that moves only its default column keeps the far corner's shape
+    roughly intact, so the shape ratio does not convict it. Its downgrade mass,
+    default excluded, does not respond to the factor at all, so concordance is
+    exactly zero and the elasticity is flat. Folding multi-notch mass into the
+    adjacent grade is the mirror image: total downgrade mass is conserved, so
+    the response statistics are untouched while the far ratio reads zero.
+    """
+    from pereval.scorers.migration import notch_diagnostics
+
+    b = generate(1, n_years=20)
+    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+    orc = _oracle_matrices(b)
+    base = quarterly_base()
+
+    d = notch_diagnostics(_matrices_text(orc), start, b["truth"])
+    assert d["matrix_downgrade_concordance"] == 1.0
+    assert d["matrix_downgrade_slope"] > 0.5
+    assert d["matrix_downgrade_pairs"] > 300
+
+    frozen = {n: {q: _freeze_body(m, base) for q, m in v.items()}
+              for n, v in orc.items()}
+    f = notch_diagnostics(_matrices_text(frozen), start, b["truth"])
+    assert f["matrix_downgrade_concordance"] == 0.0
+    assert abs(f["matrix_downgrade_slope"]) < 0.05
+    assert f["matrix_downgrade_response"] == pytest.approx(1.0, abs=0.1)
+    # and the far corner alone would have let it through
+    assert f["matrix_down3_shape"] > 0.3
+
+    folded = {n: {q: _thin_far(m, 0.0) for q, m in v.items()}
+              for n, v in orc.items()}
+    g = notch_diagnostics(_matrices_text(folded), start, b["truth"])
+    assert g["matrix_downgrade_concordance"] == 1.0
+    assert g["matrix_downgrade_slope"] == pytest.approx(
+        d["matrix_downgrade_slope_oracle"], rel=1e-9)
+    assert g["matrix_down3_ratio"] == 0.0
+
+
+def test_the_reference_responds_to_the_macros_in_the_right_direction():
+    """The anchor has to pass its own diagnostics, and it does, unevenly.
+
+    Concordance is high but not one, because the reference's estimated factor
+    orders the quarters slightly differently from the true one. The far corner
+    comes out FATTER than the oracle's rather than thinner, since the base is
+    pooled over twenty years that contain stressed ones. Both are recorded here
+    so that a later change to the reference cannot quietly invert either sign.
+    """
+    from pereval.scorers.migration import notch_diagnostics
+
+    for seed in SEEDS:
+        b = generate(seed, n_years=20)
+        start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+        d = notch_diagnostics(predict(public_files(b), "onefactor")[1],
+                              start, b["truth"])
+        assert d["matrix_downgrade_concordance"] > 0.8
+        assert d["matrix_downgrade_slope"] > 0.5
+        assert d["matrix_down3_ratio"] > 0.5
+        assert d["matrix_down1_ratio"] > 0.5
+
+
+def test_the_shape_diagnostics_survive_a_rounded_submission():
+    """Four decimal places must not invent a far-corner or response finding.
+
+    The far cells are of order 1e-4 at a mild factor, so rounding is the obvious
+    way this could break. Rounding the oracle's own matrices and re-measuring,
+    the far ratio reads 1.0000 at eight decimals, 0.9999 at six, 1.0035 at four
+    and 0.6393 at three. Six is therefore what the instructions ask for, and the
+    case for asking is this measurement: at three decimals the statistic would
+    convict a correct submission of a 36% thinning that is entirely the
+    formatting.
+    """
+    from pereval.scorers.migration import notch_diagnostics
+
+    b = generate(1, n_years=20)
+    start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
+    orc = _oracle_matrices(b)
+
+    for dp in (6, 8, 10):
+        rounded = {n: {q: np.round(m, dp) for q, m in v.items()}
+                   for n, v in orc.items()}
+        d = notch_diagnostics(_matrices_text(rounded), start, b["truth"])
+        assert d["matrix_down3_ratio"] == pytest.approx(1.0, abs=0.02)
+        assert d["matrix_downgrade_concordance"] == 1.0

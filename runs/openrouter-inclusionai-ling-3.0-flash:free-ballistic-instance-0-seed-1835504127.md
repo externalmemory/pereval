@@ -73,7 +73,7 @@ Predict y with a 95% interval for every row in data/test.csv and write predictio
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv data/test.csv && echo "---" && head -5 data/test.csv
 ```
 
 ## [3] tool
@@ -121,7 +121,26 @@ FPYCfv,200.0
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+print('Train shape:', train.shape)
+print('Test shape:', test.shape)
+print()
+print('Categories in train:', train['category'].unique())
+print('Categories in test:', test['category'].unique())
+print()
+print('Train stats per category:')
+for cat in train['category'].unique():
+    sub = train[train['category'] == cat]
+    print(f'  {cat}: n={len(sub)}, x range [{sub.x.min()}, {sub.x.max()}], y range [{sub.y.min():.4f}, {sub.y.max():.4f}]')
+print()
+print('Test stats per category:')
+for cat in test['category'].unique():
+    sub = test[test['category'] == cat]
+    print(f'  {cat}: n={len(sub)}, x range [{sub.x.min()}, {sub.x.max()}]')
+"
 ```
 
 ## [5] tool
@@ -163,7 +182,21 @@ Test stats per category:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
 
+# Look at each category's data more carefully
+for cat in train['category'].unique():
+    sub = train[train['category'] == cat].sort_values('x')
+    print(f'=== {cat} ===')
+    # Show mean y at each x
+    for xval in sorted(sub['x'].unique()):
+        ys = sub[sub['x'] == xval]['y'].values
+        print(f'  x={xval}: mean={ys.mean():.4f}, std={ys.std():.4f}, n={len(ys)}')
+    print()
+"
 ```
 
 ## [7] tool
@@ -264,7 +297,48 @@ Test stats per category:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import Pipeline
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+
+for cat in train['category'].unique():
+    sub = train[train['category'] == cat]
+    X = sub[['x']].values
+    y = sub['y'].values
+    
+    # Try quadratic
+    for deg in [2, 3]:
+        model = Pipeline([('poly', PolynomialFeatures(degree=deg, include_bias=True)),
+                          ('lr', LinearRegression())])
+        model.fit(X, y)
+        y_pred = model.predict(X)
+        residuals = y - y_pred
+        rmse = np.sqrt(np.mean(residuals**2))
+        r2 = 1 - np.sum(residuals**2) / np.sum((y - y.mean())**2)
+        print(f'{cat} deg={deg}: RMSE={rmse:.4f}, R2={r2:.4f}')
+    
+    # Try log-linear: y = a*ln(x) + b
+    from numpy.polynomial import polynomial as P
+    Xlog = np.log(X)
+    coeffs = np.polyfit(Xlog, y, 1)
+    y_pred_log = np.polyval(coeffs, Xlog)
+    residuals = y - y_pred_log
+    rmse = np.sqrt(np.mean(residuals**2))
+    r2 = 1 - np.sum(residuals**2) / np.sum((y - y.mean())**2)
+    print(f'{cat} log-linear: RMSE={rmse:.4f}, R2={r2:.4f}')
+    
+    # Try power law: y = a*x^b + c
+    # y - c = a*x^b => need to estimate c
+    # Try c = min(y) - small offset
+    print()
+"
 ```
 
 ## [9] tool
@@ -291,7 +365,87 @@ FPYCfv deg=3: RMSE=0.1120, R2=0.7628
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import Pipeline
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+
+for cat in train['category'].unique():
+    sub = train[train['category'] == cat]
+    X = sub[['x']].values.ravel()
+    y = sub['y'].values
+    
+    # Try quadratic
+    for deg in [2, 3]:
+        model = Pipeline([('poly', PolynomialFeatures(degree=deg, include_bias=True)),
+                          ('lr', LinearRegression())])
+        model.fit(X.reshape(-1,1), y)
+        y_pred = model.predict(X.reshape(-1,1))
+        residuals = y - y_pred
+        rmse = np.sqrt(np.mean(residuals**2))
+        r2 = 1 - np.sum(residuals**2) / np.sum((y - y.mean())**2)
+        print(f'{cat} deg={deg}: RMSE={rmse:.4f}, R2={r2:.4f}')
+    
+    # Try log-linear: y = a*ln(x) + b
+    Xlog = np.log(X)
+    coeffs = np.polyfit(Xlog, y, 1)
+    y_pred_log = np.polyval(coeffs, Xlog)
+    residuals = y - y_pred_log
+    rmse = np.sqrt(np.mean(residuals**2))
+    r2 = 1 - np.sum(residuals**2) / np.sum((y - y.mean())**2)
+    print(f'{cat} log-linear: RMSE={rmse:.4f}, R2={r2:.4f}')
+    
+    # Try power law: y = a*x^b + c
+    # Estimate c as y at very large x (asymptote) or try different c values
+    # Simple approach: try c = 0 first
+    # y = a*x^b => ln|y| = ln|a| + b*ln(x) (but y is negative)
+    # Use |y| = a*x^b => ln|y| = ln(a) + b*ln(x)
+    mask = y != 0
+    if mask.any():
+        log_y = np.log(np.abs(y[mask]))
+        log_x = np.log(X[mask])
+        coeffs = np.polyfit(log_x, log_y, 1)
+        y_pred_pw = -np.exp(coeffs[0]) * X**coeffs[1]  # negative since y is negative
+        residuals = y - y_pred_pw
+        rmse = np.sqrt(np.mean(residuals**2))
+        r2 = 1 - np.sum(residuals**2) / np.sum((y - y.mean())**2)
+        print(f'{cat} power-law: RMSE={rmse:.4f}, R2={r2:.4f}, coeffs={coeffs}')
+    
+    # Try exponential: y = a*exp(b*x) + c
+    # Estimate c as asymptote (min y or slightly below)
+    c_est = np.min(y) - 0.1
+    y_shifted = y - c_est
+    y_shifted_pos = y_shifted - np.min(y_shifted) + 1e-6  # make positive
+    # Actually y is negative and decreasing, so y - c where c < min(y) gives negative values
+    # Let's try y = a*exp(b*x) + c where c is the asymptote
+    # If y is decreasing and bounded below, c = lower asymptote
+    # y - c = a*exp(b*x), b < 0 since y is decreasing
+    # ln(y - c) = ln(a) + b*x
+    # c should be less than min(y) for y-c to be negative... hmm
+    # Actually y is negative and becoming more negative, so maybe y = -a*exp(b*x) + c with b > 0
+    # Or y = a*exp(b*x) + c with a < 0, b > 0
+    # Let's just try: y = c - a*exp(b*x) with a,b > 0
+    # y - c = -a*exp(b*x) => c - y = a*exp(b*x) => ln(c-y) = ln(a) + b*x
+    # c should be > max(y) (less negative)
+    c_est = np.max(y) + 0.1
+    cy = c_est - y  # should be positive
+    if np.all(cy > 0):
+        log_cy = np.log(cy)
+        coeffs = np.polyfit(X, log_cy, 1)
+        y_pred_exp = c_est - np.exp(coeffs[0]) * np.exp(coeffs[1] * X)
+        residuals = y - y_pred_exp
+        rmse = np.sqrt(np.mean(residuals**2))
+        r2 = 1 - np.sum(residuals**2) / np.sum((y - y.mean())**2)
+        print(f'{cat} exp: RMSE={rmse:.4f}, R2={r2:.4f}, coeffs={coeffs}')
+    
+    print()
+"
 ```
 
 ## [11] tool
@@ -347,7 +501,87 @@ Vi7zXY exp: RMSE=0.4806, R2=-1.5560, coeffs=[ 0.02699208 -2.98193192]
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import Pipeline
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Read data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in test['category'].unique():
+    # Get training data for this category
+    sub = train[train['category'] == cat]
+    X_train = sub[['x']].values.ravel()
+    y_train = sub['y'].values
+    n = len(X_train)
+    
+    # Fit quadratic model
+    deg = 2
+    poly = PolynomialFeatures(degree=deg, include_bias=True)
+    X_poly = poly.fit_transform(X_train.reshape(-1, 1))
+    lr = LinearRegression(fit_intercept=False)
+    lr.fit(X_poly, y_train)
+    
+    # Compute residuals and MSE
+    y_pred_train = lr.predict(X_poly)
+    residuals = y_train - y_pred_train
+    mse = np.sum(residuals**2) / (n - deg - 1)  # unbiased estimate
+    
+    # Get test data for this category
+    test_sub = test[test['category'] == cat]
+    X_test = test_sub[['x']].values.ravel()
+    X_test_poly = poly.transform(X_test.reshape(-1, 1))
+    
+    # Predictions
+    y_pred = lr.predict(X_test_poly)
+    
+    # Prediction intervals
+    # For prediction interval: se_pred = sqrt(MSE * (1 + x_new^T (X^T X)^{-1} x_new))
+    # Compute (X^T X)^{-1}
+    XtX_inv = np.linalg.inv(X_poly.T @ X_poly)
+    
+    # t-value for 95% prediction interval
+    df = n - deg - 1
+    t_val = stats.t.ppf(0.975, df)
+    
+    intervals = []
+    for i in range(len(X_test)):
+        x_new = X_test_poly[i]
+        # Leverage
+        h = x_new @ XtX_inv @ x_new
+        se_pred = np.sqrt(mse * (1 + h))
+        lower = y_pred[i] - t_val * se_pred
+        upper = y_pred[i] + t_val * se_pred
+        intervals.append((lower, upper))
+    
+    for i, (_, row) in enumerate(test_sub.iterrows()):
+        lower, upper = intervals[i]
+        results.append({
+            'category': row['category'],
+            'x': row['x'],
+            'y_pred': y_pred[i],
+            'y_lower': lower,
+            'y_upper': upper
+        })
+
+pred_df = pd.DataFrame(results)
+pred_df = pred_df.sort_values(['category', 'x']).reset_index(drop=True)
+pred_df.to_csv('predictions.csv', index=False)
+print(f"Wrote {len(pred_df)} predictions to predictions.csv")
+print(pred_df.head(10))
+print("...")
+print(pred_df.tail(10))
+PYEOF
+python3 solution.py
 ```
 
 ## [13] tool
@@ -390,7 +624,15 @@ Wrote 29 predictions to predictions.csv
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv && head -5 predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Shape:', df.shape)
+print('Columns:', list(df.columns))
+print('Categories:', df['category'].unique())
+print('Any nulls:', df.isnull().any().any())
+print('y_lower < y_pred < y_upper:', ((df['y_lower'] < df['y_pred']) & (df['y_pred'] < df['y_upper'])).all())
+"
 ```
 
 ## [15] tool
@@ -481,7 +723,93 @@ y_lower < y_pred < y_upper: True
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+
+def model_quad(x, a, b, c):
+    return a*x*x + b*x + c
+
+def model_log(x, a, b):
+    return a*np.log(x) + b
+
+def model_power(x, a, b):
+    return a * np.power(x, b)
+
+def model_exp(x, a, b, c):
+    return a * np.exp(b*x) + c
+
+def model_inv(x, a, b):
+    return a/x + b
+
+for cat in train['category'].unique():
+    sub = train[train['category'] == cat]
+    X = sub['x'].values.astype(float)
+    y = sub['y'].values.astype(float)
+    
+    print(f'=== {cat} ===')
+    
+    # Quadratic
+    try:
+        popt, _ = curve_fit(model_quad, X, y)
+        y_pred = model_quad(X, *popt)
+        rmse = np.sqrt(np.mean((y - y_pred)**2))
+        r2 = 1 - np.sum((y-y_pred)**2) / np.sum((y-y.mean())**2)
+        print(f'  quad: a={popt[0]:.6f}, b={popt[1]:.6f}, c={popt[2]:.6f}, RMSE={rmse:.4f}, R2={r2:.4f}')
+    except:
+        print('  quad: failed')
+    
+    # Log
+    try:
+        popt, _ = curve_fit(model_log, X, y)
+        y_pred = model_log(X, *popt)
+        rmse = np.sqrt(np.mean((y - y_pred)**2))
+        r2 = 1 - np.sum((y-y_pred)**2) / np.sum((y-y.mean())**2)
+        print(f'  log: a={popt[0]:.6f}, b={popt[1]:.6f}, RMSE={rmse:.4f}, R2={r2:.4f}')
+    except:
+        print('  log: failed')
+    
+    # Power
+    try:
+        # y is negative, so fit |y| = a * x^b then negate
+        mask = y != 0
+        popt, _ = curve_fit(model_power, X[mask], -y[mask])
+        y_pred = -model_power(X, *popt)
+        rmse = np.sqrt(np.mean((y - y_pred)**2))
+        r2 = 1 - np.sum((y-y_pred)**2) / np.sum((y-y.mean())**2)
+        print(f'  power: a={popt[0]:.6f}, b={popt[1]:.6f}, RMSE={rmse:.4f}, R2={r2:.4f}')
+    except:
+        print('  power: failed')
+    
+    # Exponential: y = a*exp(b*x) + c
+    try:
+        # Estimate c as lower bound
+        c_init = np.min(y) - 0.1
+        popt, _ = curve_fit(model_exp, X, y, p0=[-0.01, 0.01, c_init], maxfev=10000)
+        y_pred = model_exp(X, *popt)
+        rmse = np.sqrt(np.mean((y - y_pred)**2))
+        r2 = 1 - np.sum((y-y_pred)**2) / np.sum((y-y.mean())**2)
+        print(f'  exp: a={popt[0]:.6f}, b={popt[1]:.6f}, c={popt[2]:.6f}, RMSE={rmse:.4f}, R2={r2:.4f}')
+    except Exception as e:
+        print(f'  exp: failed - {e}')
+    
+    # Inverse: y = a/x + b
+    try:
+        popt, _ = curve_fit(model_inv, X, y)
+        y_pred = model_inv(X, *popt)
+        rmse = np.sqrt(np.mean((y - y_pred)**2))
+        r2 = 1 - np.sum((y-y_pred)**2) / np.sum((y-y.mean())**2)
+        print(f'  inv: a={popt[0]:.6f}, b={popt[1]:.6f}, RMSE={rmse:.4f}, R2={r2:.4f}')
+    except:
+        print('  inv: failed')
+    
+    print()
+"
 ```
 
 ## [17] tool
@@ -575,7 +903,67 @@ y_lower < y_pred < y_upper: True
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Read data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in test['category'].unique():
+    # Get training data for this category
+    sub = train[train['category'] == cat]
+    X_train = sub['x'].values.astype(float)
+    y_train = sub['y'].values.astype(float)
+    n = len(X_train)
+    
+    # Build polynomial features (degree 2)
+    X_design = np.column_stack([X_train**2, X_train, np.ones(n)])
+    
+    # Fit OLS
+    model = sm.OLS(y_train, X_design)
+    fit = model.fit()
+    
+    # Get test data for this category
+    test_sub = test[test['category'] == cat]
+    X_test = test_sub['x'].values.astype(float)
+    X_test_design = np.column_stack([X_test**2, X_test, np.ones(len(X_test))])
+    
+    # Predictions
+    y_pred = fit.predict(X_test_design)
+    
+    # Prediction intervals for new observations
+    # Using get_prediction which handles both estimation and observation noise
+    pred = fit.get_prediction(X_test_design)
+    pred_summary = pred.summary_frame(alpha=0.05)
+    
+    # pred_summary has columns: mean, mean_se, mean_ci_lower, mean_ci_upper,
+    #                          obs_ci_lower, obs_ci_upper, obs_se
+    # We want obs_ci_lower and obs_ci_upper for prediction intervals
+    
+    for i, (_, row) in enumerate(test_sub.iterrows()):
+        results.append({
+            'category': row['category'],
+            'x': row['x'],
+            'y_pred': y_pred[i],
+            'y_lower': pred_summary['obs_ci_lower'].iloc[i],
+            'y_upper': pred_summary['obs_ci_upper'].iloc[i]
+        })
+
+pred_df = pd.DataFrame(results)
+pred_df = pred_df.sort_values(['category', 'x']).reset_index(drop=True)
+pred_df.to_csv('predictions.csv', index=False)
+print(f"Wrote {len(pred_df)} predictions to predictions.csv")
+print(pred_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [19] tool
@@ -635,7 +1023,19 @@ Wrote 29 predictions to predictions.csv
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+print('predictions.csv shape:', df.shape)
+print('test.csv shape:', test.shape)
+print('Columns:', list(df.columns))
+print('Match test rows:', len(df) == len(test))
+print('Categories match:', set(df['category']) == set(test['category']))
+print('x values match:', all(df['x'] == test['x']))
+print('Any y_lower > y_upper:', (df['y_lower'] > df['y_upper']).any())
+print('All y_lower < y_pred < y_upper:', all((df['y_lower'] < df['y_pred']) & (df['y_pred'] < df['y_upper'])))
+"
 ```
 
 ## [21] tool

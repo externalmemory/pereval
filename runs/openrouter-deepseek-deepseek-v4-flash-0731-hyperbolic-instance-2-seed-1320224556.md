@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd /root 2>/dev/null; ls; echo "---"; find / -name "train.csv" 2>/dev/null | head
 ```
 
 ## [3] tool
@@ -65,7 +65,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd /workspace; head -50 data/train.csv; echo "..."; head -20 data/test.csv; echo "..."; wc -l data/train.csv data/test.csv
 ```
 
 ## [5] tool
@@ -149,7 +149,18 @@ t
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+print(g.head(30))
+print('...')
+print(g.tail(30))
+print('count gamma', len(g))
+print('t range', df.t.min(), df.t.max())
+print('full tail')
+print(df.tail(30))
+"
 ```
 
 ## [7] tool
@@ -268,7 +279,15 @@ full tail
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+print('gamma t range', g.t.min(), g.t.max())
+print(g.head(40).to_string())
+test=pd.read_csv('data/test.csv')
+print(test.t.tolist())
+"
 ```
 
 ## [9] tool
@@ -331,7 +350,16 @@ gamma t range 380 544
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+print('min',y.min(),'at t', t[y.argmin()])
+print('max',y.max())
+for i in range(0,len(t),15):
+    print(int(t[i]), round(y[i],2))
+"
 ```
 
 ## [11] tool
@@ -370,7 +398,22 @@ max 21.7887
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+# linear fit
+A=np.vstack([t,np.ones_like(t)]).T
+coef,res,_,_=np.linalg.lstsq(A,y,rcond=None)
+pred=A@coef
+resid=y-pred
+print('slope',coef[0],'intercept',coef[1])
+print('resid std',resid.std())
+print('residuals sampled:')
+for i in range(0,len(t),15):
+    print(int(t[i]), round(resid[i],2))
+"
 ```
 
 ## [13] tool
@@ -477,7 +520,34 @@ residuals sampled:
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+# subtract linear trend
+A=np.vstack([t,np.ones_like(t)]).T
+coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+r=y-A@coef
+# estimate period by scanning
+from numpy import cos,sin,pi
+best=None
+for P in np.arange(40,400,2):
+    C=cos(2*pi*t/P); S=sin(2*pi*t/P)
+    M=np.vstack([C,S,np.ones_like(t)]).T
+    c,_,_,_=np.linalg.lstsq(M,r,rcond=None)
+    pr=M@c
+    ss=np.sum((r-pr)**2)
+    if best is None or ss<best[0]:
+        best=(ss,P,c)
+print('best P',best[1],'rss',best[0])
+print('amps',np.hypot(best[2][0],best[2][1]))
+# print residuals at data to see structure over time with best P
+P=best[1]; c=best[2]
+C=cos(2*pi*t/P); S=sin(2*pi*t/P)
+pred=A@coef + c[0]*C+c[1]*S+c[2]
+print('std raw y', y.std(), 'total resid std after trend+sin', (y-pred).std())
+"
 ```
 
 ## [15] tool
@@ -528,7 +598,30 @@ std raw y 14.265484482266793 total resid std after trend+sin 1.1740285519996265
 **tool call: bash**
 
 ```
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from numpy import cos,sin,pi
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+test=pd.read_csv('data/test.csv').t.values
 
+def fit_and_pred(P, deg=1):
+    # design: t^1 and harmonic
+    A=np.vstack([t,np.ones_like(t)]).T  # linear
+    # add harmonic
+    H=np.vstack([cos(2*pi*t/P), sin(2*pi*t/P)]).T
+    X=np.hstack([H,A])
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    def pred(tt):
+        return coef[0]*cos(2*pi*tt/P)+coef[1]*sin(2*pi*tt/P)+coef[2]*tt+coef[3]
+    r=y-X@coef
+    return pred,r.std()
+
+for P in [120,130,140,150,160,170,180,200,250,300]:
+    pred,std=fit_and_pred(P)
+    print('P',P,'noise std',round(std,2),'pred@638',round(pred(638),2))
+"
 ```
 
 ## [17] tool
@@ -624,7 +717,20 @@ P 300 noise std 1.28 pred@638 -42.46
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+a=df['alpha'].values; t=df.t.values
+print('alpha t samples:')
+for i in range(0,len(t),40):
+    print(int(t[i]), round(a[i],1))
+print('beta non-null range:')
+b=df[['t','beta']].dropna()
+print('beta count',len(b),'t range',b.t.min(),b.t.max())
+print('beta t samples:')
+for i in range(0,len(b),60):
+    print(int(b.t.values[i]), round(b.beta.values[i],1))
+"
 ```
 
 ## [19] tool
@@ -709,7 +815,38 @@ beta t samples:
 **tool call: bash**
 
 ```
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from numpy import cos,sin,pi
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+test=pd.read_csv('data/test.csv').t.values
 
+def pred_model(P=None, deg=1):
+    if P:
+        X=[]; 
+        X.append(np.ones_like(t)); X.append(t)
+        X.append(cos(2*pi*t/P)); X.append(sin(2*pi*t/P))
+        X=np.array(X).T
+        def pf(tt): 
+            return 1+tt
+        coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+        def pred(tt):
+            return coef[0]+coef[1]*tt+coef[2]*cos(2*pi*tt/P)+coef[3]*sin(2*pi*tt/P)
+        return pred
+    else:
+        A=np.vstack([t,np.ones_like(t)]).T
+        coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+        def pred(tt): return coef[0]*tt+coef[1]
+        return pred
+
+lin=pred_model(None)
+for P in [140,150,160,170,250]:
+    p=pred_model(P)
+    print('P',P,[round(p(x),1) for x in test])
+print('linear',[round(lin(x),1) for x in test])
+"
 ```
 
 ## [21] tool
@@ -761,7 +898,33 @@ linear [np.float64(-22.8), np.float64(-25.7), np.float64(-28.9), np.float64(-31.
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+A=np.vstack([t,np.ones_like(t)]).T
+coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+r=y-A@coef
+# print residual every 5 rows
+for i in range(0,len(t),5):
+    print(int(t[i]), round(r[i],2))
+" | head -40
+echo '======'
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+# quadratic fit and residual
+A=np.vstack([t*t,t,np.ones_like(t)]).T
+coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+r=y-A@coef
+print('quad coef',coef)
+print('quad resid std',r.std())
+for i in range(0,len(t),10):
+    print(int(t[i]), round(r[i],2))
+" | head -25
 ```
 
 ## [23] tool
@@ -877,7 +1040,28 @@ quad resid std 1.4995934523177896
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from numpy import cos,sin,pi
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+best=None
+for P in np.arange(100,350,1.0):
+    X=np.vstack([np.ones_like(t),t,cos(2*pi*t/P),sin(2*pi*t/P)]).T
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    r=y-X@coef
+    ss=r@r
+    if best is None or ss<best[0]:
+        best=(ss,P,coef)
+print('best P',best[1],'rss',best[0],'resid std',np.sqrt(best[0]/(len(t)-4)))
+# examine rss around to see flatness
+for P in [140,145,150,155,160,165,170,175,180]:
+    X=np.vstack([np.ones_like(t),t,cos(2*pi*t/P),sin(2*pi*t/P)]).T
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    r=y-X@coef
+    print(P, round(np.sqrt(r@r/(len(t)-4)),3))
+"
 ```
 
 ## [25] tool
@@ -915,7 +1099,31 @@ best P 158.0 rss 207.21459512252247 resid std 1.1344810155635274
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from numpy import cos,sin,pi
+from scipy import stats
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+test=pd.read_csv('data/test.csv').t.values
+P=158.0
+def design(x):
+    return np.vstack([np.ones_like(x),x,cos(2*pi*x/P),sin(2*pi*x/P)]).T
+X=design(t)
+coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+n,p=X.shape
+resid=y-X@coef
+s2=resid@resid/(n-p)
+XtXi=np.linalg.inv(X.T@X)
+tcrit=stats.t.ppf(0.975,n-p)
+for x in test:
+    xv=design(np.array([x]))[0]
+    mu=xv@coef
+    se=np.sqrt(s2*(1+xv@XtXi@xv))
+    lo=mu-tcrit*se; hi=mu+tcrit*se
+    print(x, round(mu,2), round(lo,2), round(hi,2), 'halfwidth',round(tcrit*se,2))
+"
 ```
 
 ## [27] tool
@@ -1018,7 +1226,25 @@ best P 158.0 rss 207.21459512252247 resid std 1.1344810155635274
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from numpy import cos,sin,pi
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+test=pd.read_csv('data/test.csv').t.values
+# collect predictions across periods
+preds={}
+for P in np.arange(140,181,2):
+    X=np.vstack([np.ones_like(t),t,cos(2*pi*t/P),sin(2*pi*t/P)]).T
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    for x in test:
+        xv=np.array([1,x,cos(2*pi*x/P),sin(2*pi*x/P)])
+        preds.setdefault(x,[]).append(xv@coef)
+for x in test:
+    arr=preds[x]
+    print(x,'mean',round(np.mean(arr),2),'std',round(np.std(arr),2),'spread',round(max(arr)-min(arr),2))
+"
 ```
 
 ## [29] tool
@@ -1068,7 +1294,38 @@ best P 158.0 rss 207.21459512252247 resid std 1.1344810155635274
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from numpy import cos,sin,pi
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+best=None
+for P in np.arange(120,600,2):
+    X=np.vstack([np.ones_like(t),cos(2*pi*t/P),sin(2*pi*t/P)]).T
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    r=y-X@coef
+    ss=r@r
+    if best is None or ss<best[0]:
+        best=(ss,P,coef)
+print('pure sin best P',best[1],'resid std',np.sqrt(best[0]/(len(t)-3)))
+# also linear+sin free
+best2=None
+for P in np.arange(120,600,2):
+    X=np.vstack([np.ones_like(t),t,cos(2*pi*t/P),sin(2*pi*t/P)]).T
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    r=y-X@coef
+    ss=r@r
+    if best2 is None or ss<best2[0]:
+        best2=(ss,P,coef)
+print('lin+sin best P',best2[1],'resid std',np.sqrt(best2[0]/(len(t)-4)))
+# pure sin at 365
+for P in [330,345,360,365,375,390]:
+    X=np.vstack([np.ones_like(t),cos(2*pi*t/P),sin(2*pi*t/P)]).T
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    r=y-X@coef
+    print('P',P,'pure sin resid std',np.sqrt(r@r/(len(t)-3)))
+"
 ```
 
 ## [31] tool
@@ -1128,7 +1385,21 @@ P 390 pure sin resid std 1.4532247734994637
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from numpy import cos,sin,pi
+df=pd.read_csv('data/train.csv')
+g=df[['t','gamma']].dropna()
+t=g.t.values; y=g.gamma.values
+P=158.0
+X=np.vstack([np.ones_like(t),t,cos(2*pi*t/P),sin(2*pi*t/P),cos(4*pi*t/P),sin(4*pi*t/P)]).T
+coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+r=y-X@coef
+print('2-harmonic resid std',np.sqrt(r@r/(len(t)-6)))
+X=np.vstack([np.ones_like(t),t,cos(2*pi*t/P),sin(2*pi*t/P)]).T
+r=y-X@coef[:4]
+print('1-harmonic resid std',np.sqrt(r@r/(len(t)-4)))
+"
 ```
 
 ## [33] tool
@@ -1162,7 +1433,55 @@ P 390 pure sin resid std 1.4532247734994637
 **tool call: bash**
 
 ```
+cd /workspace; cat > pred.py << 'EOF'
+import pandas as pd, numpy as np
+from numpy import cos, sin, pi
+from scipy import stats
 
+df = pd.read_csv('data/train.csv')
+g = df[['t','gamma']].dropna()
+t = g.t.values.astype(float); y = g.gamma.values.astype(float)
+test = pd.read_csv('data/test.csv').t.values.astype(float)
+
+P = 158.0
+def design(x):
+    return np.vstack([np.ones_like(x), x, cos(2*pi*x/P), sin(2*pi*x/P)]).T
+
+X = design(t)
+coef, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+n, p = X.shape
+resid = y - X @ coef
+s2 = resid @ resid / (n - p)
+XtXi = np.linalg.inv(X.T @ X)
+tcrit = stats.t.ppf(0.975, n - p)
+
+# period uncertainty: std of point predictions across plausible periods
+periods = np.arange(140, 181, 2)
+pred_mat = []
+for Pt in periods:
+    Xt = np.vstack([np.ones_like(t), t, cos(2*pi*t/Pt), sin(2*pi*t/Pt)]).T
+    c, _, _, _ = np.linalg.lstsq(Xt, y, rcond=None)
+    row = []
+    for x in test:
+        row.append(c[0] + c[1]*x + c[2]*cos(2*pi*x/Pt) + c[3]*sin(2*pi*x/Pt))
+    pred_mat.append(row)
+pred_mat = np.array(pred_mat)  # periods x testpoints
+std_period = pred_mat.std(axis=0)
+
+rows = []
+for i, x in enumerate(test):
+    xv = design(np.array([x]))[0]
+    mu = xv @ coef
+    se_noise = np.sqrt(s2 * (1 + xv @ XtXi @ xv))
+    hw = tcrit * se_noise + 1.96 * std_period[i]
+    rows.append([x, mu, mu - hw, mu + hw])
+
+out = pd.DataFrame(rows, columns=['t','y_pred','y_lower','y_upper'])
+out['t'] = pd.read_csv('data/test.csv').t.values
+out.to_csv('predictions.csv', index=False)
+print(out.to_string(index=False))
+EOF
+python3 pred.py
 ```
 
 ## [35] tool
@@ -1191,7 +1510,15 @@ P 390 pure sin resid std 1.4532247734994637
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd
+out=pd.read_csv('predictions.csv')
+test=pd.read_csv('data/test.csv')
+print(out.shape, test.shape)
+print(out.columns.tolist())
+print('t matches:', (out.t.values==test.t.values).all())
+print(out.head())
+"
 ```
 
 ## [37] tool
@@ -1240,7 +1567,7 @@ The predictions file is valid and complete. Let me verify the final output one m
 **tool call: bash**
 
 ```
-
+cd /workspace; cat predictions.csv
 ```
 
 ## [39] tool
@@ -1295,7 +1622,16 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd
+out=pd.read_csv('predictions.csv')
+test=pd.read_csv('data/test.csv')
+assert len(out)==len(test)
+assert (out.t.values==test.t.values).all()
+assert list(out.columns)==['t','y_pred','y_lower','y_upper']
+assert (out.y_lower<=out.y_pred).all() and (out.y_pred<=out.y_upper).all()
+print('OK')
+"
 ```
 
 ## [43] tool

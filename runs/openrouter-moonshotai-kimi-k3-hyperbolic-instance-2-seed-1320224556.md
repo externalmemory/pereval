@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la && ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -116,7 +116,20 @@ t
 **tool call: bash**
 
 ```
-
+cat data/test.csv && echo "---" && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.describe())
+print('t range:', df.t.min(), df.t.max())
+print('beta non-null:', df.beta.notna().sum())
+print('gamma non-null:', df.gamma.notna().sum())
+print('beta t range:', df.loc[df.beta.notna(),'t'].min(), df.loc[df.beta.notna(),'t'].max())
+print('gamma t range:', df.loc[df.gamma.notna(),'t'].min(), df.loc[df.gamma.notna(),'t'].max())
+print()
+print(df[df.gamma.notna()].head(30))
+print('...')
+print(df[df.gamma.notna()].tail(30))
+"
 ```
 
 ## [5] tool
@@ -285,6 +298,30 @@ Let me explore the data structure more deeply.
 **tool call: bash**
 
 ```
+mkdir -p work && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+alpha = df.alpha.values
+# daily increments of alpha
+d = np.diff(alpha)
+print('alpha diffs: min %.3f max %.3f' % (d.min(), d.max()))
+# unwrap alpha (it wraps at 360)
+au = np.deg2rad(alpha)
+auu = np.unwrap(au)
+auu = np.rad2deg(auu)
+print('unwrapped alpha range: %.3f to %.3f' % (auu[0], auu[-1]))
+# fit linear
+A = np.polyfit(t, auu, 1)
+res = auu - np.polyval(A, t)
+print('linear fit: slope %.6f deg/day, intercept %.4f' % (A[0], A[1]))
+print('resid std: %.4f, max abs: %.4f' % (res.std(), np.abs(res).max()))
+# quadratic
+A2 = np.polyfit(t, auu, 2)
+res2 = auu - np.polyval(A2, t)
+print('quad fit resid std: %.4f, max abs: %.4f' % (res2.std(), np.abs(res2).max()))
+print('quad coefs:', A2)
+"
 
 ```
 
@@ -313,7 +350,20 @@ quad coefs: [-1.84332702e-04  9.40982735e-01  4.55591794e+01]
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+alpha = df.alpha.values
+auu = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
 
+# Look at residual structure of alpha after removing linear trend
+A = np.polyfit(t, auu, 1)
+res = auu - np.polyval(A, t)
+# print residuals every 10 days to see structure
+for i in range(0, len(t), 20):
+    print('%4d  alpha=%8.3f  unw=%9.3f  res=%8.3f' % (t[i], alpha[i], auu[i], res[i]))
+EOF
 ```
 
 ## [9] tool
@@ -375,7 +425,53 @@ quad coefs: [-1.84332702e-04  9.40982735e-01  4.55591794e+01]
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+alpha = df.alpha.values
+auu = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+m = df.gamma.notna().values
+to, bo, go, ao = t[m], df.beta.values[m], df.gamma.values[m], auu[m]
 
+# gamma vs t polynomial fits
+for deg in [1,2,3]:
+    c = np.polyfit(to, go, deg)
+    r = go - np.polyval(c, to)
+    print('gamma~t deg%d resid std %.4f max %.3f' % (deg, r.std(), np.abs(r).max()))
+
+# gamma vs alpha(unwrapped)
+for deg in [1,2]:
+    c = np.polyfit(ao, go, deg)
+    r = go - np.polyval(c, ao)
+    print('gamma~alpha_unw deg%d resid std %.4f' % (deg, r.std()))
+
+# gamma vs beta
+for deg in [1,2,3]:
+    c = np.polyfit(bo, go, deg)
+    r = go - np.polyval(c, bo)
+    print('gamma~beta deg%d resid std %.4f' % (deg, r.std()))
+
+# try gamma = a*sin(beta)+b*cos(beta)+c
+X = np.column_stack([np.sin(np.deg2rad(bo)), np.cos(np.deg2rad(bo)), np.ones_like(bo)])
+coef, res_, rank, sv = np.linalg.lstsq(X, go, rcond=None)
+r = go - X@coef
+print('gamma~sin/cos(beta): coef', coef, 'resid std %.4f' % r.std())
+
+# beta vs t
+for deg in [1,2,3]:
+    c = np.polyfit(to, bo, deg)
+    r = bo - np.polyval(c, to)
+    print('beta~t deg%d resid std %.4f max %.3f' % (deg, r.std(), np.abs(r).max()))
+
+# check gamma noise: look at diffs
+dg = np.diff(go)
+print('gamma diff std: %.4f (implies obs noise ~%.3f if smooth)' % (dg.std(), dg.std()/np.sqrt(2)))
+db = np.diff(bo)
+print('beta diff std: %.4f; beta daily rate ~ %.4f' % (db.std(), np.median(db)))
+da = np.diff(auu)
+print('alpha unw diff: median %.4f std %.4f' % (np.median(da), da.std()))
+EOF
 ```
 
 ## [11] tool
@@ -459,7 +555,80 @@ Gamma looks like it may be a near-deterministic function of beta plus noise. Let
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+auu = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna().values
+to, bo, go, ao = t[m], df.beta.values[m], df.gamma.values[m], auu[m]
 
+# --- beta(t): try quadratic + sinusoid at the same frequency as alpha's structure
+# First find dominant period of alpha residuals
+A1 = np.polyfit(t, auu, 1)
+ra = auu - np.polyval(A1, t)
+# FFT of residuals
+from numpy.fft import rfft, rfftfreq
+fr = rfftfreq(len(t), d=1.0)
+sp = np.abs(rfft(ra - ra.mean()))
+idx = np.argsort(sp)[::-1][:6]
+print('alpha resid top periods (days):', [round(1/fr[i],1) for i in idx if fr[i]>0])
+
+# fit alpha with linear + sin/cos at best frequency via grid search
+best=None
+for per in np.arange(100, 1200, 5):
+    w = 2*np.pi/per
+    X = np.column_stack([t, np.sin(w*t), np.cos(w*t), np.ones_like(t)])
+    c,_,_,_ = np.linalg.lstsq(X, auu, rcond=None)
+    r = auu - X@c
+    if best is None or r.std()<best[0]: best=(r.std(), per, c)
+print('alpha lin+sin best: resid std %.4f at period %.1f' % (best[0], best[1]))
+
+# same for beta on observed window
+bestb=None
+for per in np.arange(100, 1200, 5):
+    w = 2*np.pi/per
+    X = np.column_stack([to, np.sin(w*to), np.cos(w*to), np.ones_like(to)])
+    c,_,_,_ = np.linalg.lstsq(X, bo, rcond=None)
+    r = bo - X@c
+    if bestb is None or r.std()<bestb[0]: bestb=(r.std(), per, c)
+print('beta lin+sin best: resid std %.4f at period %.1f' % (bestb[0], bestb[1]))
+
+# beta: quadratic + sin
+bestb2=None
+for per in np.arange(100, 1200, 5):
+    w = 2*np.pi/per
+    X = np.column_stack([to**2, to, np.sin(w*to), np.cos(w*to), np.ones_like(to)])
+    c,_,_,_ = np.linalg.lstsq(X, bo, rcond=None)
+    r = bo - X@c
+    if bestb2 is None or r.std()<bestb2[0]: bestb2=(r.std(), per, c)
+print('beta quad+sin best: resid std %.4f at period %.1f' % (bestb2[0], bestb2[1]))
+
+# gamma vs beta with harmonics: sin/cos(beta), sin/cos(2 beta)
+b = np.deg2rad(bo)
+X = np.column_stack([np.sin(b), np.cos(b), np.sin(2*b), np.cos(2*b), np.ones_like(b)])
+c,_,_,_ = np.linalg.lstsq(X, go, rcond=None)
+r = go - X@c
+print('gamma ~ 2 harmonics of beta: resid std %.4f' % r.std())
+
+# gamma vs alpha harmonics
+a = np.deg2rad(ao)
+X = np.column_stack([np.sin(a), np.cos(a), np.sin(2*a), np.cos(2*a), np.ones_like(a)])
+c,_,_,_ = np.linalg.lstsq(X, go, rcond=None)
+r = go - X@c
+print('gamma ~ 2 harmonics of alpha: resid std %.4f' % r.std())
+
+# gamma vs both alpha and beta harmonics
+X = np.column_stack([np.sin(a), np.cos(a), np.sin(b), np.cos(b), np.ones_like(b)])
+c,_,_,_ = np.linalg.lstsq(X, go, rcond=None)
+r = go - X@c
+print('gamma ~ sin/cos(alpha)+sin/cos(beta): resid std %.4f' % r.std())
+
+# beta vs alpha?
+c = np.polyfit(ao, bo, 2)
+r = bo - np.polyval(c, ao)
+print('beta ~ alpha quad: resid std %.4f' % r.std())
+EOF
 ```
 
 ## [13] tool
@@ -571,7 +740,65 @@ Alpha fits a linear+sinusoid model at the noise floor. Gamma appears to be a det
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+auu = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna().values
+to, bo, go, ao = t[m], df.beta.values[m], df.gamma.values[m], auu[m]
 
+def fit_alpha_model(tt, aa, per):
+    w = 2*np.pi/per
+    X = np.column_stack([np.ones_like(tt), tt, np.sin(w*tt), np.cos(w*tt)])
+    c,_,_,_ = np.linalg.lstsq(X, aa, rcond=None)
+    return c, w
+
+def pred_alpha(c, w, tt):
+    X = np.column_stack([np.ones_like(tt), tt, np.sin(w*tt), np.cos(w*tt)])
+    return X@c
+
+# Backtest: cut gamma window at tcut; fit alpha only on t<=tcut; predict gamma on (tcut,544]
+for tcut in [440, 470, 500]:
+    va = (to > tcut)
+    tr_a = t <= tcut
+    # fit alpha period on restricted data
+    best=None
+    for per in np.arange(150, 1200, 2):
+        c, w = fit_alpha_model(t[tr_a], auu[tr_a], per)
+        r = auu[tr_a] - pred_alpha(c, w, t[tr_a])
+        if best is None or r.std()<best[0]: best=(r.std(), per)
+    per = best[1]
+    c, w = fit_alpha_model(t[tr_a], auu[tr_a], per)
+    a_pred_val = pred_alpha(c, w, to[va])
+    # fit gamma ~ harmonics(alpha) on gamma window restricted to <=tcut
+    gtr = (~va)
+    a1 = np.deg2rad(ao[gtr])
+    for nh in [1,2]:
+        cols = [np.ones_like(a1)]
+        for h in range(1, nh+1):
+            cols += [np.sin(h*a1), np.cos(h*a1)]
+        X = np.column_stack(cols)
+        cg,_,_,_ = np.linalg.lstsq(X, go[gtr], rcond=None)
+        av = np.deg2rad(a_pred_val)
+        cols = [np.ones_like(av)]
+        for h in range(1, nh+1):
+            cols += [np.sin(h*av), np.cos(h*av)]
+        gpred = np.column_stack(cols)@cg
+        err = gpred - go[va]
+        print(f'tcut={tcut} alpha_per={per} gamma~alpha nh={nh}: RMSE={np.sqrt((err**2).mean()):.3f} bias={err.mean():+.3f} max={np.abs(err).max():.3f}')
+    # compare: gamma ~ cubic t
+    cc = np.polyfit(to[gtr], go[gtr], 3)
+    err3 = np.polyval(cc, to[va]) - go[va]
+    print(f'tcut={tcut} gamma~cubic t: RMSE={np.sqrt((err3**2).mean()):.3f} max={np.abs(err3).max():.3f}')
+    # gamma ~ beta sin/cos (using OBSERVED beta at val times to isolate mapping error)
+    b1 = np.deg2rad(bo[gtr]); bv = np.deg2rad(bo[va])
+    X = np.column_stack([np.ones_like(b1), np.sin(b1), np.cos(b1)])
+    cb,_,_,_ = np.linalg.lstsq(X, go[gtr], rcond=None)
+    errb = np.column_stack([np.ones_like(bv), np.sin(bv), np.cos(bv)])@cb - go[va]
+    print(f'tcut={tcut} gamma~sin/cos(beta_obs): RMSE={np.sqrt((errb**2).mean()):.3f} max={np.abs(errb).max():.3f}')
+    print()
+EOF
 ```
 
 ## [15] tool
@@ -691,7 +918,74 @@ The out-of-sample blowups reveal collinearity — gamma needs an explicit-in-t m
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+auu = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+m = df.gamma.notna().values
+to, bo, go, ao = t[m], df.beta.values[m], df.gamma.values[m], auu[m]
 
+# Refine alpha period by fine grid on FULL alpha data
+def fit_basis(tt, yy, per, nh=1, trend=True):
+    w = 2*np.pi/per
+    cols = [np.ones_like(tt)]
+    if trend: cols.append(tt)
+    for h in range(1, nh+1):
+        cols += [np.sin(h*w*tt), np.cos(h*w*tt)]
+    X = np.column_stack(cols)
+    c,_,_,_ = np.linalg.lstsq(X, yy, rcond=None)
+    r = yy - X@c
+    return c, r, X
+
+best=None
+for per in np.arange(380, 480, 0.5):
+    c, r, X = fit_basis(t, auu, per)
+    if best is None or r.std()<best[0]: best=(r.std(), per)
+print('alpha refined: period %.1f resid %.4f' % (best[1], best[0]))
+perA = best[1]
+
+# Try alpha with 2 harmonics
+c, r, X = fit_basis(t, auu, perA, nh=2)
+print('alpha nh=2: resid %.4f' % r.std())
+
+# gamma with alpha's period, basis [1,t,sin,cos]
+c, r, X = fit_basis(to, go, perA)
+print('gamma basis[1,t,sin(nt),cos(nt)] @per=%.1f: resid %.4f' % (perA, r.std()))
+# gamma with 2 harmonics
+c2, r2, X2 = fit_basis(to, go, perA, nh=2)
+print('gamma nh=2: resid %.4f' % r2.std())
+# gamma without trend
+c3, r3, X3 = fit_basis(to, go, perA, trend=False)
+print('gamma no-trend: resid %.4f' % r3.std())
+
+# free period scan for gamma alone
+bestg=None
+for per in np.arange(100, 2000, 5):
+    c, r, X = fit_basis(to, go, per)
+    if bestg is None or r.std()<bestg[0]: bestg=(r.std(), per)
+print('gamma free period scan: best per %.0f resid %.4f' % (bestg[1], bestg[0]))
+
+# Backtest: gamma = [1,t,sin(nt),cos(nt)] with n fixed from alpha fit on t<=tcut
+print()
+for tcut in [440, 470, 500]:
+    tr_a = t <= tcut
+    best=None
+    for per in np.arange(350, 500, 1):
+        c, r, X = fit_basis(t[tr_a], auu[tr_a], per)
+        if best is None or r.std()<best[0]: best=(r.std(), per)
+    per = best[1]
+    gtr = to <= tcut
+    for nh in [1,2]:
+        cg, rg, Xg = fit_basis(to[gtr], go[gtr], per, nh=nh)
+        w = 2*np.pi/per
+        tt = to[~gtr]
+        cols=[np.ones_like(tt), tt]
+        for h in range(1,nh+1): cols += [np.sin(h*w*tt), np.cos(h*w*tt)]
+        pred = np.column_stack(cols)@cg
+        err = pred - go[~gtr]
+        print(f'tcut={tcut} per={per:.0f} gamma[1,t,sin/cos nh={nh}]: RMSE={np.sqrt((err**2).mean()):.3f} bias={err.mean():+.3f} max={np.abs(err).max():.3f}')
+EOF
 ```
 
 ## [17] tool
@@ -735,7 +1029,25 @@ Still unstable. I need to actually look at the shapes of beta and gamma before m
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = df.beta.values[m], df.gamma.values[m]
+auu = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))[m]
 
+print('   t    alpha_u     beta    gamma   b-a(mod360)')
+for i in range(0, len(to), 5):
+    bma = (bo[i]-auu[i]) % 360
+    print('%4d  %9.3f  %8.3f  %8.3f   %8.3f' % (to[i], auu[i], bo[i], go[i], bma))
+
+# daily rates
+print()
+print('beta daily rate: start %.3f end %.3f' % (np.median(np.diff(bo[:20])), np.median(np.diff(bo[-20:]))))
+print('gamma daily rate: start %.3f end %.3f' % (np.median(np.diff(go[:20])), np.median(np.diff(go[-20:]))))
+print('alpha daily rate: start %.3f end %.3f' % (np.median(np.diff(auu[:20])), np.median(np.diff(auu[-20:]))))
+EOF
 ```
 
 ## [19] tool
@@ -865,7 +1177,42 @@ Now I see it: beta's rate accelerates (0.18→1.62°/day) while gamma sweeps +22
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
 
+# Great circle test: tan(gamma) = P sin(beta) + Q cos(beta)
+tg = np.tan(go)
+X = np.column_stack([np.sin(bo), np.cos(bo)])
+c,_,_,_ = np.linalg.lstsq(X, tg, rcond=None)
+pred = X@c
+r = tg - pred
+print('tan(gamma) ~ P sin(beta)+Q cos(beta): coef', c, 'resid std %.4f (in tan units)' % r.std())
+# convert resid to gamma units approx: d tan = sec^2 dg
+rg = r / (1/np.cos(go)**2)  # dg = dtan / sec^2
+print('approx resid in gamma deg: std %.4f' % np.rad2deg(rg/np.cos(go)**2).std() if False else '')
+print('approx resid in gamma deg: std %.4f' % np.rad2deg(r * np.cos(go)**2).std())
+
+# With intercept (plane not through origin / refraction?)
+X3 = np.column_stack([np.sin(bo), np.cos(bo), np.ones_like(bo)])
+c3,_,_,_ = np.linalg.lstsq(X3, tg, rcond=None)
+r3 = tg - X3@c3
+print('with intercept: coef', c3, 'resid std %.4f -> gamma deg %.4f' % (r3.std(), np.rad2deg(r3*np.cos(go)**2).std()))
+
+# Alternative: sin(gamma) = A sin(beta) + B cos(beta)?
+sg = np.sin(go)
+c2,_,_,_ = np.linalg.lstsq(X, sg, rcond=None)
+r2 = sg - X@c2
+print('sin(gamma) ~ sin/cos(beta): coef', c2, 'resid -> gamma deg %.4f' % np.rad2deg(r2/np.cos(go)).std())
+
+# Compare with plain gamma ~ sin/cos(beta) (in gamma units)
+c4,_,_,_ = np.linalg.lstsq(X, np.rad2deg(go), rcond=None)
+r4 = np.rad2deg(go) - X@c4
+print('gamma ~ sin/cos(beta): resid deg %.4f' % r4.std())
+EOF
 ```
 
 ## [21] tool
@@ -927,7 +1274,59 @@ Close to noise floor but not exact. Let me test a stronger physical hypothesis: 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
 
+tref = 460.0
+tt = to - tref
+
+def angles(p):
+    x,y,z = p[...,0], p[...,1], p[...,2]
+    az = np.arctan2(x, y)
+    el = np.arctan2(z, np.hypot(x,y))
+    return az, el
+
+def resid(theta):
+    # p0 unit vector (angles a0,e0), v direction (av,ev), speed s
+    a0,e0,av,ev,logs = theta
+    s = np.exp(logs)
+    p0 = np.array([np.sin(a0)*np.cos(e0), np.cos(a0)*np.cos(e0), np.sin(e0)])
+    v  = s*np.array([np.sin(av)*np.cos(ev), np.cos(av)*np.cos(ev), np.sin(ev)])
+    P = p0[None,:] + tt[:,None]*v[None,:]
+    az, el = angles(P)
+    da = (az - bo + np.pi) % (2*np.pi) - np.pi
+    de = el - go
+    return np.concatenate([da, de])
+
+# init from endpoints
+p_a = np.array([np.sin(bo[0])*np.cos(go[0]), np.cos(bo[0])*np.cos(go[0]), np.sin(go[0])])
+p_b = np.array([np.sin(bo[-1])*np.cos(go[-1]), np.cos(bo[-1])*np.cos(go[-1]), np.sin(go[-1])])
+dv = (p_b - p_a)/(to[-1]-to[0])
+a0 = np.arctan2(p_a[0], p_a[1]); e0 = np.arctan2(p_a[2], np.hypot(p_a[0],p_a[1]))
+av = np.arctan2(dv[0], dv[1]); ev = np.arctan2(dv[2], np.hypot(dv[0],dv[1]))
+s0 = np.linalg.norm(dv)
+th0 = np.array([a0,e0,av,ev,np.log(s0)])
+sol = least_squares(resid, th0, method='lm', max_nfev=100000)
+r = resid(sol.x)
+da, de = r[:len(tt)], r[len(tt):]
+print('straight-line model: beta resid std %.4f deg, gamma resid std %.4f deg' % (np.rad2deg(da).std(), np.rad2deg(de).std()))
+print('overall RMSE %.4f deg' % np.rad2deg(np.sqrt((r**2).mean())))
+print('params:', sol.x)
+
+# Check closest approach time
+a0,e0,av,ev,logs = sol.x
+s = np.exp(logs)
+p0 = np.array([np.sin(a0)*np.cos(e0), np.cos(a0)*np.cos(e0), np.sin(e0)])
+v  = s*np.array([np.sin(av)*np.cos(ev), np.cos(av)*np.cos(ev), np.sin(ev)])
+tca = -np.dot(p0, v)/np.dot(v,v) + tref
+print('closest approach t = %.1f' % tca)
+print('z(t) crosses 0 at t = %.1f' % (-p0[2]/v[2] + tref))
+EOF
 ```
 
 ## [23] tool
@@ -970,7 +1369,44 @@ Straight-line motion is close but not exact (beta resid 3.5°). Let me try **uni
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
+tref = 460.0; tt = to - tref
 
+# Great circle uniform motion:
+# u(t) = u0 + w*tt ; sin(el) = sin(i) sin(u) ; tan(az - azn) = cos(i) tan(u)
+def resid(th):
+    i, u0, w, azn = th
+    u = u0 + w*tt
+    el = np.arcsin(np.clip(np.sin(i)*np.sin(u), -1, 1))
+    az = azn + np.arctan2(np.cos(i)*np.sin(u), np.cos(u))
+    da = (az - bo + np.pi)%(2*np.pi) - np.pi
+    de = el - go
+    return np.concatenate([da, de])
+
+# init: i ~ 23deg, el=0 crossing at t~478 => u=0 there; w: u spans +70deg..-70deg over 164d
+best=None
+for i0 in [0.2,0.3,0.4,0.5]:
+    for w0 in [-0.02,-0.015,-0.01]:
+        for u00 in [0.5, 0.2, -0.2]:
+            for azn0 in [1.0,1.5,2.0]:
+                sol = least_squares(resid, [i0,u00,w0,azn0], method='lm', max_nfev=20000)
+                ss = (resid(sol.x)**2).sum()
+                if best is None or ss < best[0]:
+                    best = (ss, sol.x.copy())
+ss, x = best
+r = resid(x)
+da, de = r[:len(tt)], r[len(tt):]
+print('great-circle model: beta resid std %.4f deg, gamma resid std %.4f deg' % (np.rad2deg(da).std(), np.rad2deg(de).std()))
+i,u0,w,azn = x
+print('i=%.4f deg, u0=%.4f rad, w=%.6f rad/day (%.4f deg/day), az_node=%.4f deg' % (np.rad2deg(i), u0, w, np.rad2deg(w), np.rad2deg(azn)))
+print('u at t=380: %.3f rad (%.1f deg), at 544: %.3f rad (%.1f deg)' % (u0+w*(380-tref), np.rad2deg(u0+w*(380-tref)), u0+w*(544-tref), np.rad2deg(u0+w*(544-tref))))
+EOF
 ```
 
 ## [25] tool
@@ -1034,7 +1470,61 @@ Great-circle is worse for beta (11°). Straight-line was better (3.5°). Let me 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
+tref = 460.0; tt = to - tref
 
+# (1) Is gamma a fixed 1-D function of beta? local linear fit on sorted beta
+order = np.argsort(bo)
+bs, gs = bo[order], go[order]
+res = np.zeros_like(bs)
+k = 15
+for i in range(len(bs)):
+    lo, hi = max(0,i-k), min(len(bs), i+k+1)
+    c = np.polyfit(np.delete(bs, slice(None), 0)[lo:hi] if False else bs[lo:hi], gs[lo:hi], 2)
+    res[i] = gs[i] - np.polyval(c, bs[i])
+print('gamma~beta local-quad resid: std %.4f deg' % np.rad2deg(res).std())
+
+# beta rate profile via local slope
+tt_full = to
+br = np.rad2deg(bo)
+for i in range(0, len(to), 15):
+    lo, hi = max(0,i-7), min(len(to), i+8)
+    c = np.polyfit(to[lo:hi], br[lo:hi], 2)
+    rate = c[1] + 2*c[0]*to[i]
+    print('t=%d beta=%.1f rate=%.3f deg/day' % (to[i], br[i], rate))
+
+# (2) Quadratic 3D trajectory p(t)=p0+v*tt+0.5*a*tt^2
+def resid_q(th):
+    p0 = th[0:3]; v = th[3:6]; a = th[6:9]
+    P = p0[None,:] + tt[:,None]*v[None,:] + 0.5*(tt[:,None]**2)*a[None,:]
+    x,y,z = P[:,0], P[:,1], P[:,2]
+    az = np.arctan2(x, y); el = np.arctan2(z, np.hypot(x,y))
+    da = (az - bo + np.pi)%(2*np.pi) - np.pi
+    de = el - go
+    return np.concatenate([da, de])
+
+# init from straight-line-ish guesses
+p_a = np.array([np.sin(bo[0])*np.cos(go[0]), np.cos(bo[0])*np.cos(go[0]), np.sin(go[0])])
+p_b = np.array([np.sin(bo[-1])*np.cos(go[-1]), np.cos(bo[-1])*np.cos(go[-1]), np.sin(go[-1])])
+dv = (p_b - p_a)/(to[-1]-to[0])
+best=None
+for sc in [1.0, 2.0, 5.0]:
+    th0 = np.concatenate([p_a*sc, dv*sc, np.zeros(3)])
+    sol = least_squares(resid_q, th0, method='lm', max_nfev=50000)
+    ss = (resid_q(sol.x)**2).sum()
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+ss,x = best
+r = resid_q(x)
+da, de = np.rad2deg(r[:len(tt)]), np.rad2deg(r[len(tt):])
+print()
+print('quadratic traj: beta resid std %.4f deg, gamma resid std %.4f deg' % (da.std(), de.std()))
+EOF
 ```
 
 ## [27] tool
@@ -1103,7 +1593,59 @@ Both findings are gold: **gamma is a fixed 1-D function of beta**, and a **const
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
+auu = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))[m]
+tref = 460.0; tt = to - tref
 
+def fit(th0):
+    def resid_q(th):
+        p0 = th[0:3]; v = th[3:6]; a = th[6:9]
+        P = p0[None,:] + tt[:,None]*v[None,:] + 0.5*(tt[:,None]**2)*a[None,:]
+        x,y,z = P[:,0], P[:,1], P[:,2]
+        az = np.arctan2(x, y); el = np.arctan2(z, np.hypot(x,y))
+        da = (az - bo + np.pi)%(2*np.pi) - np.pi
+        de = el - go
+        return np.concatenate([da, de])
+    sol = least_squares(resid_q, th0, method='lm', max_nfev=100000)
+    return sol, resid_q
+
+p_a = np.array([np.sin(bo[0])*np.cos(go[0]), np.cos(bo[0])*np.cos(go[0]), np.sin(go[0])])
+p_b = np.array([np.sin(bo[-1])*np.cos(go[-1]), np.cos(bo[-1])*np.cos(go[-1]), np.sin(go[-1])])
+dv = (p_b - p_a)/(to[-1]-to[0])
+sols=[]
+for sc in [0.5,1.0,2.0,5.0,10.0]:
+    for a0v in [np.zeros(3), np.array([0,0,-0.001]), np.array([0,0,0.001])]:
+        th0 = np.concatenate([p_a*sc, dv*sc, a0v])
+        sol, rq = fit(th0)
+        sols.append(((rq(sol.x)**2).sum(), sol.x))
+sols.sort(key=lambda s: s[0])
+ss, x = sols[0]
+print('best SS=%.5f;  top-3 SS:' % ss, [round(s[0],5) for s in sols[:3]])
+p0, v, a = x[0:3], x[3:6], x[6:9]
+print('p0=',p0, '\nv=',v, '\na=',a)
+print('|p0|=%.3f |v|=%.5f |a|=%.6f' % (np.linalg.norm(p0), np.linalg.norm(v), np.linalg.norm(a)))
+print('accel direction (unit):', a/np.linalg.norm(a))
+
+sol, rq = fit(x)
+r = rq(sol.x)
+da, de = np.rad2deg(r[:len(tt)]), np.rad2deg(r[len(tt):])
+print('beta resid std %.4f, gamma resid std %.4f' % (da.std(), de.std()))
+# residual structure?
+print('corr(gamma resid, t)=%.3f  corr(gamma resid, alpha)=%.3f' % (np.corrcoef(de, to)[0,1], np.corrcoef(de, auu)[0,1]))
+print('corr(beta resid, t)=%.3f' % np.corrcoef(da, to)[0,1])
+# autocorrelation of residuals
+print('gamma resid lag-1 autocorr: %.3f' % np.corrcoef(de[:-1], de[1:])[0,1])
+print('beta resid lag-1 autocorr: %.3f' % np.corrcoef(da[:-1], da[1:])[0,1])
+# print residuals every 10
+for i in range(0, len(to), 10):
+    print('t=%d  dBeta=%+.3f  dGamma=%+.3f' % (to[i], da[i], de[i]))
+EOF
 ```
 
 ## [29] tool
@@ -1197,7 +1739,81 @@ The quadratic-trajectory model is at the noise floor with white residuals — th
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2deg(df.gamma.values[m]) if False else np.deg2rad(df.gamma.values[m])
 
+def make_fit(tt, bo_, go_):
+    def resid_q(th):
+        p0=th[0:3]; v=th[3:6]; a=th[6:9]
+        P = p0[None,:] + tt[:,None]*v[None,:] + 0.5*(tt[:,None]**2)*a[None,:]
+        x,y,z = P[:,0],P[:,1],P[:,2]
+        az = np.arctan2(x,y); el = np.arctan2(z, np.hypot(x,y))
+        da = (az - bo_ + np.pi)%(2*np.pi)-np.pi
+        de = el - go_
+        return np.concatenate([da,de])
+    p_a = np.array([np.sin(bo_[0])*np.cos(go_[0]), np.cos(bo_[0])*np.cos(go_[0]), np.sin(go_[0])])
+    p_b = np.array([np.sin(bo_[-1])*np.cos(go_[-1]), np.cos(bo_[-1])*np.cos(go_[-1]), np.sin(go_[-1])])
+    dv = (p_b-p_a)/(tt[-1]-tt[0])
+    best=None
+    for sc in [0.5,1.,2.,5.,10.]:
+        for a0v in [np.zeros(3), np.array([0,0,-.001]), np.array([0,0,.001])]:
+            sol = least_squares(resid_q, np.concatenate([p_a*sc,dv*sc,a0v]), method='lm', max_nfev=100000)
+            ss=(resid_q(sol.x)**2).sum()
+            if best is None or ss<best[0]: best=(ss, sol.x)
+    return best[1], resid_q
+
+def predict_gamma(th, tq, tref):
+    tq = np.atleast_1d(np.asarray(tq, float)) - tref
+    P = th[0:3][None,:] + tq[:,None]*th[3:6][None,:] + 0.5*(tq[:,None]**2)*th[6:9][None,:]
+    return np.arctan2(P[:,2], np.hypot(P[:,0], P[:,1]))
+
+def gamma_jacobian(th, tq, tref):
+    eps = 1e-7
+    g0 = predict_gamma(th, tq, tref)
+    J = np.zeros((len(np.atleast_1d(tq)), 9))
+    for j in range(9):
+        thp = th.copy(); thp[j]+=eps
+        J[:,j] = (predict_gamma(thp, tq, tref)-g0)/eps
+    return J
+
+# Backtest at several cut points
+for tcut in [460, 480, 500, 520]:
+    tr = to <= tcut
+    tt_tr = to[tr] - 460.0
+    th, rq = make_fit(tt_tr, bo[tr], go[tr])
+    r = rq(th); n=len(tt_tr); 
+    resid_b, resid_g = r[:n], r[n:]
+    sb, sg = resid_b.std(), resid_g.std()
+    # parameter covariance (pseudo-inverse handles scale direction)
+    J = solJ = None
+    from scipy.linalg import pinv as _pinv
+    eps=1e-7
+    JJ = np.zeros((2*n, 9))
+    r0 = rq(th)
+    for j in range(9):
+        thp=th.copy(); thp[j]+=eps
+        JJ[:,j]=(rq(thp)-r0)/eps
+    W = np.diag(1/np.concatenate([np.full(n,sb**2), np.full(n,sg**2)]))
+    cov = _pinv(JJ.T@W@JJ)
+    va = ~tr
+    tv = to[va]
+    gp = predict_gamma(th, tv, 460.0)
+    G = gamma_jacobian(th, tv, 460.0)
+    var_mean = np.einsum('ij,jk,ik->i', G, cov, G)
+    var_tot = var_mean + sg**2
+    lo = gp - 1.96*np.sqrt(var_tot); hi = gp + 1.96*np.sqrt(var_tot)
+    gact = go[va]
+    cov95 = np.mean((gact>=lo)&(gact<=hi))
+    err = np.rad2deg(gp-gact)
+    print(f'tcut={tcut}: n_tr={tr.sum()} pred {va.sum()} pts ({tv.min():.0f}-{tv.max():.0f}): '
+          f'RMSE={np.sqrt((err**2).mean()):.2f} max|e|={np.abs(err).max():.2f} '
+          f'95%cov={cov95:.2f} mean halfwidth={np.rad2deg(np.mean(1.96*np.sqrt(var_tot))):.2f}')
+EOF
 ```
 
 ## [31] tool
@@ -1243,7 +1859,58 @@ Point errors (RMSE 2–5°) exceed delta-method widths — the linearized covari
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
+tt = to - 460.0
 
+def resid_q(th, tt, bo_, go_):
+    p0=th[0:3]; v=th[3:6]; a=th[6:9]
+    P = p0[None,:] + tt[:,None]*v[None,:] + 0.5*(tt[:,None]**2)*a[None,:]
+    az = np.arctan2(P[:,0],P[:,1]); el = np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+    return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+
+def fit(tt, bo_, go_):
+    p_a = np.array([np.sin(bo_[0])*np.cos(go_[0]), np.cos(bo_[0])*np.cos(go_[0]), np.sin(go_[0])])
+    p_b = np.array([np.sin(bo_[-1])*np.cos(go_[-1]), np.cos(bo_[-1])*np.cos(go_[-1]), np.sin(go_[-1])])
+    dv = (p_b-p_a)/(tt[-1]-tt[0])
+    best=None
+    for sc in [0.5,1.,2.,5.,10.]:
+        for a0v in [np.zeros(3), np.array([0,0,-.001]), np.array([0,0,.001])]:
+            sol = least_squares(lambda th: resid_q(th,tt,bo_,go_), np.concatenate([p_a*sc,dv*sc,a0v]), method='lm', max_nfev=100000)
+            ss=(resid_q(sol.x,tt,bo_,go_)**2).sum()
+            if best is None or ss<best[0]: best=(ss,sol.x)
+    return best[1]
+
+th = fit(tt, bo, go)
+p0,v,a = th[0:3],th[3:6],th[6:9]
+print('p0=',np.round(p0,1),' v=',np.round(v,2),' a=',np.round(a,4))
+# closest approach of quadratic path: minimize |p(t)| numerically
+ts = np.linspace(-460, 300, 20000)  # tt grid: t from 0 to 760
+P = p0[None,:] + ts[:,None]*v[None,:] + 0.5*(ts[:,None]**2)*a[None,:]
+d = np.linalg.norm(P,axis=1)
+i = np.argmin(d)
+print('closest approach: t=%.1f dist=%.1f (dist at t=380: %.1f, t=544: %.1f)' % (ts[i]+460, d[i], d[np.argmin(abs(ts+80))], d[np.argmin(abs(ts-84))]))
+# gamma prediction at test times
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+Pt = p0[None,:] + (test_t-460)[:,None]*v[None,:] + 0.5*((test_t-460)[:,None]**2)*a[None,:]
+gt = np.rad2deg(np.arctan2(Pt[:,2], np.hypot(Pt[:,0],Pt[:,1])))
+bt = np.rad2deg(np.arctan2(Pt[:,0],Pt[:,1]))%360
+dt = np.linalg.norm(Pt,axis=1)
+print()
+print('nominal predictions:')
+for j,tq in enumerate(test_t):
+    print('t=%d: gamma=%.2f beta=%.2f dist=%.1f' % (tq, gt[j], bt[j], dt[j]))
+# also show predicted gamma over the observed window to sanity check vs actual
+print()
+print('in-sample check: t=380 gamma_pred=%.2f (act %.2f), t=544 gamma_pred=%.2f (act %.2f)' % (
+    np.rad2deg(np.arctan2((p0-80*v+3200*a)[2], np.hypot((p0-80*v+3200*a)[0],(p0-80*v+3200*a)[1]))), np.rad2deg(go[0]),
+    np.rad2deg(np.arctan2((p0+84*v+3528*a)[2], np.hypot((p0+84*v+3528*a)[0],(p0+84*v+3528*a)[1]))), np.rad2deg(go[-1])))
+EOF
 ```
 
 ## [33] tool
@@ -1307,7 +1974,56 @@ Nominal predictions look sensible (gamma bottoms near t≈548 then rises). But t
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
+tt = (to - 460.0)/100.0  # scaled time
 
+def angles(P):
+    az = np.arctan2(P[:,0],P[:,1]); el = np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+    return az, el
+
+def resid_c(th, deg):
+    p0=th[0:3]; v=th[3:6]; a=th[6:9]
+    P = p0[None,:] + tt[:,None]*v[None,:] + 0.5*(tt[:,None]**2)*a[None,:]
+    if deg>=3:
+        c3=th[9:12]
+        P = P + (tt[:,None]**3)*c3[None,:]
+    az,el = angles(P)
+    return np.concatenate([(az-bo+np.pi)%(2*np.pi)-np.pi, el-go])
+
+p_a = np.array([np.sin(bo[0])*np.cos(go[0]), np.cos(bo[0])*np.cos(go[0]), np.sin(go[0])])
+p_b = np.array([np.sin(bo[-1])*np.cos(go[-1]), np.cos(bo[-1])*np.cos(go[-1]), np.sin(go[-1])])
+dv = (p_b-p_a)/(tt[-1]-tt[0])
+
+# quadratic in scaled time
+best=None
+for sc in [0.5,1.,2.,5.,10.]:
+    sol = least_squares(lambda th: resid_c(th,2), np.concatenate([p_a*sc,dv*sc,np.zeros(3)]), method='lm', max_nfev=100000)
+    ss=(resid_c(sol.x,2)**2).sum()
+    if best is None or ss<best[0]: best=(ss,sol.x)
+print('quad (scaled t): SS=%.5f' % best[0])
+thq = best[1]
+
+# cubic: init from quadratic + 0 cubic term
+best3=None
+for sc3 in [0.0]:
+    th0 = np.concatenate([thq, np.zeros(3)])
+    sol = least_squares(lambda th: resid_c(th,3), th0, method='lm', max_nfev=100000)
+    ss=(resid_c(sol.x,3)**2).sum()
+    if best3 is None or ss<best3[0]: best3=(ss,sol.x)
+print('cubic: SS=%.5f' % best3[0])
+# F-test style comparison
+n2 = 2*len(tt)
+ss2, ss3 = best[0], best3[0]
+print('resid std quad %.4f, cubic %.4f deg' % (np.rad2deg(np.sqrt(ss2/n2)), np.rad2deg(np.sqrt(ss3/n2))))
+F = (ss2-ss3)/3 / (ss3/(n2-12))
+print('F stat for 3 extra params: %.2f' % F)
+EOF
 ```
 
 ## [35] tool
@@ -1366,7 +2082,62 @@ Cubic improves marginally (F=10) — possibly mild model mismatch. Let me compar
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
+tt = (to - 460.0)/100.0
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+ttq = (test_t - 460.0)/100.0
 
+def angles(P):
+    return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+
+def path(th, tt_, deg):
+    P = th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+    if deg>=3: P = P + (tt_[:,None]**3)*th[9:12][None,:]
+    return P
+
+def resid_c(th, deg):
+    az,el = angles(path(th, tt, deg))
+    return np.concatenate([(az-bo+np.pi)%(2*np.pi)-np.pi, el-go])
+
+p_a = np.array([np.sin(bo[0])*np.cos(go[0]), np.cos(bo[0])*np.cos(go[0]), np.sin(go[0])])
+p_b = np.array([np.sin(bo[-1])*np.cos(go[-1]), np.cos(bo[-1])*np.cos(go[-1]), np.sin(go[-1])])
+dv = (p_b-p_a)/(tt[-1]-tt[0])
+
+best=None
+for sc in [0.5,1.,2.,5.,10.]:
+    sol = least_squares(lambda th: resid_c(th,2), np.concatenate([p_a*sc,dv*sc,np.zeros(3)]), method='lm', max_nfev=100000)
+    ss=(resid_c(sol.x,2)**2).sum()
+    if best is None or ss<best[0]: best=(ss,sol.x)
+thq = best[1]
+sol3 = least_squares(lambda th: resid_c(th,3), np.concatenate([thq, np.zeros(3)]), method='lm', max_nfev=100000)
+thc = sol3.x
+
+gq = np.rad2deg(angles(path(thq, ttq, 2))[1])
+gc = np.rad2deg(angles(path(thc, ttq, 3))[1])
+print('t:  quad_pred   cubic_pred   diff')
+for j,t_ in enumerate(test_t):
+    print('%d:  %8.2f  %8.2f  %+7.2f' % (t_, gq[j], gc[j], gc[j]-gq[j]))
+
+# quadratic residual runs
+r = resid_c(thq, 2)
+rb, rg = np.rad2deg(r[:len(tt)]), np.rad2deg(r[len(tt):])
+print()
+print('gamma residuals (quad), first 10:', np.round(rg[:10],2))
+print('gamma residuals (quad), last 10:', np.round(rg[-10:],2))
+print('beta residuals (quad), first 10:', np.round(rb[:10],2))
+# count runs / check mean by thirds
+for k in range(3):
+    s = slice(k*55,(k+1)*55)
+    print('gamma resid third %d: mean %+.3f std %.3f' % (k, rg[s].mean(), rg[s].std()))
+print('cubic coef:', np.round(thc[9:12],4))
+print('quad a:', np.round(thq[6:9],4))
+EOF
 ```
 
 ## [37] tool
@@ -1447,7 +2218,56 @@ Quadratic and cubic diverge wildly in extrapolation (up to 10°) — model choic
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
+tt = (to - 460.0)/100.0
 
+def angles(P):
+    return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+
+# Circle: p(t) = C + R(cos(u) e1 + sin(u) e2), u = u0 + w*tt
+# e1 unit (th1, ph1); e2 = cos(a) n1 + sin(a) n2 where n1,n2 perp to e1 -> use free vectors then orthonormalize via QR in residual? 
+# Simpler: parameterize with A=R*e1, B=R*e2 as free 3-vectors but constrain |A|=|B| and A.B=0 via penalty? 
+# Alternative: allow general ellipse first: p = C + A cos(u) + B sin(u), A,B free (6), C(3), u0,w (2) = 11 params.
+def resid_e(th):
+    C = th[0:3]; A = th[3:6]; B = th[6:9]; u0 = th[9]; w = th[10]
+    u = u0 + w*tt
+    P = C[None,:] + np.cos(u)[:,None]*A[None,:] + np.sin(u)[:,None]*B[None,:]
+    az, el = angles(P)
+    return np.concatenate([(az-bo+np.pi)%(2*np.pi)-np.pi, el-go])
+
+# init from quadratic fit at tt=-0.8, 0, 0.84 to solve for C,A,B roughly
+thq = np.array([ 1.68386072e+04, 2.22118250e+02, 1.86649317e+03, -2.16993946e+04, -1.91253010e+04, -1.11804475e+04, -6.51500000e+02, 1.09075000e+04, 5.91490000e+03])
+def qpath(tt_):
+    return thq[0:3][None,:] + tt_[:,None]*thq[3:6][None,:] + 0.5*(tt_[:,None]**2)*thq[6:9][None,:]
+# fit ellipse to the quadratic path samples to init
+tts = np.linspace(-0.8, 0.84, 50)
+Ps = qpath(tts)
+# linear least squares for C,A,B given u = u0+w*tt; scan w
+best=None
+for w0 in np.linspace(0.3, 3.0, 50):
+    u = w0*tts
+    M = np.column_stack([np.ones_like(u), np.cos(u), np.sin(u)])
+    coef,_,_,_ = np.linalg.lstsq(M, Ps, rcond=None)
+    resid = Ps - M@coef
+    if best is None or (resid**2).sum()<best[0]:
+        best = ((resid**2).sum(), w0, coef)
+_, w0, coef = best
+C0, A0, B0 = coef[0], coef[1], coef[2]
+print('ellipse init: w=%.2f' % w0)
+th0 = np.concatenate([C0, A0, B0, [0.0, w0]])
+sol = least_squares(resid_e, th0, method='lm', max_nfev=100000)
+r = resid_e(sol.x)
+print('ellipse uniform-u: resid std %.4f deg (beta %.4f, gamma %.4f)' % (
+    np.rad2deg(r).std(), np.rad2deg(r[:len(tt)]).std(), np.rad2deg(r[len(tt):]).std()))
+C,A,B,u0,w = sol.x[0:3],sol.x[3:6],sol.x[6:9],sol.x[9],sol.x[10]
+print('|A|=%.1f |B|=%.1f A.B=%.1f  (|C|=%.1f)  w=%.3f rad/100d' % (np.linalg.norm(A), np.linalg.norm(B), np.dot(A,B), np.linalg.norm(C), w))
+EOF
 ```
 
 ## [39] tool
@@ -1494,7 +2314,59 @@ The ellipse degenerates to the quadratic — in-sample data can't distinguish pa
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo, go = np.deg2rad(df.beta.values[m]), np.deg2rad(df.gamma.values[m])
 
+def angles(P):
+    return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+
+def path(th, tt_, deg):
+    P = th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+    if deg>=3: P = P + (tt_[:,None]**3)*th[9:12][None,:]
+    return P
+
+def fit(tt_, bo_, go_, deg):
+    def resid(th):
+        az,el = angles(path(th, tt_, deg))
+        return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+    p_a = np.array([np.sin(bo_[0])*np.cos(go_[0]), np.cos(bo_[0])*np.cos(go_[0]), np.sin(go_[0])])
+    p_b = np.array([np.sin(bo_[-1])*np.cos(go_[-1]), np.cos(bo_[-1])*np.cos(go_[-1]), np.sin(go_[-1])])
+    dv = (p_b-p_a)/(tt_[-1]-tt_[0])
+    npar = 9 if deg==2 else 12
+    best=None
+    starts = [np.concatenate([p_a*sc, dv*sc, np.zeros(npar-6)]) for sc in [0.5,1.,2.,5.,10.]]
+    for th0 in starts:
+        sol = least_squares(resid, th0, method='lm', max_nfev=100000)
+        ss=(resid(sol.x)**2).sum()
+        if best is None or ss<best[0]: best=(ss,sol.x)
+    return best[1]
+
+for tcut in [480, 500, 520]:
+    tr = to<=tcut; va = ~tr
+    ttr = (to[tr]-460)/100; tva = (to[va]-460)/100
+    th2 = fit(ttr, bo[tr], go[tr], 2)
+    th3 = fit(ttr, bo[tr], go[tr], 3)
+    g2 = np.rad2deg(angles(path(th2,tva,2))[1])
+    g3 = np.rad2deg(angles(path(th3,tva,3))[1])
+    ga = np.rad2deg(go[va])
+    e2, e3 = g2-ga, g3-ga
+    print(f'tcut={tcut} predict {va.sum()} pts: quad RMSE={np.sqrt((e2**2).mean()):.2f} max={np.abs(e2).max():.2f} | cubic RMSE={np.sqrt((e3**2).mean()):.2f} max={np.abs(e3).max():.2f}')
+    print('   quad err at end: %+.2f, cubic err at end: %+.2f' % (e2[-1], e3[-1]))
+
+# half-sample stability of quadratic params
+h1 = to<=462; h2 = to>462
+tha = fit((to[h1]-460)/100, bo[h1], go[h1], 2)
+thb = fit((to[h2]-460)/100, bo[h2], go[h2], 2)
+ttf = (np.array([638.0])-460)/100
+ga_ = np.rad2deg(angles(path(tha,ttf,2))[1])[0]
+gb_ = np.rad2deg(angles(path(thb,ttf,2))[1])[0]
+print('quad fit on 1st half predicts gamma(638)=%.2f; 2nd half: %.2f' % (ga_, gb_))
+EOF
 ```
 
 ## [41] tool
@@ -1573,7 +2445,62 @@ Mixed backtest signals and half-sample instability show this extrapolation is il
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares, curve_fit
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
 
+# L1: straight-line projection: tan(beta - bca) = (s0 + v*(t-tref))/d
+def beta_L1(t, bca, s0, v, d, tref=460.0):
+    return bca + np.arctan2(s0 + v*(t-tref), d)
+p1, _ = curve_fit(beta_L1, to, bo, p0=[1.8, -0.5, 0.03, 1.0], maxfev=100000)
+r1 = (beta_L1(to, *p1) - bo + np.pi)%(2*np.pi)-np.pi
+print('L1 straight-line azimuth: resid std %.4f deg' % np.rad2deg(r1).std())
+
+# L2: beta = b0 + A*atan((t-t0)/tau)
+def beta_L2(t, b0, A, t0, tau):
+    return b0 + A*np.arctan((t-t0)/tau)
+p2, _ = curve_fit(beta_L2, to, bo, p0=[1.0, 2.0, 460, 50], maxfev=100000)
+r2 = (beta_L2(to, *p2) - bo + np.pi)%(2*np.pi)-np.pi
+print('L2 atan sweep: resid std %.4f deg' % np.rad2deg(r2).std())
+
+# L1 with quadratic s(t) = s0 + v t + 0.5 q t^2  (constant accel along line) -> exactly the quad-3D azimuth law
+def beta_L3(t, bca, s0, v, q, d, tref=460.0):
+    u = t-tref
+    return bca + np.arctan2(s0 + v*u + 0.5*q*u**2, d)
+p3, _ = curve_fit(beta_L3, to, bo, p0=[1.8, -0.5, 0.03, 0.0, 1.0], maxfev=100000)
+r3 = (beta_L3(to, *p3) - bo + np.pi)%(2*np.pi)-np.pi
+print('L3 accel-along-line azimuth: resid std %.4f deg' % np.rad2deg(r3).std())
+
+# Backtest all three for beta extrapolation, then gamma via local f(beta)
+order = np.argsort(bo); bs, gs = bo[order], go[order]
+def f_beta(bq):
+    # local quadratic interpolation on the gamma(beta) curve (only valid within observed beta range)
+    out = np.zeros_like(np.atleast_1d(bq), dtype=float)
+    bq = np.atleast_1d(bq)
+    for i, b_ in enumerate(bq):
+        j = np.argmin(np.abs(bs - b_))
+        lo, hi = max(0,j-15), min(len(bs), j+16)
+        c = np.polyfit(bs[lo:hi]-b_, gs[lo:hi], 2)
+        out[i] = c[2]
+    return out
+
+for tcut in [480, 500, 520]:
+    tr = to<=tcut; va=~tr
+    pr1,_ = curve_fit(beta_L1, to[tr], bo[tr], p0=p1, maxfev=100000)
+    pr2,_ = curve_fit(beta_L2, to[tr], bo[tr], p0=p2, maxfev=100000)
+    pr3,_ = curve_fit(beta_L3, to[tr], bo[tr], p0=[p1[0],p1[1],p1[2],0.0,p1[3]], maxfev=100000)
+    for nm, pr, fn in [('L1',pr1,beta_L1),('L2',pr2,beta_L2),('L3',pr3,beta_L3)]:
+        bp = fn(to[va], *pr)
+        be = np.rad2deg((bp-bo[va]+np.pi)%(2*np.pi)-np.pi)
+        gp = f_beta(bp % (2*np.pi))
+        ge = np.rad2deg(gp - go[va])
+        print(f'tcut={tcut} {nm}: beta RMSE={np.sqrt((be**2).mean()):.2f} max={np.abs(be).max():.2f} | gamma RMSE={np.sqrt((ge**2).mean()):.2f} max={np.abs(ge).max():.2f}')
+    print()
+EOF
 ```
 
 ## [43] tool
@@ -1662,7 +2589,56 @@ Breakthrough: **beta(t) = b0 + A·atan((t−t0)/τ)** fits at the noise floor (0
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
 
+def beta_L2(t, b0, A, t0, tau):
+    return b0 + A*np.arctan((t-t0)/tau)
+p2, cov2 = curve_fit(beta_L2, to, bo, p0=[1.0, 2.0, 460, 50], maxfev=100000)
+r2 = (beta_L2(to, *p2) - bo + np.pi)%(2*np.pi)-np.pi
+b0,A,t0,tau = p2
+print('atan law: b0=%.3f deg A=%.4f rad (%.2f deg) t0=%.2f tau=%.3f' % (np.rad2deg(b0), A, np.rad2deg(A), t0, tau))
+print('resid std %.4f deg; param SEs:', np.rad2deg(r2).std(), np.round(np.sqrt(np.diag(cov2)),4))
+print('resid lag-1 autocorr %.3f' % np.corrcoef(r2[:-1], r2[1:])[0,1])
+# structure by thirds
+for k in range(3):
+    s = slice(k*55,(k+1)*55)
+    print('beta resid third %d: mean %+.3f std %.3f' % (k, np.rad2deg(r2[s]).mean(), np.rad2deg(r2[s]).std()))
+
+# try adding linear term
+def beta_L2b(t, b0, A, t0, tau, c):
+    return b0 + A*np.arctan((t-t0)/tau) + c*(t-t0)
+p2b, _ = curve_fit(beta_L2b, to, bo, p0=[p2[0],p2[1],p2[2],p2[3],0.0], maxfev=100000)
+r2b = (beta_L2b(to, *p2b) - bo + np.pi)%(2*np.pi)-np.pi
+print('with linear term: resid std %.4f, c=%.5f deg/day' % (np.rad2deg(r2b).std(), np.rad2deg(p2b[4])))
+
+# predictions of beta at test times
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+bp = np.rad2deg(beta_L2(test_t, *p2)) % 360
+print()
+print('predicted beta at test times (observed beta range 57.1 - 191.9):')
+for j,t_ in enumerate(test_t): print('t=%d beta=%.2f' % (t_, bp[j]))
+
+# implied gamma via f(beta): use monotone spline fit of gamma on beta
+order = np.argsort(bo); bs, gs = np.rad2deg(bo[order]), np.rad2deg(go[order])
+from scipy.interpolate import UnivariateSpline, PchipInterpolator
+# smooth spline with small smoothing
+spl = UnivariateSpline(bs, gs, s=len(bs)*1.03**2, k=3)
+rs = gs - spl(bs)
+print()
+print('spline gamma(beta) resid std: %.4f' % rs.std())
+pch = PchipInterpolator(bs, gs)
+rp = gs - pch(bs)
+print('pchain gamma(beta) resid std: %.4f' % rp.std())
+gp = spl(bp)
+print('gamma predictions via spline:')
+for j,t_ in enumerate(test_t): print('t=%d gamma=%.2f' % (t_, gp[j]))
+EOF
 ```
 
 ## [45] tool
@@ -1771,7 +2747,51 @@ The atan-law predicts beta sweeping to 287° at t=638 — far beyond observed be
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
 
+# Uniform motion on small circle on the sphere:
+# p(t) = cos(rho)*c_hat + sin(rho)*(cos(phi)*e1 + sin(phi)*e2), phi = phi0 + w*(t-tref)
+# c_hat from (azc, elc); e1,e2 orthonormal perp to c_hat (fixed choice).
+def model(th, tt):
+    azc, elc, rho, phi0, w = th
+    c = np.array([np.sin(azc)*np.cos(elc), np.cos(azc)*np.cos(elc), np.sin(elc)])
+    # build perp basis
+    up = np.array([0,0,1.0])
+    e1 = np.cross(c, up); n = np.linalg.norm(e1)
+    if n < 1e-9: e1 = np.array([1,0,0.])
+    else: e1 = e1/n
+    e2 = np.cross(c, e1)
+    phi = phi0 + w*tt
+    P = np.cos(rho)*c[None,:] + np.sin(rho)*(np.cos(phi)[:,None]*e1[None,:] + np.sin(phi)[:,None]*e2[None,:])
+    az = np.arctan2(P[:,0], P[:,1]); el = np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+    return az, el
+
+def resid(th):
+    az, el = model(th, to-460.0)
+    da = (az-bo+np.pi)%(2*np.pi)-np.pi
+    return np.concatenate([da, el-go])
+
+best=None
+for azc0 in [np.deg2rad(181), np.deg2rad(160), np.deg2rad(200)]:
+    for elc0 in [0, np.deg2rad(30), np.deg2rad(-30), np.deg2rad(60), np.deg2rad(-60)]:
+        for rho0 in [np.deg2rad(60), np.deg2rad(100), np.deg2rad(104)]:
+            for w0 in [0.01, -0.01, 0.02, -0.02]:
+                sol = least_squares(resid, [azc0, elc0, rho0, 0.0, w0], method='lm', max_nfev=50000)
+                ss = (resid(sol.x)**2).sum()
+                if best is None or ss<best[0]: best=(ss, sol.x.copy())
+ss, x = best
+r = resid(x)
+rb, rg = np.rad2deg(r[:len(to)]), np.rad2deg(r[len(to):])
+print('small-circle: SS=%.5f beta resid %.4f deg, gamma resid %.4f deg' % (ss, rb.std(), rg.std()))
+azc, elc, rho, phi0, w = x
+print('azc=%.2f elc=%.2f rho=%.2f deg phi0=%.3f w=%.5f rad/day (%.4f deg/day)' % (np.rad2deg(azc), np.rad2deg(elc), np.rad2deg(rho), phi0, w, np.rad2deg(w)))
+EOF
 ```
 
 ## [47] tool
@@ -1850,7 +2870,54 @@ Small-circle fails too (beta resid 10.7°). Let me take the empirical route: the
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
 
+def atanlaw(t, c0, A, t0, tau):
+    return c0 + A*np.arctan((t-t0)/tau)
+
+# gamma ~ atan(t)
+pg, covg = curve_fit(atanlaw, to, go, p0=[0.0, -1.0, 460, 100], maxfev=100000)
+rg = go - atanlaw(to, *pg)
+print('gamma ~ c0 + A atan((t-t0)/tau): resid std %.4f deg' % np.rad2deg(rg).std())
+print('params: c0=%.3f A=%.3f deg t0=%.2f tau=%.2f' % (np.rad2deg(pg[0]), np.rad2deg(pg[1]), pg[2], pg[3]))
+
+# gamma ~ atan + linear
+def atanlin(t, c0, A, t0, tau, c):
+    return c0 + A*np.arctan((t-t0)/tau) + c*(t-t0)
+pg2, _ = curve_fit(atanlin, to, go, p0=[pg[0],pg[1],pg[2],pg[3],0.0], maxfev=100000)
+rg2 = go - atanlin(to, *pg2)
+print('gamma ~ atan+lin: resid std %.4f deg, c=%.5f' % (np.rad2deg(rg2).std(), np.rad2deg(pg2[4])))
+
+# also beta ~ atan again for reference, and try joint t0/tau? 
+def atanlaw2(t, c0, A, t0, tau):
+    return c0 + A*np.arctan((t-t0)/tau)
+pb, _ = curve_fit(atanlaw2, to, bo, p0=[3.0, 2.0, 536, 62], maxfev=100000)
+print('beta atan: t0=%.2f tau=%.2f | gamma atan: t0=%.2f tau=%.2f' % (pb[2], pb[3], pg[2], pg[3]))
+
+# Backtest gamma atan law
+for tcut in [460, 480, 500, 520]:
+    tr = to<=tcut; va=~tr
+    pr,_ = curve_fit(atanlaw, to[tr], go[tr], p0=pg, maxfev=100000)
+    gp = atanlaw(to[va], *pr)
+    e = np.rad2deg(gp-go[va])
+    pr2_,_ = curve_fit(atanlin, to[tr], go[tr], p0=pg2, maxfev=100000)
+    gp2 = atanlin(to[va], *pr2_)
+    e2 = np.rad2deg(gp2-go[va])
+    print(f'tcut={tcut}: atan RMSE={np.sqrt((e**2).mean()):.2f} max={np.abs(e).max():.2f} | atan+lin RMSE={np.sqrt((e2**2).mean()):.2f} max={np.abs(e2).max():.2f}')
+
+# nominal predictions at test times
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+print()
+print('gamma atan-law predictions:')
+for j,t_ in enumerate(test_t):
+    print('t=%d gamma=%.2f (atan+lin: %.2f)' % (t_, np.rad2deg(atanlaw(t_,*pg)), np.rad2deg(atanlin(t_,*pg2))))
+EOF
 ```
 
 ## [49] tool
@@ -1946,7 +3013,66 @@ The gamma-atan law backtests poorly (RMSE 8–11). I realize my earlier f(beta) 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit, least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+god = np.rad2deg(go); bod = np.rad2deg(bo)
 
+def atanlaw(t, c0, A, t0, tau): return c0 + A*np.arctan((t-t0)/tau)
+
+def fit_fourier(bb, gg, K):
+    # gamma (deg) = c0 + sum ak sin(k b) + bk cos(k b), b in rad
+    X = [np.ones_like(bb)]
+    for k in range(1,K+1): X += [np.sin(k*bb), np.cos(k*bb)]
+    X = np.column_stack(X)
+    c,_,_,_ = np.linalg.lstsq(X, gg, rcond=None)
+    return c
+def pred_fourier(c, bb, K):
+    X=[np.ones_like(bb)]
+    for k in range(1,K+1): X += [np.sin(k*bb), np.cos(k*bb)]
+    return np.column_stack(X)@c
+
+def angles(P): return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+def path(th, tt_):
+    return th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+def fit_quad3d(tt_, bo_, go_):
+    def resid(th):
+        az,el = angles(path(th,tt_))
+        return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+    pa=np.array([np.sin(bo_[0])*np.cos(go_[0]),np.cos(bo_[0])*np.cos(go_[0]),np.sin(go_[0])])
+    pbv=np.array([np.sin(bo_[-1])*np.cos(go_[-1]),np.cos(bo_[-1])*np.cos(go_[-1]),np.sin(go_[-1])])
+    dv=(pbv-pa)/(tt_[-1]-tt_[0]); best=None
+    for sc in [0.5,1.,2.,5.,10.]:
+        sol=least_squares(resid,np.concatenate([pa*sc,dv*sc,np.zeros(3)]),method='lm',max_nfev=100000)
+        ss=(resid(sol.x)**2).sum()
+        if best is None or ss<best[0]: best=(ss,sol.x)
+    return best[1]
+
+print('HONEST backtest (everything fit on <= tcut):')
+for tcut in [470, 490, 510, 530]:
+    tr = to<=tcut; va=~tr
+    if va.sum()==0: continue
+    # beta atan law on train
+    pb_,_ = curve_fit(atanlaw, to[tr], bo[tr], p0=[3.0,1.8,536,62], maxfev=200000)
+    bva_pred = atanlaw(to[va], *pb_)
+    # gamma curve fourier on train (train beta range only)
+    row = [f'tcut={tcut} nva={va.sum()}']
+    for K in [1,2,3]:
+        cf = fit_fourier(bo[tr], god[tr], K)
+        gp = pred_fourier(cf, bva_pred, K)
+        e = gp - god[va]
+        row.append(f'F{K}:RMSE={np.sqrt((e**2).mean()):.2f},max={np.abs(e).max():.2f}')
+    # quad3d
+    th = fit_quad3d((to[tr]-460)/100, bo[tr], go[tr])
+    gp = np.rad2deg(angles(path(th,(to[va]-460)/100))[1])
+    e = gp - god[va]
+    row.append(f'quad3d:RMSE={np.sqrt((e**2).mean()):.2f},max={np.abs(e).max():.2f}')
+    print(' | '.join(row))
+EOF
 ```
 
 ## [51] tool
@@ -2008,7 +3134,71 @@ quad-3D is the best honest extrapolator so far, but let me try one more structur
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
 
+def atanlaw(t, c0, A, t0, tau): return c0 + A*np.arctan((t-t0)/tau)
+pb_,_ = curve_fit(atanlaw, to, bo, p0=[3.0,1.8,536,62], maxfev=200000)
+b0,A,t0,tau = pb_
+u = np.arctan((to-t0)/tau)
+print('u range: %.3f to %.3f rad (%.1f to %.1f deg)' % (u.min(), u.max(), np.rad2deg(u.min()), np.rad2deg(u.max())))
+
+# gamma ~ E0 + E1 sin(u) + E2 cos(u)
+X = np.column_stack([np.ones_like(u), np.sin(u), np.cos(u)])
+c,_,_,_ = np.linalg.lstsq(X, go, rcond=None)
+r = go - X@c
+print('gamma ~ E0+E1 sin u + E2 cos u: resid %.4f deg' % np.rad2deg(r).std())
+# add harmonics
+X2 = np.column_stack([np.ones_like(u), np.sin(u), np.cos(u), np.sin(2*u), np.cos(2*u)])
+c2,_,_,_ = np.linalg.lstsq(X2, go, rcond=None)
+r2 = go - X2@c2
+print('with 2nd harmonic: resid %.4f deg' % np.rad2deg(r2).std())
+
+# Also: tan(gamma) ~ trig in u
+tg = np.tan(go)
+c3,_,_,_ = np.linalg.lstsq(X, tg, rcond=None)
+r3 = tg - X@c3
+print('tan(gamma) ~ trig(u): resid->deg %.4f' % np.rad2deg(r3*np.cos(go)**2).std())
+
+# And: sin(gamma) ~ trig(u)
+sg = np.sin(go)
+c4,_,_,_ = np.linalg.lstsq(X, sg, rcond=None)
+r4 = sg - X@c4
+print('sin(gamma) ~ trig(u): resid->deg %.4f' % np.rad2deg(r4/np.cos(go)).std())
+
+# What about gamma ~ trig of beta directly with the SAME structure? Compare side by side
+# beta = b0 + A u exactly. So trig(u) ~ trig((beta-b0)/A).
+# Honest backtest of the full model: beta=b0+A*u, gamma=E0+E1 sin u + E2 cos u, u=atan((t-t0)/tau)
+def full_fit(tt, bo_, go_):
+    pb,_ = curve_fit(atanlaw, tt, bo_, p0=[3.0,1.8,536,62], maxfev=200000)
+    uu = np.arctan((tt-pb[2])/pb[3])
+    X_ = np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])
+    cg,_,_,_ = np.linalg.lstsq(X_, go_, rcond=None)
+    return pb, cg
+def full_pred(pb, cg, tt):
+    uu = np.arctan((tt-pb[2])/pb[3])
+    X_ = np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])
+    return X_@cg
+print()
+print('HONEST backtest: beta-atan + gamma~trig(u):')
+for tcut in [470, 490, 510, 530]:
+    tr = to<=tcut; va=~tr
+    pbx, cgx = full_fit(to[tr], bo[tr], go[tr])
+    gp = np.rad2deg(full_pred(pbx, cgx, to[va]))
+    e = gp - np.rad2deg(go[va])
+    print(f'tcut={tcut} nva={va.sum()}: RMSE={np.sqrt((e**2).mean()):.2f} max={np.abs(e).max():.2f}')
+# nominal predictions
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+gp = np.rad2deg(full_pred(pb_, c, test_t))
+print()
+print('nominal gamma predictions (trig-u model):')
+for j,t_ in enumerate(test_t): print('t=%d gamma=%.2f' % (t_, gp[j]))
+EOF
 ```
 
 ## [53] tool
@@ -2133,7 +3323,47 @@ The azimuth asymptotes suggest an open path (flyby). Let me fit a **two-body Kep
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+from scipy.integrate import solve_ivp
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+tref=460.0; tt = to - tref
 
+def propagate(th, tout):
+    p0 = th[0:3]; v0 = th[3:6]; mu = np.exp(th[6])
+    def rhs(t, y):
+        r = np.linalg.norm(y[0:3])
+        return np.concatenate([y[3:6], -mu*y[0:3]/r**3])
+    sol = solve_ivp(rhs, [tout.min()-1, tout.max()+1], np.concatenate([p0,v0]),
+                    t_eval=tout, rtol=1e-11, atol=1e-13, method='DOP853')
+    return sol.y[0:3].T
+
+def resid(th):
+    P = propagate(th, tt)
+    az = np.arctan2(P[:,0],P[:,1]); el = np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+    return np.concatenate([(az-bo+np.pi)%(2*np.pi)-np.pi, el-go])
+
+# init from quad3d fit: p0 (at tref=460), v, and mu from |a|*|p|^3
+p0q = np.array([16838.60717125, 222.11825016, 1866.49316813])
+vq  = np.array([-216.99394648, -191.2530098, -111.80447492])
+aq  = np.array([-0.12600416, 2.10975021, 1.14407102])
+best=None
+for mu_sc in [0.3, 1.0, 3.0, 10.0]:
+    mu0 = np.linalg.norm(aq)*np.linalg.norm(p0q)**3 * mu_sc
+    th0 = np.concatenate([p0q, vq, [np.log(mu0)]])
+    sol = least_squares(resid, th0, method='lm', max_nfev=3000, diff_step=1e-6)
+    ss = (resid(sol.x)**2).sum()
+    print('mu_sc=%.1f -> SS=%.5f' % (mu_sc, ss))
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+ss,x = best
+r = resid(x)
+print()
+print('TWO-BODY: SS=%.5f beta resid %.4f deg gamma resid %.4f deg' % (ss, np.rad2deg(r[:len(tt)]).std(), np.rad2deg(r[len(tt):]).std()))
+EOF
 ```
 
 ## [55] tool
@@ -2153,7 +3383,75 @@ Timed out — let me implement fast closed-form Kepler propagation (universal va
 **tool call: bash**
 
 ```
+timeout 280 python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+tref=460.0; tt = to - tref
 
+def stumpff(z):
+    if z > 1e-6:
+        sz = np.sqrt(z); c = (1-np.cos(sz))/z; s = (sz-np.sin(sz))/sz**3
+    elif z < -1e-6:
+        sz = np.sqrt(-z); c = (1-np.cosh(sz))/z; s = (np.sinh(sz)-sz)/sz**3
+    else:
+        c = 0.5 - z/24 + z*z/720; s = 1/6 - z/120 + z*z/5040
+    return c, s
+
+def kepler_prop(p0, v0, mu, dt):
+    # universal variable propagation, scalar dt array support via loop
+    r0 = np.linalg.norm(p0); v02 = np.dot(v0,v0)
+    p0v0 = np.dot(p0,v0)
+    alpha = 2/r0 - v02/mu   # 1/a
+    out = np.zeros((len(dt),3))
+    for i, dti in enumerate(dt):
+        # Newton solve for universal anomaly chi
+        sqrt_mu = np.sqrt(mu)
+        chi = sqrt_mu*abs(alpha)*dti  # init
+        if abs(alpha) < 1e-8: chi = sqrt_mu*dti/r0
+        for _ in range(60):
+            z = alpha*chi*chi
+            c,s = stumpff(z)
+            F = (p0v0/sqrt_mu)*chi*chi*c + (1-alpha*r0)*chi**3*s + r0*chi - sqrt_mu*dti
+            dF = (p0v0/sqrt_mu)*chi*(1-z*s) + (1-alpha*r0)*chi*chi*c + r0
+            dchi = F/dF
+            chi -= dchi
+            if abs(dchi) < 1e-10: break
+        z = alpha*chi*chi
+        c,s = stumpff(z)
+        f = 1 - chi*chi*c/r0
+        g = dti - chi**3*s/sqrt_mu
+        p = f*p0 + g*v0
+        out[i] = p
+    return out
+
+def resid(th):
+    p0 = th[0:3]; v0 = th[3:6]; mu = np.exp(th[6])
+    P = kepler_prop(p0, v0, mu, tt)
+    az = np.arctan2(P[:,0],P[:,1]); el = np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+    return np.concatenate([(az-bo+np.pi)%(2*np.pi)-np.pi, el-go])
+
+p0q = np.array([16838.60717125, 222.11825016, 1866.49316813])
+vq  = np.array([-216.99394648, -191.2530098, -111.80447492])
+aq  = np.array([-0.12600416, 2.10975021, 1.14407102])
+best=None
+for mu_sc in [0.1, 0.3, 1.0, 3.0, 10.0, 30.0]:
+    mu0 = np.linalg.norm(aq)*np.linalg.norm(p0q)**3 * mu_sc
+    th0 = np.concatenate([p0q, vq, [np.log(mu0)]])
+    try:
+        sol = least_squares(resid, th0, method='lm', max_nfev=3000)
+        ss = (resid(sol.x)**2).sum()
+        print('mu_sc=%.1f -> SS=%.5f' % (mu_sc, ss))
+        if best is None or ss<best[0]: best=(ss, sol.x.copy())
+    except Exception as ex:
+        print('mu_sc=%.1f failed: %s' % (mu_sc, ex))
+ss,x = best
+r = resid(x)
+print('TWO-BODY best: SS=%.5f beta resid %.4f gamma resid %.4f deg' % (ss, np.rad2deg(r[:len(tt)]).std(), np.rad2deg(r[len(tt):]).std()))
+EOF
 ```
 
 ## [57] tool
@@ -2267,7 +3565,71 @@ Two-body is decisively rejected (SS=96.9 vs 0.10). The parabola (constant accele
 **tool call: bash**
 
 ```
+timeout 280 python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+rng = np.random.default_rng(0)
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+tt = (to-460)/100
 
+def angles(P): return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+def path(th, tt_, deg):
+    P = th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+    if deg>=3: P = P + (tt_[:,None]**3)*th[9:12][None,:]
+    return P
+def make_resid(tt_, bo_, go_, deg):
+    def resid(th):
+        az,el = angles(path(th,tt_,deg))
+        return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+    return resid
+def fit(tt_, bo_, go_, deg, th0=None):
+    resid = make_resid(tt_,bo_,go_,deg)
+    if th0 is None:
+        pa=np.array([np.sin(bo_[0])*np.cos(go_[0]),np.cos(bo_[0])*np.cos(go_[0]),np.sin(go_[0])])
+        pbv=np.array([np.sin(bo_[-1])*np.cos(go_[-1]),np.cos(bo_[-1])*np.cos(go_[-1]),np.sin(go_[-1])])
+        dv=(pbv-pa)/(tt_[-1]-tt_[0])
+        npar = 9 if deg==2 else 12
+        best=None
+        for sc in [0.5,1.,2.,5.,10.]:
+            sol=least_squares(resid,np.concatenate([pa*sc,dv*sc,np.zeros(npar-6)]),method='lm',max_nfev=50000)
+            ss=(resid(sol.x)**2).sum()
+            if best is None or ss<best[0]: best=(ss,sol.x)
+        return best[1]
+    else:
+        sol=least_squares(resid,th0,method='lm',max_nfev=50000)
+        return sol.x
+
+th2 = fit(tt, bo, go, 2)
+r2 = make_resid(tt,bo,go,2)(th2)
+n = len(tt)
+sb, sg = r2[:n].std(), r2[n:].std()
+th3 = fit(tt, bo, go, 3, th0=np.concatenate([th2, np.zeros(3)]))
+r3 = make_resid(tt,bo,go,3)(th3)
+ss2_obs, ss3_obs = (r2**2).sum(), (r3**2).sum()
+F_obs = (ss2_obs-ss3_obs)/3/(ss3_obs/(2*n-12))
+print('observed: SS2=%.5f SS3=%.5f F=%.2f  (sb=%.3f sg=%.3f deg)' % (ss2_obs, ss3_obs, F_obs, np.rad2deg(sb), np.rad2deg(sg)))
+
+# nominal clean trajectory from quad model
+P_clean = path(th2, tt, 2)
+az_c, el_c = angles(P_clean)
+# bootstrap under quad model
+Fs = []
+for b in range(150):
+    bos = az_c + rng.normal(0, sb, n)
+    gos = el_c + rng.normal(0, sg, n)
+    th2b = fit(tt, bos, gos, 2, th0=th2)
+    ss2b = (make_resid(tt,bos,gos,2)(th2b)**2).sum()
+    th3b = fit(tt, bos, gos, 3, th0=np.concatenate([th2b, np.zeros(3)]))
+    ss3b = (make_resid(tt,bos,gos,3)(th3b)**2).sum()
+    Fb = (ss2b-ss3b)/3/(ss3b/(2*n-12))
+    Fs.append(Fb)
+Fs = np.array(Fs)
+print('bootstrap F under quad model: median %.2f, 95th pct %.2f, max %.2f' % (np.median(Fs), np.percentile(Fs,95), Fs.max()))
+print('P(F >= observed %.2f) = %.3f' % (F_obs, (Fs>=F_obs).mean()))
+EOF
 ```
 
 ## [59] tool
@@ -2331,7 +3693,65 @@ The cubic term is **real** (p<1/150) — the parabola is misspecified. Notably, 
 **tool call: bash**
 
 ```
+timeout 280 python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares, curve_fit
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
 
+def angles(P): return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+def path(th, tt_, deg):
+    P = th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+    if deg>=3: P = P + (tt_[:,None]**3)*th[9:12][None,:]
+    return P
+def fit_poly3d(tt_, bo_, go_, deg):
+    def resid(th):
+        az,el = angles(path(th,tt_,deg))
+        return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+    pa=np.array([np.sin(bo_[0])*np.cos(go_[0]),np.cos(bo_[0])*np.cos(go_[0]),np.sin(go_[0])])
+    pbv=np.array([np.sin(bo_[-1])*np.cos(go_[-1]),np.cos(bo_[-1])*np.cos(go_[-1]),np.sin(go_[-1])])
+    dv=(pbv-pa)/(tt_[-1]-tt_[0])
+    npar = 9 if deg==2 else 12
+    best=None
+    for sc in [0.5,1.,2.,5.,10.]:
+        for a0v in [np.zeros(npar-6)]:
+            th0=np.concatenate([pa*sc,dv*sc,a0v])
+            sol=least_squares(resid,th0,method='lm',max_nfev=100000)
+            ss=(resid(sol.x)**2).sum()
+            if best is None or ss<best[0]: best=(ss,sol.x)
+    return best[1]
+
+def atanlaw(t, c0, A, t0, tau): return c0 + A*np.arctan((t-t0)/tau)
+def fit_trigu(tt_, bo_, go_):
+    pb,_ = curve_fit(atanlaw, tt_, bo_, p0=[3.0,1.8,536,62], maxfev=200000)
+    uu = np.arctan((tt_-pb[2])/pb[3])
+    X_ = np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])
+    cg,_,_,_ = np.linalg.lstsq(X_, go_, rcond=None)
+    return pb, cg
+def pred_trigu(pb, cg, tt_):
+    uu = np.arctan((tt_-pb[2])/pb[3])
+    return np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])@cg
+
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+# Fit on full, first half, second half, and odd/even — compare predictions
+splits = {'full': np.ones(len(to),bool),
+          'first_half': to<=462, 'second_half': to>462,
+          'first_60%': to<=478, 'last_60%': to>=446}
+for name, sel in splits.items():
+    if sel.sum() < 40: continue
+    tt_ = (to[sel]-460)/100
+    out = [name]
+    for deg in [2,3]:
+        th = fit_poly3d(tt_, bo[sel], go[sel], deg)
+        g = np.rad2deg(angles(path(th,(test_t-460)/100,deg))[1])
+        out.append('poly%d: 546=%.1f 587=%.1f 638=%.1f' % (deg, g[0], g[5], g[9]))
+    pb, cg = fit_trigu(to[sel], bo[sel], go[sel])
+    g = np.rad2deg(pred_trigu(pb, cg, test_t))
+    out.append('trigu: 546=%.1f 587=%.1f 638=%.1f' % (g[0], g[5], g[9]))
+    print(' | '.join(out))
+EOF
 ```
 
 ## [61] tool
@@ -2426,7 +3846,50 @@ Every model is unstable across subsets at the far horizon — extrapolation is f
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
 
+def atanlaw(t, c0, A, t0, tau): return c0 + A*np.arctan((t-t0)/tau)
+pb,_ = curve_fit(atanlaw, to, bo, p0=[3.0,1.8,536,62], maxfev=200000)
+b0,A,t0,tau = pb
+u = np.arctan((to-t0)/tau)
+X = np.column_stack([np.ones_like(u), np.sin(u), np.cos(u)])
+cg,_,_,_ = np.linalg.lstsq(X, go, rcond=None)
+print('gamma = E0 + E1 sin u + E2 cos u: E0=%.3f E1=%.3f E2=%.3f (deg)' % tuple(np.rad2deg(cg)))
+
+# Build curve points, test small-circle: p.c_hat = const
+az = b0 + A*u
+el = cg[0] + cg[1]*np.sin(u) + cg[2]*np.cos(u)
+P = np.column_stack([np.cos(el)*np.sin(az), np.cos(el)*np.cos(az), np.sin(el)])
+# find best fixed axis: minimize variance of P.c over unit c -> smallest eigenvector
+M = P.T@P/len(P)
+w,V = np.linalg.eigh(M)
+c_best = V[:,0]
+proj = P@c_best
+print('small-circle test: p.c mean=%.5f std=%.5f (angular radius spread %.4f deg)' % (proj.mean(), proj.std(), np.rad2deg(proj.std()/1.0)))
+# For comparison, actual data points:
+Pd = np.column_stack([np.cos(go)*np.sin(bo), np.cos(go)*np.cos(bo), np.sin(go)])
+Md = Pd.T@Pd/len(Pd)
+wd,Vd = np.linalg.eigh(Md)
+cd = Vd[:,0]
+projd = Pd@cd
+print('data points: best-axis projection std=%.5f (=> curve deviation from small circle ~%.3f deg)' % (projd.std(), np.rad2deg(projd.std())))
+# Also test great circle (plane through origin): normal = smallest eigvec, p.n ~ 0
+print('great-circle test (p.n): std=%.5f, mean abs=%.5f' % (projd.std()*0+ (Pd@Vd[:,0]).std(), np.abs(Pd@Vd[:,0]).mean()))
+
+# check the fitted trig-u curve residual in gamma
+gp = cg[0] + cg[1]*np.sin(u) + cg[2]*np.cos(u)
+print('trig-u gamma resid std: %.4f deg' % np.rad2deg(gp-go).std())
+
+# What is angle of best small-circle axis?
+elc = np.arcsin(np.clip(cd[2],-1,1)); azc = np.arctan2(cd[0], cd[1])
+print('best axis: az=%.2f el=%.2f, mean proj=%.4f => rho=%.2f deg' % (np.rad2deg(azc), np.rad2deg(elc), projd.mean(), np.rad2deg(np.arccos(np.clip(projd.mean(),-1,1)))))
+EOF
 ```
 
 ## [63] tool
@@ -2497,7 +3960,73 @@ The curve is nearly (not exactly) a great circle. Let me run a clean, careful ba
 **tool call: bash**
 
 ```
+timeout 290 python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares, curve_fit
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+god = np.rad2deg(go)
 
+def angles(P): return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+def path(th, tt_, deg):
+    P = th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+    if deg>=3: P = P + (tt_[:,None]**3)*th[9:12][None,:]
+    return P
+def fit_poly(tt_, bo_, go_, deg, th_warm=None):
+    def resid(th):
+        az,el = angles(path(th,tt_,deg))
+        return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+    pa=np.array([np.sin(bo_[0])*np.cos(go_[0]),np.cos(bo_[0])*np.cos(go_[0]),np.sin(go_[0])])
+    pbv=np.array([np.sin(bo_[-1])*np.cos(go_[-1]),np.cos(bo_[-1])*np.cos(go_[-1]),np.sin(go_[-1])])
+    dv=(pbv-pa)/(tt_[-1]-tt_[0])
+    npar = 9 if deg==2 else 12
+    starts=[np.concatenate([pa*sc,dv*sc,np.zeros(npar-6)]) for sc in [0.5,1.,2.,5.,10.]]
+    if th_warm is not None:
+        if len(th_warm)==npar: starts.append(th_warm)
+        elif deg==3 and len(th_warm)==9: starts.append(np.concatenate([th_warm,np.zeros(3)]))
+    best=None
+    for th0 in starts:
+        sol=least_squares(resid,th0,method='lm',max_nfev=100000)
+        ss=(resid(sol.x)**2).sum()
+        if best is None or ss<best[0]: best=(ss,sol.x)
+    return best[1]
+
+def atanlaw(t, c0, A, t0, tau): return c0 + A*np.arctan((t-t0)/tau)
+def fit_trigu(tt_, bo_, go_):
+    pb,_ = curve_fit(atanlaw, tt_, bo_, p0=[3.0,1.8,536,62], maxfev=200000)
+    uu = np.arctan((tt_-pb[2])/pb[3])
+    X_ = np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])
+    cg,_,_,_ = np.linalg.lstsq(X_, go_, rcond=None)
+    return pb, cg
+def pred_trigu(pb, cg, tt_):
+    uu = np.arctan((tt_-pb[2])/pb[3])
+    return np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])@cg
+
+# warm-start full fits
+th2f = fit_poly((to-460)/100, bo, go, 2)
+th3f = fit_poly((to-460)/100, bo, go, 3, th_warm=th2f)
+
+print('tcut | nva | poly2 RMSE | poly3 RMSE | trigu RMSE')
+res = {2:[],3:[],'u':[]}
+for tcut in [470,480,490,500,510,520,530]:
+    tr = to<=tcut; va=~tr
+    tt_tr, tt_va = (to[tr]-460)/100, (to[va]-460)/100
+    th2 = fit_poly(tt_tr, bo[tr], go[tr], 2, th_warm=th2f)
+    th3 = fit_poly(tt_tr, bo[tr], go[tr], 3, th_warm=th2)
+    g2 = np.rad2deg(angles(path(th2,tt_va,2))[1])
+    g3 = np.rad2deg(angles(path(th3,tt_va,3))[1])
+    pbu, cgu = fit_trigu(to[tr], bo[tr], go[tr])
+    gu = np.rad2deg(pred_trigu(pbu, cgu, to[va]))
+    e2, e3, eu = g2-god[va], g3-god[va], gu-god[va]
+    res[2].append(e2); res[3].append(e3); res['u'].append(eu)
+    print(f'{tcut} | {va.sum()} | {np.sqrt((e2**2).mean()):6.2f} | {np.sqrt((e3**2).mean()):6.2f} | {np.sqrt((eu**2).mean()):6.2f}')
+print()
+for k in [2,3,'u']:
+    allE = np.concatenate(res[k])
+    print(f'poly{k}' if k!='u' else 'trigu', 'overall backtest RMSE: %.2f' % np.sqrt((allE**2).mean()))
+EOF
 ```
 
 ## [65] tool
@@ -2648,7 +4177,85 @@ Decision: no single model is identifiable — I'll use a **bootstrap mixture ove
 **tool call: bash**
 
 ```
+timeout 290 python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares, curve_fit
+rng = np.random.default_rng(7)
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
 
+def angles(P): return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+def path(th, tt_, deg):
+    P = th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+    if deg>=3: P = P + (tt_[:,None]**3)*th[9:12][None,:]
+    return P
+def fit_poly(tt_, bo_, go_, deg, warm=None):
+    def resid(th):
+        az,el = angles(path(th,tt_,deg))
+        return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+    pa=np.array([np.sin(bo_[0])*np.cos(go_[0]),np.cos(bo_[0])*np.cos(go_[0]),np.sin(go_[0])])
+    pbv=np.array([np.sin(bo_[-1])*np.cos(go_[-1]),np.cos(bo_[-1])*np.cos(go_[-1]),np.sin(go_[-1])])
+    dv=(pbv-pa)/(tt_[-1]-tt_[0]); npar=9 if deg==2 else 12
+    starts=[np.concatenate([pa*sc,dv*sc,np.zeros(npar-6)]) for sc in [1.,2.,5.]]
+    if warm is not None:
+        starts.append(warm if len(warm)==npar else np.concatenate([warm,np.zeros(3)]))
+    best=None
+    for th0 in starts:
+        sol=least_squares(resid,th0,method='lm',max_nfev=100000)
+        ss=(resid(sol.x)**2).sum()
+        if best is None or ss<best[0]: best=(ss,sol.x)
+    return best[1]
+def atanlaw(t,c0,A,t0,tau): return c0+A*np.arctan((t-t0)/tau)
+def fit_trigu(tt_, bo_, go_):
+    pb,_ = curve_fit(atanlaw, tt_, bo_, p0=[3.0,1.8,536,62], maxfev=200000)
+    uu = np.arctan((tt_-pb[2])/pb[3])
+    X_ = np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])
+    cg,_,_,_ = np.linalg.lstsq(X_, go_, rcond=None)
+    return pb, cg
+def pred_trigu(pb,cg,tt_):
+    uu=np.arctan((tt_-pb[2])/pb[3])
+    return np.column_stack([np.ones_like(uu),np.sin(uu),np.cos(uu)])@cg
+
+tt=(to-460)/100; ttq=(test_t-460)/100
+th2=fit_poly(tt,bo,go,2); th3=fit_poly(tt,bo,go,3,warm=th2)
+pbu,cgu=fit_trigu(to,bo,go)
+# residuals for noise estimates (per-model)
+def poly_resid(th,deg):
+    az,el=angles(path(th,tt,deg))
+    return np.rad2deg((az-bo+np.pi)%(2*np.pi)-np.pi), np.rad2deg(el-go)
+r2b,r2g=poly_resid(th2,2); r3b,r3g=poly_resid(th3,3)
+rbu=np.rad2deg((atanlaw(to,*pbu)-bo+np.pi)%(2*np.pi)-np.pi))
+gu=pred_trigu(pbu,cgu,to); rgu=np.rad2deg(gu-go)
+print('noise: poly2 (%.3f,%.3f) poly3 (%.3f,%.3f) trigu (%.3f,%.3f)'%(r2b.std(),r2g.std(),r3b.std(),r3g.std(),rbu.std(),rgu.std()))
+
+B=200
+preds={2:np.zeros((B,len(test_t))),3:np.zeros((B,len(test_t))),'u':np.zeros((B,len(test_t)))}
+# clean nominal curves for simulation
+az2,el2=angles(path(th2,tt,2)); az3,el3=angles(path(th3,tt,3))
+azb=atanlaw(to,*pbu)
+for b in range(B):
+    # poly2 bootstrap
+    bos=az2+np.deg2rad(rng.normal(0,r2b.std(),len(tt))); gos=el2+np.deg2rad(rng.normal(0,r2g.std(),len(tt)))
+    th=fit_poly(tt,bos,gos,2,warm=th2)
+    preds[2][b]=np.rad2deg(angles(path(th,ttq,2))[1])
+    # poly3 bootstrap
+    bos=az3+np.deg2rad(rng.normal(0,r3b.std(),len(tt))); gos=el3+np.deg2rad(rng.normal(0,r3g.std(),len(tt)))
+    th=fit_poly(tt,bos,gos,3,warm=th3)
+    preds[3][b]=np.rad2deg(angles(path(th,ttq,3))[1])
+    # trigu bootstrap
+    bos=azb+np.deg2rad(rng.normal(0,rbu.std(),len(tt))); gos=np.deg2rad(pred_trigu(pbu,cgu,to))+np.deg2rad(rng.normal(0,rgu.std(),len(tt)))
+    pbx,cgx=fit_trigu(to,bos,gos)
+    preds['u'][b]=np.rad2deg(pred_trigu(pbx,cgx,test_t))
+for k in [2,3,'u']:
+    nm=f'poly{k}' if k!='u' else 'trigu'
+    med=np.median(preds[k],axis=0); sd=preds[k].std(axis=0)
+    print(nm,'pred median:', np.round(med,1))
+    print(nm,'pred std:  ', np.round(sd,1))
+np.save('/tmp/boot_preds.npy', np.stack([preds[2],preds[3],preds['u']]))
+EOF
 ```
 
 ## [67] tool
@@ -2672,7 +4279,82 @@ SyntaxError: unmatched ')'
 **tool call: bash**
 
 ```
+cat > /tmp/boot.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares, curve_fit
+rng = np.random.default_rng(7)
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
 
+def angles(P): return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+def path(th, tt_, deg):
+    P = th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+    if deg>=3: P = P + (tt_[:,None]**3)*th[9:12][None,:]
+    return P
+def fit_poly(tt_, bo_, go_, deg, warm=None):
+    def resid(th):
+        az,el = angles(path(th,tt_,deg))
+        return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+    pa=np.array([np.sin(bo_[0])*np.cos(go_[0]),np.cos(bo_[0])*np.cos(go_[0]),np.sin(go_[0])])
+    pbv=np.array([np.sin(bo_[-1])*np.cos(go_[-1]),np.cos(bo_[-1])*np.cos(go_[-1]),np.sin(go_[-1])])
+    dv=(pbv-pa)/(tt_[-1]-tt_[0]); npar=9 if deg==2 else 12
+    starts=[np.concatenate([pa*sc,dv*sc,np.zeros(npar-6)]) for sc in [1.,2.,5.]]
+    if warm is not None:
+        starts.append(warm if len(warm)==npar else np.concatenate([warm,np.zeros(3)]))
+    best=None
+    for th0 in starts:
+        sol=least_squares(resid,th0,method='lm',max_nfev=100000)
+        ss=(resid(sol.x)**2).sum()
+        if best is None or ss<best[0]: best=(ss,sol.x)
+    return best[1]
+def atanlaw(t,c0,A,t0,tau): return c0+A*np.arctan((t-t0)/tau)
+def fit_trigu(tt_, bo_, go_):
+    pb,_ = curve_fit(atanlaw, tt_, bo_, p0=[3.0,1.8,536,62], maxfev=200000)
+    uu = np.arctan((tt_-pb[2])/pb[3])
+    X_ = np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])
+    cg,_,_,_ = np.linalg.lstsq(X_, go_, rcond=None)
+    return pb, cg
+def pred_trigu(pb,cg,tt_):
+    uu=np.arctan((tt_-pb[2])/pb[3])
+    return np.column_stack([np.ones_like(uu),np.sin(uu),np.cos(uu)])@cg
+
+tt=(to-460)/100; ttq=(test_t-460)/100
+th2=fit_poly(tt,bo,go,2); th3=fit_poly(tt,bo,go,3,warm=th2)
+pbu,cgu=fit_trigu(to,bo,go)
+def poly_resid(th,deg):
+    az,el=angles(path(th,tt,deg))
+    return np.rad2deg((az-bo+np.pi)%(2*np.pi)-np.pi), np.rad2deg(el-go)
+r2b,r2g=poly_resid(th2,2); r3b,r3g=poly_resid(th3,3)
+rbu=np.rad2deg((atanlaw(to,*pbu)-bo+np.pi)%(2*np.pi)-np.pi)
+gu=pred_trigu(pbu,cgu,to); rgu=np.rad2deg(gu-go)
+print('noise: poly2 (%.3f,%.3f) poly3 (%.3f,%.3f) trigu (%.3f,%.3f)'%(r2b.std(),r2g.std(),r3b.std(),r3g.std(),rbu.std(),rgu.std()))
+
+B=200
+preds={2:np.zeros((B,len(test_t))),3:np.zeros((B,len(test_t))),'u':np.zeros((B,len(test_t)))}
+az2,el2=angles(path(th2,tt,2)); az3,el3=angles(path(th3,tt,3))
+azb=atanlaw(to,*pbu)
+for b in range(B):
+    bos=az2+np.deg2rad(rng.normal(0,r2b.std(),len(tt))); gos=el2+np.deg2rad(rng.normal(0,r2g.std(),len(tt)))
+    th=fit_poly(tt,bos,gos,2,warm=th2)
+    preds[2][b]=np.rad2deg(angles(path(th,ttq,2))[1])
+    bos=az3+np.deg2rad(rng.normal(0,r3b.std(),len(tt))); gos=el3+np.deg2rad(rng.normal(0,r3g.std(),len(tt)))
+    th=fit_poly(tt,bos,gos,3,warm=th3)
+    preds[3][b]=np.rad2deg(angles(path(th,ttq,3))[1])
+    bos=azb+np.deg2rad(rng.normal(0,rbu.std(),len(tt)))
+    gos=np.deg2rad(pred_trigu(pbu,cgu,to))+np.deg2rad(rng.normal(0,rgu.std(),len(tt)))
+    pbx,cgx=fit_trigu(to,bos,gos)
+    preds['u'][b]=np.rad2deg(pred_trigu(pbx,cgx,test_t))
+for k in [2,3,'u']:
+    nm=f'poly{k}' if k!='u' else 'trigu'
+    med=np.median(preds[k],axis=0); sd=preds[k].std(axis=0)
+    print(nm,'median:', np.round(med,1))
+    print(nm,'std:   ', np.round(sd,1))
+np.save('/tmp/boot_preds.npy', np.stack([preds[2],preds[3],preds['u']]))
+EOF
+timeout 290 python3 /tmp/boot.py
 ```
 
 ## [69] tool
@@ -2719,7 +4401,7 @@ Bug found: double deg2rad conversion in the trig-u gamma simulation. Let me fix 
 **tool call: bash**
 
 ```
-
+cd /tmp && sed -i 's|gos=np.deg2rad(pred_trigu(pbu,cgu,to))+np.deg2rad(rng.normal(0,rgu.std(),len(tt)))|gos=pred_trigu(pbu,cgu,to)+np.deg2rad(rng.normal(0,rgu.std(),len(tt)))|' boot.py && timeout 290 python3 boot.py
 ```
 
 ## [71] tool
@@ -2758,7 +4440,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/train.csv'
 **tool call: bash**
 
 ```
-
+timeout 290 python3 /tmp/boot.py
 ```
 
 ## [73] tool
@@ -2880,7 +4562,85 @@ Now the bootstrap is correct. Three models diverge ~11° at t=638 — model unce
 **tool call: bash**
 
 ```
+cat > /tmp/pipeline.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares, curve_fit
 
+def angles(P): return np.arctan2(P[:,0],P[:,1]), np.arctan2(P[:,2], np.hypot(P[:,0],P[:,1]))
+def path(th, tt_, deg):
+    P = th[0:3][None,:] + tt_[:,None]*th[3:6][None,:] + 0.5*(tt_[:,None]**2)*th[6:9][None,:]
+    if deg>=3: P = P + (tt_[:,None]**3)*th[9:12][None,:]
+    return P
+def fit_poly(tt_, bo_, go_, deg, warm=None):
+    def resid(th):
+        az,el = angles(path(th,tt_,deg))
+        return np.concatenate([(az-bo_+np.pi)%(2*np.pi)-np.pi, el-go_])
+    pa=np.array([np.sin(bo_[0])*np.cos(go_[0]),np.cos(bo_[0])*np.cos(go_[0]),np.sin(go_[0])])
+    pbv=np.array([np.sin(bo_[-1])*np.cos(go_[-1]),np.cos(bo_[-1])*np.cos(go_[-1]),np.sin(go_[-1])])
+    dv=(pbv-pa)/(tt_[-1]-tt_[0]); npar=9 if deg==2 else 12
+    starts=[np.concatenate([pa*sc,dv*sc,np.zeros(npar-6)]) for sc in [1.,2.,5.]]
+    if warm is not None:
+        starts.append(warm if len(warm)==npar else np.concatenate([warm,np.zeros(3)]))
+    best=None
+    for th0 in starts:
+        sol=least_squares(resid,th0,method='lm',max_nfev=100000)
+        ss=(resid(sol.x)**2).sum()
+        if best is None or ss<best[0]: best=(ss,sol.x)
+    return best[1]
+def atanlaw(t,c0,A,t0,tau): return c0+A*np.arctan((t-t0)/tau)
+def fit_trigu(tt_, bo_, go_):
+    pb,_ = curve_fit(atanlaw, tt_, bo_, p0=[3.0,1.8,536,62], maxfev=200000)
+    uu = np.arctan((tt_-pb[2])/pb[3])
+    X_ = np.column_stack([np.ones_like(uu), np.sin(uu), np.cos(uu)])
+    cg,_,_,_ = np.linalg.lstsq(X_, go_, rcond=None)
+    return pb, cg
+def pred_trigu(pb,cg,tt_):
+    uu=np.arctan((tt_-pb[2])/pb[3])
+    return np.column_stack([np.ones_like(uu),np.sin(uu),np.cos(uu)])@cg
+
+def fit_all(to_, bo_, go_):
+    tt_=(to_-460)/100
+    th2=fit_poly(tt_,bo_,go_,2); th3=fit_poly(tt_,bo_,go_,3,warm=th2)
+    pbu,cgu=fit_trigu(to_,bo_,go_)
+    return th2,th3,pbu,cgu
+
+def predict_all(fits, tq):
+    th2,th3,pbu,cgu = fits
+    ttq=(np.atleast_1d(np.asarray(tq,float))-460)/100
+    g2=np.rad2deg(angles(path(th2,ttq,2))[1])
+    g3=np.rad2deg(angles(path(th3,ttq,3))[1])
+    gu=np.rad2deg(pred_trigu(pbu,cgu,tq))
+    return g2,g3,gu
+
+def resid_stds(fits, to_, bo_, go_):
+    th2,th3,pbu,cgu = fits
+    tt_=(to_-460)/100
+    def pr(th,deg):
+        az,el=angles(path(th,tt_,deg))
+        return np.rad2deg((az-bo_+np.pi)%(2*np.pi)-np.pi), np.rad2deg(el-go_)
+    r2b,r2g=pr(th2,2); r3b,r3g=pr(th3,3)
+    rbu=np.rad2deg((atanlaw(to_,*pbu)-bo_+np.pi)%(2*np.pi)-np.pi)
+    rgu=np.rad2deg(pred_trigu(pbu,cgu,to_)-go_)
+    return (r2b.std(),r2g.std()),(r3b.std(),r3g.std()),(rbu.std(),rgu.std())
+
+def bootstrap_preds(fits, to_, bo_, go_, tq, B, rng):
+    th2,th3,pbu,cgu = fits
+    tt_=(to_-460)/100
+    s2,s3,su = resid_stds(fits,to_,bo_,go_)
+    az2,el2=angles(path(th2,tt_,2)); az3,el3=angles(path(th3,tt_,3))
+    azb=atanlaw(to_,*pbu); elu=pred_trigu(pbu,cgu,to_)
+    ttq=(np.atleast_1d(np.asarray(tq,float))-460)/100
+    P2=np.zeros((B,len(ttq))); P3=np.zeros((B,len(ttq))); PU=np.zeros((B,len(ttq)))
+    for b in range(B):
+        bos=az2+np.deg2rad(rng.normal(0,s2[0],len(tt_))); gos=el2+np.deg2rad(rng.normal(0,s2[1],len(tt_)))
+        th=fit_poly(tt_,bos,gos,2,warm=th2); P2[b]=np.rad2deg(angles(path(th,ttq,2))[1])
+        bos=az3+np.deg2rad(rng.normal(0,s3[0],len(tt_))); gos=el3+np.deg2rad(rng.normal(0,s3[1],len(tt_)))
+        th=fit_poly(tt_,bos,gos,3,warm=th3); P3[b]=np.rad2deg(angles(path(th,ttq,3))[1])
+        bos=azb+np.deg2rad(rng.normal(0,su[0],len(tt_))); gos=elu+np.deg2rad(rng.normal(0,su[1],len(tt_)))
+        pbx,cgx=fit_trigu(to_,bos,gos); PU[b]=np.rad2deg(pred_trigu(pbx,cgx,tq))
+    return P2,P3,PU
+EOF
+echo "module written"
 ```
 
 ## [75] tool
@@ -2904,7 +4664,37 @@ module written
 **tool call: bash**
 
 ```
+cat > /tmp/validate.py << 'EOF'
+import sys; sys.path.insert(0,'/tmp')
+import pandas as pd, numpy as np
+from pipeline import *
+rng = np.random.default_rng(3)
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+god = np.rad2deg(go)
 
+B=120
+for tcut in [480, 500, 520]:
+    tr = to<=tcut; va=~tr
+    fits = fit_all(to[tr], bo[tr], go[tr])
+    g2,g3,gu = predict_all(fits, to[va])
+    ga = god[va]
+    P2,P3,PU = bootstrap_preds(fits, to[tr], bo[tr], go[tr], to[va], B, rng)
+    # measurement noise estimate (gamma) - use 1.03 avg
+    sig_g = 1.03
+    # mixture: pool bootstrap samples + noise
+    pool = np.concatenate([P2,P3,PU],axis=0) + rng.normal(0,sig_g,(3*B, va.sum()))
+    lo = np.percentile(pool, 2.5, axis=0); hi = np.percentile(pool, 97.5, axis=0)
+    cov = np.mean((ga>=lo)&(ga<=hi))
+    e2,e3,eu = g2-ga, g3-ga, gu-ga
+    emean = (g2+g3+gu)/3 - ga
+    emed = np.median(np.stack([g2,g3,gu]),axis=0) - ga
+    rm = lambda e: np.sqrt((e**2).mean())
+    print(f'tcut={tcut} horizon~{int(to[va].max()-tcut)}d: RMSE poly2={rm(e2):.2f} poly3={rm(e3):.2f} trigu={rm(eu):.2f} mean3={rm(emean):.2f} med3={rm(emed):.2f} | mixCov95={cov:.2f} meanHW={np.mean((hi-lo)/2):.1f}')
+EOF
+timeout 290 python3 /tmp/validate.py
 ```
 
 ## [77] tool
@@ -3010,7 +4800,48 @@ Let me check near-term boundary behavior of each model and the poly3 bootstrap d
 **tool call: bash**
 
 ```
-
+cat > /tmp/check.py << 'EOF'
+import sys; sys.path.insert(0,'/tmp')
+import pandas as pd, numpy as np
+from pipeline import *
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+god = np.rad2deg(go)
+fits = fit_all(to, bo, go)
+th2,th3,pbu,cgu = fits
+# fitted values at boundary (last 6 points) vs actual
+g2f,g3f,guf = predict_all(fits, to)
+print('t | actual | poly2 fit | poly3 fit | trigu fit')
+for i in range(-6,0):
+    print('%d | %7.2f | %8.2f | %8.2f | %8.2f' % (to[i], god[i], g2f[i], g3f[i], guf[i]))
+print()
+print('mean fitted resid over last 10: poly2 %+.3f poly3 %+.3f trigu %+.3f' % (
+    (god[-10:]-g2f[-10:]).mean(), (god[-10:]-g3f[-10:]).mean(), (god[-10:]-guf[-10:]).mean()))
+print('mean fitted resid over all: poly2 %+.3f poly3 %+.3f trigu %+.3f' % (
+    (god-g2f).mean(), (god-g3f).mean(), (god-guf).mean()))
+# endpoint derivative check: numeric dgamma/dt at t=544 from each model
+for nm, pr in [('poly2',2),('poly3',3),('trigu','u')]:
+    pass
+eps=0.5
+g2a,g3a,gua = predict_all(fits, [544-eps, 544+eps])
+print('endpoint slope dgamma/dt: poly2 %.3f poly3 %.3f trigu %.3f (data local ~ -0.27)' % (
+    (g2a[1]-g2a[0])/(2*eps), (g3a[1]-g3a[0])/(2*eps), (gua[1]-gua[0])/(2*eps)))
+# local slope from data: fit line to last 15 pts
+c = np.polyfit(to[-15:], god[-15:], 1)
+print('data local slope (last 15): %.3f' % c[0])
+# poly3 beta at test
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+ttq=(test_t-460)/100
+b3 = np.rad2deg(angles(path(th3,ttq,3))[0])%360
+b2 = np.rad2deg(angles(path(th2,ttq,2))[0])%360
+bu = np.rad2deg(atanlaw(test_t,*pbu))%360
+print('beta at test: poly2', np.round(b2,1))
+print('beta at test: poly3', np.round(b3,1))
+print('beta at test: trigu', np.round(bu,1))
+EOF
+timeout 120 python3 /tmp/check.py
 ```
 
 ## [79] tool
@@ -3154,7 +4985,56 @@ Key insights: poly3 is boundary-unbiased and matches the endpoint slope (data di
 **tool call: bash**
 
 ```
+cat > /tmp/final.py << 'EOF'
+import sys; sys.path.insert(0,'/tmp')
+import pandas as pd, numpy as np
+from pipeline import *
 
+rng = np.random.default_rng(42)
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+
+fits = fit_all(to, bo, go)
+th2,th3,pbu,cgu = fits
+g2,g3,gu = predict_all(fits, test_t)
+print('point predictions:')
+print('t | poly2 | poly3 | trigu')
+for j,t_ in enumerate(test_t):
+    print('%d | %6.2f | %6.2f | %6.2f' % (t_, g2[j], g3[j], gu[j]))
+
+B=500
+P2,P3,PU = bootstrap_preds(fits, to, bo, go, test_t, B, rng)
+# check poly3 bootstrap for bimodality/outliers
+print()
+print('poly3 bootstrap percentiles at t=638: 1%/50%/99%%:', 
+      np.round(np.percentile(P3[:,9],[1,50,99]),2))
+print('poly3 bootstrap mean/std at 638: %.2f/%.2f' % (P3[:,9].mean(), P3[:,9].std()))
+
+sig_g = 1.0
+W = {'2':0.20, '3':0.50, 'u':0.30}
+# build weighted mixture pool
+n2 = int(round(B*W['2'])); n3 = int(round(B*W['3'])); nu = int(round(B*W['u']))
+# resample indices
+i2 = rng.integers(0,B,n2); i3 = rng.integers(0,B,n3); iu = rng.integers(0,B,nu)
+pool = np.concatenate([P2[i2], P3[i3], PU[iu]], axis=0)
+pool = pool + rng.normal(0, sig_g, pool.shape)
+lo = np.percentile(pool, 2.5, axis=0)
+hi = np.percentile(pool, 97.5, axis=0)
+med = np.percentile(pool, 50, axis=0)
+print()
+print('mixture median:', np.round(med,2))
+print('half-widths:', np.round((hi-lo)/2,2))
+
+y_pred = g3  # poly3 point estimate
+out = pd.DataFrame({'t': test_t.astype(int), 'y_pred': y_pred, 'y_lower': lo, 'y_upper': hi})
+out.to_csv('predictions.csv', index=False)
+print()
+print(out.to_string(index=False))
+EOF
+timeout 295 python3 /tmp/final.py
 ```
 
 ## [81] tool
@@ -3252,7 +5132,33 @@ The predictions are written. Before finalizing, let me probe gamma's slope/curva
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+god = df.gamma.values[m]
 
+# local slope of gamma at several times (window +-12 days)
+print('local gamma slope dgamma/dt:')
+slopes=[]
+for tc in range(390, 545, 15):
+    sel = np.abs(to-tc)<=12
+    c = np.polyfit(to[sel], god[sel], 1)
+    slopes.append((tc, c[0]))
+    print('t=%d slope=%+.4f deg/day' % (tc, c[0]))
+sl = np.array(slopes)
+# is slope linearly increasing? fit line to slope vs t
+c2 = np.polyfit(sl[:,0], sl[:,1], 1)
+print('slope trend: %.5f*t %+.4f -> slope=0 at t=%.1f' % (c2[0], c2[1], -c2[1]/c2[0]))
+# same for beta slope (rate)
+print()
+print('local beta rate:')
+for tc in range(390, 545, 15):
+    sel = np.abs(to-tc)<=12
+    c = np.polyfit(to[sel], df.beta.values[m][sel], 1)
+    print('t=%d rate=%+.4f deg/day' % (tc, c[0]))
+EOF
 ```
 
 ## [83] tool
@@ -3411,7 +5317,40 @@ Predictions written. The slope analysis shows gamma's minimum is imminent (~547-
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import sys; sys.path.insert(0,'/tmp')
+import pandas as pd, numpy as np
+from scipy import stats
+from pipeline import *
+df = pd.read_csv('data/train.csv')
+m = df.gamma.notna().values
+to = df.t.values[m].astype(float)
+bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+fits = fit_all(to, bo, go)
+g2f,g3f,guf = predict_all(fits, to)
+god = np.rad2deg(go)
+for nm, gf in [('poly2',g2f),('poly3',g3f),('trigu',guf)]:
+    r = god - gf
+    print('%s gamma resid: std=%.3f skew=%.2f kurtosis=%.2f (normal:0)' % (nm, r.std(), stats.skew(r), stats.kurtosis(r)))
+    # beta resid too
+th2,th3,pbu,cgu = fits
+tt=(to-460)/100
+b2f = np.rad2deg(angles(path(th2,tt,2))[0]); b3f = np.rad2deg(angles(path(th3,tt,3))[0])
+bod = np.rad2deg(bo)
+rb2 = (b2f-bod+180)%360-180; rb3 = (b3f-bod+180)%360-180
+print('poly2 beta resid kurtosis %.2f, poly3 beta resid kurtosis %.2f' % (stats.kurtosis(rb2), stats.kurtosis(rb3)))
 
+# verify predictions.csv
+out = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+print()
+print('predictions.csv shape:', out.shape, 'columns:', list(out.columns))
+print('test rows:', len(test))
+print('t match:', (out.t.values == test.t.values).all())
+print('any NaN:', out.isna().any().any())
+print('lower<=pred<=upper all:', ((out.y_lower<=out.y_pred)&(out.y_pred<=out.y_upper)).all())
+print('gamma within [-90,90]:', ((out.y_lower>=-90)&(out.y_upper<=90)).all())
+EOF
 ```
 
 ## [85] tool
@@ -3485,7 +5424,40 @@ Residuals are clean (no heavy tails), so the F-test rejection of poly2 is trustw
 **tool call: bash**
 
 ```
+cat > /tmp/final2.py << 'EOF'
+import sys; sys.path.insert(0,'/tmp')
+import pandas as pd, numpy as np
+from pipeline import *
 
+def run(seed, B=600, w=(0.20,0.50,0.30), sig_g=1.0, write=False):
+    rng = np.random.default_rng(seed)
+    df = pd.read_csv('data/train.csv')
+    m = df.gamma.notna().values
+    to = df.t.values[m].astype(float)
+    bo = np.deg2rad(df.beta.values[m]); go = np.deg2rad(df.gamma.values[m])
+    test_t = pd.read_csv('data/test.csv').t.values.astype(float)
+    fits = fit_all(to, bo, go)
+    g2,g3,gu = predict_all(fits, test_t)
+    P2,P3,PU = bootstrap_preds(fits, to, bo, go, test_t, B, rng)
+    n2=int(round(B*w[0])); n3=int(round(B*w[1])); nu=int(round(B*w[2]))
+    pool = np.concatenate([P2[rng.integers(0,B,n2)], P3[rng.integers(0,B,n3)], PU[rng.integers(0,B,nu)]],axis=0)
+    pool = pool + rng.normal(0,sig_g,pool.shape)
+    lo = np.percentile(pool,2.5,axis=0); hi = np.percentile(pool,97.5,axis=0)
+    out = pd.DataFrame({'t':test_t.astype(int),'y_pred':g3,'y_lower':lo,'y_upper':hi})
+    if write: out.to_csv('predictions.csv', index=False)
+    return out
+
+o1 = run(42)
+o2 = run(123)
+o3 = run(2024, write=True)
+print('seed stability (y_lower / y_upper at t=546, 597, 638):')
+for nm, o in [('s42',o1),('s123',o2),('s2024',o3)]:
+    print(nm, '546:[%.1f,%.1f] 597:[%.1f,%.1f] 638:[%.1f,%.1f]' % (
+        o.y_lower[0],o.y_upper[0], o.y_lower[5],o.y_upper[5], o.y_lower[9],o.y_upper[9]))
+print()
+print(o3.to_string(index=False))
+EOF
+timeout 295 python3 /tmp/final2.py
 ```
 
 ## [87] tool
@@ -3547,7 +5519,17 @@ Intervals are stable across seeds (±0.5°). Let me do a final verification of t
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+out = pd.read_csv('predictions.csv'); test = pd.read_csv('data/test.csv')
+assert list(out.columns)==['t','y_pred','y_lower','y_upper']
+assert len(out)==len(test)==10
+assert (out.t.values==test.t.values).all()
+assert not out.isna().any().any()
+assert ((out.y_lower<=out.y_pred)&(out.y_pred<=out.y_upper)).all()
+assert ((out.y_upper-out.y_lower)>0).all()
+print('ALL CHECKS PASSED:', out.shape)
+"
 ```
 
 ## [89] tool

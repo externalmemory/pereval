@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -116,7 +116,7 @@ t
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv && cat data/test.csv
 ```
 
 **tool call: python**
@@ -620,7 +620,46 @@ The optimizer collapsed to a degenerate solution. Let me use a proper global opt
 **tool call: bash**
 
 ```
+mkdir -p /work && cat > /work/fit1.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import differential_evolution, least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def theta_model(t, w0, p0, w, r, d):
+    psi = (w - w0)*t + d
+    return w0*t + p0 + np.arctan2(r*np.sin(psi), r*np.cos(psi) - 1.0)
+
+def wrap(x): return (x + np.pi) % (2*np.pi) - np.pi
+
+def joint_obj(x):
+    w0, p0, wa, ra, da, wb, rb, db = x
+    ra_ = np.exp(ra); rb_ = np.exp(rb)
+    ma = theta_model(t, w0, p0, wa, ra_, da)
+    mb = theta_model(t, w0, p0, wb, rb_, db)
+    return np.sum(wrap(ma-au)**2) + np.sum(wrap(mb-bu)**2)
+
+TPI = 2*np.pi
+bounds = [(TPI/340, TPI/310), (0,TPI),      # w0, p0
+          (TPI/700, TPI/100), (np.log(0.15), np.log(0.98)), (0,TPI),  # alpha: w, log r, d
+          (TPI/1300, TPI/900), (np.log(1.02), np.log(25.0)), (0,TPI)] # beta: w, log r, d
+sol = differential_evolution(joint_obj, bounds, maxiter=400, popsize=25, tol=1e-10, seed=1, workers=1, polish=True)
+print("DE cost:", sol.fun)
+x = sol.x
+w0,p0,wa,ra,da,wb,rb,db = x
+ra, rb = np.exp(ra), np.exp(rb)
+print("w0: T=%.2f d, p0=%.3f" % (TPI/w0, p0))
+print("alpha: T=%.2f d, r=%.4f, d=%.3f" % (TPI/wa, ra, da))
+print("beta : T=%.2f d, r=%.4f, d=%.3f" % (TPI/wb, rb, db))
+resa = wrap(theta_model(t,w0,p0,wa,ra,da)-au)
+resb = wrap(theta_model(t,w0,p0,wb,rb,db)-bu)
+print("alpha resid RMS deg:", np.rad2deg(np.sqrt(np.mean(resa**2))))
+print("beta  resid RMS deg:", np.rad2deg(np.sqrt(np.mean(resb**2))))
+np.save('/work/x_joint.npy', x)
+EOF
+python /work/fit1.py
 ```
 
 ## [16] tool
@@ -748,7 +787,39 @@ The smoothed increments reveal clean periodic oscillations. The pattern suggests
 **tool call: bash**
 
 ```
+cat > /work/fit2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import differential_evolution
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def theta_model(t, w0, p0, w, r, d):
+    psi = (w - w0)*t + d
+    return w0*t + p0 + np.arctan2(r*np.sin(psi), r*np.cos(psi) - 1.0)
+def wrap(x): return (x + np.pi) % (2*np.pi) - np.pi
+
+def make_obj(obs):
+    def obj(x):
+        w0,p0,w,lr,d = x
+        m = theta_model(t, w0, p0, w, np.exp(lr), d)
+        return np.sum(wrap(m-obs)**2)
+    return obj
+
+bounds = [(TPI/340, TPI/300), (0,TPI), (TPI/3000, TPI/60), (np.log(0.05), np.log(40.0)), (0,TPI)]
+for name, obs in [('alpha', au), ('beta', bu)]:
+    best=None
+    for seed in range(3):
+        sol = differential_evolution(make_obj(obs), bounds, maxiter=600, popsize=30, tol=1e-11, seed=seed, polish=True)
+        if best is None or sol.fun < best.fun: best = sol
+    w0,p0,w,lr,d = best.x
+    print("%s: cost=%.3f  T0=%.2f p0=%.3f | T=%.1f r=%.4f d=%.3f  RMS=%.3f deg" % (
+        name, best.fun, TPI/w0, p0, TPI/w, np.exp(lr), d, np.rad2deg(np.sqrt(best.fun/len(t)))))
+    np.save('/work/fit_%s.npy'%name, best.x)
+EOF
+python /work/fit2.py
 ```
 
 ## [20] tool
@@ -1120,7 +1191,53 @@ Excellent — now the structure is clear! The spectra show lines on a **frequenc
 **tool call: bash**
 
 ```
+cat > /work/fit3.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def design(t, w0, w1, K, M):
+    # columns: t, 1, then sin/cos for each lattice freq (k,m) excluding (0,0)
+    cols = [t, np.ones_like(t)]
+    combos = [(k,m) for k in range(-K,K+1) for m in range(-M,M+1) if not (k==0 and m==0)]
+    for k,m in combos:
+        nu = k*w0 + m*w1
+        cols.append(np.sin(nu*t)); cols.append(np.cos(nu*t))
+    return np.column_stack(cols), combos
+
+def profile_rss(obs, w0, w1, K, M, ridge=1e-8):
+    X, combos = design(t, w0, w1, K, M)
+    A = X.T@X + ridge*np.eye(X.shape[1])
+    c = np.linalg.solve(A, X.T@obs)
+    r = obs - X@c
+    return r@r, c, combos
+
+def fit_angle(obs, w0_init, w1_init, K, M):
+    def obj(p):
+        w0, w1 = p
+        rss,_,_ = profile_rss(obs, w0, w1, K, M)
+        return rss
+    best=None
+    for s1 in [1.0]:
+        for scale in [1.0]:
+            p0 = np.array([w0_init, w1_init])
+            sol = minimize(obj, p0, method='Nelder-Mead', options=dict(maxfev=4000, xatol=1e-12, fatol=1e-10))
+            if best is None or sol.fun<best.fun: best=sol
+    w0,w1 = best.x
+    rss,c,combos = profile_rss(obs,w0,w1,K,M)
+    return w0,w1,rss,c,combos
+
+# ALPHA: w0 ~ 2pi/323.69, wa: try w0 + 2pi/320.53 (T~161) and w0 - 2pi/320.53 (~0)
+w0g = TPI/323.69
+for wa_g, tag in [(w0g+TPI/320.53, 'wa>w0 (T~161)'), (abs(w0g-TPI/320.53), 'wa~0 (fixed target)')]:
+    w0,wa,rss,c,combos = fit_angle(au, w0g, wa_g, 3, 3)
+    print("ALPHA %s: w0 T=%.3f, wa T=%.3f, RSS=%.4f, RMS=%.4f deg" % (tag, TPI/w0, TPI/wa if wa>1e-6 else np.inf, rss, np.rad2deg(np.sqrt(rss/len(t)))))
+EOF
+python /work/fit3.py
 ```
 
 ## [26] tool
@@ -1158,7 +1275,54 @@ Both alpha interpretations reach the noise floor (~0.59°). Now let me fit beta 
 **tool call: bash**
 
 ```
+cat > /work/fit4.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def design(t, w0, w1, K, M):
+    cols = [t, np.ones_like(t)]
+    combos = [(k,m) for k in range(-K,K+1) for m in range(-M,M+1) if not (k==0 and m==0)]
+    for k,m in combos:
+        nu = k*w0 + m*w1
+        cols.append(np.sin(nu*t)); cols.append(np.cos(nu*t))
+    return np.column_stack(cols), combos
+
+def profile_rss(obs, w0, w1, K, M, ridge=1e-8):
+    X, combos = design(t, w0, w1, K, M)
+    A = X.T@X + ridge*np.eye(X.shape[1])
+    c = np.linalg.solve(A, X.T@obs)
+    r = obs - X@c
+    return r@r, c, combos
+
+def fit_angle(obs, w0_init, w1_init, K, M, fix_w0=None):
+    if fix_w0 is not None:
+        def obj(p):
+            rss,_,_ = profile_rss(obs, fix_w0, p[0], K, M); return rss
+        sol = minimize(obj, [w1_init], method='Nelder-Mead', options=dict(maxfev=4000, xatol=1e-13, fatol=1e-11))
+        w0, w1 = fix_w0, sol.x[0]; rss = sol.fun
+    else:
+        def obj(p):
+            rss,_,_ = profile_rss(obs, p[0], p[1], K, M); return rss
+        sol = minimize(obj, [w0_init, w1_init], method='Nelder-Mead', options=dict(maxfev=6000, xatol=1e-13, fatol=1e-11))
+        w0, w1 = sol.x; rss = sol.fun
+    rss,c,combos = profile_rss(obs,w0,w1,K,M)
+    return w0,w1,rss,c,combos
+
+wbg = TPI/1107.47
+# Beta fits with different w0 initializations / constraints
+for w0init, tag in [(TPI/320.5,'free init 320.5'), (TPI/317.94,'free init 317.94')]:
+    w0,wb,rss,c,combos = fit_angle(bu, w0init, wbg, 3, 3)
+    print("BETA %s: w0 T=%.3f, wb T=%.3f, RMS=%.4f deg" % (tag, TPI/w0, TPI/wb, np.rad2deg(np.sqrt(rss/len(t)))))
+for w0fix, tag in [(TPI/317.94,'w0 fixed 317.94'), (TPI/304.84,'w0 fixed 304.84'), (TPI/323.69,'w0 fixed 323.69')]:
+    w0,wb,rss,c,combos = fit_angle(bu, None, wbg, 3, 3, fix_w0=w0fix)
+    print("BETA %s: wb T=%.3f, RMS=%.4f deg" % (tag, TPI/wb, np.rad2deg(np.sqrt(rss/len(t)))))
+EOF
+python /work/fit4.py
 ```
 
 ## [28] tool
@@ -1210,7 +1374,69 @@ Beta strongly prefers w₀ period ≈ 323.8, but alpha's free fit chose 317.9. L
 **tool call: bash**
 
 ```
+cat > /work/fit5.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def design(t, w0, w1, K, M):
+    cols = [t, np.ones_like(t)]
+    combos = [(k,m) for k in range(-K,K+1) for m in range(-M,M+1) if not (k==0 and m==0)]
+    for k,m in combos:
+        nu = k*w0 + m*w1
+        cols.append(np.sin(nu*t)); cols.append(np.cos(nu*t))
+    return np.column_stack(cols), combos
+
+def profile_rss(obs, w0, w1, K, M, ridge=1e-8):
+    X, combos = design(t, w0, w1, K, M)
+    A = X.T@X + ridge*np.eye(X.shape[1])
+    c = np.linalg.solve(A, X.T@obs)
+    r = obs - X@c
+    return r@r, c, combos
+
+def report(tag, obs, w0, w1, K, M):
+    rss,c,combos = profile_rss(obs,w0,w1,K,M)
+    print("%s: w0 T=%.3f w1 T=%.3f trend=%.5f deg/d (T=%.2f) RMS=%.4f deg" % (
+        tag, TPI/w0, TPI/w1, np.rad2deg(c[0]), 360/np.rad2deg(c[0]), np.rad2deg(np.sqrt(rss/len(t)))))
+    return rss,c,combos
+
+# Alpha with w0 fixed at beta's preferred value
+w0b = TPI/323.86
+def fit1(obs, w0, w1i, K, M, free_w0=True):
+    if free_w0:
+        obj = lambda p: profile_rss(obs, p[0], p[1], K, M)[0]
+        sol = minimize(obj, [w0, w1i], method='Nelder-Mead', options=dict(maxfev=6000, xatol=1e-13, fatol=1e-11))
+        return sol.x[0], sol.x[1]
+    else:
+        obj = lambda p: profile_rss(obs, w0, p[0], K, M)[0]
+        sol = minimize(obj, [w1i], method='Nelder-Mead', options=dict(maxfev=6000, xatol=1e-13, fatol=1e-11))
+        return w0, sol.x[0]
+
+print("--- alpha, w0 FIXED to 323.86 ---")
+for wa_i, tg in [(TPI/161.0,'wa~161'), (TPI/317.9,'wa~317.9')]:
+    w0,wa = fit1(au, w0b, wa_i, 3, 3, free_w0=False)
+    report("alpha w0fixed "+tg, au, w0, wa, 3, 3)
+
+print("--- JOINT fit: shared w0 ---")
+def joint_obj(p):
+    w0, wa, wb = p
+    return profile_rss(au, w0, wa, 3, 3)[0] + profile_rss(bu, w0, wb, 3, 3)[0]
+for wa_i in [TPI/161.0, TPI/317.9]:
+    sol = minimize(joint_obj, [TPI/323.8, wa_i, TPI/1109.9], method='Nelder-Mead', options=dict(maxfev=12000, xatol=1e-13, fatol=1e-11))
+    w0,wa,wb = sol.x
+    print("joint init wa T=%.1f -> w0 T=%.4f wa T=%.4f wb T=%.4f" % (TPI/wa_i, TPI/w0, TPI/wa, TPI/wb))
+    report("  alpha part", au, w0, wa, 3, 3)
+    report("  beta part ", bu, w0, wb, 3, 3)
+
+print("--- beta alone, bigger lattice K=M=4 ---")
+w0,wb = fit1(bu, TPI/323.86, TPI/1109.9, 4, 4)
+report("beta K=M=4", bu, w0, wb, 4, 4)
+EOF
+python /work/fit5.py
 ```
 
 ## [30] tool
@@ -1238,7 +1464,51 @@ Timed out — let me split the work and speed up the design-matrix construction.
 **tool call: bash**
 
 ```
+cat > /work/fit6.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def make_design(K, M):
+    combos = [(k,m) for k in range(-K,K+1) for m in range(-M,M+1) if not (k==0 and m==0)]
+    kk = np.array([c[0] for c in combos]); mm = np.array([c[1] for c in combos])
+    return combos, kk, mm
+
+def profile_rss(obs, w0, w1, kk, mm, ridge=1e-8):
+    nu = kk*w0 + mm*w1
+    ph = np.outer(t, nu)
+    X = np.column_stack([t, np.ones_like(t), np.sin(ph), np.cos(ph)])
+    A = X.T@X + ridge*np.eye(X.shape[1])
+    c = np.linalg.solve(A, X.T@obs)
+    r = obs - X@c
+    return r@r, c
+
+combos, kk, mm = make_design(3,3)
+# alpha with w0 fixed to 2pi/323.86, 1D search over wa
+w0fix = TPI/323.86
+wgrid = TPI/np.linspace(150, 175, 400)
+rsss = []
+for wa in wgrid:
+    rss,_ = profile_rss(au, w0fix, wa, kk, mm); rsss.append(rss)
+rsss = np.array(rsss)
+i = np.argmin(rsss)
+wa_g = wgrid[i]
+sol = minimize(lambda p: profile_rss(au, w0fix, p[0], kk, mm)[0], [wa_g], method='Nelder-Mead', options=dict(maxfev=800, xatol=1e-14, fatol=1e-12))
+wa = sol.x[0]; rss,c = profile_rss(au, w0fix, wa, kk, mm)
+print("ALPHA w0 fixed 323.86: wa T=%.4f RMS=%.4f deg trend T=%.3f" % (TPI/wa, np.rad2deg(np.sqrt(rss/len(t))), 360/np.rad2deg(c[0])))
+# also check near wa ~ 318 region & wa~0 region
+for lo,hi,tg in [(300,340,'wa~318'),(3000,20000,'wa huge')]:
+    wg = TPI/np.linspace(lo,hi,300); rr=[profile_rss(au,w0fix,w,kk,mm)[0] for w in wg]
+    j=np.argmin(rr)
+    sol = minimize(lambda p: profile_rss(au, w0fix, p[0], kk, mm)[0], [wg[j]], method='Nelder-Mead', options=dict(maxfev=800, xatol=1e-14, fatol=1e-12))
+    wa=sol.x[0]; rss,c = profile_rss(au, w0fix, wa, kk, mm)
+    print("ALPHA w0 fixed 323.86 (%s): wa T=%.2f RMS=%.4f" % (tg, TPI/wa, np.rad2deg(np.sqrt(rss/len(t)))))
+EOF
+python /work/fit6.py
 ```
 
 ## [32] tool
@@ -1274,7 +1544,50 @@ Alpha fits at the noise floor (0.587°) with the shared vantage frequency w₀ =
 **tool call: bash**
 
 ```
+cat > /work/fit7.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def make_design(K, M):
+    combos = [(k,m) for k in range(-K,K+1) for m in range(-M,M+1) if not (k==0 and m==0)]
+    kk = np.array([c[0] for c in combos]); mm = np.array([c[1] for c in combos])
+    return combos, kk, mm
+
+def fit(obs, w0, w1, kk, mm, ridge=1e-8):
+    nu = kk*w0 + mm*w1
+    ph = np.outer(t, nu)
+    X = np.column_stack([t, np.ones_like(t), np.sin(ph), np.cos(ph)])
+    A = X.T@X + ridge*np.eye(X.shape[1])
+    c = np.linalg.solve(A, X.T@obs)
+    r = obs - X@c
+    return r, c
+
+def peaks(r, k=12):
+    n=len(r); R=np.abs(np.fft.rfft(r*np.hanning(n), n*8)); f=np.fft.rfftfreq(n*8,1.0)
+    pk=[]
+    for i in range(2,len(R)-2):
+        if R[i]>R[i-1] and R[i]>=R[i+1] and R[i]>R[i-2] and R[i]>=R[i+2]: pk.append((R[i],f[i]))
+    pk.sort(reverse=True)
+    return [(round(1/f,1),) for _,f in pk[:k]], pk[:k]
+
+w0 = TPI/323.86
+for K,M in [(3,3),(4,4),(5,5)]:
+    combos,kk,mm = make_design(K,M)
+    # refine wb
+    sol = minimize(lambda p: fit(bu,w0,p[0],kk,mm)[0]@fit(bu,w0,p[0],kk,mm)[0], [TPI/1109.9], method='Nelder-Mead', options=dict(maxfev=500, xatol=1e-14, fatol=1e-12))
+    wb = sol.x[0]
+    r,c = fit(bu,w0,wb,kk,mm)
+    rms = np.rad2deg(np.sqrt(r@r/len(t)))
+    print("K=M=%d: wb T=%.4f RMS=%.4f deg, n_coef=%d" % (K, TPI/wb, rms, len(c)))
+    if K==3:
+        pk,_ = peaks(r)
+        print("   K=3 residual top periods:", pk)
+EOF
+python /work/fit7.py
 ```
 
 ## [34] tool
@@ -1368,7 +1681,55 @@ Beta improves with more terms but the frequency estimate became unstable at K=M=
 **tool call: bash**
 
 ```
+cat > /work/quick_pred.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+df = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def make_design(K, M):
+    combos = [(k,m) for k in range(-K,K+1) for m in range(-M,M+1) if not (k==0 and m==0)]
+    kk = np.array([c[0] for c in combos]); mm = np.array([c[1] for c in combos])
+    return kk, mm
+
+def fit(obs, w0, w1, kk, mm, ridge=1e-8):
+    nu = kk*w0 + mm*w1
+    ph = np.outer(t, nu)
+    X = np.column_stack([t, np.ones_like(t), np.sin(ph), np.cos(ph)])
+    A = X.T@X + ridge*np.eye(X.shape[1])
+    c = np.linalg.solve(A, X.T@obs)
+    r = obs - X@c
+    return r, c
+
+def predict(tt, w0, w1, kk, mm, c):
+    nu = kk*w0 + mm*w1
+    ph = np.outer(tt, nu)
+    X = np.column_stack([tt, np.ones_like(tt), np.sin(ph), np.cos(ph)])
+    return X@c
+
+w0 = TPI/323.86
+kk, mm = make_design(4,4)
+sol = minimize(lambda p: fit(bu,w0,p[0],kk,mm)[0]@fit(bu,w0,p[0],kk,mm)[0], [TPI/1109.9], method='Nelder-Mead', options=dict(maxfev=400, xatol=1e-14, fatol=1e-12))
+wb = sol.x[0]
+r, c = fit(bu, w0, wb, kk, mm)
+rms = np.sqrt(r@r/len(t))
+print("wb T=%.4f  RMS=%.4f deg" % (TPI/wb, np.rad2deg(rms)))
+tt = te.t.values.astype(float)
+pred = predict(tt, w0, wb, kk, mm)  # unwrapped radians
+pred_deg = np.rad2deg(pred) % 360.0
+# interval: residual RMS already includes obs noise; use 1.96*rms (roughly)
+half = 1.96*np.rad2deg(rms)
+lo = (pred_deg - half) % 360.0
+hi = (pred_deg + half) % 360.0
+out = pd.DataFrame({'t': te.t.values, 'y_pred': pred_deg, 'y_lower': lo, 'y_upper': hi})
+out.to_csv('predictions.csv', index=False)
+print(out)
+print("half-width deg:", half)
+EOF
+python /work/quick_pred.py && cat predictions.csv
 ```
 
 ## [36] tool
@@ -1394,7 +1755,7 @@ wb T=1109.9491  RMS=0.6387 deg
 **tool call: bash**
 
 ```
-
+cd /work && sed -i 's/pred = predict(tt, w0, wb, kk, mm)/pred = predict(tt, w0, wb, kk, mm, c)/' quick_pred.py && python quick_pred.py && cp predictions.csv /workspace 2>/dev/null; ls -la predictions.csv; pwd
 ```
 
 ## [38] tool
@@ -1435,7 +1796,7 @@ ls: cannot access 'predictions.csv': No such file or directory
 **tool call: bash**
 
 ```
-
+find / -name train.csv -path '*data*' 2>/dev/null; echo "---"; ls ~ 2>/dev/null; echo "HOME=$HOME"; pwd
 ```
 
 ## [40] tool
@@ -1458,7 +1819,7 @@ HOME=/root
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i 's#/work/quick_pred.py#quick_pred.py#' /dev/null; python /work/quick_pred.py && echo "---" && cat predictions.csv
 ```
 
 ## [42] tool
@@ -1544,7 +1905,60 @@ A valid `predictions.csv` is now on disk. Now let me build the physical model �
 **tool call: bash**
 
 ```
+cat > /work/kep1.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+
+def bearing(params, t):
+    # params: n0,M00,e0,pom0, a1,n1,M10,e1,pom1
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = params
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    return np.arctan2(Y1-Y0, X1-X0)
+
+def wrap(x): return (x+np.pi)%TPI-np.pi
+
+def fit_angle(obs, n1_init, a1_init, e1_init, n0_init=TPI/323.86, ntry=40, seed=0):
+    rng = np.random.default_rng(seed)
+    best=None
+    for i in range(ntry):
+        x0 = [n0_init, rng.uniform(0,TPI), rng.uniform(0.02,0.25), rng.uniform(0,TPI),
+              a1_init*rng.uniform(0.8,1.25), n1_init*rng.uniform(0.98,1.02), rng.uniform(0,TPI),
+              e1_init*rng.uniform(0.5,1.5), rng.uniform(0,TPI)]
+        try:
+            sol = least_squares(lambda p: wrap(bearing(p,t)-obs), x0, max_nfev=3000)
+            if best is None or sol.cost < best.cost: best = sol
+        except Exception:
+            pass
+    return best
+
+# BETA alone
+solb = fit_angle(bu, TPI/1109.9, 2.275, 0.16, ntry=40, seed=1)
+print("BETA cost=%.4f RMS=%.4f deg" % (solb.cost, np.rad2deg(np.sqrt(2*solb.cost/len(t)))))
+n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = solb.x
+print("  vantage: T0=%.3f M00=%.3f e0=%.4f pom0=%.3f" % (TPI/n0, M00%TPI, e0, pom0%TPI))
+print("  target : a=%.4f T=%.3f M0=%.3f e=%.4f pom=%.3f" % (a1, TPI/n1, M10%TPI, e1, pom1%TPI))
+np.save('/work/kep_beta.npy', solb.x)
+EOF
+python /work/kep1.py
 ```
 
 ## [44] tool
@@ -1577,7 +1991,44 @@ Timed out. Let me time a single run and reduce the restart count.
 **tool call: bash**
 
 ```
+cat > /work/kep2.py << 'EOF'
+import pandas as pd, numpy as np, time
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(8):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+
+def bearing(params, t):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = params
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    return np.arctan2(Y1-Y0, X1-X0)
+
+def wrap(x): return (x+np.pi)%TPI-np.pi
+
+rng = np.random.default_rng(1)
+x0 = [TPI/323.86, rng.uniform(0,TPI), 0.1, rng.uniform(0,TPI),
+      2.275, TPI/1109.9, rng.uniform(0,TPI), 0.16, rng.uniform(0,TPI)]
+t0=time.time()
+sol = least_squares(lambda p: wrap(bearing(p,t)-bu), x0, max_nfev=1500)
+print("1 run: %.1fs cost=%.4f RMS=%.4f deg" % (time.time()-t0, sol.cost, np.rad2deg(np.sqrt(2*sol.cost/len(t)))))
+print(np.round(sol.x,4))
+EOF
+python /work/kep2.py
 ```
 
 ## [46] tool
@@ -1629,7 +2080,62 @@ A single run hits the noise floor (RMS 0.599°) — the Keplerian two-orbit mode
 **tool call: bash**
 
 ```
+cat > /work/kep3.py << 'EOF'
+import pandas as pd, numpy as np, time
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
 
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(10):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def bearing(params, t):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = params
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    return np.arctan2(Y1-Y0, X1-X0)
+def wrap(x): return (x+np.pi)%TPI-np.pi
+
+def fit_angle(obs, n1_init, a1_init, e1_init, ntry, seed):
+    rng = np.random.default_rng(seed)
+    best=None
+    for i in range(ntry):
+        x0 = [TPI/323.86*rng.uniform(0.99,1.01), rng.uniform(0,TPI), rng.uniform(0.02,0.3), rng.uniform(0,TPI),
+              a1_init*rng.uniform(0.85,1.2), n1_init*rng.uniform(0.985,1.015), rng.uniform(0,TPI),
+              e1_init*rng.uniform(0.3,2.0), rng.uniform(0,TPI)]
+        try:
+            sol = least_squares(lambda p: wrap(bearing(p,t)-obs), x0, max_nfev=1500)
+            if best is None or sol.cost < best.cost: best = sol
+        except Exception: pass
+    return best
+
+t0=time.time()
+sola = fit_angle(au, TPI/159.83, 0.625, 0.06, ntry=50, seed=2)
+solb = fit_angle(bu, TPI/1109.9, 2.275, 0.16, ntry=50, seed=3)
+print("fit time %.1fs" % (time.time()-t0))
+for tag, sol in [('ALPHA', sola), ('BETA', solb)]:
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = sol.x
+    # normalize e0 positive
+    if e0 < 0: e0=-e0; pom0+=np.pi; M00+=np.pi
+    if e1 < 0: e1=-e1; pom1+=np.pi; M10+=np.pi
+    print("%s cost=%.5f RMS=%.4f deg" % (tag, sol.cost, np.rad2deg(np.sqrt(2*sol.cost/len(t)))))
+    print("   vantage: T0=%.4f M00=%.4f e0=%.4f pom0=%.4f" % (TPI/n0, M00%TPI, e0, pom0%TPI))
+    print("   target : a=%.4f T=%.4f M0=%.4f e=%.4f pom=%.4f" % (a1, TPI/n1, M10%TPI, e1, pom1%TPI))
+    print("   KeplerIII check: a_from_n=%.4f vs fitted a=%.4f" % ((n0/n1)**(2/3), a1))
+    np.save('/work/kep_%s.npy'%tag.lower(), sol.x)
+EOF
+python /work/kep3.py
 ```
 
 ## [48] tool
@@ -1656,7 +2162,51 @@ A single run hits the noise floor (RMS 0.599°) — the Keplerian two-orbit mode
 **tool call: bash**
 
 ```
-
+cat > /work/kep4.py << 'EOF'
+import pandas as pd, numpy as np, time, sys
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(10):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def bearing(params, t):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = params
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    return np.arctan2(Y1-Y0, X1-X0)
+def wrap(x): return (x+np.pi)%TPI-np.pi
+def fit_angle(obs, n1_init, a1_init, e1_init, ntry, seed, tag):
+    rng = np.random.default_rng(seed)
+    best=None
+    for i in range(ntry):
+        t0=time.time()
+        x0 = [TPI/323.86*rng.uniform(0.99,1.01), rng.uniform(0,TPI), rng.uniform(0.02,0.3), rng.uniform(0,TPI),
+              a1_init*rng.uniform(0.85,1.2), n1_init*rng.uniform(0.985,1.015), rng.uniform(0,TPI),
+              e1_init*rng.uniform(0.3,2.0), rng.uniform(0,TPI)]
+        try:
+            sol = least_squares(lambda p: wrap(bearing(p,t)-obs), x0, max_nfev=500)
+            if best is None or sol.cost < best.cost: best = sol
+        except Exception as e: pass
+        print("  %s try %d: %.1fs cost=%.4f" % (tag, i, time.time()-t0, sol.cost if sol else -1)); sys.stdout.flush()
+    return best
+solb = fit_angle(bu, TPI/1109.9, 2.275, 0.16, ntry=10, seed=3, tag='B')
+n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = solb.x
+print("BETA best cost=%.5f RMS=%.4f" % (solb.cost, np.rad2deg(np.sqrt(2*solb.cost/len(t)))))
+np.save('/work/kep_beta.npy', solb.x)
+EOF
+timeout 100 python /work/kep4.py
 ```
 
 ## [50] tool
@@ -1692,7 +2242,50 @@ Very stable — 9/10 restarts hit the identical optimum (RMS 0.599°). Now alpha
 **tool call: bash**
 
 ```
-
+cat > /work/kep5.py << 'EOF'
+import pandas as pd, numpy as np, time, sys
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(10):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def bearing(params, t):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = params
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    return np.arctan2(Y1-Y0, X1-X0)
+def wrap(x): return (x+np.pi)%TPI-np.pi
+rng = np.random.default_rng(5)
+best=None
+for i in range(12):
+    x0 = [TPI/323.86*rng.uniform(0.99,1.01), rng.uniform(0,TPI), rng.uniform(0.02,0.3), rng.uniform(0,TPI),
+          0.625*rng.uniform(0.85,1.2), TPI/159.83*rng.uniform(0.985,1.015), rng.uniform(0,TPI),
+          0.08*rng.uniform(0.3,2.5), rng.uniform(0,TPI)]
+    try:
+        sol = least_squares(lambda p: wrap(bearing(p,t)-au), x0, max_nfev=500)
+        if best is None or sol.cost < best.cost: best = sol
+        print("try %d cost=%.4f" % (i, sol.cost)); sys.stdout.flush()
+    except Exception as e:
+        print("try %d failed" % i)
+n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = best.x
+print("ALPHA best cost=%.5f RMS=%.4f deg" % (best.cost, np.rad2deg(np.sqrt(2*best.cost/len(t)))))
+print("vantage: T0=%.4f M00=%.4f e0=%.4f pom0=%.4f" % (TPI/n0, M00%TPI, e0, pom0%TPI))
+print("target : a=%.4f T=%.4f M0=%.4f e=%.4f pom=%.4f" % (a1, TPI/n1, M10%TPI, e1, pom1%TPI))
+print("KeplerIII: a_from_n=%.4f vs fitted %.4f" % ((n0/n1)**(2/3), a1))
+np.save('/work/kep_alpha.npy', best.x)
+EOF
+timeout 110 python /work/kep5.py
 ```
 
 ## [52] tool
@@ -1791,7 +2384,50 @@ Alpha also hits the noise floor (0.591°), and its target's fitted orbit is esse
 **tool call: bash**
 
 ```
+cat > /work/kep6.py << 'EOF'
+import pandas as pd, numpy as np, sys
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
 
+# Joint model: vantage (n0,M00,e0,pom0); alpha target at center; beta target (a1,n1,M10,e1,pom1)
+def joint_resid(p):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = p
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    ra = wrap(np.arctan2(-Y0, -X0) - au)
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    rb = wrap(np.arctan2(Y1-Y0, X1-X0) - bu)
+    return np.concatenate([ra, rb])
+
+# init from separate fits (normalized): vantage e0=0.251, pom0=4.048, M00=0.340, T0=323.8
+x0 = [TPI/323.8, 0.340, 0.251, 4.048, 2.2727, TPI/1102.3, 2.2386, 0.0843, 0.255]
+sol = least_squares(joint_resid, x0, max_nfev=3000)
+r = joint_resid(sol.x)
+ra, rb = r[:len(t)], r[len(t):]
+print("JOINT cost=%.5f" % sol.cost)
+print("  alpha RMS=%.4f deg, beta RMS=%.4f deg" % (np.rad2deg(np.sqrt(np.mean(ra**2))), np.rad2deg(np.sqrt(np.mean(rb**2)))))
+n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = sol.x
+print("  vantage: T0=%.5f M00=%.5f e0=%.5f pom0=%.5f" % (TPI/n0, M00%TPI, e0, pom0%TPI))
+print("  beta tgt: a=%.5f T=%.5f M0=%.5f e=%.5f pom=%.5f" % (a1, TPI/n1, M10%TPI, e1, pom1%TPI))
+print("  KeplerIII: a_from_n=%.5f vs fitted %.5f" % ((n0/n1)**(2/3), a1))
+np.save('/work/kep_joint.npy', sol.x)
+EOF
+timeout 110 python /work/kep6.py
 ```
 
 ## [54] tool
@@ -1848,7 +2484,45 @@ The joint fit diverged — the separate fits found vantage conventions differing
 **tool call: bash**
 
 ```
+cat > /work/kep7.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
 
+xa = np.load('/work/kep_alpha.npy')  # vantage: n0=2pi/323.66,M00=0.3383,e0=0.2506,pom0=0.9099
+xb = np.load('/work/kep_beta.npy')   # raw: e0=-0.2513, pom0=7.1868, M00=3.4829
+Xa,Ya = pos(1.0, xa[2], xa[3], xa[0]*t + xa[1])
+Xb,Yb = pos(1.0, xb[2], xb[3], xb[0]*t + xb[1])
+print("corr Xa,Xb:", np.corrcoef(Xa,Xb)[0,1], " corr Ya,Yb:", np.corrcoef(Ya,Yb)[0,1])
+print("corr Xa,-Xb:", np.corrcoef(Xa,-Xb)[0,1])
+
+# alpha with target fixed at center:
+def res_acenter(p):
+    n0,M00,e0,pom0 = p
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    return wrap(np.arctan2(-Y0,-X0) - au)
+sol = least_squares(res_acenter, [xa[0], xa[1], xa[2], xa[3]], max_nfev=2000)
+print("ALPHA target@center: cost=%.5f RMS=%.4f deg" % (sol.cost, np.rad2deg(np.sqrt(2*sol.cost/len(t)))))
+print("  vantage:", np.round(sol.x,6), "T0=", TPI/sol.x[0])
+np.save('/work/vantage_alpha.npy', sol.x)
+EOF
+timeout 110 python /work/kep7.py
 ```
 
 ## [56] tool
@@ -1892,7 +2566,50 @@ Confirmed: the separate beta fit used vantage = −V (a degenerate mirror soluti
 **tool call: bash**
 
 ```
+cat > /work/kep8.py << 'EOF'
+import pandas as pd, numpy as np, sys
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
 
+vant = np.load('/work/vantage_alpha.npy')  # n0,M00,e0,pom0
+n0,M00,e0,pom0 = vant
+X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+def res_b(p):
+    a1,n1,M10,e1,pom1 = p
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    return wrap(np.arctan2(Y1-Y0, X1-X0) - bu)
+rng = np.random.default_rng(7)
+best=None
+for i in range(25):
+    x0 = [2.27*rng.uniform(0.8,1.3), TPI/1102.0*rng.uniform(0.97,1.03), rng.uniform(0,TPI),
+          rng.uniform(0.02,0.35), rng.uniform(0,TPI)]
+    try:
+        sol = least_squares(res_b, x0, max_nfev=1200)
+        if best is None or sol.cost < best.cost: best = sol
+        print("try %d cost=%.4f" % (i, sol.cost)); sys.stdout.flush()
+    except Exception: print("try %d fail" % i)
+a1,n1,M10,e1,pom1 = best.x
+print("BETA (vantage fixed): cost=%.5f RMS=%.4f deg" % (best.cost, np.rad2deg(np.sqrt(2*best.cost/len(t)))))
+print("  target: a=%.5f T=%.5f M0=%.5f e=%.5f pom=%.5f" % (a1, TPI/n1, M10%TPI, e1, pom1%TPI))
+print("  KeplerIII: a_from_n=%.5f" % ((n0/n1)**(2/3)))
+np.save('/work/beta_target.npy', best.x)
+EOF
+timeout 115 python /work/kep8.py
 ```
 
 ## [58] tool
@@ -1998,7 +2715,40 @@ All restarts diverge to a→∞ — with alpha's vantage V, no Keplerian beta ta
 **tool call: bash**
 
 ```
-
+cat > /work/kep9.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import differential_evolution
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
+vant = np.load('/work/vantage_alpha.npy')
+n0,M00,e0,pom0 = vant
+X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+def obj(p):
+    a1,n1,M10,e1,pom1 = p
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    r = wrap(np.arctan2(Y1-Y0, X1-X0) - bu)
+    return r@r
+bounds = [(1.05, 8.0), (TPI/1400, TPI/800), (0,TPI), (0.0,0.6), (0,TPI)]
+sol = differential_evolution(obj, bounds, maxiter=300, popsize=20, tol=1e-10, seed=1, polish=True)
+print("DE cost=%.5f RMS=%.4f deg" % (sol.fun, np.rad2deg(np.sqrt(sol.fun/len(t)))))
+a1,n1,M10,e1,pom1 = sol.x
+print("target: a=%.4f T=%.2f M0=%.3f e=%.4f pom=%.3f" % (a1, TPI/n1, M10%TPI, e1, pom1%TPI))
+EOF
+timeout 115 python /work/kep9.py
 ```
 
 ## [60] tool
@@ -2140,7 +2890,51 @@ This is a fascinating puzzle. Let me verify the exact relationship: alpha appear
 **tool call: bash**
 
 ```
+cat > /work/kep10.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
+def rmsd(r): return np.rad2deg(np.sqrt(np.mean(r**2)))
 
+xb = np.load('/work/kep_beta.npy')  # raw beta-only fit
+n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = xb
+X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)   # V_beta
+print("alpha vs angle(+V_beta): RMS=%.4f deg" % rmsd(wrap(np.arctan2(Y0,X0)-au)))
+print("alpha vs angle(-V_beta): RMS=%.4f deg" % rmsd(wrap(np.arctan2(-Y0,-X0)-au)))
+
+# Joint fit: V=(n0,M00,e0,pom0), alpha=angle(V), beta=angle(P_b - V)
+def joint_resid(p):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = p
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    ra = wrap(np.arctan2(Y0, X0) - au)
+    X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+    rb = wrap(np.arctan2(Y1-Y0, X1-X0) - bu)
+    return np.concatenate([ra, rb])
+sol = least_squares(joint_resid, xb, max_nfev=4000)
+r = joint_resid(sol.x)
+print("JOINT cost=%.5f  alpha RMS=%.4f  beta RMS=%.4f" % (sol.cost, rmsd(r[:len(t)]), rmsd(r[len(t):])))
+n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = sol.x
+print("vantage: T0=%.5f M00=%.5f e0=%.5f pom0=%.5f" % (TPI/n0, M00%TPI, e0, pom0%TPI))
+print("beta tgt: a=%.5f T=%.5f M0=%.5f e=%.5f pom=%.5f" % (a1, TPI/n1, M10%TPI, e1, pom1%TPI))
+np.save('/work/kep_joint.npy', sol.x)
+EOF
+timeout 115 python /work/kep10.py
 ```
 
 ## [62] tool
@@ -2205,7 +2999,50 @@ Let me examine residuals for leftover structure that could affect extrapolation.
 **tool call: bash**
 
 ```
-
+cat > /work/resid.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
+x = np.load('/work/kep_joint.npy')
+n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = x
+X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+X1,Y1 = pos(a1, e1, pom1, n1*t + M10)
+ra = wrap(np.arctan2(Y0,X0)-au)
+rb = wrap(np.arctan2(Y1-Y0,X1-X0)-bu)
+print("alpha resid RMS=%.4f deg, beta resid RMS=%.4f deg" % (np.rad2deg(ra.std()), np.rad2deg(rb.std())))
+# noise estimate from 2nd differences of residuals
+print("alpha noise via 2nd diff: %.4f" % (np.rad2deg(np.diff(ra,2).std())/np.sqrt(6)))
+print("beta noise via 2nd diff: %.4f" % (np.rad2deg(np.diff(rb,2).std())/np.sqrt(6)))
+def toplines(r, k=10):
+    n=len(r); R=np.abs(np.fft.rfft(r*np.hanning(n), n*8)); f=np.fft.rfftfreq(n*8,1.0)
+    pk=[]
+    for i in range(2,len(R)-2):
+        if R[i]>R[i-1] and R[i]>=R[i+1] and R[i]>R[i-2] and R[i]>=R[i+2]: pk.append((R[i],f[i]))
+    pk.sort(reverse=True)
+    return [(round(1/ff,1), round(np.rad2deg(mm)/n*2/0.375,3)) for mm,ff in pk[:k]]
+print("alpha resid top lines (period, amp_deg):", toplines(ra))
+print("beta resid top lines (period, amp_deg):", toplines(rb))
+# check autocorrelation of residuals (lag-1)
+print("alpha resid lag1 corr:", np.corrcoef(ra[:-1],ra[1:])[0,1])
+print("beta resid lag1 corr:", np.corrcoef(rb[:-1],rb[1:])[0,1])
+np.save('/work/resid_a.npy', ra); np.save('/work/resid_b.npy', rb)
+EOF
+timeout 115 python /work/resid.py
 ```
 
 ## [64] tool
@@ -2277,7 +3114,86 @@ Residuals are pure white noise (no spectral lines, no autocorrelation) — the m
 **tool call: bash**
 
 ```
+cat > /work/final.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
 
+def beta_model(p, tt):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = p
+    X0,Y0 = pos(1.0, e0, pom0, n0*tt + M00)
+    X1,Y1 = pos(a1, e1, pom1, n1*tt + M10)
+    return np.arctan2(Y1-Y0, X1-X0)
+def joint_resid(p):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = p
+    X0,Y0 = pos(1.0, e0, pom0, n0*t + M00)
+    ra = wrap(np.arctan2(Y0, X0) - au)
+    rb = wrap(beta_model(p, t) - bu)
+    return np.concatenate([ra, rb])
+
+x0 = np.load('/work/kep_joint.npy')
+sol = least_squares(joint_resid, x0, max_nfev=6000)
+print("polished cost=%.6f (was 0.32938)" % sol.cost)
+p = sol.x
+n = len(t)
+ra = joint_resid(p)[:n]; rb = joint_resid(p)[n:]
+sa = ra.std(); sb_ = rb.std()
+print("sigma_a=%.5f deg, sigma_b=%.5f deg" % (np.rad2deg(sa), np.rad2deg(sb_)))
+
+# Jacobian at solution (numerical, 9 params)
+eps = 1e-7
+J = np.zeros((2*n, 9))
+for j in range(9):
+    dp = np.zeros(9); dp[j] = eps*max(1.0, abs(p[j]))
+    J[:,j] = (joint_resid(p+dp) - joint_resid(p-dp))/(2*dp[j])
+# weights
+W = np.concatenate([np.full(n, 1/sa**2), np.full(n, 1/sb_**2)])
+A = J.T @ (J*W[:,None])
+Cov = np.linalg.inv(A)
+print("param sigma: n0=%.3e (T0 sigma=%.5f d), n1=%.3e (T1 sigma=%.5f d)" % (
+    np.sqrt(Cov[0,0]), TPI/p[0]**2*np.sqrt(Cov[0,0]),
+    np.sqrt(Cov[5,5]), TPI/p[5]**2*np.sqrt(Cov[5,5])))
+
+# predictions
+tt = te.t.values.astype(float)
+pred = beta_model(p, tt)  # radians, near data branch
+# prediction jacobian
+G = np.zeros((len(tt), 9))
+for j in range(9):
+    dp = np.zeros(9); dp[j] = eps*max(1.0, abs(p[j]))
+    G[:,j] = (beta_model(p+dp, tt) - beta_model(p-dp, tt))/(2*dp[j])
+var_model = np.einsum('ij,jk,ik->i', G, Cov, G)
+sig_pred = np.sqrt(sb_**2 + var_model)
+print("model-only sigma at test times (deg):", np.round(np.rad2deg(np.sqrt(var_model)),4))
+print("total pred sigma (deg):", np.round(np.rad2deg(sig_pred),4))
+pred_deg = np.rad2deg(pred) % 360.0
+half = 1.959964*np.rad2deg(sig_pred)
+lo = (pred_deg - half) % 360.0
+hi = (pred_deg + half) % 360.0
+out = pd.DataFrame({'t': te.t.values, 'y_pred': pred_deg, 'y_lower': lo, 'y_upper': hi})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+np.save('/work/p_final.npy', p)
+np.save('/work/pred_kep.npy', pred_deg)
+EOF
+timeout 115 python /work/final.py
 ```
 
 ## [66] tool
@@ -2342,7 +3258,64 @@ Keplerian predictions have tiny model uncertainty (0.02–0.07°) — total sigm
 **tool call: bash**
 
 ```
+cat > /work/hindcast.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
 
+def fit_joint(ttr, autr, butr, p_init):
+    def resid(p):
+        n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = p
+        X0,Y0 = pos(1.0, e0, pom0, n0*ttr + M00)
+        ra = wrap(np.arctan2(Y0, X0) - autr)
+        X1,Y1 = pos(a1, e1, pom1, n1*ttr + M10)
+        rb = wrap(np.arctan2(Y1-Y0, X1-X0) - butr)
+        return np.concatenate([ra, rb])
+    sol = least_squares(resid, p_init, max_nfev=4000)
+    return sol.x, sol.cost
+
+def beta_pred(p, tt):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = p
+    X0,Y0 = pos(1.0, e0, pom0, n0*tt + M00)
+    X1,Y1 = pos(a1, e1, pom1, n1*tt + M10)
+    return np.arctan2(Y1-Y0, X1-X0)
+
+p_full = np.load('/work/p_final.npy')
+rng = np.random.default_rng(0)
+for cutoff in [2500, 1380]:
+    m = t <= cutoff
+    best=None
+    for trial in range(6):
+        dp = p_full.copy()
+        # perturb phases/elements for a fair-ish start
+        dp = dp + rng.normal(0, [2e-5,0.5,0.05,0.5, 0.3,2e-5,0.5,0.03,0.5])
+        try:
+            p, cost = fit_joint(t[m], au[m], bu[m], dp)
+            if best is None or cost < best[1]: best = (p, cost)
+        except Exception as e: pass
+    p, cost = best
+    pr = beta_pred(p, t[~m])
+    err = np.rad2deg(np.abs(wrap(pr - bu[~m])))
+    print("cutoff=%d: fit cost=%.4f, held-out %d pts, extrap %d..%d d ahead" % (cutoff, cost, m.sum()*0+(~m).sum(), t[~m].min()-cutoff, t[~m].max()-cutoff))
+    print("   abs err deg: mean=%.3f median=%.3f p90=%.3f max=%.3f" % (err.mean(), np.median(err), np.percentile(err,90), err.max()))
+EOF
+timeout 115 python /work/hindcast.py
 ```
 
 ## [68] tool
@@ -2388,7 +3361,72 @@ Hindcast validation is excellent — extrapolating 1664 days ahead (matching max
 **tool call: bash**
 
 ```
+cat > /work/validate.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def kep_E(M, e):
+    M = M % TPI
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def pos(a, e, pomega, M):
+    E = kep_E(M, e)
+    x = a*(np.cos(E) - e); y = a*np.sqrt(1-e**2)*np.sin(E)
+    co, si = np.cos(pomega), np.sin(pomega)
+    return co*x - si*y, si*x + co*y
+def wrap(x): return (x+np.pi)%TPI-np.pi
+def beta_pred(p, tt):
+    n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = p
+    X0,Y0 = pos(1.0, e0, pom0, n0*tt + M00)
+    X1,Y1 = pos(a1, e1, pom1, n1*tt + M10)
+    return np.arctan2(Y1-Y0, X1-X0)
+def fit_joint(ttr, autr, butr, p_init):
+    def resid(p):
+        n0,M00,e0,pom0,a1,n1,M10,e1,pom1 = p
+        X0,Y0 = pos(1.0, e0, pom0, n0*ttr + M00)
+        ra = wrap(np.arctan2(Y0, X0) - autr)
+        rb = wrap(beta_pred(p, ttr) - butr)
+        return np.concatenate([ra, rb])
+    sol = least_squares(resid, p_init, max_nfev=4000)
+    return sol.x, resid(sol.x)
 
+p_full = np.load('/work/p_final.npy')
+# coverage check at cutoff 1380
+m = t <= 1380
+p, r = fit_joint(t[m], au[m], bu[m], p_full)
+sb = r[len(r)//2:].std()
+pr = beta_pred(p, t[~m])
+err = wrap(pr - bu[~m])
+half = 1.959964*np.rad2deg(sb)
+cov = np.mean(np.abs(np.rad2deg(err)) <= half)
+print("cutoff=1380: sigma_b=%.4f, half-width=%.3f, coverage=%.4f (n=%d)" % (np.rad2deg(sb), half, cov, (~m).sum()))
+
+# LATTICE cross-check with Keplerian frequencies
+n0, n1 = p_full[0], p_full[5]
+combos = [(k,mm) for k in range(-4,5) for mm in range(-4,5) if not (k==0 and mm==0)]
+kk = np.array([c[0] for c in combos]); mmv = np.array([c[1] for c in combos])
+nu = kk*n0 + mmv*n1
+ph = np.outer(t, nu)
+X = np.column_stack([t, np.ones_like(t), np.sin(ph), np.cos(ph)])
+c, *_ = np.linalg.lstsq(X, bu, rcond=None)
+rlat = bu - X@c
+print("lattice (K=M=4, kep freqs) RMS=%.4f deg" % np.rad2deg(rlat.std()))
+te = pd.read_csv('data/test.csv')
+tt = te.t.values.astype(float)
+pht = np.outer(tt, nu)
+Xt = np.column_stack([tt, np.ones_like(tt), np.sin(pht), np.cos(pht)])
+pred_lat = np.rad2deg(Xt@c) % 360.0
+pred_kep = np.load('/work/pred_kep.npy')
+diff = np.rad2deg(wrap(np.deg2rad(pred_lat) - np.deg2rad(pred_kep)))
+print("lattice vs kepler test preds diff (deg):", np.round(diff, 3))
+EOF
+timeout 115 python /work/validate.py
 ```
 
 ## [70] tool
@@ -2431,7 +3469,31 @@ Coverage is 94.9% — the intervals are well-calibrated. The lattice model diffe
 **tool call: bash**
 
 ```
-
+cat > /work/latconv.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+TPI = 2*np.pi
+def wrap(x): return (x+np.pi)%TPI-np.pi
+p_full = np.load('/work/p_final.npy')
+n0, n1 = p_full[0], p_full[5]
+pred_kep = np.load('/work/pred_kep.npy')
+tt = te.t.values.astype(float)
+for K in [3,4,5,6,7]:
+    combos = [(k,m) for k in range(-K,K+1) for m in range(-K,K+1) if not (k==0 and m==0)]
+    kk = np.array([c[0] for c in combos]); mm = np.array([c[1] for c in combos])
+    nu = kk*n0 + mm*n1
+    X = np.column_stack([t, np.ones_like(t), np.sin(np.outer(t,nu)), np.cos(np.outer(t,nu))])
+    c, *_ = np.linalg.lstsq(X, bu, rcond=None)
+    r = bu - X@c
+    Xt = np.column_stack([tt, np.ones_like(tt), np.sin(np.outer(tt,nu)), np.cos(np.outer(tt,nu))])
+    pl = np.rad2deg(Xt@c) % 360.0
+    d = np.rad2deg(wrap(np.deg2rad(pl)-np.deg2rad(pred_kep)))
+    print("K=%d: lattice RMS=%.4f, max|diff vs kep|=%.3f deg, diffs=%s" % (K, np.rad2deg(r.std()), np.abs(d).max(), np.round(d,2)))
+EOF
+timeout 115 python /work/latconv.py
 ```
 
 ## [72] tool
@@ -2485,7 +3547,17 @@ The lattice model **explodes** on extrapolation at K≥5 (100–180° errors des
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && cat > /work/norm.py << 'EOF'
+import numpy as np
+from scipy import stats
+ra = np.load('/work/resid_a.npy'); rb = np.load('/work/resid_b.npy')
+ra = np.rad2deg(ra); rb = np.rad2deg(rb)
+for tag, r in [('alpha', ra), ('beta', rb)]:
+    z = r/r.std()
+    print("%s: std=%.4f skew=%.3f kurtosis=%.3f  P(|z|>1.96)=%.4f (normal:0.05)  P(|z|>2.58)=%.4f (normal:0.01)" % (
+        tag, r.std(), stats.skew(r), stats.kurtosis(r), np.mean(np.abs(z)>1.96), np.mean(np.abs(z)>2.58)))
+EOF
+python /work/norm.py
 ```
 
 ## [74] tool
@@ -2556,7 +3628,23 @@ Residuals are perfectly Gaussian (skew≈0, kurtosis≈0, exact normal tail rate
 **tool call: bash**
 
 ```
-
+cat > /work/check_final.py << 'EOF'
+import pandas as pd, numpy as np
+te = pd.read_csv('data/test.csv')
+pr = pd.read_csv('predictions.csv')
+print("columns:", list(pr.columns))
+print("rows:", len(pr), "test rows:", len(te))
+print("t matches exactly:", (pr.t.values == te.t.values).all())
+print("NaNs:", pr.isna().any().any())
+print("all angles in [0,360):", ((pr[['y_pred','y_lower','y_upper']]>=0)&(pr[['y_pred','y_lower','y_upper']]<360)).all().all())
+print("half-widths:", np.round((pr.y_upper-pr.y_lower).values/2, 3))
+# sanity: point estimate inside interval (circular)
+def wrap(x): return (x+180)%360-180
+inside = np.abs(wrap(pr.y_pred-pr.y_lower)) <= np.abs(wrap(pr.y_upper-pr.y_lower))+1e-9
+print("pred within interval:", inside.all())
+print(pr.to_string(index=False))
+EOF
+python /work/check_final.py
 ```
 
 ## [76] tool

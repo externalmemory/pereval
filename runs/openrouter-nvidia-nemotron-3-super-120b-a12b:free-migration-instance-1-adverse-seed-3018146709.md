@@ -133,7 +133,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -159,7 +159,7 @@ drwxr-xr-x 1 root root 4096 Oct 19 14:52 ..
 **tool call: bash**
 
 ```
-
+head -20 data/transitions.csv
 ```
 
 ## [5] tool
@@ -199,7 +199,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+head -20 data/macro_history.csv
 ```
 
 ## [7] tool
@@ -237,7 +237,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+head -20 data/scenario.csv
 ```
 
 ## [9] tool
@@ -295,7 +295,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/transitions.csv | sort -u | wc -l
 ```
 
 ## [11] tool
@@ -334,7 +334,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+wc -l data/macro_history.csv
 ```
 
 ## [13] tool
@@ -353,7 +353,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/transitions.csv | sort -n | head -5
 ```
 
 ## [15] tool
@@ -376,7 +376,7 @@ year
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/transitions.csv | tail -n +2 | sort -u | head -30
 ```
 
 ## [17] tool
@@ -2809,7 +2809,7 @@ Matrices.csv head:
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [35] tool
@@ -2830,7 +2830,7 @@ Matrices.csv head:
 **tool call: bash**
 
 ```
-
+wc -l matrices.csv
 ```
 
 ## [37] tool
@@ -2851,7 +2851,7 @@ Matrices.csv head:
 **tool call: bash**
 
 ```
-
+wc -l backtest.csv
 ```
 
 ## [39] tool
@@ -2871,7 +2871,7 @@ wc: backtest.csv: No such file or directory
 **tool call: bash**
 
 ```
-
+ls -l *.csv
 ```
 
 ## [41] tool
@@ -2906,7 +2906,7 @@ wc: backtest.csv: No such file or directory
 **tool call: bash**
 
 ```
-
+ls -la
 ```
 
 ## [43] tool
@@ -2936,7 +2936,7 @@ drwxr-xr-x 2 root root  4096 Oct 19 14:52 data
 **tool call: bash**
 
 ```
-
+find . -name "*backtest*" -type f
 ```
 
 ## [45] tool
@@ -3633,7 +3633,7 @@ Backtest head:
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [53] tool
@@ -3654,7 +3654,7 @@ Backtest head:
 **tool call: bash**
 
 ```
-
+wc -l matrices.csv
 ```
 
 ## [55] tool
@@ -3675,7 +3675,7 @@ Backtest head:
 **tool call: bash**
 
 ```
-
+wc -l backtest.csv
 ```
 
 ## [57] tool
@@ -3696,7 +3696,7 @@ Backtest head:
 **tool call: bash**
 
 ```
-
+head -20 predictions.csv
 ```
 
 ## [59] tool
@@ -3763,7 +3763,7 @@ Name: share, dtype: float64
 **tool call: bash**
 
 ```
-
+head -1 matrices.csv
 ```
 
 ## [63] tool
@@ -3792,7 +3792,8 @@ quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+echo 'Files ready:'
+ls -l predictions.csv matrices.csv backtest.csv
 ```
 
 ## [65] tool
@@ -3816,7 +3817,7 @@ Files ready:
 **tool call: bash**
 
 ```
-
+echo 'Task completed. Files predictions.csv, matrices.csv, backtest.csv are ready.'
 ```
 
 ## [67] tool

@@ -7,14 +7,15 @@ Standing convention in this repo: every model run leaves a readable transcript
 on disk, not just a score. Reasoning content is included when the provider
 surfaces it (OpenRouter does; Zen's openai-api provider does not).
 
-Transcripts are never overwritten. Model, task, instance and seed do not identify a
-RUN, only a cell, so re-running any cell used to silently destroy the archived record
-of the previous attempt. That is exactly backwards for a repository whose tables are
+Transcripts are never overwritten. Model, task, instance, seed and epoch do not
+identify a RUN, only a cell, so re-running any cell used to silently destroy the
+archived record of the previous attempt. That is exactly backwards for a repository whose tables are
 audited from these files: it deletes evidence at the moment a result is being revised.
 On collision the new transcript takes a `-<YYYY-MM-DD>` suffix, and a further `-<logid>`
 if that also exists, so archived runs keep their bare names and later generations sit
 beside them. Re-saving the same log twice is a no-op.
 """
+import json
 import os
 import re
 import sys
@@ -40,6 +41,23 @@ def _text(content):
     return "\n\n".join(out)
 
 
+#: Argument names that hold the body of a tool call. `command` is what Inspect's
+#: own bash() and python() tools use, and leaving it out silently archived 259 of
+#: 281 calls in one migration run as an empty block: a transcript of the agent's
+#: reasoning with the work removed. Anything unrecognised is dumped whole rather
+#: than dropped, so a tool signature this list has not met costs noise, not
+#: evidence.
+BODY_KEYS = ("command", "code", "cmd", "answer", "input", "text")
+
+
+def _call_text(args: dict) -> str:
+    """The body of a tool call, whatever the tool chose to name its argument."""
+    for key in BODY_KEYS:
+        if isinstance(args.get(key), str) and args[key].strip():
+            return args[key]
+    return "" if not args else json.dumps(args, indent=2, default=str)
+
+
 def render(log, sample) -> str:
     scores = sample.scores or {}
     sc = scores.get(log.eval.task) or (next(iter(scores.values())) if scores else None)
@@ -59,8 +77,7 @@ def render(log, sample) -> str:
             body.append(t)
             body.append("")
         for tc in (getattr(m, "tool_calls", None) or []):
-            args = tc.arguments or {}
-            code = args.get("code") or args.get("cmd") or args.get("answer") or ""
+            code = _call_text(tc.arguments or {})
             body.append(f"**tool call: {tc.function}**")
             body.append("")
             body.append("```")
@@ -105,6 +122,14 @@ def main(paths):
             seed = (s.metadata or {}).get("seed")
             if seed is not None and f"seed-{seed}" not in name:
                 name = f"{name}-seed-{seed}"
+            # With -T repeats=N the same instance is drawn N times in one log, so the
+            # model, task, instance and seed no longer name a SAMPLE. Without the epoch
+            # the repeats collide with each other and get handed the collision suffixes
+            # meant for separate runs, which reads as three runs on three dates when it
+            # is one run drawn three times, and the Nth repeat past the third has no
+            # name left at all. Single-draw logs keep their bare names.
+            if (log.eval.config.epochs or 1) > 1:
+                name = f"{name}-epoch{s.epoch}"
             out = _free_path(os.path.join(RUNS, f"{slug}-{name}.md"), render(log, s), p)
             if out is None:
                 continue

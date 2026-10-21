@@ -52,7 +52,7 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd data && head -50 train.csv && echo "---" && wc -l train.csv test.csv && echo "---" && head -10 test.csv
 ```
 
 ## [3] tool
@@ -2731,7 +2731,7 @@ dtype: object
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && wc -l predictions.csv
 ```
 
 ## [65] tool

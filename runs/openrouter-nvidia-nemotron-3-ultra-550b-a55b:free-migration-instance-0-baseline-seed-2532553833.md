@@ -2638,7 +2638,7 @@ backtest.csv written: 20 rows
 **tool call: bash**
 
 ```
-
+ls -la *.csv
 ```
 
 ## [27] tool

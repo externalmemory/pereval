@@ -52,7 +52,7 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -111,7 +111,7 @@ t
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv && cat data/test.csv
 ```
 
 **tool call: python**
@@ -727,7 +727,113 @@ Backtest is essentially perfect: 318-day extrapolation achieves exactly 95% cove
 **tool call: bash**
 
 ```
+cat > predict.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+# ---------------- Load ----------------
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(train.alpha.values)))  # unwrapped angle (deg)
+
+NHARM = 4
+
+def design(tt, P, nharm=NHARM):
+    tt = np.asarray(tt, dtype=float)
+    cols = [tt, np.ones_like(tt)]
+    for k in range(1, nharm + 1):
+        cols.append(np.sin(2*np.pi*k*tt/P))
+        cols.append(np.cos(2*np.pi*k*tt/P))
+    return np.vstack(cols).T
+
+# ---------------- Estimate period (fine grid, joint LS) ----------------
+grid = np.linspace(322.0, 325.5, 7001)
+bestP, bestrss = None, np.inf
+for P in grid:
+    X = design(t, P)
+    c, *_ = np.linalg.lstsq(X, au, rcond=None)
+    rss = float(np.sum((au - X @ c)**2))
+    if rss < bestrss:
+        bestrss, bestP = rss, P
+# polish with a tighter local grid
+for P in np.linspace(bestP - 0.01, bestP + 0.01, 2001):
+    X = design(t, P)
+    c, *_ = np.linalg.lstsq(X, au, rcond=None)
+    rss = float(np.sum((au - X @ c)**2))
+    if rss < bestrss:
+        bestrss, bestP = rss, P
+P = bestP
+
+# ---------------- Final OLS fit ----------------
+X = design(t, P)
+n, p = X.shape
+coef, *_ = np.linalg.lstsq(X, au, rcond=None)
+resid = au - X @ coef
+sigma2 = float(np.sum(resid**2)) / (n - p)          # observation-noise variance
+XtX_inv = np.linalg.inv(X.T @ X)
+
+# Period uncertainty from RSS profile curvature (1-param approx)
+dP = 1e-3
+rss_here = np.sum(resid**2)
+X1 = design(t, P + dP); c1, *_ = np.linalg.lstsq(X1, au, rcond=None)
+rss1 = np.sum((au - X1 @ c1)**2)
+X2 = design(t, P - dP); c2, *_ = np.linalg.lstsq(X2, au, rcond=None)
+rss2 = np.sum((au - X2 @ c2)**2)
+curv = (rss1 + rss2 - 2 * rss_here) / dP**2          # d2RSS/dP2
+var_P = 2 * sigma2 / curv                            # from RSS ~ RSS0 + 0.5*curv*(P-P0)^2, chi2_1=1 at 1-sigma
+
+# ---------------- Predict at test t ----------------
+tt = test.t.values.astype(float)
+Xe = design(tt, P)
+pred = Xe @ coef
+leverage = np.einsum('ij,jk,ik->i', Xe, XtX_inv, Xe)
+var_mean = sigma2 * leverage                          # parameter uncertainty on mean
+# period-uncertainty propagation via numeric derivative
+eps = 0.05
+dpred_dP = (design(tt, P + eps) @ coef - design(tt, P - eps) @ coef) / (2 * eps)
+# recompute derivative more consistently: coefficients also change with P; use total derivative
+def pred_at_P(Pv):
+    Xv = design(t, Pv)
+    cv, *_ = np.linalg.lstsq(Xv, au, rcond=None)
+    return design(tt, Pv) @ cv
+dpred_dP = (pred_at_P(P + eps) - pred_at_P(P - eps)) / (2 * eps)
+var_period = (dpred_dP**2) * var_P
+
+var_tot = sigma2 + var_mean + var_period             # new noisy measurement
+std_tot = np.sqrt(var_tot)
+
+z = 1.959963985  # 95%
+lower_u = pred - z * std_tot
+upper_u = pred + z * std_tot
+
+# wrap to [0, 360)
+def wrap(x):
+    return np.mod(x, 360.0)
+
+y_pred = wrap(pred)
+y_lower = wrap(lower_u)
+y_upper = wrap(upper_u)
+
+# If a wrapped interval straddles 0/360 (lower > upper), re-express it centred on
+# y_pred so that lower <= upper numerically while remaining circularly correct:
+# put endpoints on the unwrapped scale anchored at y_pred.
+for i in range(len(tt)):
+    if y_lower[i] > y_upper[i]:
+        lo = y_pred[i] - z * std_tot[i]
+        hi = y_pred[i] + z * std_tot[i]
+        # endpoints may fall slightly outside [0,360); that is intentional (wrap-aware interval)
+        y_lower[i], y_upper[i] = lo, hi
+
+out = pd.DataFrame({'t': test.t.values, 'y_pred': y_pred, 'y_lower': y_lower, 'y_upper': y_upper})
+out.to_csv('predictions.csv', index=False)
+
+print(f"period = {P:.4f} d, var_P = {var_P:.2e}, sigma_noise = {np.sqrt(sigma2):.4f} deg")
+print(f"slope = {coef[0]:.6f} deg/day, resid std = {resid.std():.4f}")
+print(out.to_string(index=False))
+print("pred std (total):", np.round(std_tot, 4))
+EOF
+python predict.py
 ```
 
 ## [20] tool
@@ -837,7 +943,15 @@ The model is very well calibrated: residuals are Gaussian, and backtests at four
 **tool call: bash**
 
 ```
-
+cat predictions.csv && python -c "
+import pandas as pd, numpy as np
+p = pd.read_csv('predictions.csv'); te = pd.read_csv('data/test.csv')
+assert list(p.columns)==['t','y_pred','y_lower','y_upper'], p.columns
+assert len(p)==len(te) and (p.t.values==te.t.values).all()
+assert (p.y_lower<=p.y_pred).all() and (p.y_pred<=p.y_upper).all()
+assert p[['y_pred','y_lower','y_upper']].notna().all().all()
+print('OK:', len(p), 'rows; all angles within:', p[['y_pred','y_lower','y_upper']].min().min(), p[['y_pred','y_lower','y_upper']].max().max())
+"
 ```
 
 ## [24] tool

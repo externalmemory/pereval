@@ -55,19 +55,19 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+cat data/train.csv | head -20
 ```
 
 **tool call: bash**
 
 ```
-
+cat data/test.csv | head -20
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -129,13 +129,13 @@ t
 **tool call: bash**
 
 ```
-
+cat data/test.csv
 ```
 
 **tool call: bash**
 
 ```
-
+cat data/train.csv | tail -10
 ```
 
 ## [7] tool
@@ -178,7 +178,43 @@ t
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+print("Train shape:", train.shape)
+print("Test shape:", test.shape)
+print("\nTrain t range:", train['t'].min(), "-", train['t'].max())
+print("Test t range:", test['t'].min(), "-", test['t'].max())
+
+print("\nAlpha stats:")
+print(train['alpha'].describe())
+print("\nBeta stats:")
+print(train['beta'].describe())
+
+# Check if alpha and beta have a clear relationship
+# Wrap angles
+alpha_rad = np.radians(train['alpha'].values)
+beta_rad = np.radians(train['beta'].values)
+
+# Check for periodicity
+print("\nAlpha first 50:")
+print(train['alpha'].head(50).values)
+print("\nBeta first 50:")
+print(train['beta'].head(50).values)
+
+# Check difference between alpha and beta
+diff = train['beta'].values - train['alpha'].values
+print("\nAlpha - Beta first 50:", diff[:50])
+print("Alpha - Beta stats:", pd.Series(diff).describe())
+
+# Check for wrapping
+diff_wrapped = np.arctan2(np.sin(np.radians(diff)), np.cos(np.radians(diff)))
+print("\nWrapped diff stats:", pd.Series(np.degrees(diff_wrapped)).describe())
+EOF
 ```
 
 ## [10] tool
@@ -269,7 +305,78 @@ dtype: float64
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+# Look at alpha and beta at different parts of the series
+# Check if alpha and beta are rotating at different speeds
+# Alpha wraps around 360
+
+# Calculate cumulative alpha (unwrapped)
+alpha_unwrapped = np.unwrap(np.radians(train['alpha'].values))
+beta_unwrapped = np.unwrap(np.radians(train['beta'].values))
+
+print("Alpha unwrapped range:", np.degrees(alpha_unwrapped[0]), "-", np.degrees(alpha_unwrapped[-1]))
+print("Beta unwrapped range:", np.degrees(beta_unwrapped[0]), "-", np.degrees(beta_unwrapped[-1]))
+
+# Rate of change
+dt = train['t'].diff().values[1:]
+dalpha = np.diff(alpha_unwrapped) / dt
+dbeta = np.diff(beta_unwrapped) / dt
+
+print("\nAlpha rate (rad/day):", pd.Series(dalpha).describe())
+print("\nBeta rate (rad/day):", pd.Series(dbeta).describe())
+
+# Try to fit linear model to unwrapped angles
+# Use first half to calibrate
+n = len(train)
+half = n // 2
+
+from numpy.polynomial import polynomial as P
+t = train['t'].values
+
+# Fit alpha as function of t (with periodic terms)
+# Let's see if alpha(t) is roughly linear with some oscillation
+alpha_lin = np.polyfit(t, alpha_unwrapped, 1)
+beta_lin = np.polyfit(t, beta_unwrapped, 1)
+
+print("\nAlpha linear fit:", alpha_lin)
+print("Beta linear fit:", beta_lin)
+
+# So alpha rotates at ~alpha_lin[0] rad/day, beta at beta_lin[0] rad/day
+# Both start at some phase
+
+# Look at residuals from linear fit
+alpha_resid = alpha_unwrapped - np.polyval(alpha_lin, t)
+beta_resid = beta_unwrapped - np.polyval(beta_lin, t)
+
+print("\nAlpha residual range (degrees):", np.degrees(alpha_resid.min()), "-", np.degrees(alpha_resid.max()))
+print("Beta residual range (degrees):", np.degrees(beta_resid.min()), "-", np.degrees(beta_resid.max()))
+
+# Correlation between alpha residual and beta residual
+corr = np.corrcoef(alpha_resid, beta_resid)[0, 1]
+print("\nCorrelation of residuals:", corr)
+
+# Let's check what happens if we fit beta as function of alpha
+# Since both are rotating, maybe beta is a function of alpha
+# But alpha also advances, so it's alpha(t) that matters
+
+# Check if beta is a delayed version of alpha
+for delay in range(-50, 51):
+    if delay >= 0:
+        c = np.corrcoef(alpha_unwrapped[delay:], beta_unwrapped[:len(beta_unwrapped)-delay])[0,1] if delay < len(alpha_unwrapped) else 0
+    else:
+        c = np.corrcoef(alpha_unwrapped[:len(alpha_unwrapped)+delay], beta_unwrapped[-delay:])[0,1]
+    if abs(c) > 0.99:
+        print(f"Delay {delay}: correlation = {c}")
+
+# Direct correlation
+c = np.corrcoef(alpha_unwrapped, beta_unwrapped)[0, 1]
+print(f"\nDirect correlation unwrapped: {c}")
+EOF
 ```
 
 ## [12] tool
@@ -426,7 +533,97 @@ Direct correlation unwrapped: 0.9967959338432943
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+
+# Unwrap both
+alpha_unwrapped = np.unwrap(np.radians(alpha))
+beta_unwrapped = np.unwrap(np.radians(beta))
+
+# Fit beta_unwrapped = a * alpha_unwrapped + b
+coeffs = np.polyfit(alpha_unwrapped, beta_unwrapped, 1)
+print("Linear fit: beta_uw = {:.6f} * alpha_uw + {:.6f}".format(coeffs[0], coeffs[1]))
+
+# Residuals
+beta_pred_uw = np.polyval(coeffs, alpha_unwrapped)
+resid = beta_unwrapped - beta_pred_uw
+
+print("Residual stats (radians):")
+print(pd.Series(resid).describe())
+print("Residual stats (degrees):")
+print(pd.Series(np.degrees(resid)).describe())
+
+# Check if residuals have structure (maybe periodic in alpha)
+alpha_deg = train['alpha'].values
+resid_deg = np.degrees(resid)
+
+# Maybe the residual is periodic in alpha?
+# Plot correlation with sin/cos of alpha
+for freq in [1, 2, 3]:
+    sin_corr = np.corrcoef(np.sin(freq * alpha_unwrapped), resid)[0,1]
+    cos_corr = np.corrcoef(np.cos(freq * alpha_unwrapped), resid)[0,1]
+    print(f"Freq {freq}: sin corr = {sin_corr:.4f}, cos corr = {cos_corr:.4f}")
+
+# Try fitting residual with periodic terms
+from numpy.polynomial import polynomial as P
+
+# Build feature matrix
+features = np.column_stack([
+    np.ones(len(t)),
+    np.sin(alpha_unwrapped),
+    np.cos(alpha_unwrapped),
+    np.sin(2 * alpha_unwrapped),
+    np.cos(2 * alpha_unwrapped),
+    np.sin(3 * alpha_unwrapped),
+    np.cos(3 * alpha_unwrapped),
+])
+
+# Also add t-based features
+features_t = np.column_stack([
+    features,
+    t,
+    t**2,
+])
+
+beta_fit = np.linalg.lstsq(features_t, beta_unwrapped, rcond=None)
+print("\nR-squared with periodic + t features:")
+resid2 = beta_unwrapped - features_t @ beta_fit[0]
+ss_res = np.sum(resid2**2)
+ss_tot = np.sum((beta_unwrapped - np.mean(beta_unwrapped))**2)
+print(1 - ss_res/ss_tot)
+print("Residual std (degrees):", np.std(np.degrees(resid2)))
+print("Residual std (radians):", np.std(resid2))
+
+# Now try a pure periodic model of alpha -> beta
+# beta(t) = f(alpha(t)) for some periodic function
+# Since alpha rotates ~3378 degrees over 3044 days, it completes about 9.4 rotations
+# So alpha wraps around 9-10 times in the training data
+
+# Let's try: beta = linear(alpha) + periodic(alpha)
+features_alpha = np.column_stack([
+    np.ones(len(t)),
+    alpha_unwrapped,
+    np.sin(alpha_unwrapped),
+    np.cos(alpha_unwrapped),
+    np.sin(2 * alpha_unwrapped),
+    np.cos(2 * alpha_unwrapped),
+])
+
+beta_fit_alpha = np.linalg.lstsq(features_alpha, beta_unwrapped, rcond=None)
+resid_alpha = beta_unwrapped - features_alpha @ beta_fit_alpha[0]
+print("\nAlpha-based fit R-squared:")
+ss_res_a = np.sum(resid_alpha**2)
+print(1 - ss_res_a/ss_tot)
+print("Residual std (radians):", np.std(resid_alpha))
+print("Residual std (degrees):", np.std(np.degrees(resid_alpha)))
+EOF
 ```
 
 ## [14] tool
@@ -491,7 +688,108 @@ Let me look at beta vs alpha more carefully, especially in the angular domain.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy import optimize
 
+train = pd.read_csv('data/train.csv')
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+
+# Unwrap
+alpha_uw = np.unwrap(np.radians(alpha))
+beta_uw = np.unwrap(np.radians(beta))
+
+# The relationship beta_uw ≈ 0.292 * alpha_uw + 1.189 suggests
+# beta rotates about 3.4x slower than alpha
+# Let's check if there's a cleaner model
+
+# Try: beta(t) = A*sin(omega*t + phi) + linear trend + offset
+# Or perhaps alpha and beta are on a circle and this is related to orbital mechanics
+
+# Let me try a more careful analysis
+# Look at the residuals from the linear alpha->beta model as function of t
+coeffs = np.polyfit(alpha_uw, beta_uw, 1)
+resid = beta_uw - np.polyval(coeffs, alpha_uw)
+
+# Check if residuals are periodic in t
+# FFT of residuals
+from scipy import signal
+
+# Try to find periodicity in residuals
+# The alpha rotates once every ~360/0.0194 ≈ 18556 degrees of alpha = 360/0.0194*rad... 
+# Actually alpha_unwrapped rate is 0.0194 rad/day, so period = 2pi/0.0194 ≈ 324 days
+# Beta rate is 0.00567 rad/day, so period = 2pi/0.00567 ≈ 1108 days
+
+# The residuals might have structure related to these periods
+print("Alpha period (days):", 2*np.pi/0.0194)
+print("Beta period (days):", 2*np.pi/0.00567)
+
+# Let's try: beta(t) = a + b*t + c*sin(2*pi*t/P1) + d*cos(2*pi*t/P1) + 
+#                         e*sin(2*pi*t/P2) + f*cos(2*pi*t/P2)
+# with P1 and P2 as the alpha and beta periods
+
+# Better approach: use the alpha(t) model more carefully
+# Alpha unwrapped seems to be roughly quadratic in t
+
+# Let's fit alpha_uw as a function of t with a polynomial
+alpha_poly = np.polyfit(t, alpha_uw, 2)
+print("\nAlpha polyfit (2nd degree):", alpha_poly)
+alpha_uw_pred = np.polyval(alpha_poly, t)
+resid_alpha_model = alpha_uw - alpha_uw_pred
+print("Alpha model residual std (degrees):", np.std(np.degrees(resid_alpha_model)))
+
+# Similarly for beta
+beta_poly = np.polyfit(t, beta_uw, 2)
+print("Beta polyfit (2nd degree):", beta_poly)
+beta_uw_pred = np.polyval(beta_poly, t)
+resid_beta_model = beta_uw - beta_uw_pred
+print("Beta model residual std (degrees):", np.std(np.degrees(resid_beta_model)))
+
+# Let me try a different approach - model beta(t) directly with Fourier + polynomial
+# But for prediction beyond training range, need something robust
+
+# Key question: can we predict beta_t given alpha_t at the same time?
+# But in the test set, we DON'T have alpha values! So we need to predict alpha too.
+
+# Wait, actually the test set only has t values. We need to predict beta from t alone
+# (using alpha info from training to learn the relationship).
+
+# So the approach should be:
+# 1. Model alpha(t) to extrapolate alpha at test t values
+# 2. Use the alpha-beta relationship to predict beta at test t values
+
+# For step 1, let's model alpha more carefully
+# Alpha looks like it could be a polynomial + periodic function of t
+
+# Let's try fitting alpha(t) = a0 + a1*t + a2*t^2 + sum_k [Ak*sin(2*pi*k*t/P) + Bk*cos(2*pi*k*t/P)]
+# where P is related to the dominant period
+
+# Actually, let me look at alpha more carefully in the angular domain
+alpha_wrapped = np.radians(alpha)
+
+# Since alpha seems to have a clear rotation, let me model it as:
+# alpha_uw(t) = p(t) + periodic(t)
+# where p(t) is a smooth polynomial
+
+# Remove polynomial trend
+alpha_uw_resid = alpha_uw - np.polyval(alpha_poly, t)
+
+# Now check what period the residual has
+# Use autocorrelation
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(alpha_uw_resid, nlags=min(1000, len(alpha_uw_resid)//2))
+
+# Find peaks in autocorrelation
+# The dominant period should show up as a peak
+peaks, _ = signal.find_peaks(acf_vals, prominence=0.01)
+if len(peaks) > 0:
+    print("\nAutocorrelation peaks at lags:", peaks[:10])
+    print("Corresponding periods (days):", peaks[:10])
+
+EOF
 ```
 
 ## [16] tool
@@ -556,7 +854,102 @@ Let me build a comprehensive Fourier + polynomial model for both alpha and beta.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+
+# Unwrap
+alpha_uw = np.unwrap(np.radians(alpha))
+beta_uw = np.unwrap(np.radians(beta))
+
+# Model both alpha and beta as: polynomial(t) + Fourier series(t)
+# The dominant period is ~324 days
+
+# Let's build the design matrix with polynomial + Fourier terms
+# Try various numbers of harmonics and polynomial degrees
+
+def build_features(t, periods=[324], poly_degree=2, n_harmonics=3):
+    """Build feature matrix with polynomial and Fourier terms."""
+    features = []
+    # Polynomial terms
+    for d in range(poly_degree + 1):
+        features.append(t**d)
+    # Fourier terms
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Try fitting alpha model
+periods = [324, 1108]
+features = build_features(t, periods=periods, poly_degree=2, n_harmonics=5)
+
+# Fit alpha
+alpha_fit = np.linalg.lstsq(features, alpha_uw, rcond=None)
+alpha_pred_uw = features @ alpha_fit[0]
+alpha_resid = alpha_uw - alpha_pred_uw
+print("Alpha model:")
+print("  Residual std (degrees):", np.std(np.degrees(alpha_resid)))
+print("  R-squared:", 1 - np.sum(alpha_resid**2)/np.sum((alpha_uw - np.mean(alpha_uw))**2))
+
+# Fit beta
+beta_fit = np.linalg.lstsq(features, beta_uw, rcond=None)
+beta_pred_uw = features @ beta_fit[0]
+beta_resid = beta_uw - beta_pred_uw
+print("Beta model:")
+print("  Residual std (degrees):", np.std(np.degrees(beta_resid)))
+print("  R-squared:", 1 - np.sum(beta_resid**2)/np.sum((beta_uw - np.mean(beta_uw))**2))
+
+# Now try using alpha to predict beta: beta_uw = a * alpha_uw + Fourier_terms + poly
+alpha_beta_features = np.column_stack([
+    np.ones(len(t)),
+    alpha_uw,
+])
+
+for P in periods:
+    for k in range(1, 6):
+        alpha_beta_features = np.column_stack([
+            alpha_beta_features,
+            np.sin(2 * np.pi * k * t / P),
+            np.cos(2 * np.pi * k * t / P),
+        ])
+
+ab_fit = np.linalg.lstsq(alpha_beta_features, beta_uw, rcond=None)
+beta_pred_ab = alpha_beta_features @ ab_fit[0]
+beta_resid_ab = beta_uw - beta_pred_ab
+print("\nAlpha->Beta model:")
+print("  Residual std (degrees):", np.std(np.degrees(beta_resid_ab)))
+print("  R-squared:", 1 - np.sum(beta_resid_ab**2)/np.sum((beta_uw - np.mean(beta_uw))**2))
+
+# Try just using t to model beta with many Fourier terms
+for n_harm in [3, 5, 8, 10, 15, 20]:
+    features = build_features(t, periods=[324, 1108], poly_degree=2, n_harmonics=n_harm)
+    fit = np.linalg.lstsq(features, beta_uw, rcond=None)
+    pred = features @ fit[0]
+    resid = beta_uw - pred
+    rss = np.sum(resid**2)
+    tss = np.sum((beta_uw - np.mean(beta_uw))**2)
+    r2 = 1 - rss/tss
+    # Cross-validation: use last 500 points as validation
+    n_val = 500
+    features_train = features[:-n_val]
+    beta_train = beta_uw[:-n_val]
+    features_val = features[-n_val:]
+    beta_val = beta_uw[-n_val:]
+    fit_cv = np.linalg.lstsq(features_train, beta_train, rcond=None)
+    pred_val = features_val @ fit_cv[0]
+    rmse_val = np.sqrt(np.mean((beta_val - pred_val)**2))
+    print(f"n_harm={n_harm:2d}: R²={r2:.6f}, RMSE_val={np.degrees(rmse_val):.2f}°, RMSE_train={np.degrees(np.std(resid)):.2f}°")
+
+EOF
 ```
 
 ## [18] tool
@@ -610,7 +1003,87 @@ The alpha model is very precise (~0.7° residual std). Beta is much noisier. Let
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+
+# Model alpha very precisely to get predicted alpha
+alpha_uw = np.unwrap(np.radians(alpha))
+beta_uw = np.unwrap(np.radians(beta))
+
+# Build good alpha features
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = []
+    for d in range(poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Fit alpha model precisely
+alpha_features = build_features(t, periods=[324, 1108, 2000], poly_degree=3, n_harmonics=8)
+alpha_fit = np.linalg.lstsq(alpha_features, alpha_uw, rcond=None)
+alpha_model_pred = alpha_features @ alpha_fit[0]
+alpha_resid = alpha_uw - alpha_model_pred
+print("Alpha model residual std:", np.degrees(np.std(alpha_resid)), "degrees")
+
+# Now model beta using alpha_model_pred (predicted alpha) plus Fourier terms in t
+# This way, at test time, we use predicted alpha
+
+# Approach 1: beta_uw = a * alpha_pred + b + Fourier(t)
+# Approach 2: beta_uw = polynomial(alpha_pred) + Fourier(t)
+# Approach 3: Direct Fourier model for beta
+
+# Let me look at what's really going on with the beta residuals
+beta_direct_features = build_features(t, periods=[324, 1108, 2000], poly_degree=3, n_harmonics=8)
+beta_fit = np.linalg.lstsq(beta_direct_features, beta_uw, rcond=None)
+beta_model_pred = beta_direct_features @ beta_fit[0]
+beta_resid = beta_uw - beta_model_pred
+print("Direct beta model residual std:", np.degrees(np.std(beta_resid)), "degrees")
+
+# What if the ~17° std is just noise? Let's check the autocorrelation of residuals
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(beta_resid, nlags=200)
+print("\nBeta residual ACF first 10 lags:", acf_vals[:10])
+
+# Check if there's remaining periodicity
+from scipy import signal
+psd = np.abs(np.fft.rfft(beta_resid))**2
+freqs = np.fft.rfftfreq(len(beta_resid))
+# Find peaks
+peaks, _ = signal.find_peaks(psd, height=np.percentile(psd, 95))
+print("\nStrongest frequency components:")
+for p in peaks[:10]:
+    print(f"  freq={freqs[p]:.6f}, period={1/freqs[p]:.1f} days, power={psd[p]:.2f}")
+
+# Check autocorrelation time (how much is signal vs noise)
+# If residuals are white noise, ACF should be near 0 for lag > 0
+print("\nACF at lags 1-20:")
+for i in range(1, 21):
+    print(f"  lag {i}: {acf_vals[i]:.4f}")
+
+# Estimate noise std from first-lag ACF
+# If y = signal + noise, then ACF(lag 1) ≈ ACF_signal(lag 1) 
+# But for white noise, ACF(1) ≈ 0
+
+# Estimate noise variance: look at variance of differences
+diff_beta = np.diff(beta_resid)
+print("\nVariance of residuals:", np.var(beta_resid))
+print("Variance of residual diffs:", np.var(diff_beta))
+# For white noise: Var(diff) = 2 * Var(noise)
+# For signal + noise: Var(diff) > 2 * Var(noise) if signal is correlated
+noise_est = np.sqrt(np.var(diff_beta) / 2)
+print("Estimated noise std:", np.degrees(noise_est), "degrees")
+
+EOF
 ```
 
 ## [20] tool
@@ -703,7 +1176,103 @@ The beta residuals still have high autocorrelation, meaning there's unmodeled st
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+
+alpha_uw = np.unwrap(np.radians(alpha))
+beta_uw = np.unwrap(np.radians(beta))
+
+# Key insight: alpha has a very strong periodic signal
+# Let me try to directly model the relationship between unwrapped alpha and unwrapped beta
+# with high-order Fourier terms in alpha
+
+# Since alpha_uw(t) wraps around ~10 times, using Fourier terms in alpha
+# should capture the nonlinear relationship
+
+# Build features using Fourier terms of alpha_uw directly
+features_ab = [np.ones(len(t)), alpha_uw]
+for k in range(1, 20):
+    features_ab.append(np.sin(k * alpha_uw))
+    features_ab.append(np.cos(k * alpha_uw))
+features_ab = np.column_stack(features_ab)
+
+# This won't work for extrapolation since alpha_uw is unbounded!
+# Instead, let's use the wrapped alpha
+alpha_wrapped = np.radians(alpha)
+
+features_ab2 = [np.ones(len(t))]
+for k in range(1, 20):
+    features_ab2.append(np.sin(k * alpha_wrapped))
+    features_ab2.append(np.cos(k * alpha_wrapped))
+features_ab2 = np.column_stack(features_ab2)
+
+fit2 = np.linalg.lstsq(features_ab2, beta_uw, rcond=None)
+pred2 = features_ab2 @ fit2[0]
+resid2 = beta_uw - pred2
+print("Beta from wrapped alpha (Fourier):")
+print("  Residual std:", np.degrees(np.std(resid2)), "degrees")
+print("  R²:", 1 - np.sum(resid2**2)/np.sum((beta_uw - np.mean(beta_uw))**2))
+
+# Now add t-based terms for the linear trend
+features_ab3 = [np.ones(len(t))]
+for d in range(1, 4):
+    features_ab3.append(t**d)
+for k in range(1, 20):
+    features_ab3.append(np.sin(k * alpha_wrapped))
+    features_ab3.append(np.cos(k * alpha_wrapped))
+features_ab3 = np.column_stack(features_ab3)
+
+fit3 = np.linalg.lstsq(features_ab3, beta_uw, rcond=None)
+pred3 = features_ab3 @ fit3[0]
+resid3 = beta_uw - pred3
+print("\nBeta from wrapped alpha + poly(t):")
+print("  Residual std:", np.degrees(np.std(resid3)), "degrees")
+print("  R²:", 1 - np.sum(resid3**2)/np.sum((beta_uw - np.mean(beta_uw))**2))
+
+# Now try: since alpha can be modeled very precisely (0.6° std),
+# we can predict alpha at test time, then predict beta from predicted alpha
+# But there's a problem: the prediction uncertainty in alpha propagates
+
+# Let me try yet another approach: direct beta model with VERY many Fourier terms
+# Use both 324-day and 1108-day base periods with many harmonics
+
+def build_model_features(t, periods_harmonics):
+    """periods_harmonics: list of (period, n_harmonics) tuples"""
+    features = [np.ones(len(t))]
+    for P, n_harm in periods_harmonics:
+        for k in range(1, n_harm + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Try various configurations
+for base_period, n_h in [(324, 30), (324, 50), (324, 100)]:
+    features = build_model_features(t, [(base_period, n_h)])
+    fit = np.linalg.lstsq(features, beta_uw, rcond=None)
+    pred = features @ fit[0]
+    resid = beta_uw - pred
+    print(f"\nBase period {base_period}, {n_h} harmonics:")
+    print(f"  Residual std: {np.degrees(np.std(resid)):.4f} degrees")
+    print(f"  R²: {1 - np.sum(resid**2)/np.sum((beta_uw - np.mean(beta_uw))**2):.8f}")
+
+# Try with both periods
+features = build_model_features(t, [(324, 50), (1108, 20)])
+fit = np.linalg.lstsq(features, beta_uw, rcond=None)
+pred = features @ fit[0]
+resid = beta_uw - pred
+print(f"\nBoth periods (324x50 + 1108x20):")
+print(f"  Residual std: {np.degrees(np.std(resid)):.4f} degrees")
+print(f"  R²: {1 - np.sum(resid**2)/np.sum((beta_uw - np.mean(beta_uw))**2):.8f}")
+
+EOF
 ```
 
 ## [22] tool
@@ -766,7 +1335,171 @@ The unwrapped beta is a non-periodic trend, so Fourier-only fails. The polynomia
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy import optimize
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+
+alpha_uw = np.unwrap(np.radians(alpha))
+beta_uw = np.unwrap(np.radians(beta))
+
+# The alpha model has only 0.6° residual - very clean signal
+# The beta model has 1.7° residual
+
+# Let me check: if I fit beta as a linear function of alpha_uw (not wrapped)
+# with Fourier terms in t to capture the periodic components
+# This should work because alpha_uw itself already contains both trend and periodic info
+
+# Actually, let me try a different approach:
+# beta_uw = f(alpha_uw) where f is some smooth function
+# Since alpha_uw is monotonically increasing, this is well-defined
+
+# Use a high-degree polynomial in alpha_uw
+for deg in [2, 3, 5, 7, 10]:
+    features = np.column_stack([alpha_uw**d for d in range(deg+1)])
+    fit = np.linalg.lstsq(features, beta_uw, rcond=None)
+    pred = features @ fit[0]
+    resid = beta_uw - pred
+    print(f"Poly(alpha, deg={deg}): residual std = {np.degrees(np.std(resid)):.4f}°")
+
+# The linear fit gives 22° residuals - let's check polynomial
+# This means the relationship beta_uw = f(alpha_uw) has significant nonlinearity
+
+# Let me try a completely different approach:
+# Use the Kalman filter to model the true underlying signal
+
+# Or, let me try: fit beta(t) = A*sin(omega*t + phi(t)) + linear(t)
+# where phi(t) slowly varies
+
+# Actually, let me think about what produces this data
+# Two angles measured from a moving vantage point
+# They're probably related to some position in 2D/3D space
+# alpha could be the angle to one object, beta to another
+# Or they could be the azimuth and elevation of the same object
+
+# Let me try to fit a more physical model
+# If beta = atan2(sin(alpha)/k, cos(alpha)) for some constant k
+# Then sin(beta)/sin(alpha) = cos(beta)/cos(alpha) / k ... not quite
+
+# Actually, let me try: beta(t) = alpha(t)/n + phase_offset + noise
+# where n is some ratio
+# From the linear fit: beta_uw = 0.292 * alpha_uw + 1.189
+# So n ≈ 1/0.292 ≈ 3.42
+
+# Let's try: beta = alpha/n + g(alpha mod 2pi)
+# where g is a periodic function
+
+# This would be: for each "cycle" of alpha, beta advances by 2pi/n
+# And there's a periodic correction based on where we are in the alpha cycle
+
+n_ratio = 1.0 / 0.292140
+print(f"\nAlpha/Beta ratio: {n_ratio:.4f}")
+
+# Check if n is close to a rational number
+# 3.42 ≈ 17/5 = 3.4, or 24/7 ≈ 3.43, or 31/9 ≈ 3.44
+# Or maybe it's exactly related to some geometric parameter
+
+# Let's try: predict beta from alpha using periodic function of alpha
+# beta = alpha/n + h(alpha) where h is periodic with period 2*pi
+# i.e., h(alpha) = sum_k [a_k * sin(k*alpha) + b_k * cos(k*alpha)]
+
+# This is equivalent to fitting beta_uw = alpha_uw/n + h(alpha_wrapped)
+# Let's optimize n and the Fourier coefficients jointly
+
+def model_beta(alpha_uw, alpha_wrapped, n_inv, fourier_coeffs):
+    """n_inv = 1/n, fourier_coeffs = [(a_k, b_k)]"""
+    beta_pred = alpha_uw * n_inv
+    for k, (a_k, b_k) in enumerate(fourier_coeffs, 1):
+        beta_pred += a_k * np.sin(k * alpha_wrapped) + b_k * np.cos(k * alpha_wrapped)
+    return beta_pred
+
+def objective(params, alpha_uw, alpha_wrapped, beta_uw, n_fourier=10):
+    n_inv = params[0]
+    fourier_coeffs = [(params[2*k], params[2*k+1]) for k in range(1, n_fourier+1)]
+    beta_pred = model_beta(alpha_uw, alpha_wrapped, n_inv, fourier_coeffs)
+    return np.sum((beta_uw - beta_pred)**2)
+
+from scipy.optimize import minimize
+
+n_fourier = 10
+x0 = np.zeros(1 + 2*n_fourier)
+x0[0] = 0.292  # initial n_inv
+
+result = minimize(objective, x0, args=(alpha_uw, np.radians(alpha), beta_uw, n_fourier),
+                  method='L-BFGS-B')
+print(f"\nOptimization result: {result.success}")
+n_inv_opt = result.x[0]
+fourier_coeffs_opt = [(result.x[2*k], result.x[2*k+1]) for k in range(1, n_fourier+1)]
+beta_pred_opt = model_beta(alpha_uw, np.radians(alpha), n_inv_opt, fourier_coeffs_opt)
+resid_opt = beta_uw - beta_pred_opt
+print(f"Optimized n_inv = {n_inv_opt:.6f}, n = {1/n_inv_opt:.6f}")
+print(f"Residual std: {np.degrees(np.std(resid_opt)):.4f}°")
+
+# Now try with many more Fourier terms
+n_fourier = 30
+x0 = np.zeros(1 + 2*n_fourier)
+x0[0] = n_inv_opt
+
+result2 = minimize(objective, x0, args=(alpha_uw, np.radians(alpha), beta_uw, n_fourier),
+                   method='L-BFGS-B', options={'maxiter': 5000})
+n_inv_opt2 = result2.x[0]
+fourier_coeffs_opt2 = [(result2.x[2*k], result2.x[2*k+1]) for k in range(1, n_fourier+1)]
+beta_pred_opt2 = model_beta(alpha_uw, np.radians(alpha), n_inv_opt2, fourier_coeffs_opt2)
+resid_opt2 = beta_uw - beta_pred_opt2
+print(f"\nOptimized n_inv = {n_inv_opt2:.6f}, n = {1/n_inv_opt2:.6f}")
+print(f"Residual std: {np.degrees(np.std(resid_opt2)):.4f}°")
+
+# This is basically the same as fitting beta_uw = c*alpha_uw + Fourier(alpha_wrapped)
+# Which is equivalent to what we tried before with the alpha_beta_features
+# The key question is: can we predict alpha at test time?
+
+# Let's check: alpha model prediction quality
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = []
+    for d in range(poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Fit alpha model with many harmonics
+alpha_features = build_features(t, periods=[324], poly_degree=2, n_harmonics=30)
+alpha_fit = np.linalg.lstsq(alpha_features, alpha_uw, rcond=None)
+alpha_pred = alpha_features @ alpha_fit[0]
+alpha_resid = alpha_uw - alpha_pred
+print(f"\nAlpha model (30 harmonics) residual std: {np.degrees(np.std(alpha_resid)):.4f}°")
+
+# Check ACF of alpha residuals
+from statsmodels.tsa.stattools import acf
+acf_alpha = acf(alpha_resid, nlags=50)
+print("Alpha residual ACF first 10 lags:", acf_alpha[:10])
+
+# This is excellent! Alpha can be predicted to ~0.6° accuracy
+# Now let's see what happens with the alpha-based beta model
+
+# Model: beta_uw = c * alpha_pred + Fourier(alpha_pred_wrapped)
+# But alpha_pred_wrapped = alpha_pred mod 2*pi... 
+# Wait, we need to be more careful.
+
+# Actually the model is:
+# beta_uw(t) = c * alpha_true(t) + h(alpha_true_wrapped(t))
+# If we replace alpha_true with alpha_pred (which has very small error ~0.6°):
+# beta_pred(t) = c * alpha_pred(t) + h(alpha_pred_wrapped(t))
+
+# The error propagation: 
+# delta_beta ≈ c * delta_alpha + h'(alpha) * delta_alpha_wrapped
+# With c ≈ 0.29 and h' bounded, the error contribution from alpha prediction is small
+
+EOF
 ```
 
 ## [24] tool
@@ -829,7 +1562,117 @@ The polynomial fit of beta_uw vs alpha_uw has 22° residuals. The relationship i
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+alpha_wrapped = np.radians(alpha)
+
+alpha_uw = np.unwrap(alpha_wrapped)
+beta_uw = np.unwrap(np.radians(beta))
+
+# Model: beta_uw = c * alpha_uw + h(alpha_wrapped)
+# where h is periodic with period 2*pi
+
+# Build features: alpha_uw + Fourier(alpha_wrapped)
+n_fourier = 20
+features = [alpha_uw]
+for k in range(1, n_fourier + 1):
+    features.append(np.sin(k * alpha_wrapped))
+    features.append(np.cos(k * alpha_wrapped))
+features = np.column_stack(features)
+
+# Add intercept
+features_with_const = np.column_stack([np.ones(len(t)), features])
+
+fit = np.linalg.lstsq(features_with_const, beta_uw, rcond=None)
+pred = features_with_const @ fit[0]
+resid = beta_uw - pred
+print(f"beta_uw = c*alpha_uw + h(alpha_wrapped) with {n_fourier} harmonics:")
+print(f"  Residual std: {np.degrees(np.std(resid)):.4f}°")
+print(f"  c = {fit[0][1]:.6f}")
+
+# Now let me try: beta_uw = c * alpha_uw + h(alpha_wrapped) + polynomial(t)
+# This adds slow time-varying effects
+features2 = [np.ones(len(t)), alpha_uw]
+for k in range(1, n_fourier + 1):
+    features2.append(np.sin(k * alpha_wrapped))
+    features2.append(np.cos(k * alpha_wrapped))
+# Add polynomial in t
+for d in range(1, 4):
+    features2.append(t**d)
+features2 = np.column_stack(features2)
+
+fit2 = np.linalg.lstsq(features2, beta_uw, rcond=None)
+pred2 = features2 @ fit2[0]
+resid2 = beta_uw - pred2
+print(f"\nWith poly(t) added:")
+print(f"  Residual std: {np.degrees(np.std(resid2)):.4f}°")
+
+# Direct beta model with Fourier(t) - this should be the most directly useful
+# since we don't have alpha at test time
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = []
+    for d in range(poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Try optimized periods
+from scipy.optimize import minimize
+
+def objective_periods(params, t, beta_uw, poly_degree=2, n_harm=10):
+    P1 = params[0]
+    features = build_features(t, [P1], poly_degree, n_harm)
+    fit = np.linalg.lstsq(features, beta_uw, rcond=None)
+    pred = features @ fit[0]
+    resid = beta_uw - pred
+    return np.sum(resid**2)
+
+result = minimize(objective_periods, [324], args=(t, beta_uw),
+                  bounds=[(200, 500)])
+print(f"\nOptimal period: {result.x[0]:.2f}")
+print(f"Optimal period objective: {np.sqrt(result.fun/len(t)):.6f}")
+
+# Now with two periods
+def objective_periods2(params, t, beta_uw, poly_degree=2, n_harm=10):
+    P1, P2 = params
+    features = build_features(t, [P1, P2], poly_degree, n_harm)
+    fit = np.linalg.lstsq(features, beta_uw, rcond=None)
+    pred = features @ fit[0]
+    resid = beta_uw - pred
+    return np.sum(resid**2)
+
+result2 = minimize(objective_periods2, [324, 1108], args=(t, beta_uw),
+                   bounds=[(200, 500), (800, 1500)])
+print(f"\nOptimal periods: {result2.x[0]:.2f}, {result2.x[1]:.2f}")
+print(f"Optimal periods objective: {np.sqrt(result2.fun/len(t)):.6f}")
+
+# Check ACF of residuals from the best model
+P1_opt, P2_opt = result2.x
+best_features = build_features(t, [P1_opt, P2_opt], 2, 10)
+best_fit = np.linalg.lstsq(best_features, beta_uw, rcond=None)
+best_pred = best_features @ best_fit[0]
+best_resid = beta_uw - best_pred
+print(f"\nBest model residual std: {np.degrees(np.std(best_resid)):.4f}°")
+print(f"Best model R²: {1 - np.sum(best_resid**2)/np.sum((beta_uw - np.mean(beta_uw))**2):.8f}")
+
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(best_resid, nlags=50)
+print(f"ACF lag 1: {acf_vals[1]:.4f}")
+print(f"ACF lag 5: {acf_vals[5]:.4f}")
+print(f"ACF lag 10: {acf_vals[10]:.4f}")
+
+EOF
 ```
 
 ## [26] tool
@@ -895,7 +1738,115 @@ The ACF is 0.998 - residuals are extremely smooth, not noise. There's a strong u
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+
+# Let me look at the raw beta and alpha to understand the physics better
+# Plot the wrapped angles over time
+
+# Alpha wraps about 3045*0.0194/(2*pi) ≈ 9.4 times
+# Beta wraps about 3045*0.0057/(2*pi) ≈ 2.7 times
+
+# Let me check: what if there's a linear phase relationship?
+# alpha_phase = alpha mod 360
+# beta_phase = beta mod 360
+
+alpha_phase = alpha % 360
+beta_phase = beta % 360
+
+# Maybe beta_phase is a function of alpha_phase?
+# This would mean: when alpha is at angle theta, beta is always at the same angle
+
+# But from the linear model: beta_uw ≈ 0.292 * alpha_uw + 1.189
+# So beta advances by 0.292 radians per radian of alpha
+# This means beta wraps around every time alpha advances by 2pi/0.292 ≈ 21.5 radians
+# So beta wraps when alpha advances by about 6.84 rotations
+
+# This means beta_phase depends on alpha_uw mod (2pi/0.292) 
+# Or equivalently, beta_phase depends on (alpha_phase * 0.292) mod 2pi
+# which is just beta_phase... circular argument
+
+# Let me try a completely different approach
+# What if I just look at the time series of wrapped beta and try to predict it?
+
+# The wrapped beta oscillates between 0 and 360
+# With a period of ~1108 days for each full cycle
+# And with higher harmonics
+
+# Let me model beta(t) directly in the circular domain
+# Using sin and cos of beta as target variables
+
+beta_rad = np.radians(beta)
+
+# Target: sin(beta) and cos(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+# Build Fourier features
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Try modeling sin(beta) and cos(beta) directly
+# The key periods for beta are ~324 (from alpha rotation) and ~1108 (from beta rotation)
+# Actually, let me find the dominant periods in sin(beta) and cos(beta)
+
+# FFT of sin(beta)
+fft_sin = np.abs(np.fft.rfft(sin_beta))
+freqs_sin = np.fft.rfftfreq(len(sin_beta))
+# Find top frequencies
+top_idx = np.argsort(fft_sin)[-20:][::-1]
+print("Top frequencies in sin(beta):")
+for idx in top_idx[:10]:
+    print(f"  freq={freqs_sin[idx]:.6f}, period={1/freqs_sin[idx]:.1f} days, amp={fft_sin[idx]:.2f}")
+
+# Try direct modeling with many harmonics of the 324-day period
+# Since beta is essentially alpha/3.42, the dominant period in wrapped beta is 324/3.42 ≈ 94.7 days?
+# No wait - beta rotates once every 1108 days, so the fundamental is 1108 days
+# But there's also power at 324 days because of the alpha-beta coupling
+
+# Let me try fitting sin(beta) and cos(beta) with Fourier features
+for periods, n_h, poly_d in [
+    ([324, 1108], 30, 2),
+    ([324, 1108], 50, 2),
+    ([324], 50, 2),
+    ([324], 100, 2),
+]:
+    features = build_features(t, periods, poly_d, n_h)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    
+    # Reconstruct beta
+    pred_beta_rad = np.arctan2(pred_sin, pred_cos)
+    # Compute error
+    error = beta_rad - pred_beta_rad
+    # Handle wrapping
+    error = np.arctan2(np.sin(error), np.cos(error))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    print(f"\nperiods={periods}, n_h={n_h}, poly_d={poly_d}:")
+    print(f"  RMSE (circular): {rmse:.4f}°")
+    print(f"  sin residual std: {np.std(sin_beta - pred_sin):.6f}")
+    print(f"  cos residual std: {np.std(cos_beta - pred_cos):.6f}")
+
+EOF
 ```
 
 ## [28] tool
@@ -981,7 +1932,97 @@ The circular model (sin/cos beta) gives ~7.5° RMSE with [324, 1108] periods. Le
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Find the best set of periods by trying many combinations
+# First, let me use the FFT to identify the key frequencies
+
+# Use a periodogram approach
+from scipy.signal import periodogram
+f_sin, Pxx_sin = periodogram(sin_beta, fs=1.0)
+f_cos, Pxx_cos = periodogram(cos_beta, fs=1.0)
+
+# Get peaks
+from scipy.signal import find_peaks
+peaks_sin, _ = find_peaks(Pxx_sin, height=np.percentile(Pxx_sin, 90))
+peaks_cos, _ = find_peaks(Pxx_cos, height=np.percentile(Pxx_cos, 90))
+
+all_peaks = np.union1d(peaks_sin, peaks_cos)
+periods_found = 1.0 / f_sin[all_peaks]
+# Filter to reasonable periods (100-3000 days)
+mask = (periods_found > 100) & (periods_found < 3000)
+periods_found = periods_found[mask]
+print("Significant periods found:", np.sort(periods_found))
+
+# Now try using all these periods
+best_periods = list(periods_found)
+print(f"\nTrying {len(best_periods)} periods: {sorted(best_periods)}")
+
+features = build_features(t, best_periods, 2, 3)
+fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+
+pred_sin = features @ fit_sin[0]
+pred_cos = features @ fit_cos[0]
+pred_beta_rad = np.arctan2(pred_sin, pred_cos)
+error = np.arctan2(np.sin(beta_rad - pred_beta_rad), np.cos(beta_rad - pred_beta_rad))
+rmse = np.degrees(np.sqrt(np.mean(error**2)))
+print(f"RMSE: {rmse:.4f}°")
+
+# Try with just a few dominant periods
+for n_p in [2, 3, 4, 5, 6, 8]:
+    periods_subset = sorted(periods_found)[:n_p]
+    features = build_features(t, periods_subset, 2, 3)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta_rad = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta_rad), np.cos(beta_rad - pred_beta_rad))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    print(f"Top {n_p} periods {periods_subset}: RMSE = {rmse:.4f}°")
+
+# Try different harmonics for the best periods
+print("\n--- Optimizing harmonics for top periods ---")
+for n_h in [1, 2, 3, 5, 8, 10]:
+    periods_subset = sorted(periods_found)[:4]
+    features = build_features(t, periods_subset, 2, n_h)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta_rad = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta_rad), np.cos(beta_rad - pred_beta_rad))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    n_params = features.shape[1]
+    print(f"n_h={n_h}, n_params={n_params}: RMSE = {rmse:.4f}°")
+
+EOF
 ```
 
 ## [30] tool
@@ -1037,7 +2078,114 @@ The periodogram approach is picking up noise frequencies. Let me focus on the [3
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+
+alpha_uw = np.unwrap(np.radians(alpha))
+beta_uw = np.unwrap(np.radians(beta))
+beta_rad = np.radians(beta)
+
+# Approach: Two-step model
+# Step 1: Model alpha(t) very precisely
+# Step 2: Model beta(t) from predicted alpha(t) + time
+
+# Step 1: Alpha model
+# Use many Fourier harmonics of the 324-day period + polynomial
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Alpha is very clean - let me use a very flexible model
+# Period 324 days, poly degree 3, many harmonics
+alpha_features = build_features(t, [324], 3, 40)
+alpha_fit = np.linalg.lstsq(alpha_features, alpha_uw, rcond=None)
+alpha_pred_train = alpha_features @ alpha_fit[0]
+alpha_resid_train = alpha_uw - alpha_pred_train
+print(f"Alpha model residual std: {np.degrees(np.std(alpha_resid_train)):.4f}°")
+
+# Step 2: Model beta as function of predicted alpha + Fourier(t)
+# Since alpha is predicted very well, we can use it as a feature
+alpha_pred_wrapped = alpha_pred_train % (2*np.pi)  # wrapped predicted alpha
+
+# Model: sin(beta) = f(alpha_pred_wrapped, t)
+# cos(beta) = g(alpha_pred_wrapped, t)
+
+# Features: Fourier(alpha_pred_wrapped) + Fourier(t)
+def build_ab_features(t, alpha_wrapped, n_alpha_harm, n_time_harm, time_periods, poly_degree):
+    features = [np.ones(len(t))]
+    # Fourier terms in alpha
+    for k in range(1, n_alpha_harm + 1):
+        features.append(np.sin(k * alpha_wrapped))
+        features.append(np.cos(k * alpha_wrapped))
+    # Fourier terms in t
+    for P in time_periods:
+        for k in range(1, n_time_harm + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    # Polynomial in t
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    return np.column_stack(features)
+
+# Try various configurations
+for n_a_h in [3, 5, 10, 15]:
+    for n_t_h in [3, 5]:
+        for t_periods in [[324, 1108], [324]]:
+            features = build_ab_features(t, alpha_pred_wrapped, n_a_h, n_t_h, t_periods, 2)
+            fit_sin = np.linalg.lstsq(features, np.sin(beta_rad), rcond=None)
+            fit_cos = np.linalg.lstsq(features, np.cos(beta_rad), rcond=None)
+            pred_sin = features @ fit_sin[0]
+            pred_cos = features @ fit_cos[0]
+            pred_beta = np.arctan2(pred_sin, pred_cos)
+            error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+            rmse = np.degrees(np.sqrt(np.mean(error**2)))
+            n_params = features.shape[1]
+            print(f"n_alpha_h={n_a_h:2d}, n_time_h={n_t_h}, time_periods={t_periods}, n_params={n_params:3d}: RMSE = {rmse:.4f}°")
+
+# Now try the direct model: beta(t) with [324, 1108] periods
+print("\n--- Direct beta model ---")
+for n_h in [1, 2, 3, 5, 8, 10, 15, 20]:
+    features = build_features(t, [324, 1108], 2, n_h)
+    fit_sin = np.linalg.lstsq(features, np.sin(beta_rad), rcond=None)
+    fit_cos = np.linalg.lstsq(features, np.cos(beta_rad), rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    n_params = features.shape[1]
+    print(f"n_h={n_h:2d}, n_params={n_params:3d}: RMSE = {rmse:.4f}°")
+
+# Try with optimized periods
+print("\n--- Optimized periods ---")
+for P1 in [310, 320, 324, 330, 340, 350, 360, 380, 400, 450]:
+    for P2 in [900, 1000, 1050, 1108, 1200, 1300]:
+        features = build_features(t, [P1, P2], 2, 5)
+        fit_sin = np.linalg.lstsq(features, np.sin(beta_rad), rcond=None)
+        fit_cos = np.linalg.lstsq(features, np.cos(beta_rad), rcond=None)
+        pred_sin = features @ fit_sin[0]
+        pred_cos = features @ fit_cos[0]
+        pred_beta = np.arctan2(pred_sin, pred_cos)
+        error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+        rmse = np.degrees(np.sqrt(np.mean(error**2)))
+        if rmse < 7.0:
+            print(f"P1={P1}, P2={P2}: RMSE = {rmse:.4f}°")
+
+EOF
 ```
 
 ## [32] tool
@@ -1090,7 +2238,87 @@ No periods found better than the default [324, 1108]. Let me try continuous opti
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+def compute_rmse(params, t, target):
+    P1, P2 = params
+    features = build_features(t, [P1, P2], 2, 5)
+    fit = np.linalg.lstsq(features, target, rcond=None)
+    pred = features @ fit[0]
+    resid = target - pred
+    return np.sqrt(np.mean(resid**2))
+
+# Optimize periods for sin(beta) model
+def compute_rmse_circ(params, t, sin_beta, cos_beta):
+    P1, P2 = params
+    features = build_features(t, [P1, P2], 2, 5)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+# Grid search with finer resolution
+best_rmse = 100
+best_params = None
+for P1 in np.arange(300, 400, 2):
+    for P2 in np.arange(900, 1400, 5):
+        rmse = compute_rmse_circ([P1, P2], t, sin_beta, cos_beta)
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_params = (P1, P2)
+
+print(f"Best periods from grid: P1={best_params[0]}, P2={best_params[1]}, RMSE={np.degrees(best_rmse):.4f}°")
+
+# Fine-tune with continuous optimization
+result = minimize(compute_rmse_circ, best_params, args=(t, sin_beta, cos_beta),
+                  method='Nelder-Mead', options={'maxiter': 10000, 'xatol': 0.01, 'fatol': 1e-8})
+print(f"Optimized periods: P1={result.x[0]:.2f}, P2={result.x[1]:.2f}, RMSE={np.degrees(result.fun):.4f}°")
+
+# Also try 3 periods
+def compute_rmse_circ_3(params, t, sin_beta, cos_beta):
+    P1, P2, P3 = params
+    features = build_features(t, [P1, P2, P3], 2, 3)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+result3 = minimize(compute_rmse_circ_3, [324, 700, 1108], args=(t, sin_beta, cos_beta),
+                   method='Nelder-Mead', options={'maxiter': 50000, 'xatol': 0.01, 'fatol': 1e-8})
+print(f"\n3-period optimization:")
+print(f"P1={result3.x[0]:.2f}, P2={result3.x[1]:.2f}, P3={result3.x[2]:.2f}")
+print(f"RMSE={np.degrees(result3.fun):.4f}°")
+
+EOF
 ```
 
 ## [34] tool
@@ -1114,7 +2342,99 @@ Excellent! Adding a third period at ~847 days drops RMSE from 7.45° to 3.86°! 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+def compute_rmse_circ(params, t, sin_beta, cos_beta, n_periods, n_harm):
+    periods = list(params[:n_periods])
+    features = build_features(t, periods, 2, n_harm)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+# Try 4 periods
+for n_harm in [2, 3, 5]:
+    result4 = minimize(compute_rmse_circ_4, [324, 600, 847, 1108], 
+                       args=(t, sin_beta, cos_beta),
+                       method='Nelder-Mead', 
+                       options={'maxiter': 100000, 'xatol': 0.01, 'fatol': 1e-8})
+    print(f"4 periods, n_harm={n_harm}: P={[f'{p:.1f}' for p in result4.x]}, RMSE={np.degrees(result4.fun):.4f}°")
+
+def compute_rmse_circ_4(params, t, sin_beta, cos_beta):
+    periods = list(params[:4])
+    features = build_features(t, periods, 2, 3)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+result4 = minimize(compute_rmse_circ_4, [324, 600, 847, 1108], 
+                   args=(t, sin_beta, cos_beta),
+                   method='Nelder-Mead', 
+                   options={'maxiter': 100000, 'xatol': 0.01, 'fatol': 1e-8})
+print(f"\n4 periods: P={[f'{p:.1f}' for p in result4.x]}, RMSE={np.degrees(result4.fun):.4f}°")
+
+# 5 periods
+def compute_rmse_circ_5(params, t, sin_beta, cos_beta):
+    periods = list(params[:5])
+    features = build_features(t, periods, 2, 2)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+result5 = minimize(compute_rmse_circ_5, [200, 324, 600, 847, 1108], 
+                   args=(t, sin_beta, cos_beta),
+                   method='Nelder-Mead', 
+                   options={'maxiter': 100000, 'xatol': 0.01, 'fatol': 1e-8})
+print(f"5 periods: P={[f'{p:.1f}' for p in result5.x]}, RMSE={np.degrees(result5.fun):.4f}°")
+
+# Try optimizing 3-period result with more harmonics
+result3_best = [322.60, 847.09, 1103.07]
+for n_harm in [1, 2, 3, 5, 8, 10]:
+    features = build_features(t, result3_best, 2, n_harm)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    n_params = features.shape[1]
+    print(f"3 periods, n_harm={n_harm}, n_params={n_params}: RMSE = {rmse:.4f}°")
+
+EOF
 ```
 
 ## [36] tool
@@ -1136,7 +2456,84 @@ NameError: name 'compute_rmse_circ_4' is not defined. Did you mean: 'compute_rms
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+def rmse_circ(params, n_periods, n_harm=3):
+    periods = list(params[:n_periods])
+    features = build_features(t, periods, 2, n_harm)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+# Test 3-period with different harmonics
+result3 = [322.60, 847.09, 1103.07]
+print("=== 3-period model ===")
+for n_harm in [1, 2, 3, 5, 8, 10]:
+    features = build_features(t, result3, 2, n_harm)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    n_params = features.shape[1]
+    print(f"n_harm={n_harm:2d}, n_params={n_params:3d}: RMSE = {rmse:.4f}°")
+
+# 4 periods
+print("\n=== Optimizing 4 periods ===")
+result4 = minimize(lambda p: rmse_circ(p, 4, 3), [324, 600, 847, 1108], 
+                   method='Nelder-Mead', 
+                   options={'maxiter': 100000, 'xatol': 0.01, 'fatol': 1e-8})
+print(f"4 periods: P={[f'{p:.1f}' for p in result4.x]}, RMSE={np.degrees(result4.fun):.4f}°")
+
+# Fine-tune from 4-period result
+result4b = minimize(lambda p: rmse_circ(p, 4, 5), result4.x, 
+                    method='Nelder-Mead', 
+                    options={'maxiter': 100000, 'xatol': 0.01, 'fatol': 1e-8})
+print(f"4 periods (n_h=5): P={[f'{p:.1f}' for p in result4b.x]}, RMSE={np.degrees(result4b.fun):.4f}°")
+
+# 5 periods
+print("\n=== Optimizing 5 periods ===")
+result5 = minimize(lambda p: rmse_circ(p, 5, 2), [200, 324, 600, 847, 1108], 
+                   method='Nelder-Mead', 
+                   options={'maxiter': 100000, 'xatol': 0.01, 'fatol': 1e-8})
+print(f"5 periods: P={[f'{p:.1f}' for p in result5.x]}, RMSE={np.degrees(result5.fun):.4f}°")
+
+# 6 periods
+print("\n=== Optimizing 6 periods ===")
+result6 = minimize(lambda p: rmse_circ(p, 6, 2), [200, 324, 500, 700, 847, 1108], 
+                   method='Nelder-Mead', 
+                   options={'maxiter': 200000, 'xatol': 0.01, 'fatol': 1e-8})
+print(f"6 periods: P={[f'{p:.1f}' for p in result6.x]}, RMSE={np.degrees(result6.fun):.4f}°")
+
+EOF
 ```
 
 ## [38] tool
@@ -1173,7 +2570,123 @@ The 4-period model with n_h=5 gives RMSE 2.06°. Let me try more optimization an
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+def rmse_circ(params, n_periods, n_harm=5):
+    periods = list(params[:n_periods])
+    features = build_features(t, periods, 2, n_harm)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+# Cross-validation: last 500 points
+n_val = 500
+t_train_cv = t[:-n_val]
+t_val = t[-n_val:]
+sin_beta_train_cv = sin_beta[:-n_val]
+sin_beta_val = sin_beta[-n_val:]
+cos_beta_train_cv = cos_beta[:-n_val]
+cos_beta_val = cos_beta[-n_val:]
+beta_rad_val = beta_rad[-n_val:]
+
+# Cross-val for different model sizes
+print("=== Cross-validation ===")
+for n_p, n_h in [(2, 5), (3, 3), (3, 5), (4, 3), (4, 5), (5, 2), (5, 3)]:
+    best_cv_rmse = 100
+    best_periods = None
+    # Multiple random starts
+    for _ in range(5):
+        init = sorted(np.random.uniform(200, 1200, n_p))
+        try:
+            result = minimize(lambda p: _rmse_circ_cv(p, n_p, n_h, t_train_cv, sin_beta_train_cv, cos_beta_train_cv),
+                            init, method='Nelder-Mead',
+                            options={'maxiter': 50000, 'xatol': 0.1, 'fatol': 1e-6})
+            # Evaluate on validation
+            periods = list(result.x[:n_p])
+            features_val = build_features(t_val, periods, 2, n_h)
+            # Refit on train
+            features_train = build_features(t_train_cv, periods, 2, n_h)
+            fit_sin = np.linalg.lstsq(features_train, sin_beta_train_cv, rcond=None)
+            fit_cos = np.linalg.lstsq(features_train, cos_beta_train_cv, rcond=None)
+            pred_sin = features_val @ fit_sin[0]
+            pred_cos = features_val @ fit_cos[0]
+            pred_beta = np.arctan2(pred_sin, pred_cos)
+            error = np.arctan2(np.sin(beta_rad_val - pred_beta), np.cos(beta_rad_val - pred_beta))
+            cv_rmse = np.sqrt(np.mean(error**2))
+            if cv_rmse < best_cv_rmse:
+                best_cv_rmse = cv_rmse
+                best_periods = periods
+        except:
+            pass
+    print(f"n_p={n_p}, n_h={n_h}: best CV RMSE={np.degrees(best_cv_rmse):.4f}°, periods={[f'{p:.0f}' for p in best_periods]}")
+
+def _rmse_circ_cv(params, n_periods, n_harm, t_local, sin_b, cos_b):
+    periods = list(params[:n_periods])
+    features = build_features(t_local, periods, 2, n_harm)
+    fit_sin = np.linalg.lstsq(features, sin_b, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_b, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    # We need beta_rad for the full local data
+    local_beta_rad = np.arctan2(sin_b, cos_b)
+    error = np.arctan2(np.sin(local_beta_rad - pred_beta), np.cos(local_beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+# Now let me try with the best 4-period result and various harmonics
+print("\n=== 4 periods, varying harmonics ===")
+best_4p = [308.0, 669.2, 826.7, 1094.8]
+for n_h in [3, 5, 8, 10, 15]:
+    features = build_features(t, best_4p, 2, n_h)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    n_params = features.shape[1]
+    
+    # Cross-val
+    features_train = build_features(t_train_cv, best_4p, 2, n_h)
+    fit_sin_cv = np.linalg.lstsq(features_train, sin_beta_train_cv, rcond=None)
+    fit_cos_cv = np.linalg.lstsq(features_train, cos_beta_train_cv, rcond=None)
+    features_val_build = build_features(t_val, best_4p, 2, n_h)
+    pred_sin_val = features_val_build @ fit_sin_cv[0]
+    pred_cos_val = features_val_build @ fit_cos_cv[0]
+    pred_beta_val = np.arctan2(pred_sin_val, pred_cos_val)
+    error_val = np.arctan2(np.sin(beta_rad_val - pred_beta_val), np.cos(beta_rad_val - pred_beta_val))
+    cv_rmse = np.degrees(np.sqrt(np.mean(error_val**2)))
+    
+    print(f"n_h={n_h:2d}, n_params={n_params:3d}: train RMSE = {rmse:.4f}°, CV RMSE = {cv_rmse:.4f}°")
+
+EOF
 ```
 
 ## [40] tool
@@ -1198,7 +2711,106 @@ The function _rmse_circ_cv is defined after it's used. Let me fix the script.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+# Cross-validation: last 500 points
+n_val = 500
+t_train_cv = t[:-n_val]
+t_val = t[-n_val:]
+sin_beta_train_cv = sin_beta[:-n_val]
+sin_beta_val = sin_beta[-n_val:]
+cos_beta_train_cv = cos_beta[:-n_val]
+cos_beta_val = cos_beta[-n_val:]
+beta_rad_val = beta_rad[-n_val:]
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+def _rmse_circ_cv(params, n_periods, n_harm, t_local, sin_b, cos_b):
+    periods = list(params[:n_periods])
+    features = build_features(t_local, periods, 2, n_harm)
+    fit_sin = np.linalg.lstsq(features, sin_b, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_b, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    local_beta_rad = np.arctan2(sin_b, cos_b)
+    error = np.arctan2(np.sin(local_beta_rad - pred_beta), np.cos(local_beta_rad - pred_beta))
+    return np.sqrt(np.mean(error**2))
+
+# Test 4-period model with various harmonics
+best_4p = [308.0, 669.2, 826.7, 1094.8]
+print("=== 4 periods, varying harmonics ===")
+for n_h in [3, 5, 8, 10, 15]:
+    features = build_features(t, best_4p, 2, n_h)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    n_params = features.shape[1]
+    
+    # Cross-val
+    features_train = build_features(t_train_cv, best_4p, 2, n_h)
+    fit_sin_cv = np.linalg.lstsq(features_train, sin_beta_train_cv, rcond=None)
+    fit_cos_cv = np.linalg.lstsq(features_train, cos_beta_train_cv, rcond=None)
+    features_val_build = build_features(t_val, best_4p, 2, n_h)
+    pred_sin_val = features_val_build @ fit_sin_cv[0]
+    pred_cos_val = features_val_build @ fit_cos_cv[0]
+    pred_beta_val = np.arctan2(pred_sin_val, pred_cos_val)
+    error_val = np.arctan2(np.sin(beta_rad_val - pred_beta_val), np.cos(beta_rad_val - pred_beta_val))
+    cv_rmse = np.degrees(np.sqrt(np.mean(error_val**2)))
+    
+    print(f"n_h={n_h:2d}, n_params={n_params:3d}: train RMSE = {rmse:.4f}°, CV RMSE = {cv_rmse:.4f}°")
+
+# Also try 3-period model with varying harmonics for comparison
+best_3p = [322.60, 847.09, 1103.07]
+print("\n=== 3 periods, varying harmonics ===")
+for n_h in [3, 5, 8, 10]:
+    features = build_features(t, best_3p, 2, n_h)
+    fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+    fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+    pred_sin = features @ fit_sin[0]
+    pred_cos = features @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+    rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    n_params = features.shape[1]
+    
+    features_train = build_features(t_train_cv, best_3p, 2, n_h)
+    fit_sin_cv = np.linalg.lstsq(features_train, sin_beta_train_cv, rcond=None)
+    fit_cos_cv = np.linalg.lstsq(features_train, cos_beta_train_cv, rcond=None)
+    features_val_build = build_features(t_val, best_3p, 2, n_h)
+    pred_sin_val = features_val_build @ fit_sin_cv[0]
+    pred_cos_val = features_val_build @ fit_cos_cv[0]
+    pred_beta_val = np.arctan2(pred_sin_val, pred_cos_val)
+    error_val = np.arctan2(np.sin(beta_rad_val - pred_beta_val), np.cos(beta_rad_val - pred_beta_val))
+    cv_rmse = np.degrees(np.sqrt(np.mean(error_val**2)))
+    
+    print(f"n_h={n_h:2d}, n_params={n_params:3d}: train RMSE = {rmse:.4f}°, CV RMSE = {cv_rmse:.4f}°")
+
+EOF
 ```
 
 ## [42] tool
@@ -1275,7 +2887,119 @@ The cross-validation results show severe overfitting. The complex models extrapo
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# The alpha model is very precise. Let me use it.
+# Alpha rotation period is ~324 days
+# Let me model alpha, then model beta from alpha
+
+# Alpha model
+alpha = train['alpha'].values
+alpha_uw = np.unwrap(np.radians(alpha))
+
+# For alpha, use a simple model: poly(t) + Fourier(t, period=324)
+# This is well-constrained and extrapolates well
+alpha_features = build_features(t, [324], 2, 15)
+alpha_fit = np.linalg.lstsq(alpha_features, alpha_uw, rcond=None)
+alpha_pred_train = alpha_features @ alpha_fit[0]
+alpha_resid = alpha_uw - alpha_pred_train
+alpha_noise_std = np.std(alpha_resid)
+print(f"Alpha model residual std: {np.degrees(alpha_noise_std):.4f}°")
+print(f"Alpha model n_params: {alpha_features.shape[1]}")
+
+# Now the key insight: beta(t) has the same periodic structure
+# but different amplitudes/phases for each harmonic
+
+# Since alpha rotation period is P=324 days, and beta_uw = 0.292*alpha_uw + ...
+# beta also has oscillations at the same frequency as alpha
+# But additionally, beta rotates at a different rate, so there's also
+# a period of ~1108 days in wrapped beta
+
+# For extrapolation, the most robust approach:
+# 1. Use a simple polynomial trend
+# 2. Add a few carefully chosen Fourier harmonics
+
+# Let me try cross-validation with a rolling/expanding window approach
+# to see which model complexity generalizes
+
+# Try: conservative model with just [324, 1108] periods, n_h=3
+# This has 15 parameters and should be robust
+features_conservative = build_features(t, [324, 1108], 2, 3)
+fit_sin_c = np.linalg.lstsq(features_conservative, sin_beta, rcond=None)
+fit_cos_c = np.linalg.lstsq(features_conservative, cos_beta, rcond=None)
+
+# Leave-last-out CV for different horizons
+print("\n=== Expanding window CV for different model sizes ===")
+n_val = 300
+for n_p, P_list, n_h in [
+    (2, [324, 1108], 3),
+    (2, [324, 1108], 5),
+    (1, [324], 5),
+    (1, [324], 3),
+    (1, [324], 10),
+]:
+    # Train on first (N-n_val) points, predict last n_val
+    t_train = t[:len(t)-n_val]
+    t_test_cv = t[len(t)-n_val:]
+    sin_b_train = sin_beta[:len(t)-n_val]
+    cos_b_train = cos_beta[:len(t)-n_val]
+    beta_rad_test = beta_rad[len(t)-n_val:]
+    
+    features_train = build_features(t_train, P_list, 2, n_h)
+    features_test = build_features(t_test_cv, P_list, 2, n_h)
+    
+    fit_sin = np.linalg.lstsq(features_train, sin_b_train, rcond=None)
+    fit_cos = np.linalg.lstsq(features_train, cos_b_train, rcond=None)
+    
+    pred_sin = features_test @ fit_sin[0]
+    pred_cos = features_test @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad_test - pred_beta), np.cos(beta_rad_test - pred_beta))
+    cv_rmse = np.degrees(np.sqrt(np.mean(error**2)))
+    
+    n_params = features_train.shape[1]
+    print(f"  periods={P_list}, n_h={n_h}, n_params={n_params:2d}: CV RMSE = {cv_rmse:.4f}°")
+
+# Test on the actual prediction points
+print("\n=== Prediction with conservative model ===")
+features_pred = build_features(t, [324, 1108], 2, 3)
+fit_sin_pred = np.linalg.lstsq(features_pred, sin_beta, rcond=None)
+fit_cos_pred = np.linalg.lstsq(features_pred, cos_beta, rcond=None)
+pred_sin_train = features_pred @ fit_sin_pred[0]
+pred_cos_train = features_pred @ fit_cos_pred[0]
+pred_beta_train = np.arctan2(pred_sin_train, pred_cos_train)
+error_train = np.arctan2(np.sin(beta_rad - pred_beta_train), np.cos(beta_rad - pred_beta_train))
+train_rmse = np.degrees(np.sqrt(np.mean(error_train**2)))
+print(f"Training RMSE: {train_rmse:.4f}°")
+
+# Estimate noise std
+# The model residuals include both signal error and noise
+# For the conservative model, residuals should be mostly noise + small signal error
+resid_std = np.degrees(np.std(error_train))
+print(f"Training residual std: {resid_std:.4f}°")
+
+EOF
 ```
 
 ## [44] tool
@@ -1348,7 +3072,152 @@ The CV RMSE is 13.76° for the conservative model. Let me now try a different ap
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+alpha = train['alpha'].values
+t = train['t'].values
+t_test = test['t'].values
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+alpha_rad = np.radians(alpha)
+alpha_uw = np.unwrap(alpha_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Approach: model alpha very precisely, then use alpha to predict beta
+# Step 1: alpha model (very precise)
+alpha_features = build_features(t, [324], 2, 15)
+alpha_fit = np.linalg.lstsq(alpha_features, alpha_uw, rcond=None)
+alpha_pred_train = alpha_features @ alpha_fit[0]
+alpha_noise = np.std(alpha_uw - alpha_pred_train)
+print(f"Alpha noise std: {np.degrees(alpha_noise):.4f}°")
+
+# Step 2: model beta from alpha
+# beta_uw = f(alpha_uw) where f includes:
+# - Linear relationship: c * alpha_uw
+# - Periodic correction: h(alpha_wrapped)
+# Since alpha model is so good, predicted alpha ≈ true alpha + tiny noise
+
+# Let's fit: sin(beta) = g(alpha_wrapped, t)
+# cos(beta) = h(alpha_wrapped, t)
+
+# Use Fourier terms of alpha_wrapped (periodic in alpha) + Fourier(t) for slow drift
+# This captures:
+# - Fast oscillations tied to alpha rotation
+# - Slow drift over time
+
+# Model 1: sin(beta), cos(beta) from Fourier(alpha_wrapped) + Fourier(t, [1108])
+n_alpha_h = 10
+features = [np.ones(len(t))]
+for k in range(1, n_alpha_h + 1):
+    features.append(np.sin(k * alpha_rad))
+    features.append(np.cos(k * alpha_rad))
+# Add Fourier of t with period 1108 (the slow beta rotation)
+for k in range(1, 6):
+    features.append(np.sin(2 * np.pi * k * t / 1108))
+    features.append(np.cos(2 * np.pi * k * t / 1108))
+# Add polynomial in t
+for d in range(1, 3):
+    features.append(t**d)
+features = np.column_stack(features)
+
+fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+pred_sin = features @ fit_sin[0]
+pred_cos = features @ fit_cos[0]
+pred_beta = np.arctan2(pred_sin, pred_cos)
+error = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+rmse = np.degrees(np.sqrt(np.mean(error**2)))
+print(f"\nModel 1 (Fourier(alpha) + Fourier(t,1108) + poly(t)):")
+print(f"  n_params = {features.shape[1]}, RMSE = {rmse:.4f}°")
+
+# Cross-validate
+n_val = 300
+t_train = t[:-n_val]
+t_val = t[-n_val:]
+sin_b_train = sin_beta[:-n_val]
+cos_b_train = cos_beta[:-n_val]
+alpha_rad_train = alpha_rad[:-n_val]
+beta_rad_val = beta_rad[-n_val:]
+
+features_train = [np.ones(len(t_train))]
+for k in range(1, n_alpha_h + 1):
+    features_train.append(np.sin(k * alpha_rad_train))
+    features_train.append(np.cos(k * alpha_rad_train))
+for k in range(1, 6):
+    features_train.append(np.sin(2 * np.pi * k * t_train / 1108))
+    features_train.append(np.cos(2 * np.pi * k * t_train / 1108))
+for d in range(1, 3):
+    features_train.append(t_train**d)
+features_train = np.column_stack(features_train)
+
+# For validation, we need alpha at validation times
+# We predict alpha from the alpha model
+alpha_val_features = build_features(t_val, [324], 2, 15)
+alpha_pred_val = alpha_val_features @ alpha_fit[0]
+
+features_val = [np.ones(len(t_val))]
+for k in range(1, n_alpha_h + 1):
+    features_val.append(np.sin(k * alpha_pred_val))
+    features_val.append(np.cos(k * alpha_pred_val))
+for k in range(1, 6):
+    features_val.append(np.sin(2 * np.pi * k * t_val / 1108))
+    features_val.append(np.cos(2 * np.pi * k * t_val / 1108))
+for d in range(1, 3):
+    features_val.append(t_val**d)
+features_val = np.column_stack(features_val)
+
+fit_sin_cv = np.linalg.lstsq(features_train, sin_b_train, rcond=None)
+fit_cos_cv = np.linalg.lstsq(features_train, cos_b_train, rcond=None)
+pred_sin_val = features_val @ fit_sin_cv[0]
+pred_cos_val = features_val @ fit_cos_cv[0]
+pred_beta_val = np.arctan2(pred_sin_val, pred_cos_val)
+error_val = np.arctan2(np.sin(beta_rad_val - pred_beta_val), np.cos(beta_rad_val - pred_beta_val))
+cv_rmse = np.degrees(np.sqrt(np.mean(error_val**2)))
+print(f"  CV RMSE (last {n_val} pts) = {cv_rmse:.4f}°")
+
+# Now the direct model with [324, 1108] for comparison
+print("\n--- Direct model comparison ---")
+for P_list, n_h in [([324, 1108], 3), ([324, 1108], 5), ([324], 5), ([324], 15)]:
+    features_d = build_features(t, P_list, 2, n_h)
+    fit_sin_d = np.linalg.lstsq(features_d, sin_beta, rcond=None)
+    fit_cos_d = np.linalg.lstsq(features_d, cos_beta, rcond=None)
+    pred_sin_d = features_d @ fit_sin_d[0]
+    pred_cos_d = features_d @ fit_cos_d[0]
+    pred_beta_d = np.arctan2(pred_sin_d, pred_cos_d)
+    error_d = np.arctan2(np.sin(beta_rad - pred_beta_d), np.cos(beta_rad - pred_beta_d))
+    rmse_d = np.degrees(np.sqrt(np.mean(error_d**2)))
+    
+    # CV
+    features_d_train = build_features(t_train, P_list, 2, n_h)
+    fit_sin_d_cv = np.linalg.lstsq(features_d_train, sin_b_train, rcond=None)
+    fit_cos_d_cv = np.linalg.lstsq(features_d_train, cos_b_train, rcond=None)
+    features_d_val = build_features(t_val, P_list, 2, n_h)
+    pred_sin_d_val = features_d_val @ fit_sin_d_cv[0]
+    pred_cos_d_val = features_d_val @ fit_cos_d_cv[0]
+    pred_beta_d_val = np.arctan2(pred_sin_d_val, pred_cos_d_val)
+    error_d_val = np.arctan2(np.sin(beta_rad_val - pred_beta_d_val), np.cos(beta_rad_val - pred_beta_d_val))
+    cv_rmse_d = np.degrees(np.sqrt(np.mean(error_d_val**2)))
+    
+    print(f"  periods={P_list}, n_h={n_h}: train={rmse_d:.4f}°, CV={cv_rmse_d:.4f}°")
+
+EOF
 ```
 
 ## [46] tool
@@ -1419,7 +3288,126 @@ I'm getting CV RMSE of ~14° for extrapolation. Let me now estimate the noise va
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Estimate noise variance using the differencing method
+# If y(t) = f(t) + noise, and f is smooth, then:
+# Var(diff(y)) ≈ 2 * Var(noise) for small dt
+# But for angles, need to handle wrapping
+
+# First, let me compute residuals from the [324, 1108] n_h=3 model
+features = build_features(t, [324, 1108], 2, 3)
+fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+
+pred_sin = features @ fit_sin[0]
+pred_cos = features @ fit_cos[0]
+pred_beta_rad = np.arctan2(pred_sin, pred_cos)
+
+# Residuals in the circular sense
+resid = np.arctan2(np.sin(beta_rad - pred_beta_rad), np.cos(beta_rad - pred_beta_rad))
+
+# From the residuals, estimate the observation noise
+# The residuals contain both model error and noise
+# The model error is smooth (correlated), noise is white
+
+# Use the variogram approach
+# For white noise + smooth signal:
+# Var(y(t+h) - y(t)) = 2*sigma_noise^2 + Var(f(t+h) - f(t))
+# As h -> 0, Var(diff) -> 2*sigma_noise^2 (if f is continuous)
+# But our data has dt=1, so there IS some signal change
+
+# Let's use the autocovariance
+# gamma(0) = sigma_signal^2 + sigma_noise^2
+# gamma(h) = sigma_signal^2 * rho(h)
+# For white noise: gamma(h) = 0 for h > 0
+# So sigma_noise^2 = gamma(0) - gamma(1) (approximately)
+
+from statsmodels.tsa.stattools import acf
+acf_resid = acf(resid, nlags=100)
+var_resid = np.var(resid)
+print(f"Residual variance: {np.degrees(np.sqrt(var_resid)):.4f}° (std)")
+
+# The ACF at lag 1 tells us about noise vs signal
+# If ACF(1) ≈ 0: mostly noise
+# If ACF(1) ≈ 1: mostly signal (smooth model error)
+print(f"ACF at lag 1: {acf_resid[1]:.4f}")
+print(f"ACF at lag 5: {acf_resid[5]:.4f}")
+print(f"ACF at lag 10: {acf_resid[10]:.4f}")
+
+# Estimate noise variance
+# sigma^2_total = sigma^2_signal + sigma^2_noise
+# gamma(1) = sigma^2_signal * rho(1)
+# gamma(0) = sigma^2_signal + sigma^2_noise
+# So: sigma^2_noise = gamma(0) - gamma(1) = var * (1 - ACF(1))
+sigma2_noise = var_resid * (1 - acf_resid[1])
+sigma_noise = np.sqrt(sigma2_noise)
+print(f"\nEstimated noise std: {np.degrees(sigma_noise):.4f}°")
+print(f"Estimated signal std: {np.degrees(np.sqrt(var_resid - sigma2_noise)):.4f}°")
+
+# Alternative: use the alpha model to estimate observation noise
+# Alpha has very clean signal, so its residuals are mostly noise
+alpha_rad = np.radians(alpha)
+alpha_uw = np.unwrap(alpha_rad)
+alpha_features = build_features(t, [324], 2, 15)
+alpha_fit = np.linalg.lstsq(alpha_features, alpha_uw, rcond=None)
+alpha_pred = alpha_features @ alpha_fit[0]
+alpha_resid = alpha_uw - alpha_pred
+alpha_resid_std = np.std(alpha_resid)
+print(f"\nAlpha residual std: {np.degrees(alpha_resid_std):.4f}°")
+print(f"Alpha residual ACF(1): {acf(alpha_resid, nlags=10)[1]:.4f}")
+
+# Alpha residuals are nearly white (low ACF), so alpha_noise_std ≈ 0.68°
+# This is the measurement noise for alpha
+# Beta might have different noise level
+
+# Let me also try fitting a much more flexible model to beta to extract the noise
+# Use [324, 1108] with n_h=10 (lots of parameters) and see what happens
+features_flex = build_features(t, [324, 1108], 2, 10)
+fit_sin_flex = np.linalg.lstsq(features_flex, sin_beta, rcond=None)
+fit_cos_flex = np.linalg.lstsq(features_flex, cos_beta, rcond=None)
+pred_sin_flex = features_flex @ fit_sin_flex[0]
+pred_cos_flex = features_flex @ fit_cos_flex[0]
+pred_beta_flex = np.arctan2(pred_sin_flex, pred_cos_flex)
+resid_flex = np.arctan2(np.sin(beta_rad - pred_beta_flex), np.cos(beta_rad - pred_beta_flex))
+acf_flex = acf(resid_flex, nlags=10)
+sigma2_noise_flex = np.var(resid_flex) * (1 - acf_flex[1])
+sigma_noise_flex = np.sqrt(sigma2_noise_flex)
+print(f"\nFlexible model residual std: {np.degrees(np.std(resid_flex)):.4f}°")
+print(f"Flexible model ACF(1): {acf_flex[1]:.4f}")
+print(f"Flexible model estimated noise std: {np.degrees(sigma_noise_flex):.4f}°")
+
+# Print summary
+print(f"\n=== Summary ===")
+print(f"Observation noise std (from alpha): ~{np.degrees(alpha_resid_std):.2f}°")
+print(f"Observation noise std (from beta model): ~{np.degrees(sigma_noise_flex):.2f}°")
+print(f"Total prediction error std (conservative model CV): ~13.76°")
+
+EOF
 ```
 
 ## [48] tool
@@ -1691,7 +3679,105 @@ Excellent findings! Observation noise is ~0.62°, model error is ~7.88° (mostly
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Estimate how prediction error grows with extrapolation distance
+# by fitting on subsets and evaluating at various distances
+periods = [324, 1108]
+n_h = 3
+
+print("=== Extrapolation error vs distance ===")
+errors_by_distance = {}
+for n_train in [500, 1000, 1500, 2000, 2500, 3000]:
+    t_tr = t[:n_train]
+    sin_b_tr = sin_beta[:n_train]
+    cos_b_tr = cos_beta[:n_train]
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    fit_sin = np.linalg.lstsq(features_tr, sin_b_tr, rcond=None)
+    fit_cos = np.linalg.lstsq(features_tr, cos_b_tr, rcond=None)
+    
+    # Evaluate at various distances beyond training
+    for dist in [10, 50, 100, 200, 500]:
+        t_eval = np.array([n_train + dist])
+        if t_eval[0] > 3044:
+            continue
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin = features_eval @ fit_sin[0]
+        pred_cos = features_eval @ fit_cos[0]
+        pred_beta = np.arctan2(pred_sin, pred_cos)
+        
+        # True value
+        true_beta = beta_rad[n_train + dist - 1]  # -1 because 0-indexed
+        error = np.arctan2(np.sin(true_beta - pred_beta), np.cos(true_beta - pred_beta))
+        
+        if dist not in errors_by_distance:
+            errors_by_distance[dist] = []
+        errors_by_distance[dist].append(np.degrees(error))
+
+for dist in sorted(errors_by_distance.keys()):
+    errors = errors_by_distance[dist]
+    rmse = np.sqrt(np.mean(np.array(errors)**2))
+    print(f"  Distance {dist:4d} days: RMSE = {rmse:.2f}° (n_samples = {len(errors)})")
+
+# Now also do expanding-window CV to measure error at specific distances
+print("\n=== Expanding window: error at specific distances ===")
+distances_to_test = [2, 10, 50, 100, 200, 500, 1000, 1500]
+all_errors = {d: [] for d in distances_to_test}
+
+for start_train in range(0, 2500, 100):
+    end_train = min(start_train + 2500, len(t))
+    t_tr = t[start_train:end_train]
+    sin_b_tr = sin_beta[start_train:end_train]
+    cos_b_tr = cos_beta[start_train:end_train]
+    n_tr = end_train - start_train
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    fit_sin = np.linalg.lstsq(features_tr, sin_b_tr, rcond=None)
+    fit_cos = np.linalg.lstsq(features_tr, cos_b_tr, rcond=None)
+    
+    for dist in distances_to_test:
+        idx = end_train + dist - 1
+        if idx >= len(t):
+            continue
+        t_eval = np.array([t[idx]])
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin = features_eval @ fit_sin[0]
+        pred_cos = features_eval @ fit_cos[0]
+        pred_beta = np.arctan2(pred_sin, pred_cos)
+        
+        true_beta = beta_rad[idx]
+        error = np.arctan2(np.sin(true_beta - pred_beta), np.cos(true_beta - pred_beta))
+        all_errors[dist].append(np.degrees(error))
+
+for dist in distances_to_test:
+    errors = all_errors[dist]
+    if errors:
+        rmse = np.sqrt(np.mean(np.array(errors)**2))
+        print(f"  Distance {dist:4d} days: RMSE = {rmse:.2f}° (n = {len(errors)})")
+
+EOF
 ```
 
 ## [50] tool
@@ -1875,7 +3961,166 @@ The expanding window gives more reasonable errors (7-16° depending on distance)
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+alpha_rad = np.radians(alpha)
+alpha_uw = np.unwrap(alpha_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Step 1: Fit alpha model
+alpha_features = build_features(t, [324], 2, 15)
+alpha_fit = np.linalg.lstsq(alpha_features, alpha_uw, rcond=None)
+
+# Step 2: Fit beta model using [324, 1108] periods with n_h=3
+periods_beta = [324, 1108]
+n_h_beta = 3
+beta_features = build_features(t, periods_beta, 2, n_h_beta)
+fit_sin = np.linalg.lstsq(beta_features, sin_beta, rcond=None)
+fit_cos = np.linalg.lstsq(beta_features, cos_beta, rcond=None)
+
+# Predict at test points
+alpha_test_features = build_features(t_test, [324], 2, 15)
+alpha_pred_test = alpha_test_features @ alpha_fit[0]
+alpha_pred_test_wrapped = alpha_pred_test % (2*np.pi)
+alpha_pred_test_deg = np.degrees(alpha_pred_test_wrapped) % 360
+
+beta_test_features = build_features(t_test, periods_beta, 2, n_h_beta)
+pred_sin_test = beta_test_features @ fit_sin[0]
+pred_cos_test = beta_test_features @ fit_cos[0]
+pred_beta_test_rad = np.arctan2(pred_sin_test, pred_cos_test)
+pred_beta_test = np.degrees(pred_beta_test_rad) % 360
+
+print("Test predictions:")
+for i in range(len(t_test)):
+    dist = t_test[i] - t.max()
+    print(f"  t={t_test[i]}, alpha_pred={alpha_pred_test_deg[i]:.2f}°, beta_pred={pred_beta_test[i]:.2f}°, dist={dist}")
+
+# Estimate prediction uncertainty for each test point
+# Use expanding window CV to estimate RMSE as function of distance
+print("\n=== Computing uncertainty estimates ===")
+
+# Do expanding window CV
+distances_to_test = list(range(0, 2000, 50))
+all_rmse = {}
+
+for n_train in range(500, 3045, 50):
+    t_tr = t[:n_train]
+    sin_b_tr = sin_beta[:n_train]
+    cos_b_tr = cos_beta[:n_train]
+    
+    features_tr = build_features(t_tr, periods_beta, 2, n_h_beta)
+    fit_sin_tr = np.linalg.lstsq(features_tr, sin_b_tr, rcond=None)
+    fit_cos_tr = np.linalg.lstsq(features_tr, cos_b_tr, rcond=None)
+    
+    for dist in distances_to_test:
+        idx = n_train + dist
+        if idx >= len(t):
+            continue
+        t_eval = np.array([t[idx]])
+        features_eval = build_features(t_eval, periods_beta, 2, n_h_beta)
+        pred_sin_eval = features_eval @ fit_sin_tr[0]
+        pred_cos_eval = features_eval @ fit_cos_tr[0]
+        pred_beta_eval = np.arctan2(pred_sin_eval, pred_cos_eval)
+        
+        true_beta = beta_rad[idx]
+        error = np.arctan2(np.sin(true_beta - pred_beta_eval), np.cos(true_beta - pred_beta_eval))
+        
+        if dist not in all_rmse:
+            all_rmse[dist] = []
+        all_rmse[dist].append(np.degrees(error)**2)
+
+# Compute RMSE for each distance
+rmse_by_dist = {}
+for dist in sorted(all_rmse.keys()):
+    errors = all_rmse[dist]
+    if len(errors) >= 3:
+        rmse_by_dist[dist] = np.sqrt(np.mean(errors))
+
+print("RMSE by extrapolation distance:")
+for dist in sorted(rmse_by_dist.keys()):
+    if dist % 200 == 0 or dist in [2, 10, 50, 100]:
+        print(f"  {dist:5d} days: RMSE = {rmse_by_dist[dist]:.2f}° (n={len(all_rmse[dist])})")
+
+# Now interpolate RMSE for each test point
+dist_array = np.array(sorted(rmse_by_dist.keys()))
+rmse_array = np.array([rmse_by_dist[d] for d in dist_array])
+
+# Observation noise std
+sigma_noise = 0.62  # degrees
+
+# For each test point, compute the prediction interval
+print("\n=== Final predictions ===")
+results = []
+for i in range(len(t_test)):
+    dist = t_test[i] - t.max()
+    
+    # Interpolate RMSE
+    if dist <= dist_array[-1]:
+        sigma_model = np.interp(dist, dist_array, rmse_array)
+    else:
+        # Extrapolate: use the last known RMSE + some growth
+        # Linear extrapolation of RMSE
+        last_dist = dist_array[-1]
+        last_rmse = rmse_array[-1]
+        # Use the slope from the last few points
+        mask = dist_array > dist_array[-1] - 500
+        if sum(mask) > 1:
+            slope = np.polyfit(dist_array[mask], rmse_array[mask], 1)[0]
+        else:
+            slope = 0.005  # default growth rate
+        sigma_model = last_rmse + slope * (dist - last_dist)
+    
+    # Total prediction std
+    sigma_total = np.sqrt(sigma_model**2 + sigma_noise**2)
+    
+    # 95% prediction interval
+    z = 1.96
+    y_lower = (pred_beta_test[i] - z * sigma_total) % 360
+    y_upper = (pred_beta_test[i] + z * sigma_total) % 360
+    
+    results.append({
+        't': t_test[i],
+        'y_pred': pred_beta_test[i],
+        'y_lower': y_lower,
+        'y_upper': y_upper,
+        'sigma_model': sigma_model,
+        'dist': dist
+    })
+    
+    print(f"  t={t_test[i]:5d}, dist={dist:5d}, pred={pred_beta_test[i]:.2f}°, "
+          f"sigma_model={sigma_model:.2f}°, interval=[{y_lower:.2f}, {y_upper:.2f}]")
+
+# Write predictions
+df = pd.DataFrame(results)
+# Ensure columns are exactly as specified
+df_out = df[['t', 'y_pred', 'y_lower', 'y_upper']].copy()
+df_out.to_csv('predictions.csv', index=False)
+print(f"\nWrote predictions.csv with {len(df_out)} rows")
+print(df_out)
+
+EOF
 ```
 
 ## [52] tool
@@ -2011,7 +4256,95 @@ The RMSE by distance from the expanding window is very large because different t
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Use FIXED training size and test extrapolation
+periods = [324, 1108]
+n_h = 3
+
+print("=== Fixed training size, varying extrapolation distance ===")
+n_train = 2500  # Use 2500 points for training
+t_tr = t[:n_train]
+sin_b_tr = sin_beta[:n_train]
+cos_b_tr = cos_beta[:n_train]
+
+features_tr = build_features(t_tr, periods, 2, n_h)
+fit_sin = np.linalg.lstsq(features_tr, sin_b_tr, rcond=None)
+fit_cos = np.linalg.lstsq(features_tr, cos_b_tr, rcond=None)
+
+# Train error
+pred_sin_tr = features_tr @ fit_sin[0]
+pred_cos_tr = features_tr @ fit_cos[0]
+pred_beta_tr = np.arctan2(pred_sin_tr, pred_cos_tr)
+error_tr = np.arctan2(np.sin(beta_rad[:n_train] - pred_beta_tr), np.cos(beta_rad[:n_train] - pred_beta_tr))
+print(f"Training RMSE: {np.degrees(np.sqrt(np.mean(error_tr**2))):.2f}°")
+
+# Test at various distances
+for dist in [0, 2, 5, 10, 20, 50, 100, 200, 300, 400, 500]:
+    idx = n_train + dist
+    if idx >= len(t):
+        continue
+    t_eval = np.array([t[idx]])
+    features_eval = build_features(t_eval, periods, 2, n_h)
+    pred_sin = features_eval @ fit_sin[0]
+    pred_cos = features_eval @ fit_cos[0]
+    pred_beta = np.arctan2(pred_sin, pred_cos)
+    error = np.arctan2(np.sin(beta_rad[idx] - pred_beta), np.cos(beta_rad[idx] - pred_beta))
+    print(f"  Distance {dist:4d} days (t={t[idx]}): error = {np.degrees(error):.2f}°")
+
+# Now do this for multiple training sizes and average
+print("\n=== Averaged over multiple training sizes ===")
+distances = [0, 2, 5, 10, 20, 50, 100, 200, 300, 400, 500]
+errors_by_dist = {d: [] for d in distances}
+
+for n_train_start in range(1500, 2700, 100):
+    n_tr = n_train_start
+    t_tr = t[:n_tr]
+    sin_b_tr = sin_beta[:n_tr]
+    cos_b_tr = cos_beta[:n_tr]
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    fit_sin_local = np.linalg.lstsq(features_tr, sin_b_tr, rcond=None)
+    fit_cos_local = np.linalg.lstsq(features_tr, cos_b_tr, rcond=None)
+    
+    for dist in distances:
+        idx = n_tr + dist
+        if idx >= len(t):
+            continue
+        t_eval = np.array([t[idx]])
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin = features_eval @ fit_sin_local[0]
+        pred_cos = features_eval @ fit_cos_local[0]
+        pred_beta = np.arctan2(pred_sin, pred_cos)
+        error = np.arctan2(np.sin(beta_rad[idx] - pred_beta), np.cos(beta_rad[idx] - pred_beta))
+        errors_by_dist[dist].append(np.degrees(error)**2)
+
+for dist in distances:
+    errs = errors_by_dist[dist]
+    if len(errs) > 0:
+        rmse = np.sqrt(np.mean(errs))
+        print(f"  Distance {dist:4d} days: RMSE = {rmse:.2f}° (n={len(errs)})")
+
+EOF
 ```
 
 ## [54] tool
@@ -2036,7 +4369,89 @@ Let me fix the format issue and try again.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+periods = [324, 1108]
+n_h = 3
+
+# Do this for multiple training sizes and average
+distances = [0, 2, 5, 10, 20, 50, 100, 200, 300, 400, 500]
+errors_by_dist = {d: [] for d in distances}
+
+for n_train_start in range(1500, 2800, 100):
+    n_tr = n_train_start
+    t_tr = t[:n_tr]
+    sin_b_tr = sin_beta[:n_tr]
+    cos_b_tr = cos_beta[:n_tr]
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    fit_sin_local = np.linalg.lstsq(features_tr, sin_b_tr, rcond=None)
+    fit_cos_local = np.linalg.lstsq(features_tr, cos_b_tr, rcond=None)
+    
+    for dist in distances:
+        idx = n_tr + dist
+        if idx >= len(t):
+            continue
+        t_eval = np.array([t[idx]])
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin = features_eval @ fit_sin_local[0]
+        pred_cos = features_eval @ fit_cos_local[0]
+        pred_beta = np.arctan2(pred_sin, pred_cos)
+        error = np.arctan2(np.sin(beta_rad[idx] - pred_beta), np.cos(beta_rad[idx] - pred_beta))
+        errors_by_dist[dist].append(float(np.degrees(error)**2))
+
+print("=== RMSE by extrapolation distance (averaged) ===")
+for dist in distances:
+    errs = errors_by_dist[dist]
+    if len(errs) > 0:
+        rmse = np.sqrt(np.mean(errs))
+        print(f"  Distance {dist:4d} days: RMSE = {rmse:.2f} degrees (n={len(errs)})")
+
+# Now test with the full model (all 3045 points)
+print("\n=== Full model, extrapolation to test points ===")
+features_full = build_features(t, periods, 2, n_h)
+fit_sin_full = np.linalg.lstsq(features_full, sin_beta, rcond=None)
+fit_cos_full = np.linalg.lstsq(features_full, cos_beta, rcond=None)
+
+# Compute training RMSE
+pred_sin_full = features_full @ fit_sin_full[0]
+pred_cos_full = features_full @ fit_cos_full[0]
+pred_beta_full = np.arctan2(pred_sin_full, pred_cos_full)
+error_full = np.arctan2(np.sin(beta_rad - pred_beta_full), np.cos(beta_rad - pred_beta_full))
+print(f"Full training RMSE: {np.degrees(np.sqrt(np.mean(error_full**2))):.2f} degrees")
+
+# Test points
+t_test = np.array([3046, 3231, 3416, 3600, 3785, 3970, 4155, 4340, 4525, 4709])
+features_test = build_features(t_test, periods, 2, n_h)
+pred_sin_test = features_test @ fit_sin_full[0]
+pred_cos_test = features_test @ fit_cos_full[0]
+pred_beta_test = np.arctan2(pred_sin_test, pred_cos_test)
+pred_beta_test_deg = np.degrees(pred_beta_test) % 360
+
+for i, tval in enumerate(t_test):
+    dist = tval - t.max()
+    print(f"  t={tval}, dist={dist}, pred={pred_beta_test_deg[i]:.2f} degrees")
+
+EOF
 ```
 
 ## [56] tool
@@ -2058,7 +4473,83 @@ TypeError: only 0-dimensional arrays can be converted to Python scalars
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+periods = [324, 1108]
+n_h = 3
+n = len(t)
+
+# Use full training data, then also evaluate at test points
+features_full = build_features(t, periods, 2, n_h)
+fit_sin_full = np.linalg.lstsq(features_full, sin_beta, rcond=None)
+fit_cos_full = np.linalg.lstsq(features_full, cos_beta, rcond=None)
+
+# Training RMSE
+pred_sin_full = features_full @ fit_sin_full[0]
+pred_cos_full = features_full @ fit_cos_full[0]
+pred_beta_full = np.arctan2(pred_sin_full, pred_cos_full)
+error_full = np.arctan2(np.sin(beta_rad - pred_beta_full), np.cos(beta_rad - pred_beta_full))
+train_rmse = float(np.degrees(np.sqrt(np.mean(error_full**2))))
+print("Full training RMSE:", train_rmse, "degrees")
+
+# Now use expanding window to measure extrapolation error properly
+print("\n=== Proper expanding window CV ===")
+# Use train on [0, T] and test at T+1, T+2, ..., T+H
+# where H is the max horizon we can test
+
+# For each training end point T, measure error at various horizons
+horizons = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500, 700, 1000]
+errors = {h: [] for h in horizons}
+
+for T_end in range(2000, n - 1, 50):
+    t_tr = t[:T_end]
+    sin_b_tr = sin_beta[:T_end]
+    cos_b_tr = cos_beta[:T_end]
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    fit_sin = np.linalg.lstsq(features_tr, sin_b_tr, rcond=None)
+    fit_cos = np.linalg.lstsq(features_tr, cos_b_tr, rcond=None)
+    
+    for h in horizons:
+        idx = T_end + h - 1  # 0-indexed
+        if idx >= n:
+            continue
+        t_eval = np.array([t[idx]])
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin = float(features_eval @ fit_sin[0])
+        pred_cos = float(features_eval @ fit_cos[0])
+        pred_beta = np.arctan2(pred_sin, pred_cos)
+        error = float(np.arctan2(np.sin(beta_rad[idx] - pred_beta), np.cos(beta_rad[idx] - pred_beta)))
+        errors[h].append(error)
+
+print("RMSE by horizon:")
+for h in horizons:
+    errs = np.array(errors[h])
+    if len(errs) > 0:
+        rmse = float(np.degrees(np.sqrt(np.mean(errs**2))))
+        bias = float(np.degrees(np.mean(errs)))
+        print(f"  h={h:5d}: RMSE={rmse:.2f}, bias={bias:.2f}, n={len(errs)}")
+
+EOF
 ```
 
 ## [58] tool
@@ -2083,7 +4574,77 @@ Full training RMSE: 7.883525122859462 degrees
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+beta = train['beta'].values
+t = train['t'].values
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+periods = [324, 1108]
+n_h = 3
+n = len(t)
+
+# Use expanding window to measure extrapolation error
+horizons = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500, 700, 1000]
+errors = {h: [] for h in horizons}
+
+for T_end in range(2000, n - 1, 50):
+    t_tr = t[:T_end]
+    sin_b_tr = sin_beta[:T_end]
+    cos_b_tr = cos_beta[:T_end]
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    fit_sin = np.linalg.lstsq(features_tr, sin_b_tr, rcond=None)
+    fit_cos = np.linalg.lstsq(features_tr, cos_b_tr, rcond=None)
+    
+    for h in horizons:
+        idx = T_end + h - 1  # 0-indexed
+        if idx >= n:
+            continue
+        t_eval = np.array([t[idx]])
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin_val = (features_eval @ fit_sin[0])[0]
+        pred_cos_val = (features_eval @ fit_cos[0])[0]
+        pred_beta = np.arctan2(pred_sin_val, pred_cos_val)
+        error = float(np.arctan2(np.sin(beta_rad[idx] - pred_beta), np.cos(beta_rad[idx] - pred_beta)))
+        errors[h].append(error)
+
+print("RMSE by extrapolation horizon (degrees):")
+for h in horizons:
+    errs = np.array(errors[h])
+    if len(errs) > 0:
+        rmse = float(np.degrees(np.sqrt(np.mean(errs**2))))
+        print(f"  h={h:5d}: RMSE={rmse:.2f}, n={len(errs)}")
+
+# Test point distances from training end
+t_test = np.array([3046, 3231, 3416, 3600, 3785, 3970, 4155, 4340, 4525, 4709])
+dists = t_test - (n - 1)  # distance from last training point (t=3044)
+print("\nTest point distances:", dists)
+
+# Interpolate RMSE for test distances
+h_array = np.array([h for h in horizons if h <= max(errors.keys()) and len(errors[h]) > 0])
+rmse_array = np.array([float(np.degrees(np.sqrt(np.mean(np.array(errors[h])**2)))) for h in h_array])
+
+for i, (tval, dist) in enumerate(zip(t_test, dists)):
+    sigma_model = np.interp(dist, h_array, rmse_array)
+    print(f"  t={tval}, dist={dist}, sigma_model={sigma_model:.2f}")
+
+EOF
 ```
 
 ## [60] tool
@@ -2170,7 +4731,157 @@ The RMSE results fluctuate a lot due to small sample sizes at large horizons. Le
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+n = len(t)
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t))]
+    for d in range(1, poly_degree + 1):
+        features.append(t**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Use the [324, 1108] model with n_h=3
+periods = [324, 1108]
+n_h = 3
+
+# Fit sin(beta) model
+features = build_features(t, periods, 2, n_h)
+p = features.shape[1]
+print(f"Number of parameters: {p}")
+print(f"Number of data points: {n}")
+
+# Fit both sin and cos
+fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+
+# Compute residuals
+pred_sin = features @ fit_sin[0]
+pred_cos = features @ fit_cos[0]
+resid_sin = sin_beta - pred_sin
+resid_cos = cos_beta - pred_cos
+
+# Estimate noise variance (treating total residual as noise)
+# This is conservative because it includes model error
+sigma2_sin = np.sum(resid_sin**2) / (n - p)
+sigma2_cos = np.sum(resid_cos**2) / (n - p)
+print(f"sigma2_sin = {sigma2_sin:.6f}")
+print(f"sigma2_cos = {sigma2_cos:.6f}")
+
+# Compute (X'X)^{-1} for prediction intervals
+XtX_inv_sin = np.linalg.inv(features.T @ fit_sin[1])  # fit_sin[1] is the residual sum of squares matrix... no
+
+# Actually, let me compute it properly
+# For least squares: fit = (X'X)^{-1} X'y
+# We need (X'X)^{-1}
+XtX = features.T @ features
+XtX_inv = np.linalg.inv(XtX)
+
+print(f"\nCondition number of X'X: {np.linalg.cond(XtX):.2f}")
+
+# Predict at test points
+features_test = build_features(t_test, periods, 2, n_h)
+
+# Prediction variance for each test point
+# Var(y_new) = sigma^2 * (1 + x_new' (X'X)^{-1} x_new)
+# Note: this is for a single target. For sin/cos separately:
+# Var(sin(beta_new)) = sigma2_sin * (1 + x_new' (X'X)^{-1} x_new)
+# Var(cos(beta_new)) = sigma2_cos * (1 + x_new' (X'X)^{-1} x_new)
+
+# But sin and cos are correlated, so the circular prediction interval is different
+# Let me use a simpler approach: compute the prediction variance and use it directly
+
+# First, compute prediction standard deviation for sin and cos at each test point
+# For the prediction interval of the ANGLE, I'll use the delta method
+
+print("\n=== Prediction intervals ===")
+sigma_noise = 0.62  # observation noise in degrees
+
+results = []
+for i in range(len(t_test)):
+    x_new = features_test[i:i+1, :]  # (1, p)
+    
+    # Leverage
+    h_val = float(x_new @ XtX_inv @ x_new.T)
+    
+    # Prediction variance for sin(beta)
+    pred_var_sin = sigma2_sin * (1 + h_val)
+    # Prediction variance for cos(beta)
+    pred_var_cos = sigma2_cos * (1 + h_val)
+    
+    # Point prediction
+    sin_pred = float(features_test[i] @ fit_sin[0])
+    cos_pred = float(features_test[i] @ fit_cos[0])
+    beta_pred = float(np.arctan2(sin_pred, cos_pred))
+    beta_pred_deg = beta_pred * 180 / np.pi % 360
+    
+    # Convert prediction variance to angle variance using delta method
+    # beta = arctan2(sin, cos)
+    # d(beta)/d(sin) = cos / (sin^2 + cos^2) = cos
+    # d(beta)/d(cos) = -sin / (sin^2 + cos^2) = -sin
+    # Var(beta) ≈ cos^2 * Var(sin) + sin^2 * Var(cos) - 2*sin*cos*Cov(sin,cos)
+    
+    # For the prediction interval, use the total prediction std
+    # The total std in the angle domain:
+    # Use max of sin and cos variances as a rough estimate
+    pred_var_total = max(pred_var_sin, pred_var_cos)
+    
+    # But this underestimates because sin and cos can be anti-correlated
+    # Better approach: use the residual in the angle domain directly
+    resid_angle = np.arctan2(np.sin(beta_rad - np.arctan2(pred_sin, pred_cos)), 
+                              np.cos(beta_rad - np.arctan2(pred_sin, pred_cos)))
+    sigma2_angle = float(np.var(resid_angle))
+    
+    # For prediction interval in angle domain:
+    # Var(y_new_angle) ≈ sigma2_angle * (1 + h_val)
+    pred_var_angle = sigma2_angle * (1 + h_val)
+    pred_std_angle = np.sqrt(pred_var_angle)
+    
+    # Also add observation noise
+    total_std = np.sqrt(pred_var_angle + (sigma_noise * np.pi/180)**2)
+    total_std_deg = total_std * 180 / np.pi
+    
+    # 95% prediction interval (use 1.96 for normal approximation)
+    z = 1.96
+    y_lower = (beta_pred_deg - z * total_std_deg) % 360
+    y_upper = (beta_pred_deg + z * total_std_deg) % 360
+    
+    dist = t_test[i] - t.max()
+    print(f"  t={t_test[i]:5d}, dist={dist:5d}, pred={beta_pred_deg:.2f}, "
+          f"leverage={h_val:.4f}, sigma_pred={total_std_deg:.2f}, "
+          f"interval=[{y_lower:.2f}, {y_upper:.2f}]")
+    
+    results.append({
+        't': int(t_test[i]),
+        'y_pred': round(beta_pred_deg, 4),
+        'y_lower': round(y_lower, 4),
+        'y_upper': round(y_upper, 4)
+    })
+
+# Write predictions
+df = pd.DataFrame(results)
+df.to_csv('predictions.csv', index=False)
+print(f"\nWrote predictions.csv with {len(df)} rows")
+print(df.to_string(index=False))
+
+EOF
 ```
 
 ## [62] tool
@@ -2198,7 +4909,105 @@ Let me fix the code.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+n = len(t)
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t_arr, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t_arr))]
+    for d in range(1, poly_degree + 1):
+        features.append(t_arr**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t_arr / P))
+            features.append(np.cos(2 * np.pi * k * t_arr / P))
+    return np.column_stack(features)
+
+periods = [324, 1108]
+n_h = 3
+
+features = build_features(t, periods, 2, n_h)
+p = features.shape[1]
+
+fit_sin = np.linalg.lstsq(features, sin_beta, rcond=None)
+fit_cos = np.linalg.lstsq(features, cos_beta, rcond=None)
+
+pred_sin = features @ fit_sin[0]
+pred_cos = features @ fit_cos[0]
+pred_beta = np.arctan2(pred_sin, pred_cos)
+
+# Residuals in angle domain
+resid_angle = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+sigma2_angle = float(np.var(resid_angle))
+print(f"Angle residual variance: {np.degrees(np.sqrt(sigma2_angle)):.4f} degrees std")
+
+# Observation noise
+sigma_noise_rad = 0.62 * np.pi / 180
+
+# (X'X)^{-1}
+XtX = features.T @ features
+XtX_inv = np.linalg.inv(XtX)
+
+print(f"Condition number: {np.linalg.cond(XtX):.1f}")
+
+# Predict at test points
+features_test = build_features(t_test, periods, 2, n_h)
+
+print("\nPredictions:")
+results = []
+for i in range(len(t_test)):
+    x_new = features_test[i:i+1, :]
+    
+    # Leverage h = x' (X'X)^{-1} x
+    h_val = float(x_new @ XtX_inv @ x_new.T)
+    
+    # Point prediction
+    sin_pred = float(features_test[i] @ fit_sin[0])
+    cos_pred = float(features_test[i] @ fit_cos[0])
+    beta_pred = float(np.arctan2(sin_pred, cos_pred))
+    beta_pred_deg = (beta_pred * 180 / np.pi) % 360
+    
+    # Prediction variance (model + noise)
+    pred_var_angle = sigma2_angle * (1 + h_val)
+    total_var = pred_var_angle + sigma_noise_rad**2
+    total_std_deg = np.sqrt(total_var) * 180 / np.pi
+    
+    # 95% prediction interval
+    z = 1.96
+    y_lower = (beta_pred_deg - z * total_std_deg) % 360
+    y_upper = (beta_pred_deg + z * total_std_deg) % 360
+    
+    dist = int(t_test[i] - t.max())
+    print(f"  t={int(t_test[i])}, dist={dist}, pred={beta_pred_deg:.2f}, "
+          f"leverage={h_val:.4f}, std={total_std_deg:.2f}, "
+          f"[{y_lower:.2f}, {y_upper:.2f}]")
+    
+    results.append({
+        't': int(t_test[i]),
+        'y_pred': round(beta_pred_deg, 4),
+        'y_lower': round(y_lower, 4),
+        'y_upper': round(y_upper, 4)
+    })
+
+df = pd.DataFrame(results)
+df.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv ({len(df)} rows)")
+print(df.to_string(index=False))
+
+EOF
 ```
 
 ## [64] tool
@@ -2230,7 +5039,131 @@ The condition number is 1.8e14 - extremely ill-conditioned! Let me normalize fea
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+n = len(t)
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t_arr, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t_arr))]
+    for d in range(1, poly_degree + 1):
+        features.append(t_arr**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t_arr / P))
+            features.append(np.cos(2 * np.pi * k * t_arr / P))
+    return np.column_stack(features)
+
+periods = [324, 1108]
+n_h = 3
+
+# Build features and normalize
+features_raw = build_features(t, periods, 2, n_h)
+p = features_raw.shape[1]
+
+# Normalize features for numerical stability
+feat_mean = np.mean(features_raw, axis=0)
+feat_std = np.std(features_raw, axis=0)
+feat_std[feat_std == 0] = 1  # avoid division by zero
+# Don't normalize the intercept (column 0)
+feat_mean[0] = 0
+feat_std[0] = 1
+
+features = (features_raw - feat_mean) / feat_std
+
+print(f"Features: {features.shape}, condition number: {np.linalg.cond(features):.2f}")
+
+# Use SVD for numerical stability
+U, s, Vt = np.linalg.svd(features, full_matrices=False)
+print(f"Singular values: {s}")
+
+# Fit using SVD
+# beta_hat = V * S^{-1} * U' * y
+def fit_svd(U, s, Vt, y):
+    UTy = U.T @ y
+    coeffs = Vt.T @ (UTy / s)
+    return coeffs
+
+coeffs_sin = fit_svd(U, s, Vt, sin_beta)
+coeffs_cos = fit_svd(U, s, Vt, cos_beta)
+
+# Predictions on training
+pred_sin = features @ coeffs_sin
+pred_cos = features @ coeffs_cos
+pred_beta = np.arctan2(pred_sin, pred_cos)
+
+# Residuals
+resid_angle = np.arctan2(np.sin(beta_rad - pred_beta), np.cos(beta_rad - pred_beta))
+sigma2_resid = float(np.sum(resid_angle**2) / (n - p))
+print(f"Residual std (degrees): {np.degrees(np.sqrt(sigma2_resid)):.4f}")
+
+# Observation noise
+sigma_noise_rad = 0.62 * np.pi / 180
+
+# For prediction intervals, use SVD-based approach
+# Var(y_new) = sigma^2 * (1 + x_new' (X'X)^{-1} x_new)
+# With SVD: (X'X)^{-1} = V * diag(1/s^2) * V'
+# x_new' (X'X)^{-1} x_new = sum_j (v_j' x_new)^2 / s_j^2
+
+# Build test features
+features_test_raw = build_features(t_test, periods, 2, n_h)
+features_test = (features_test_raw - feat_mean) / feat_std
+
+print("\nPredictions:")
+results = []
+for i in range(len(t_test)):
+    x_new = features_test[i]
+    
+    # Leverage using SVD
+    Vx = Vt @ x_new  # p-dimensional
+    h_val = float(np.sum((Vx / s)**2))
+    
+    # Point prediction
+    sin_pred = float(features_test[i] @ coeffs_sin)
+    cos_pred = float(features_test[i] @ coeffs_cos)
+    beta_pred = float(np.arctan2(sin_pred, cos_pred))
+    beta_pred_deg = (beta_pred * 180 / np.pi) % 360
+    
+    # Prediction variance
+    pred_var = sigma2_resid * (1 + h_val)
+    total_var = pred_var + sigma_noise_rad**2
+    total_std_deg = float(np.sqrt(total_var) * 180 / np.pi)
+    
+    # 95% prediction interval
+    z = 1.96
+    y_lower = (beta_pred_deg - z * total_std_deg) % 360
+    y_upper = (beta_pred_deg + z * total_std_deg) % 360
+    
+    dist = int(t_test[i] - t.max())
+    print(f"  t={int(t_test[i])}, dist={dist:4d}, pred={beta_pred_deg:7.2f}, "
+          f"leverage={h_val:.4f}, std={total_std_deg:.2f}, "
+          f"[{y_lower:.2f}, {y_upper:.2f}]")
+    
+    results.append({
+        't': int(t_test[i]),
+        'y_pred': round(beta_pred_deg, 4),
+        'y_lower': round(y_lower, 4),
+        'y_upper': round(y_upper, 4)
+    })
+
+df = pd.DataFrame(results)
+df.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv ({len(df)} rows)")
+print(df.to_string(index=False))
+
+EOF
 ```
 
 ## [66] tool
@@ -2429,7 +5362,158 @@ Let me build the final prediction script that:
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+n = len(t)
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+def build_features(t_arr, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t_arr))]
+    for d in range(1, poly_degree + 1):
+        features.append(t_arr**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t_arr / P))
+            features.append(np.cos(2 * np.pi * k * t_arr / P))
+    return np.column_stack(features)
+
+# ============================================================
+# Step 1: Build expanding-window RMSE curve
+# ============================================================
+periods = [324, 1108]
+n_h = 3
+
+horizons = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500]
+errors = {h: [] for h in horizons}
+
+for T_end in range(2000, n - 1, 50):
+    t_tr = t[:T_end]
+    sin_b_tr = sin_beta[:T_end]
+    cos_b_tr = cos_beta[:T_end]
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    U, s, Vt = np.linalg.svd(features_tr, full_matrices=False)
+    
+    coeffs_sin = Vt.T @ ((U.T @ sin_b_tr) / s)
+    coeffs_cos = Vt.T @ ((U.T @ cos_b_tr) / s)
+    
+    for h in horizons:
+        idx = T_end + h - 1
+        if idx >= n:
+            continue
+        t_eval = np.array([t[idx]])
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin_val = float(features_eval @ coeffs_sin)
+        pred_cos_val = float(features_eval @ coeffs_cos)
+        pred_beta_val = np.arctan2(pred_sin_val, pred_cos_val)
+        error = float(np.arctan2(np.sin(beta_rad[idx] - pred_beta_val), 
+                                  np.cos(beta_rad[idx] - pred_beta_val)))
+        errors[h].append(error)
+
+# Compute RMSE and also std of errors (not RMSE) for prediction intervals
+# For a prediction interval, we need the quantile, not the RMSE
+horizon_arr = []
+rmse_arr = []
+std_arr = []
+for h in horizons:
+    errs = np.array(errors[h])
+    if len(errs) >= 5:
+        horizon_arr.append(h)
+        rmse_arr.append(float(np.degrees(np.sqrt(np.mean(errs**2)))))
+        std_arr.append(float(np.degrees(np.std(errs))))
+
+horizon_arr = np.array(horizon_arr)
+rmse_arr = np.array(rmse_arr)
+std_arr = np.array(std_arr)
+
+print("Expanding window results:")
+for i, h in enumerate(horizon_arr):
+    print(f"  h={h:4d}: RMSE={rmse_arr[i]:.2f}, std={std_arr[i]:.2f}, n={len(errors[h])}")
+
+# ============================================================
+# Step 2: Fit full model for point predictions
+# ============================================================
+features_full = build_features(t, periods, 2, n_h)
+U_full, s_full, Vt_full = np.linalg.svd(features_full, full_matrices=False)
+coeffs_sin_full = Vt_full.T @ ((U_full.T @ sin_beta) / s_full)
+coeffs_cos_full = Vt_full.T @ ((U_full.T @ cos_beta) / s_full)
+
+# Predict at test points
+features_test = build_features(t_test, periods, 2, n_h)
+pred_sin_test = features_test @ coeffs_sin_full
+pred_cos_test = features_test @ coeffs_cos_full
+pred_beta_test = np.arctan2(pred_sin_test, pred_cos_test)
+pred_beta_test_deg = np.degrees(pred_beta_test) % 360
+
+# Observation noise
+sigma_noise_deg = 0.62
+
+# ============================================================
+# Step 3: Compute prediction intervals
+# ============================================================
+# Use the expanding-window RMSE to estimate total prediction uncertainty
+# The RMSE includes model error + observation noise
+# For the prediction interval, we need to estimate the quantile
+# For a 95% interval with roughly normal errors: width ≈ 2 * 1.96 * std
+
+# But the errors may not be normal. Let me use the actual empirical quantiles.
+# With ~20 samples per horizon, this is approximate.
+
+# For each test distance, interpolate the uncertainty
+print("\nFinal predictions:")
+results = []
+for i in range(len(t_test)):
+    dist = int(t_test[i] - t.max())
+    
+    # Interpolate RMSE and std
+    if dist <= horizon_arr[-1]:
+        sigma_model_rmse = np.interp(dist, horizon_arr, rmse_arr)
+        sigma_model_std = np.interp(dist, horizon_arr, std_arr)
+    else:
+        # Extrapolate: use last values with slight growth
+        sigma_model_rmse = rmse_arr[-1] + 0.005 * (dist - horizon_arr[-1])
+        sigma_model_std = std_arr[-1] + 0.005 * (dist - horizon_arr[-1])
+    
+    # For prediction interval, use std (not RMSE) since RMSE includes bias
+    # The prediction interval should cover the random component
+    # Use RMSE as a more conservative estimate
+    
+    # Total prediction std (model + observation noise)
+    total_std = np.sqrt(sigma_model_rmse**2 + sigma_noise_deg**2)
+    
+    # 95% prediction interval
+    z = 1.96
+    y_lower = (pred_beta_test_deg[i] - z * total_std) % 360
+    y_upper = (pred_beta_test_deg[i] + z * total_std) % 360
+    
+    print(f"  t={int(t_test[i])}, dist={dist:4d}, pred={pred_beta_test_deg[i]:7.2f}, "
+          f"std={total_std:.2f}, [{y_lower:.2f}, {y_upper:.2f}]")
+    
+    results.append({
+        't': int(t_test[i]),
+        'y_pred': round(float(pred_beta_test_deg[i]), 4),
+        'y_lower': round(float(y_lower), 4),
+        'y_upper': round(float(y_upper), 4)
+    })
+
+df = pd.DataFrame(results)
+df.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv ({len(df)} rows)")
+print(df.to_string(index=False))
+
+EOF
 ```
 
 ## [68] tool
@@ -2453,7 +5537,132 @@ OverflowError: Python int too large to convert to C long
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values
+t_test = test['t'].values
+n = len(t)
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+sigma_noise_deg = 0.62
+
+def build_features(t_arr, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t_arr))]
+    for d in range(1, poly_degree + 1):
+        features.append(t_arr.astype(float)**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t_arr.astype(float) / P))
+            features.append(np.cos(2 * np.pi * k * t_arr.astype(float) / P))
+    return np.column_stack(features)
+
+periods = [324, 1108]
+n_h = 3
+
+# Step 1: Expanding window CV
+horizons = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500]
+errors = {h: [] for h in horizons}
+
+for T_end in range(2000, n - 1, 50):
+    t_tr = t[:T_end].astype(float)
+    sin_b_tr = sin_beta[:T_end]
+    cos_b_tr = cos_beta[:T_end]
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    U, s, Vt = np.linalg.svd(features_tr, full_matrices=False)
+    
+    coeffs_sin = Vt.T @ ((U.T @ sin_b_tr) / s)
+    coeffs_cos = Vt.T @ ((U.T @ cos_b_tr) / s)
+    
+    for h in horizons:
+        idx = T_end + h - 1
+        if idx >= n:
+            continue
+        t_eval = np.array([float(t[idx])])
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin_val = float(features_eval @ coeffs_sin)
+        pred_cos_val = float(features_eval @ coeffs_cos)
+        pred_beta_val = np.arctan2(pred_sin_val, pred_cos_val)
+        error = float(np.arctan2(np.sin(float(beta_rad[idx]) - pred_beta_val), 
+                                  np.cos(float(beta_rad[idx]) - pred_beta_val)))
+        errors[h].append(error)
+
+horizon_arr = []
+rmse_arr = []
+for h in horizons:
+    errs = np.array(errors[h])
+    if len(errs) >= 5:
+        horizon_arr.append(h)
+        rmse_arr.append(float(np.degrees(np.sqrt(np.mean(errs**2)))))
+
+horizon_arr = np.array(horizon_arr)
+rmse_arr = np.array(rmse_arr)
+
+print("Expanding window RMSE:")
+for i, h in enumerate(horizon_arr):
+    print(f"  h={h:4d}: RMSE={rmse_arr[i]:.2f} deg, n={len(errors[h])}")
+
+# Step 2: Full model for point predictions
+features_full = build_features(t.astype(float), periods, 2, n_h)
+U_f, s_f, Vt_f = np.linalg.svd(features_full, full_matrices=False)
+coeffs_sin_f = Vt_f.T @ ((U_f.T @ sin_beta) / s_f)
+coeffs_cos_f = Vt_f.T @ ((U_f.T @ cos_beta) / s_f)
+
+features_test = build_features(t_test.astype(float), periods, 2, n_h)
+pred_sin_test = features_test @ coeffs_sin_f
+pred_cos_test = features_test @ coeffs_cos_f
+pred_beta_test = np.arctan2(pred_sin_test, pred_cos_test)
+pred_beta_test_deg = np.degrees(pred_beta_test) % 360
+
+# Step 3: Prediction intervals
+print("\nFinal predictions:")
+results = []
+for i in range(len(t_test)):
+    dist = int(t_test[i]) - int(t.max())
+    
+    # Interpolate RMSE
+    if dist <= horizon_arr[-1]:
+        sigma_model = float(np.interp(dist, horizon_arr, rmse_arr))
+    else:
+        # Linear extrapolation of RMSE trend
+        # Use slope from last two reliable points
+        if len(horizon_arr) >= 2:
+            slope = (rmse_arr[-1] - rmse_arr[-2]) / (horizon_arr[-1] - horizon_arr[-2])
+        else:
+            slope = 0.01
+        sigma_model = float(rmse_arr[-1] + slope * (dist - horizon_arr[-1]))
+        sigma_model = max(sigma_model, rmse_arr[-1])  # Don't go below last measured
+    
+    total_std = np.sqrt(sigma_model**2 + sigma_noise_deg**2)
+    
+    z = 1.96
+    y_pred = float(pred_beta_test_deg[i])
+    y_lower = (y_pred - z * total_std) % 360
+    y_upper = (y_pred + z * total_std) % 360
+    
+    print(f"  t={int(t_test[i])}, dist={dist:4d}, pred={y_pred:7.2f}, "
+          f"std={total_std:.2f}, [{y_lower:.2f}, {y_upper:.2f}]")
+    
+    results.append({
+        't': int(t_test[i]),
+        'y_pred': round(y_pred, 4),
+        'y_lower': round(float(y_lower), 4),
+        'y_upper': round(float(y_upper), 4)
+    })
+
+df = pd.DataFrame(results)
+df.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv ({len(df)} rows)")
+print(df.to_string(index=False))
+EOF
 ```
 
 ## [70] tool
@@ -2477,7 +5686,19 @@ OverflowError: Python int too large to convert to C long
 **tool call: bash**
 
 ```
-
+python3 -c "
+import numpy as np
+t = np.array([0, 1, 2])
+print(type(t[0]))
+print(np.issubdtype(t.dtype, np.integer))
+t_float = t.astype(float)
+print(type(t_float[0]))
+# Test the conversion
+idx = 1
+beta_rad = np.array([0.1, 0.2, 0.3])
+val = float(np.arctan2(np.sin(float(beta_rad[idx]) - 0.1), np.cos(float(beta_rad[idx]) - 0.1)))
+print(val)
+"
 ```
 
 ## [72] tool
@@ -2527,7 +5748,25 @@ OverflowError: Python int too large to convert to C long
 **tool call: bash**
 
 ```
-
+python3 -c "
+import numpy as np
+t = np.array([3044])
+print(t.dtype)
+print(t**2)
+print(t.astype(float)**2)
+print(np.sin(2*np.pi*t/324))
+# The issue is that t is int64 and t**2 is fine, but maybe there's an issue with very large powers
+t_arr = t.astype(float)
+features = [np.ones(1), t_arr, t_arr**2, np.sin(2*np.pi*t_arr/324), np.cos(2*np.pi*t_arr/324)]
+X = np.column_stack(features)
+print('features shape:', X.shape)
+print('features:', X)
+# Test matrix multiply
+coeffs = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+result = X @ coeffs
+print('result:', result, type(result))
+print('float result:', float(result))
+"
 ```
 
 ## [74] tool
@@ -2559,7 +5798,131 @@ The issue is that `X @ coeffs` returns a 1-element numpy array `[27803895.498438
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta = train['beta'].values
+t = train['t'].values.astype(float)
+t_test = test['t'].values.astype(float)
+n = len(t)
+
+beta_rad = np.radians(beta)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+sigma_noise_deg = 0.62
+
+def build_features(t_arr, periods, poly_degree, n_harmonics):
+    features = [np.ones(len(t_arr))]
+    for d in range(1, poly_degree + 1):
+        features.append(t_arr**d)
+    for P in periods:
+        for k in range(1, n_harmonics + 1):
+            features.append(np.sin(2 * np.pi * k * t_arr / P))
+            features.append(np.cos(2 * np.pi * k * t_arr / P))
+    return np.column_stack(features)
+
+periods = [324.0, 1108.0]
+n_h = 3
+
+# Step 1: Expanding window CV
+horizons = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500]
+errors = {h: [] for h in horizons}
+
+for T_end in range(2000, n - 1, 50):
+    t_tr = t[:T_end]
+    sin_b_tr = sin_beta[:T_end]
+    cos_b_tr = cos_beta[:T_end]
+    
+    features_tr = build_features(t_tr, periods, 2, n_h)
+    U, s, Vt = np.linalg.svd(features_tr, full_matrices=False)
+    
+    coeffs_sin = Vt.T @ ((U.T @ sin_b_tr) / s)
+    coeffs_cos = Vt.T @ ((U.T @ cos_b_tr) / s)
+    
+    for h in horizons:
+        idx = T_end + h - 1
+        if idx >= n:
+            continue
+        t_eval = np.array([t[idx]])
+        features_eval = build_features(t_eval, periods, 2, n_h)
+        pred_sin_val = (features_eval @ coeffs_sin)[0]
+        pred_cos_val = (features_eval @ coeffs_cos)[0]
+        pred_beta_val = np.arctan2(pred_sin_val, pred_cos_val)
+        error = np.arctan2(np.sin(beta_rad[idx] - pred_beta_val), 
+                           np.cos(beta_rad[idx] - pred_beta_val))
+        errors[h].append(float(error))
+
+horizon_arr = []
+rmse_arr = []
+for h in horizons:
+    errs = np.array(errors[h])
+    if len(errs) >= 5:
+        horizon_arr.append(h)
+        rmse_arr.append(float(np.degrees(np.sqrt(np.mean(errs**2)))))
+
+horizon_arr = np.array(horizon_arr)
+rmse_arr = np.array(rmse_arr)
+
+print("Expanding window RMSE:")
+for i, h in enumerate(horizon_arr):
+    print(f"  h={h:4d}: RMSE={rmse_arr[i]:.2f} deg, n={len(errors[h])}")
+
+# Step 2: Full model for point predictions
+features_full = build_features(t, periods, 2, n_h)
+U_f, s_f, Vt_f = np.linalg.svd(features_full, full_matrices=False)
+coeffs_sin_f = Vt_f.T @ ((U_f.T @ sin_beta) / s_f)
+coeffs_cos_f = Vt_f.T @ ((U_f.T @ cos_beta) / s_f)
+
+features_test = build_features(t_test, periods, 2, n_h)
+pred_sin_test = features_test @ coeffs_sin_f
+pred_cos_test = features_test @ coeffs_cos_f
+pred_beta_test = np.arctan2(pred_sin_test, pred_cos_test)
+pred_beta_test_deg = np.degrees(pred_beta_test) % 360
+
+# Step 3: Prediction intervals
+print("\nFinal predictions:")
+results = []
+for i in range(len(t_test)):
+    dist = float(t_test[i] - t.max())
+    
+    # Interpolate RMSE
+    if dist <= horizon_arr[-1]:
+        sigma_model = float(np.interp(dist, horizon_arr, rmse_arr))
+    else:
+        # Linear extrapolation of RMSE trend
+        if len(horizon_arr) >= 2:
+            slope = (rmse_arr[-1] - rmse_arr[-2]) / (horizon_arr[-1] - horizon_arr[-2])
+        else:
+            slope = 0.01
+        sigma_model = float(rmse_arr[-1] + slope * (dist - horizon_arr[-1]))
+        sigma_model = max(sigma_model, rmse_arr[-1])
+    
+    total_std = np.sqrt(sigma_model**2 + sigma_noise_deg**2)
+    
+    z = 1.96
+    y_pred = float(pred_beta_test_deg[i])
+    y_lower = (y_pred - z * total_std) % 360
+    y_upper = (y_pred + z * total_std) % 360
+    
+    print(f"  t={int(t_test[i])}, dist={dist:.0f}, pred={y_pred:7.2f}, "
+          f"std={total_std:.2f}, [{y_lower:.2f}, {y_upper:.2f}]")
+    
+    results.append({
+        't': int(t_test[i]),
+        'y_pred': round(y_pred, 4),
+        'y_lower': round(float(y_lower), 4),
+        'y_upper': round(float(y_upper), 4)
+    })
+
+df = pd.DataFrame(results)
+df.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv ({len(df)} rows)")
+print(df.to_string(index=False))
+EOF
 ```
 
 ## [76] tool
@@ -2699,7 +6062,7 @@ The predictions look reasonable. But I notice the RMSE drops at h=300 and h=500 
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [78] tool
@@ -2808,7 +6171,24 @@ The file looks good. Let me verify everything is correct and check the wrapping 
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Shape:', df.shape)
+print('Columns:', list(df.columns))
+print()
+print(df.to_string(index=False))
+print()
+# Check all values are in [0, 360)
+for col in ['y_pred', 'y_lower', 'y_upper']:
+    vals = df[col]
+    print(f'{col}: min={vals.min():.4f}, max={vals.max():.4f}')
+    assert (vals >= 0).all() and (vals < 360).all(), f'{col} has values outside [0, 360)'
+print('All values in [0, 360) ✓')
+print(f'Rows: {len(df)}')
+assert len(df) == 10, f'Expected 10 rows, got {len(df)}'
+print('10 rows ✓')
+"
 ```
 
 ## [80] tool
@@ -2880,7 +6260,7 @@ Let me verify the file is on disk and submit.
 **tool call: bash**
 
 ```
-
+ls -la predictions.csv && wc -l predictions.csv
 ```
 
 ## [82] tool

@@ -52,13 +52,13 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd data && head -20 train.csv && echo "---" && head -20 test.csv && echo "---" && wc -l train.csv test.csv
 ```
 
 **tool call: bash**
 
 ```
-
+cd data && tail -5 train.csv && echo "---TEST---" && tail -5 test.csv
 ```
 
 ## [3] tool
@@ -1081,7 +1081,54 @@ pred wrapped: [114.5262 165.6968 241.98   312.9548 359.088   32.7031  62.681   9
 **tool call: bash**
 
 ```
+cat > /tmp/script.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train['t'].values
+a = train['alpha'].values
+a_u = np.degrees(np.unwrap(np.deg2rad(a)))
+tv = test['t'].values
+
+P = 323.6937
+nharm = 4
+
+def design(tt, P, nh):
+    cols=[np.ones_like(tt), tt]
+    for k in range(1,nh+1):
+        cols.append(np.cos(2*np.pi*k*tt/P)); cols.append(np.sin(2*np.pi*k*tt/P))
+    return np.column_stack(cols)
+
+X = design(t, P, nharm)
+beta,_,_,_ = np.linalg.lstsq(X, a_u, rcond=None)
+resid = a_u - X@beta
+n, p = X.shape
+s2 = (resid@resid)/(n-p)
+XpXinv = np.linalg.inv(X.T@X)
+
+Xt = design(tv, P, nharm)
+mu_u = Xt@beta
+leverage = np.sum(Xt * (Xt@XpXinv), axis=1)
+total_sd = np.sqrt(s2*(1+leverage))
+tcrit = stats.t.ppf(0.975, n-p)
+
+def wrap(x):
+    return np.mod(x, 360.0)
+
+y_pred = wrap(mu_u)
+half = tcrit*total_sd
+y_lower = wrap(mu_u - half)
+y_upper = wrap(mu_u + half)
+
+out = pd.DataFrame({'t': tv, 'y_pred': y_pred, 'y_lower': y_lower, 'y_upper': y_upper})
+out.to_csv('predictions.csv', index=False)
+print(out.round(4))
+print("rows:", len(out))
+print("noise_std:", np.sqrt(s2), "half width min/max:", half.min(), half.max())
+EOF
+python /tmp/script.py
 ```
 
 ## [30] tool
@@ -1124,7 +1171,16 @@ noise_std: 0.30850073279518364 half width min/max: 0.6075774954019493 0.60854550
 **tool call: bash**
 
 ```
-
+cd /tmp 2>/dev/null; cp predictions.csv /tmp/ 2>/dev/null; cd - >/dev/null; python -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+test=pd.read_csv('data/test.csv')
+print(p.columns.tolist())
+print('rows',len(p))
+print('t match', (p['t'].values==test['t'].values).all())
+print(p.head())
+print('valid ranges: lower<=pred<=upper?', ((p.y_lower<=p.y_pred)&(p.y_pred<=p.y_upper)).all())
+"
 ```
 
 ## [32] tool
@@ -1154,7 +1210,7 @@ valid ranges: lower<=pred<=upper? True
 **tool call: bash**
 
 ```
-
+ls -la predictions.csv && pwd && head -3 predictions.csv
 ```
 
 ## [34] tool

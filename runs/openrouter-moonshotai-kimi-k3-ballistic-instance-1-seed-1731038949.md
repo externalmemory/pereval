@@ -66,7 +66,7 @@ Predict y with a 95% interval for every row in data/test.csv and write predictio
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -134,7 +134,21 @@ UsN6Q8,125.0
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+print('Train categories:', train['category'].unique())
+print('Test categories:', test['category'].unique())
+print()
+for cat in train['category'].unique():
+    sub = train[train['category']==cat]
+    tsub = test[test['category']==cat]
+    print(cat, 'train n=', len(sub), 'x range:', sub['x'].min(), '-', sub['x'].max())
+    print('   train x values:', sorted(sub['x'].unique()))
+    print('   test x:', sorted(tsub['x'].unique()) if len(tsub) else 'none')
+    print()
+"
 ```
 
 ## [5] tool
@@ -179,7 +193,17 @@ YdTZK3 train n= 48 x range: 25.0 - 400.0
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+for cat in train['category'].unique():
+    sub = train[train['category']==cat]
+    print('===', cat, '===')
+    g = sub.groupby('x')['y'].agg(['mean','std','count'])
+    print(g)
+    print()
+"
 ```
 
 ## [7] tool
@@ -382,6 +406,17 @@ Let me look at the data characteristics more, then write a quick baseline submis
 **tool call: bash**
 
 ```
+mkdir -p /tmp/work && cd /tmp/work && python3 -c "
+import pandas as pd, numpy as np
+train = pd.read_csv('/tmp/work/data/train.csv') if False else pd.read_csv('data/train.csv')
+# check noise scaling: std vs mean per category
+for cat in train['category'].unique():
+    sub = train[train['category']==cat]
+    g = sub.groupby('x')['y'].agg(['mean','std','count'])
+    g = g[g['count']>2]
+    ratio = g['std']/abs(g['mean'])
+    print(cat, 'std/|mean| median:', np.nanmedian(ratio).round(3), 'range:', np.nanmin(ratio).round(3), np.nanmax(ratio).round(3))
+"
 
 ```
 
@@ -419,7 +454,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/train.csv'
 **tool call: bash**
 
 ```
-
+pwd && ls
 ```
 
 ## [11] tool
@@ -439,7 +474,18 @@ data
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+train = pd.read_csv('data/train.csv')
+for cat in train['category'].unique():
+    sub = train[train['category']==cat]
+    g = sub.groupby('x')['y'].agg(['mean','std','count'])
+    g = g[g['count']>2]
+    ratio = g['std']/abs(g['mean'])
+    print(cat, 'std/|mean| median:', round(np.nanmedian(ratio),3), ' min/max:', round(np.nanmin(ratio),3), round(np.nanmax(ratio),3))
+    # also std vs x correlation
+    print('   corr(std, x):', np.corrcoef(g.index, g['std'])[0,1].round(3), ' corr(std,|mean|):', np.corrcoef(abs(g['mean']), g['std'])[0,1].round(3))
+"
 ```
 
 ## [13] tool
@@ -487,7 +533,39 @@ Noise looks roughly proportional to |y| (multiplicative, ~13-15%). Now let me wr
 **tool call: bash**
 
 ```
+cd /workspace && cat > baseline.py << 'EOF'
+import pandas as pd, numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+rows = []
+for cat in test['category'].unique():
+    sub = train[train['category']==cat].copy()
+    tsub = test[test['category']==cat].copy()
+    # power law: log(-y) = a + b*log(x)
+    lx = np.log(sub['x'].values); ly = np.log(-sub['y'].values)
+    b, a = np.polyfit(lx, ly, 1)
+    resid = ly - (a + b*lx)
+    s = resid.std(ddof=2)
+    lxt = np.log(tsub['x'].values)
+    mu = a + b*lxt
+    y_pred = -np.exp(mu)
+    y_upper = -np.exp(mu - 1.96*s)   # less negative
+    y_lower = -np.exp(mu + 1.96*s)   # more negative
+    for i in range(len(tsub)):
+        rows.append((cat, tsub['x'].values[i], y_pred[i], y_lower[i], y_upper[i]))
+
+out = pd.DataFrame(rows, columns=['category','x','y_pred','y_lower','y_upper'])
+# restore original test order
+test['order'] = range(len(test))
+out = test.merge(out, on=['category','x'], how='left').sort_values('order')
+out = out[['category','x','y_pred','y_lower','y_upper']]
+out.to_csv('predictions.csv', index=False)
+print(out)
+print('rows:', len(out))
+EOF
+python3 baseline.py
 ```
 
 ## [15] tool
@@ -554,7 +632,65 @@ A valid baseline `predictions.csv` with 29 rows now exists. Now let me refine th
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+
+# candidate models: name -> (func(x, *params) returning y, param0, fit_in_log)
+def m_power(x, a, b): return -a*np.power(x, b)
+def m_power_off(x, a, b, c): return -(c + a*np.power(x, b))
+def m_exp(x, a, b): return -a*np.exp(b*x)
+def m_exp_off(x, a, b, c): return c - a*np.exp(b*x)
+def m_poly2(x, a, b, c): return a + b*x + c*x*x
+def m_poly3(x, a, b, c, d): return a + b*x + c*x*x + d*x**3
+def m_powerexp(x, a, b, c): return -a*np.power(x, b)*np.exp(c*x)
+def m_sat(x, a, b, c): return -a*np.power(x, b)*(1-np.exp(-x/c))
+def m_logquad(x, a, b, c): return -np.exp(a + b*np.log(x) + c*np.log(x)**2)
+def m_expx2(x, a, b, c): return -np.exp(a + b*x + c*x*x)
+
+models = {
+ 'power': (m_power, [1e-3, 1.5]),
+ 'power_off': (m_power_off, [1e-3, 1.5, 0.05]),
+ 'exp': (m_exp, [1e-2, 0.005]),
+ 'exp_off': (m_exp_off, [1e-2, 0.005, -0.05]),
+ 'poly2': (m_poly2, [0, -1e-3, -1e-5]),
+ 'poly3': (m_poly3, [0, -1e-3, -1e-5, -1e-8]),
+ 'powerexp': (m_powerexp, [1e-3, 1.0, 1e-3]),
+ 'sat': (m_sat, [1e-3, 1.5, 50.0]),
+ 'logquad': (m_logquad, [-5, 1.0, 0.1]),
+ 'expx2': (m_expx2, [-5, 0.01, -1e-5]),
+}
+
+def fit_model(func, p0, x, y):
+    try:
+        popt, _ = curve_fit(func, x, y, p0=p0, maxfev=200000)
+        return popt
+    except Exception:
+        return None
+
+cats = ['JLbWvI','P9x4od','YdTZK3']
+print('=== Backtest: fit x<=cut, predict x>cut, log-space RMSE ===')
+for cat in cats:
+    sub = train[train['category']==cat]
+    x = sub['x'].values.astype(float); y = sub['y'].values
+    print('\n---', cat, '---')
+    for name,(func,p0) in models.items():
+        errs = []
+        for cut in [150, 200, 250, 300]:
+            tr = x<=cut; te = x>cut
+            if te.sum()==0 or tr.sum()<5: continue
+            popt = fit_model(func, p0, x[tr], y[tr])
+            if popt is None:
+                errs.append(np.nan); continue
+            pred = func(x[te], *popt)
+            # log-space error (multiplicative noise)
+            e = np.log(-pred) - np.log(-y[te])
+            errs.append(np.sqrt(np.mean(e**2)))
+        print(f'{name:10s} cutoff RMSEs (150,200,250,300): ' + ' '.join(f'{e:.4f}' for e in errs))
+EOF
+python3 explore.py
 ```
 
 ## [17] tool
@@ -650,7 +786,42 @@ The backtest shows `power_off` (y = -(c + a·x^b)), `poly2`, and `logquad` all e
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+
+def m_power_off(x, a, b, c): return -(c + a*np.power(x, b))
+def m_poly2(x, a, b, c): return a + b*x + c*x*x
+def m_logquad(x, a, b, c): return -np.exp(a + b*np.log(x) + c*np.log(x)**2)
+
+models = {
+ 'power_off': (m_power_off, [1e-3, 1.5, 0.05]),
+ 'poly2': (m_poly2, [0, -1e-3, -1e-5]),
+ 'logquad': (m_logquad, [-5, 1.0, 0.1]),
+}
+
+for cat in ['JLbWvI','P9x4od','YdTZK3','H6F6wO']:
+    sub = train[train['category']==cat]
+    x = sub['x'].values.astype(float); y = sub['y'].values
+    # group means for residual check
+    g = sub.groupby('x')['y'].agg(['mean','std','count'])
+    print('\n===', cat, '===')
+    for name,(func,p0) in models.items():
+        try:
+            popt,_ = curve_fit(func, x, y, p0=p0, maxfev=200000)
+        except Exception as e:
+            print(name, 'fit failed'); continue
+        resid_log = np.log(-func(x,*popt)) - np.log(-y)
+        rmse_log = np.sqrt(np.mean(resid_log**2))
+        # predictions at test range
+        xt = np.array([125.,150.,175.,200.,500.,600.,700.,800.])
+        pred = func(xt, *popt)
+        print(f'{name:10s} params={np.round(popt,6)} rmse_log={rmse_log:.4f}')
+        print('   pred@125,150,175,200,500,600,700,800:', np.round(pred,3))
+EOF
+python3 explore2.py
 ```
 
 ## [19] tool
@@ -804,7 +975,63 @@ The fitted parameters are strikingly consistent across categories (power_off: b�
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore3.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+train = pd.read_csv('data/train.csv')
+
+# Build group-mean dataset per category (with SEM)
+cats = ['JLbWvI','P9x4od','YdTZK3','H6F6wO']
+data = {}
+for cat in cats:
+    sub = train[train['category']==cat]
+    g = sub.groupby('x')['y'].agg(['mean','std','count'])
+    g['sem'] = g['std']/np.sqrt(g['count'])
+    data[cat] = g
+
+# Families: predict mean_y given (x, per-cat scale params, shared shape params)
+# We fit in log space on group means, weighted by SEM of log(-y) ~ sem/|mean|.
+# Family 1: power_off  y = -(c + a_cat * x^b)         shared: b, c ; per-cat: a
+# Family 2: logquad    log(-y) = A_cat + b lx + c lx^2 shared: b, c ; per-cat: A
+# Family 3: poly2      y = a_cat + b x + c x^2          shared: b, c ; per-cat: a
+
+def make_residuals(family):
+    def res(p):
+        out = []
+        if family=='power_off':
+            b, c = p[0], p[1]; a_map = p[2:]
+            for i,cat in enumerate(cats):
+                g = data[cat]; x = g.index.values.astype(float)
+                mu = -(c + a_map[i]*np.power(x, b))
+                out.append((np.log(-mu) - np.log(-g['mean'].values)) / (g['sem'].values/np.abs(g['mean'].values)))
+        elif family=='logquad':
+            b, c = p[0], p[1]; A_map = p[2:]
+            for i,cat in enumerate(cats):
+                g = data[cat]; x = g.index.values.astype(float)
+                lmu = A_map[i] + b*np.log(x) + c*np.log(x)**2
+                out.append((lmu - np.log(-g['mean'].values)) / (g['sem'].values/np.abs(g['mean'].values)))
+        elif family=='poly2':
+            b, c = p[0], p[1]; a_map = p[2:]
+            for i,cat in enumerate(cats):
+                g = data[cat]; x = g.index.values.astype(float)
+                mu = a_map[i] + b*x + c*x*x
+                out.append((np.log(-mu) - np.log(-g['mean'].values)) / (g['sem'].values/np.abs(g['mean'].values)))
+        return np.concatenate(out)
+    return res
+
+starts = {
+ 'power_off': [2.3, 0.06, 2e-6, 1e-6, 1e-6, 1.3e-5],
+ 'logquad':   [-2.5, 0.41, 1.4, 0.77, 0.97, 0.83],
+ 'poly2':     [7e-4, -9e-6, -0.08, -0.08, -0.09, -0.09],
+}
+
+for family in ['power_off','logquad','poly2']:
+    r = least_squares(make_residuals(family), starts[family], max_nfev=100000)
+    chi2 = np.sum(r.fun**2); dof = len(r.fun) - len(r.x)
+    print(f'{family:10s} chi2={chi2:.1f} dof={dof} chi2/dof={chi2/dof:.3f} shared_params={np.round(r.x[:2],5)} percat={np.round(r.x[2:],8)}')
+EOF
+python3 explore3.py
 ```
 
 ## [21] tool
@@ -846,7 +1073,66 @@ poly2      chi2=1160.8 dof=46 chi2/dof=25.235 shared_params=[-2.e-05 -1.e-05] pe
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore4.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+train = pd.read_csv('data/train.csv')
+cats = ['JLbWvI','P9x4od','YdTZK3','H6F6wO']
+data = {}
+for cat in cats:
+    sub = train[train['category']==cat]
+    g = sub.groupby('x')['y'].agg(['mean','std','count'])
+    g['sem'] = g['std']/np.sqrt(g['count'])
+    data[cat] = g
+
+def fit(family, starts):
+    def res(p):
+        out = []
+        if family=='power_off':       # shared b,c ; per-cat a
+            b, c = p[0], p[1]
+            for i,cat in enumerate(cats):
+                g = data[cat]; x = g.index.values.astype(float)
+                mu = -(c + p[2+i]*np.power(x, b))
+                w = g['sem'].values/np.abs(g['mean'].values)
+                out.append((np.log(-mu) - np.log(-g['mean'].values))/w)
+        elif family=='power_off_pc':  # shared b ; per-cat a, c
+            b = p[0]
+            for i,cat in enumerate(cats):
+                g = data[cat]; x = g.index.values.astype(float)
+                a, c = p[1+2*i], p[2+2*i]
+                mu = -(c + a*np.power(x, b))
+                w = g['sem'].values/np.abs(g['mean'].values)
+                out.append((np.log(-mu) - np.log(-g['mean'].values))/w)
+        elif family=='power_off_d':   # y = -(c*x^d + a*x^b) shared b,d; per-cat a,c
+            b, d = p[0], p[1]
+            for i,cat in enumerate(cats):
+                g = data[cat]; x = g.index.values.astype(float)
+                a, c = p[2+2*i], p[3+2*i]
+                mu = -(c*np.power(x,d) + a*np.power(x, b))
+                w = g['sem'].values/np.abs(g['mean'].values)
+                out.append((np.log(-mu) - np.log(-g['mean'].values))/w)
+        return np.concatenate(out)
+    r = least_squares(res, starts, max_nfev=200000)
+    chi2 = np.sum(r.fun**2); dof = len(r.fun) - len(r.x)
+    print(f'{family:14s} chi2={chi2:7.1f} dof={dof} chi2/dof={chi2/dof:.3f} params={np.round(r.x,6)}')
+    return r
+
+r1 = fit('power_off',    [2.15, 0.05, 3e-6, 3e-6, 3.9e-6, 3e-5])
+r2 = fit('power_off_pc', [2.15, 3e-6,0.05, 3e-6,0.05, 3.9e-6,0.05, 3e-5,0.05])
+r3 = fit('power_off_d',  [2.15, 1.0, 3e-6,1e-3, 3e-6,1e-3, 3.9e-6,1e-3, 3e-5,1e-3])
+
+# residual pattern of best shared fit vs x
+print('\npower_off residual (log units) by category/x:')
+b, c = r1.x[0], r1.x[1]
+for i,cat in enumerate(cats):
+    g = data[cat]; x = g.index.values.astype(float)
+    a = r1.x[2+i]
+    mu = -(c + a*np.power(x,b))
+    res = np.log(-mu) - np.log(-g['mean'].values)
+    print(cat, 'a=%.2e'%a, np.round(res,3))
+EOF
+python3 explore4.py
 ```
 
 ## [23] tool
@@ -925,7 +1211,98 @@ Residuals show no strong trends. Per-category offset helps (chi²/dof 1.31). Now
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore5.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+train = pd.read_csv('data/train.csv')
+cats = ['JLbWvI','P9x4od','YdTZK3','H6F6wO']
+
+# Fit in log space on RAW data points (multiplicative noise), shared b, per-cat a,c
+def joint_fit(df, cats_fit, shared_b=True, percat_b=False):
+    def res(p):
+        out = []
+        if shared_b:
+            b = p[0]
+            for i,cat in enumerate(cats_fit):
+                sub = df[df['category']==cat]
+                x = sub['x'].values.astype(float); y = sub['y'].values
+                a, c = p[1+2*i], p[2+2*i]
+                mu = c + a*np.power(x,b)
+                out.append(np.log(mu) - np.log(-y))
+        else:
+            for i,cat in enumerate(cats_fit):
+                sub = df[df['category']==cat]
+                x = sub['x'].values.astype(float); y = sub['y'].values
+                b, a, c = p[3*i], p[3*i+1], p[3*i+2]
+                mu = c + a*np.power(x,b)
+                out.append(np.log(mu) - np.log(-y))
+        return np.concatenate(out)
+    if shared_b:
+        p0 = [2.15] + [3e-6, 0.05]*len(cats_fit)
+    else:
+        p0 = [2.15, 3e-6, 0.05]*len(cats_fit)
+    r = least_squares(res, p0, max_nfev=200000)
+    return r
+
+# 1) shared b vs per-cat b (full data, 4 long-ish cats)
+r_shared = joint_fit(train, cats, shared_b=True)
+r_pc = joint_fit(train, cats, shared_b=False)
+n = sum(len(train[train['category']==c]) for c in cats)
+print('shared b:  SSR=%.4f  k=%d  b=%.4f' % (np.sum(r_shared.fun**2), len(r_shared.x), r_shared.x[0]))
+print('per-cat b: SSR=%.4f  k=%d  bs=%s' % (np.sum(r_pc.fun**2), len(r_pc.x), np.round(r_pc.x[0::3],4)))
+# F-test
+ss1, ss2 = np.sum(r_shared.fun**2), np.sum(r_pc.fun**2)
+df1, df2 = n-len(r_shared.x), n-len(r_pc.x)
+F = ((ss1-ss2)/(df1-df2)) / (ss2/df2)
+from scipy import stats
+print('F=%.3f, p=%.4f' % (F, 1-stats.f.cdf(F, df1-df2, df2)))
+
+# 2) Extrapolation backtest with shared-b model
+print('\nExtrapolation backtest (shared b, per-cat a,c): predict group means above cutoff')
+for cut in [200, 250, 300]:
+    tr = train[train['x']<=cut]
+    r = joint_fit(tr, cats, shared_b=True)
+    b = r.x[0]
+    errs = []
+    for i,cat in enumerate(cats[:3]):  # long cats
+        a, c = r.x[1+2*i], r.x[2+2*i]
+        sub = train[(train['category']==cat) & (train['x']>cut)]
+        g = sub.groupby('x')['y'].mean()
+        x = g.index.values.astype(float)
+        mu = -(c + a*np.power(x,b))
+        errs.extend((np.log(-mu)-np.log(-g.values)).tolist())
+    errs = np.array(errs)
+    print(f'cut={cut}: b={b:.4f}  log-err mean={errs.mean():+.4f} rmse={np.sqrt(np.mean(errs**2)):.4f} max|e|={np.max(np.abs(errs)):.4f}')
+
+# 3) noise structure: residual std in log space vs x (full fit)
+r = joint_fit(train, cats, shared_b=True)
+b = r.x[0]
+print('\nlog-residual std by x-bin:')
+allres = []
+for i,cat in enumerate(cats):
+    a, c = r.x[1+2*i], r.x[2+2*i]
+    sub = train[train['category']==cat]
+    x = sub['x'].values.astype(float); y = sub['y'].values
+    mu = c + a*np.power(x,b)
+    res = np.log(mu) - np.log(-y)
+    allres.append(pd.DataFrame({'x':x,'res':res}))
+allres = pd.concat(allres)
+for lo,hi in [(25,100),(125,200),(225,300),(325,400)]:
+    m = (allres['x']>=lo)&(allres['x']<=hi)
+    print(f'x {lo}-{hi}: std={allres["res"][m].std():.4f} n={m.sum()}')
+print('overall log-resid std:', allres['res'].std().round(4))
+# per category resid std
+print('\nper-cat log-resid std:')
+for i,cat in enumerate(cats):
+    a, c = r.x[1+2*i], r.x[2+2*i]
+    sub = train[train['category']==cat]
+    x = sub['x'].values.astype(float); y = sub['y'].values
+    mu = c + a*np.power(x,b)
+    res = np.log(mu) - np.log(-y)
+    print(cat, round(res.std(),4))
+EOF
+python3 explore5.py
 ```
 
 ## [25] tool
@@ -997,7 +1374,61 @@ Shared-b is validated (per-cat b: p=0.86, no improvement) and extrapolation back
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore6.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+train = pd.read_csv('data/train.csv')
+cats = ['JLbWvI','P9x4od','YdTZK3','H6F6wO']
+
+def joint_fit(df, cats_fit):
+    def res(p):
+        out = []
+        b = p[0]
+        for i,cat in enumerate(cats_fit):
+            sub = df[df['category']==cat]
+            x = sub['x'].values.astype(float); y = sub['y'].values
+            a, c = p[1+2*i], p[2+2*i]
+            out.append(np.log(c + a*np.power(x,b)) - np.log(-y))
+        return np.concatenate(out)
+    p0 = [2.15] + [3e-6, 0.05]*len(cats_fit)
+    return least_squares(res, p0, max_nfev=200000)
+
+r = joint_fit(train, cats)
+b = r.x[0]
+print('shared b =', round(b,4))
+recs = []
+for i,cat in enumerate(cats):
+    a, c = r.x[1+2*i], r.x[2+2*i]
+    sub = train[train['category']==cat].copy()
+    x = sub['x'].values.astype(float); y = sub['y'].values
+    mu = c + a*np.power(x,b)
+    sub['res'] = np.log(mu) - np.log(-y)
+    sub['mu'] = mu
+    recs.append(sub)
+R = pd.concat(recs)
+print('\nlog-resid std per x (pooled across cats):')
+for x in sorted(R['x'].unique()):
+    m = R[R['x']==x]['res']
+    print(f'x={x:6.0f}  n={len(m):2d}  std={m.std():.4f}')
+# check normality / tails
+from scipy import stats
+print('\nshapiro p:', stats.shapiro(R['res'])[1].round(4))
+print('kurtosis:', stats.kurtosis(R['res']).round(3))
+# sigma model candidates: log sigma vs log x
+gstd = R.groupby('x')['res'].std()
+lx = np.log(gstd.index.values.astype(float))
+ls = np.log(gstd.values)
+w = np.sqrt(R.groupby('x')['res'].count().values)  # rough weight
+A = np.vstack([np.ones_like(lx), lx]).T
+coef, *_ = np.linalg.lstsq(A*np.sqrt(w)[:,None], ls*np.sqrt(w), rcond=None)
+print('\nlog sigma = %.3f + %.3f log(x)' % (coef[0], coef[1]))
+pred_ls = A@coef
+print('observed vs fitted sigma:')
+for i,x in enumerate(gstd.index):
+    print(f'x={x:6.0f} obs={gstd.values[i]:.3f} fit={np.exp(pred_ls[i]):.3f}')
+EOF
+python3 explore6.py
 ```
 
 ## [27] tool
@@ -1075,7 +1506,49 @@ Noise decreases with x but with wiggles — let me check for outliers and unders
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore7.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+train = pd.read_csv('data/train.csv')
+cats = ['JLbWvI','P9x4od','YdTZK3','H6F6wO']
+
+def joint_fit(df, cats_fit):
+    def res(p):
+        out = []
+        b = p[0]
+        for i,cat in enumerate(cats_fit):
+            sub = df[df['category']==cat]
+            x = sub['x'].values.astype(float); y = sub['y'].values
+            a, c = p[1+2*i], p[2+2*i]
+            out.append(np.log(c + a*np.power(x,b)) - np.log(-y))
+        return np.concatenate(out)
+    p0 = [2.15] + [3e-6, 0.05]*len(cats_fit)
+    return least_squares(res, p0, max_nfev=200000)
+
+r = joint_fit(train, cats)
+b = r.x[0]
+recs = []
+for i,cat in enumerate(cats):
+    a, c = r.x[1+2*i], r.x[2+2*i]
+    sub = train[train['category']==cat].copy()
+    x = sub['x'].values.astype(float); y = sub['y'].values
+    sub['res'] = np.log(c + a*np.power(x,b)) - np.log(-y)
+    recs.append(sub)
+R = pd.concat(recs)
+# standardized within x-group
+R['z'] = R.groupby('x')['res'].transform(lambda s: s/s.std())
+big = R[np.abs(R['z'])>2.5]
+print('standardized outliers (|z|>2.5):', len(big))
+print(big[['category','x','y','res','z']].to_string())
+print('\ntop |res| rows:')
+print(R.reindex(R['res'].abs().sort_values(ascending=False).index)[['category','x','y','res']].head(15).to_string())
+# residual autocorrelation within (cat,x) group? check group means pattern instead
+gm = R.groupby(['category','x'])['res'].mean().reset_index()
+print('\nmean resid per group (should be ~0); largest:')
+print(gm.reindex(gm['res'].abs().sort_values(ascending=False).index).head(8).to_string())
+EOF
+python3 explore7.py
 ```
 
 ## [29] tool
@@ -1187,7 +1660,92 @@ The mean model is solid (group-mean residuals <0.17); noise has mild heavy tails
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore8.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+train = pd.read_csv('data/train.csv')
+cats = ['JLbWvI','P9x4od','YdTZK3','H6F6wO']
+data = {}
+for cat in cats:
+    sub = train[train['category']==cat]
+    g = sub.groupby('x')['y'].agg(['mean','std','count'])
+    g['sem'] = g['std']/np.sqrt(g['count'])
+    data[cat] = g
+
+def fit(family, p0):
+    def res(p):
+        out = []
+        if family=='xshift':   # y = -a*(x+d)^b ; shared b,d ; per-cat a
+            b, d = p[0], p[1]
+            for i,cat in enumerate(cats):
+                g = data[cat]; x = g.index.values.astype(float)
+                mu = -p[2+i]*np.power(x+d, b)
+                out.append((np.log(-mu)-np.log(-g['mean'].values))/(g['sem'].values/np.abs(g['mean'].values)))
+        if family=='ypow_lin': # y = -(a*x^b + d*x); shared b,d; per-cat a
+            b, d = p[0], p[1]
+            for i,cat in enumerate(cats):
+                g = data[cat]; x = g.index.values.astype(float)
+                mu = -(p[2+i]*np.power(x,b) + d*x)
+                out.append((np.log(-mu)-np.log(-g['mean'].values))/(g['sem'].values/np.abs(g['mean'].values)))
+        return np.concatenate(out)
+    r = least_squares(res, p0, max_nfev=200000)
+    print(f'{family:10s} chi2/dof={np.sum(r.fun**2)/(len(r.fun)-len(r.x)):.3f} params={np.round(r.x,6)}')
+    return r
+
+r1 = fit('xshift', [2.2, 20.0, 3e-6, 3e-6, 4e-6, 3e-5])
+r2 = fit('ypow_lin', [2.2, 1e-4, 3e-6, 3e-6, 4e-6, 3e-5])
+
+# predictions at 500-800 from xshift vs power_off
+b, d = r1.x[0], r1.x[1]
+print('\nxshift preds @500,600,700,800:')
+for i,cat in enumerate(cats[:3]):
+    a = r1.x[2+i]
+    xt = np.array([500.,600.,700.,800.])
+    print(cat, np.round(-a*np.power(xt+d,b),3))
+
+# standardized residual quantiles for interval calibration
+def joint_fit(df):
+    def res(p):
+        out = []
+        b = p[0]
+        for i,cat in enumerate(cats):
+            sub = df[df['category']==cat]
+            x = sub['x'].values.astype(float); y = sub['y'].values
+            a, c = p[1+2*i], p[2+2*i]
+            out.append(np.log(c + a*np.power(x,b)) - np.log(-y))
+        return np.concatenate(out)
+    return least_squares(res, [2.15]+[3e-6,0.05]*4, max_nfev=200000)
+
+r = joint_fit(train)
+b = r.x[0]
+recs = []
+for i,cat in enumerate(cats):
+    a, c = r.x[1+2*i], r.x[2+2*i]
+    sub = train[train['category']==cat].copy()
+    x = sub['x'].values.astype(float); y = sub['y'].values
+    sub['res'] = np.log(c + a*np.power(x,b)) - np.log(-y)
+    recs.append(sub)
+R = pd.concat(recs)
+# sigma(x) smooth: fit log sigma = a+b log x on per-x MAD-based std
+rows=[]
+for x in sorted(R['x'].unique()):
+    m = R[R['x']==x]['res']
+    mad = np.median(np.abs(m - np.median(m)))
+    rows.append((x, 1.4826*mad, len(m)))
+S = pd.DataFrame(rows, columns=['x','sig','n'])
+lx = np.log(S['x'].values); ls = np.log(S['sig'].values)
+A = np.vstack([np.ones_like(lx), lx]).T
+coef,*_ = np.linalg.lstsq(A, ls, rcond=None)
+print('\nrobust sigma fit: log sig = %.3f %+.3f log x' % (coef[0],coef[1]))
+print(S.assign(fit=np.exp(A@coef)).round(3).to_string())
+# standardized residuals using fitted sigma
+R['sig'] = np.exp(coef[0]+coef[1]*np.log(R['x']))
+R['z'] = R['res']/R['sig']
+print('\nz quantiles 1%,2.5%,5%,95%,97.5%,99%:', np.round(np.percentile(R['z'],[1,2.5,5,95,97.5,99]),3))
+print('z std:', R['z'].std().round(3), ' kurtosis:', float(pd.Series(R['z']).kurt()))
+EOF
+python3 explore8.py
 ```
 
 ## [31] tool
@@ -1357,7 +1915,183 @@ Now I'll write the final solution: joint fit of y = -(c_cat + a_cat·x^b) with s
 **tool call: bash**
 
 ```
+cd /workspace && cat > solution.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+RNG = np.random.default_rng(12345)
+
+# ---------------- model ----------------
+# y = -(c_cat + a_cat * x^b), b shared across categories
+# noise: log(-y) = log(mu) + sigma(x)*z, sigma(x)=exp(g0+g1*log x), z empirical
+
+CATS = None  # set at runtime
+
+def unpack(p, ncats):
+    b = p[0]
+    a = p[1:1+ncats]
+    c = p[1+ncats:1+2*ncats]
+    return b, a, c
+
+def make_resid(df, cat_index):
+    x = df['x'].values.astype(float)
+    ly = np.log(-df['y'].values)
+    ci = df['category'].map(cat_index).values
+    def resid(p):
+        b, a, c = unpack(p, len(cat_index))
+        mu = c[ci] + a[ci]*np.power(x, b)
+        return np.log(mu) - ly
+    def jac(p):
+        b, a, c = unpack(p, len(cat_index))
+        mu = c[ci] + a[ci]*np.power(x, b)
+        n = len(x); k = 1+2*len(cat_index)
+        J = np.zeros((n, k))
+        xb = np.power(x, b)
+        J[:, 0] = a[ci]*xb*np.log(x)/mu
+        for j in range(len(cat_index)):
+            m = ci == j
+            J[m, 1+j] = xb[m]/mu[m]
+            J[m, 1+len(cat_index)+j] = 1.0/mu[m]
+        return J
+    return resid, jac
+
+def joint_fit(df, cat_index, p0=None):
+    resid, jac = make_resid(df, cat_index)
+    nc = len(cat_index)
+    lb = [1.0] + [1e-10]*nc + [1e-5]*nc
+    ub = [3.5] + [1e-1]*nc + [1.0]*nc
+    if p0 is None:
+        p0 = np.array([2.15] + [3e-6]*nc + [0.05]*nc)
+    r = least_squares(resid, p0, jac=jac, bounds=(lb, ub), method='trf',
+                      max_nfev=20000, xtol=1e-12, ftol=1e-12, gtol=1e-12)
+    return r.x
+
+def predict_mu(p, cat_index, cats, x):
+    b, a, c = unpack(p, len(cat_index))
+    ci = np.array([cat_index[c] for c in cats])
+    x = np.asarray(x, dtype=float)
+    return c[ci] + a[ci]*np.power(x, b)
+
+# ---------------- noise model ----------------
+def fit_noise(df, cat_index, p):
+    b, a, c = unpack(p, len(cat_index))
+    x = df['x'].values.astype(float)
+    ci = df['category'].map(cat_index).values
+    mu = c[ci] + a[ci]*np.power(x, b)
+    res = np.log(mu) - np.log(-df['y'].values)
+    # robust per-x std (1.4826*MAD), pooled across categories
+    d = pd.DataFrame({'x': x, 'res': res})
+    rows = []
+    for xv, grp in d.groupby('x'):
+        m = grp['res'].values
+        mad = np.median(np.abs(m - np.median(m)))
+        rows.append((xv, 1.4826*mad, len(m)))
+    S = pd.DataFrame(rows, columns=['x','sig','n'])
+    A = np.vstack([np.ones(len(S)), np.log(S['x'].values)]).T
+    W = np.sqrt(S['n'].values)
+    coef, *_ = np.linalg.lstsq(A*W[:,None], np.log(np.maximum(S['sig'].values,1e-3))*W, rcond=None)
+    sig_x = np.exp(coef[0] + coef[1]*np.log(x))
+    z = res/sig_x
+    scale = z.std()
+    z = z/scale
+    return coef, scale, z
+
+def sigma_x(coef, scale, x):
+    return scale*np.exp(coef[0] + coef[1]*np.log(np.asarray(x, dtype=float)))
+
+# ---------------- predictive bootstrap ----------------
+def bootstrap_predict(train, cat_index, p_full, coef, scale, zpool, test, B=2000):
+    b0, a0, c0 = unpack(p_full, len(cat_index))
+    xtr = train['x'].values.astype(float)
+    citr = train['category'].map(cat_index).values
+    mu_tr = c0[citr] + a0[citr]*np.power(xtr, b0)
+    sig_tr = sigma_x(coef, scale, xtr)
+    xte = test['x'].values.astype(float)
+    cite = test['category'].map(cat_index).values
+    sig_te = sigma_x(coef, scale, xte)
+    nz = len(zpool)
+    preds = np.empty((B, len(test)))
+    for bi in range(B):
+        zsim = zpool[RNG.integers(0, nz, size=len(train))]
+        ysim = -mu_tr*np.exp(sig_tr*zsim)
+        dfsim = pd.DataFrame({'category': train['category'].values, 'x': xtr, 'y': ysim})
+        try:
+            pb = joint_fit(dfsim, cat_index, p0=p_full)
+        except Exception:
+            pb = p_full
+        mu_te = predict_mu(pb, cat_index, test['category'].values, xte)
+        znew = zpool[RNG.integers(0, nz, size=len(test))]
+        preds[bi] = -mu_te*np.exp(sig_te*znew)
+    return preds
+
+# ---------------- backtest ----------------
+def backtest(train):
+    print('=== Backtest: fit x<=300 (long cats), intervals for x=325..400 ===')
+    long_cats = ['JLbWvI','P9x4od','YdTZK3']
+    short_cats = ['H6F6wO','UsN6Q8']
+    cats_fit = long_cats + short_cats
+    ci = {c:i for i,c in enumerate(cats_fit)}
+    tr = train[((train['category'].isin(long_cats)) & (train['x']<=300)) |
+               (train['category'].isin(short_cats))].copy()
+    p = joint_fit(tr, ci)
+    coef, scale, zpool = fit_noise(tr, ci, p)
+    te = train[(train['category'].isin(long_cats)) & (train['x']>300)].copy()
+    te = te[['category','x']].drop_duplicates().sort_values(['category','x']).reset_index(drop=True)
+    preds = bootstrap_predict(tr, ci, p, coef, scale, zpool, te, B=1000)
+    lo = np.percentile(preds, 2.5, axis=0); hi = np.percentile(preds, 97.5, axis=0)
+    mid = np.median(preds, axis=0)
+    obs = train[train['category'].isin(long_cats) & (train['x']>300)]
+    cov = 0; tot = 0; errs = []
+    for j,row in te.iterrows():
+        o = obs[(obs['category']==row['category']) & (obs['x']==row['x'])]['y'].values
+        for yv in o:
+            cov += (lo[j] <= yv <= hi[j]); tot += 1
+            errs.append(np.log(-mid[j]) - np.log(-yv))
+    print(f'coverage: {cov}/{tot} = {cov/tot:.3f} (target 0.95)')
+    errs = np.array(errs)
+    print(f'point log-err: bias={errs.mean():+.4f} rmse={np.sqrt(np.mean(errs**2)):.4f}')
+    print('b from truncated fit:', round(p[0],4))
+
+# ---------------- main ----------------
+def main():
+    train = pd.read_csv('data/train.csv')
+    test = pd.read_csv('data/test.csv')
+    backtest(train)
+    cats = sorted(train['category'].unique())
+    ci = {c:i for i,c in enumerate(cats)}
+    p = joint_fit(train, ci)
+    b, a, c = unpack(p, len(cats))
+    print('\nFull fit: shared b =', round(b,4))
+    for cat in cats:
+        print(f'  {cat}: a={a[ci[cat]]:.4e} c={c[ci[cat]]:.4f}')
+    coef, scale, zpool = fit_noise(train, ci, p)
+    print('sigma(x) = %.3f * exp(%.3f %+.3f log x)' % (scale, coef[0], coef[1]))
+    print('sigma at x=125,200,500,800:', np.round(sigma_x(coef, scale, [125,200,500,800]),4))
+    print('zpool 2.5/97.5 pct:', np.round(np.percentile(zpool,[2.5,97.5]),3))
+
+    preds = bootstrap_predict(train, ci, p, coef, scale, zpool, test, B=2000)
+    lo = np.percentile(preds, 2.5, axis=0)
+    hi = np.percentile(preds, 97.5, axis=0)
+    # point estimate: conditional mean from original fit = -mu * E[exp(sigma z)]
+    xte = test['x'].values.astype(float)
+    mu_te = predict_mu(p, ci, test['category'].values, xte)
+    sig_te = sigma_x(coef, scale, xte)
+    mean_factor = np.mean(np.exp(sig_te[:,None]*zpool[None,:]), axis=1)
+    y_pred = -mu_te*mean_factor
+
+    out = test.copy()
+    out['y_pred'] = y_pred
+    out['y_lower'] = lo
+    out['y_upper'] = hi
+    out = out[['category','x','y_pred','y_lower','y_upper']]
+    out.to_csv('predictions.csv', index=False)
+    print('\nwrote predictions.csv, rows:', len(out))
+    print(out.to_string())
+
+if __name__ == '__main__':
+    main()
+EOF
+timeout 1200 python3 solution.py
 ```
 
 ## [33] tool
@@ -1439,7 +2173,44 @@ The pipeline works and backtest coverage is 100% (slightly conservative). The ke
 **tool call: bash**
 
 ```
+cd /workspace && cat > backtest2.py << 'EOF'
+import pandas as pd, numpy as np
+from solution import joint_fit, fit_noise, bootstrap_predict, predict_mu, unpack
 
+train = pd.read_csv('data/train.csv')
+long_cats = ['JLbWvI','P9x4od','YdTZK3']
+short_cats = ['H6F6wO','UsN6Q8']
+cats_fit = long_cats + short_cats
+ci = {c:i for i,c in enumerate(cats_fit)}
+
+for cut in [200, 250]:
+    tr = train[((train['category'].isin(long_cats)) & (train['x']<=cut)) |
+               (train['category'].isin(short_cats))].copy()
+    p = joint_fit(tr, ci)
+    coef, scale, zpool = fit_noise(tr, ci, p)
+    te = train[(train['category'].isin(long_cats)) & (train['x']>cut)].copy()
+    te = te[['category','x']].drop_duplicates().sort_values(['category','x']).reset_index(drop=True)
+    preds = bootstrap_predict(tr, ci, p, coef, scale, zpool, te, B=1000)
+    lo = np.percentile(preds, 2.5, axis=0); hi = np.percentile(preds, 97.5, axis=0)
+    mid = np.median(preds, axis=0)
+    obs = train[train['category'].isin(long_cats) & (train['x']>cut)]
+    cov=0; tot=0; errs=[]; worst=[]
+    for j,row in te.iterrows():
+        o = obs[(obs['category']==row['category']) & (obs['x']==row['x'])]['y'].values
+        gm = o.mean()
+        worst.append((row['category'], row['x'], np.log(-mid[j])-np.log(-gm), len(o),
+                      np.mean([(lo[j]<=yv<=hi[j]) for yv in o])))
+        for yv in o:
+            cov += (lo[j] <= yv <= hi[j]); tot += 1
+            errs.append(np.log(-mid[j]) - np.log(-yv))
+    errs = np.array(errs)
+    print(f'\n=== cut={cut} (extrapolate to {2*cut if cut==200 else 400}): b={p[0]:.4f} ===')
+    print(f'coverage: {cov}/{tot} = {cov/tot:.3f}   log-err bias={errs.mean():+.4f} rmse={np.sqrt(np.mean(errs**2)):.4f}')
+    print('per-group log bias of median vs group mean (cat, x, bias, n, coverage):')
+    for w in worst:
+        print('  ', w[0], int(w[1]), '%+.3f'%w[2], w[3], '%.2f'%w[4])
+EOF
+timeout 1200 python3 backtest2.py
 ```
 
 ## [35] tool
@@ -1546,7 +2317,37 @@ One concern: UsN6Q8 (only 4 points) rises steeply at the end — let me check wh
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+train = pd.read_csv('data/train.csv')
+sub = train[train['category']=='UsN6Q8']
+x = sub['x'].values; y = sub['y'].values
+print('UsN6Q8 data:', list(zip(x,y)))
+def f(x,a,b,c): return -(c+a*np.power(x,b))
+# free fit: 3 params, 4 points
+try:
+    popt,_ = curve_fit(f, x, y, p0=[2e-5,2.2,0.05], maxfev=100000)
+    print('free fit a,b,c:', popt, '-> b =', round(popt[1],3))
+    xt=[125,150,175,200]
+    print('free-b preds:', np.round(f(np.array(xt),*popt),3))
+except Exception as e:
+    print('fail',e)
+# shared b=2.199 fit
+def f2(x,a,c): return -(c+a*np.power(x,2.199))
+popt2,_ = curve_fit(f2, x, y, p0=[2e-5,0.05])
+print('shared-b fit a,c:', popt2)
+print('shared-b resid:', np.round(y - f2(x,*popt2),4))
+print('shared-b preds:', np.round(f2(np.array([125,150,175,200]),*popt2),3))
+# how well can b be pinned? profile SSR over b grid
+for bb in [2.0,2.199,2.4,2.6,2.8,3.0]:
+    def f3(x,a,c,bb=bb): return -(c+a*np.power(x,bb))
+    try:
+        p3,_ = curve_fit(f3, x, y, p0=[2e-5,0.05], maxfev=100000)
+        ssr = np.sum((y-f3(x,*p3))**2)
+        print(f'b={bb}: SSR={ssr:.6f} a={p3[0]:.2e} c={p3[1]:.4f} pred@200={f3(200,*p3):.3f}')
+    except Exception as e: print(bb,'fail')
+"
 ```
 
 ## [37] tool
@@ -1671,7 +2472,48 @@ Final refinements: use the bootstrap predictive mean as y_pred (accounts for par
 **tool call: bash**
 
 ```
+cd /workspace && cat > final.py << 'EOF'
+import pandas as pd, numpy as np, time
+from solution import joint_fit, fit_noise, bootstrap_predict, predict_mu, unpack, sigma_x
 
+t0 = time.time()
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+cats = sorted(train['category'].unique())
+ci = {c:i for i,c in enumerate(cats)}
+p = joint_fit(train, ci)
+b, a, c = unpack(p, len(cats))
+coef, scale, zpool = fit_noise(train, ci, p)
+print('shared b =', round(b,4), '| sigma scale =', round(scale,3),
+      '| fit time so far %.1fs' % (time.time()-t0))
+
+B = 4000
+preds = bootstrap_predict(train, ci, p, coef, scale, zpool, test, B=B)
+lo = np.percentile(preds, 2.5, axis=0)
+hi = np.percentile(preds, 97.5, axis=0)
+y_pred_mean = preds.mean(axis=0)
+y_pred_med = np.median(preds, axis=0)
+print('bootstrap done, total %.1fs' % (time.time()-t0))
+
+out = test.copy()
+out['y_pred'] = y_pred_mean
+out['y_lower'] = lo
+out['y_upper'] = hi
+out = out[['category','x','y_pred','y_lower','y_upper']]
+out.to_csv('predictions.csv', index=False)
+print('wrote predictions.csv rows:', len(out))
+
+chk = pd.read_csv('predictions.csv')
+assert len(chk)==len(test) and list(chk.columns)==['category','x','y_pred','y_lower','y_upper']
+assert (chk['y_lower']<chk['y_pred']).all() and (chk['y_pred']<chk['y_upper']).all()
+assert chk[['y_pred','y_lower','y_upper']].notna().all().all()
+m = chk.merge(test, on=['category','x'])
+print('validation OK; all test rows matched:', len(m)==len(test))
+print(chk.to_string())
+print('\nmean vs median diff (log):', np.round(np.log(-y_pred_mean)-np.log(-y_pred_med),3))
+EOF
+timeout 3000 python3 final.py
 ```
 
 ## [39] tool
@@ -1753,7 +2595,16 @@ The final solution is complete and validated. Let me do a final verification of 
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -la predictions.csv && head -5 predictions.csv && python3 -c "
+import pandas as pd
+p = pd.read_csv('predictions.csv'); t = pd.read_csv('data/test.csv')
+assert list(p.columns)==['category','x','y_pred','y_lower','y_upper']
+assert len(p)==len(t)==29
+assert (p['category'].values==t['category'].values).all() and (p['x'].values==t['x'].values).all()
+assert (p['y_lower']<=p['y_pred']).all() and (p['y_pred']<=p['y_upper']).all()
+assert p.notna().all().all()
+print('predictions.csv valid: 29 rows, columns/order/intervals all OK')
+"
 ```
 
 ## [41] tool

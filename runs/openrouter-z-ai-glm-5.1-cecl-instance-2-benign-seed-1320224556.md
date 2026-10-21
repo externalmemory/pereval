@@ -95,13 +95,13 @@ I'll start by examining all the input data files to understand the structure and
 **tool call: bash**
 
 ```
-
+ls -la data/ && echo "---POLICY---" && cat data/policy.json && echo "---POOLS HEAD---" && head -20 data/pools.csv && echo "---HISTORY HEAD---" && head -20 data/history.csv && echo "---FORECAST HEAD---" && head -20 data/forecast.csv
 ```
 
 **tool call: bash**
 
 ```
-
+echo "---POOLS WC---" && wc -l data/pools.csv && echo "---HISTORY WC---" && wc -l data/history.csv && echo "---FORECAST WC---" && wc -l data/forecast.csv
 ```
 
 ## [3] tool
@@ -1494,7 +1494,177 @@ The timelines look correct. Now let me write the full simulation script.
 **tool call: bash**
 
 ```
+cat > solve.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
+from scipy.stats import norm
+import json, time
 
+np.random.seed(42)
+
+# ============================================================
+# Load data
+# ============================================================
+history = pd.read_csv('data/history.csv')
+forecast = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+with open('data/policy.json') as f:
+    policy = json.load(f)
+
+FQ = policy['forecast_quarters']   # 8
+RQ = policy['reversion_quarters']  # 4
+RHO = policy['rho']                # 0.02
+PERS = policy['persistence']       # 0.6
+IL = policy['interval_level']      # 0.95
+T_MAX = int(pools['remaining_quarters'].max())  # 40
+N_PATHS = 500_000
+
+segments = ['A','B','C']
+sqrt_rho = np.sqrt(RHO)
+sqrt_1rho = np.sqrt(1.0 - RHO)
+sigma_eps = np.sqrt(1.0 - PERS**2)
+
+def sigmoid(x):
+    return 1.0/(1.0+np.exp(-np.clip(x,-30,30)))
+
+# ============================================================
+# Step 1: Fit logit NLS models per segment
+# ============================================================
+models = {}
+hist_means = {}
+for seg in segments:
+    d = history[history['segment']==seg].copy()
+    X = np.column_stack([np.ones(len(d)), d['unemployment'].values, d['hpi_growth'].values])
+    models[seg] = {}
+    hist_means[seg] = {}
+    for rate in ['pd','lgd','prepay']:
+        y = d[rate].values
+        hist_means[seg][rate] = float(y.mean())
+        def nls(beta, X=X, y=y):
+            p = sigmoid(X @ beta)
+            return np.sum((y-p)**2)
+        best_res, best_fun = None, np.inf
+        for x0 in [[0,0,0],[0,0.1,-1],[-3,0.3,-5],[-2,0.1,-2],[0,0.05,-0.5]]:
+            res = minimize(nls, x0, method='Nelder-Mead',
+                           options={'maxiter':50000,'xatol':1e-12,'fatol':1e-14})
+            if res.fun < best_fun:
+                best_fun, best_res = res.fun, res
+        models[seg][rate] = best_res.x
+
+# ============================================================
+# Step 2 & 3: Build rate timelines (forecast + reversion + hold)
+# ============================================================
+Xf = np.column_stack([np.ones(FQ), forecast['unemployment'].values, forecast['hpi_growth'].values])
+rate_tl = {}
+for seg in segments:
+    rate_tl[seg] = {}
+    for rate in ['pd','lgd','prepay']:
+        fcast = sigmoid(Xf @ models[seg][rate])
+        M = hist_means[seg][rate]
+        F_last = fcast[-1]
+        tl = np.zeros(T_MAX)
+        tl[:FQ] = fcast
+        for i in range(1, RQ+1):
+            w = i / RQ
+            tl[FQ-1+i] = (1-w)*F_last + w*M
+        tl[FQ+RQ:] = M
+        rate_tl[seg][rate] = tl
+
+# ============================================================
+# Step 4: Simulate z-paths and realized PDs per segment
+# ============================================================
+# Precompute Phi_inv of mean PD for each quarter
+phi_inv_pd = {}
+for seg in segments:
+    phi_inv_pd[seg] = norm.ppf(rate_tl[seg]['pd'])
+
+# Generate z-paths and realized PDs per segment
+pd_realized = {}  # pd_realized[seg] = array (N_PATHS, T_MAX)
+for seg in segments:
+    z = np.zeros((N_PATHS, T_MAX))
+    z[:, 0] = np.random.randn(N_PATHS)
+    for q in range(1, T_MAX):
+        z[:, q] = PERS * z[:, q-1] + sigma_eps * np.random.randn(N_PATHS)
+    # Realized PD = Phi((Phi_inv(m) + sqrt_rho*z) / sqrt_1rho)
+    pr = np.zeros((N_PATHS, T_MAX))
+    for q in range(T_MAX):
+        pr[:, q] = norm.cdf((phi_inv_pd[seg][q] + sqrt_rho * z[:, q]) / sqrt_1rho)
+    pd_realized[seg] = pr
+    print(f"Segment {seg}: simulated {N_PATHS} paths, "
+          f"mean PD q1={pr[:,0].mean():.5f} (target {rate_tl[seg]['pd'][0]:.5f}), "
+          f"std loss check later")
+
+# ============================================================
+# Step 5: Compute ECL and intervals per pool
+# ============================================================
+# Analytical ECL (using mean PDs) for comparison
+def analytical_ecl(B, T, seg):
+    pd_arr = rate_tl[seg]['pd'][:T]
+    lgd_arr = rate_tl[seg]['lgd'][:T]
+    pp_arr = rate_tl[seg]['prepay'][:T]
+    S = 1.0
+    total = 0.0
+    for q in range(T):
+        P_q = B * (T - q) / T  # beginning principal, 0-based q => 1-based q+1
+        total += pd_arr[q] * S * P_q * lgd_arr[q]
+        S *= (1 - pd_arr[q]) * (1 - pp_arr[q])
+    return total
+
+results = []
+t0 = time.time()
+for _, row in pools.iterrows():
+    pid = row['pool_id']
+    seg = row['segment']
+    B = float(row['balance'])
+    T = int(row['remaining_quarters'])
+    
+    pr = pd_realized[seg][:, :T]  # (N_PATHS, T)
+    lgd_arr = rate_tl[seg]['lgd'][:T]
+    pp_arr = rate_tl[seg]['prepay'][:T]
+    
+    # Vectorized balance recursion over all paths
+    surviving = np.ones(N_PATHS)
+    total_loss = np.zeros(N_PATHS)
+    for q in range(T):
+        P_q = B * (T - q) / T
+        pd_q = pr[:, q]
+        loss_q = pd_q * surviving * P_q * lgd_arr[q]
+        total_loss += loss_q
+        surviving *= (1 - pd_q) * (1 - pp_arr[q])
+    
+    ecl = float(total_loss.mean())
+    lower = float(np.percentile(total_loss, 2.5))
+    upper = float(np.percentile(total_loss, 97.5))
+    ecl_anal = analytical_ecl(B, T, seg)
+    
+    # Clip to valid range
+    ecl = max(0.0, min(ecl, B))
+    lower = max(0.0, min(lower, B))
+    upper = max(0.0, min(upper, B))
+    if lower > upper:
+        lower, upper = upper, lower
+    
+    results.append({
+        'pool_id': pid, 'ecl': ecl, 'ecl_lower': lower, 'ecl_upper': upper,
+        'ecl_analytical': ecl_anal, 'balance': B, 'loss_rate': ecl/B,
+        'loss_std': float(total_loss.std()), 'loss_mean_anal_rate': ecl_anal/B
+    })
+    print(f"{pid}: ecl={ecl:.1f} (anal={ecl_anal:.1f}), "
+          f"interval=[{lower:.1f}, {upper:.1f}], "
+          f"loss_rate={ecl/B:.5f}, std={total_loss.std():.1f}")
+
+print(f"\nTotal time: {time.time()-t0:.1f}s")
+print(f"Portfolio ECL: {sum(r['ecl'] for r in results):.1f}")
+print(f"Portfolio balance: {sum(r['balance'] for r in results):.1f}")
+
+# Write predictions
+df_out = pd.DataFrame(results)[['pool_id','ecl','ecl_lower','ecl_upper']]
+df_out.to_csv('predictions.csv', index=False)
+print("\nWrote predictions.csv:")
+print(df_out.to_string())
+PYEOF
+python solve.py
 ```
 
 ## [20] tool
@@ -2686,7 +2856,196 @@ The simple logit(u,h) model is optimal (lowest AIC, no benefit from interactions
 **tool call: bash**
 
 ```
+cat > solve_final.py << 'PYEOF'
+#!/usr/bin/env python3
+"""
+Lifetime ECL estimation for closed-end loan pools.
+- Logit NLS regression to forecast PD/LGD/prepay from economic variables
+- Linear reversion to historical mean after forecast period
+- Probit AR(1) aggregate simulation for ECL and 95% prediction intervals
+"""
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
+from scipy.stats import norm
+import json, time
 
+np.random.seed(2024)
+
+# ============================================================
+# Load data
+# ============================================================
+history = pd.read_csv('data/history.csv')
+forecast = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+with open('data/policy.json') as f:
+    policy = json.load(f)
+
+FQ  = policy['forecast_quarters']    # 8
+RQ  = policy['reversion_quarters']   # 4
+RHO = policy['rho']                  # 0.02
+PERS = policy['persistence']         # 0.6
+IL  = policy['interval_level']       # 0.95
+T_MAX = int(pools['remaining_quarters'].max())  # 40
+N_PATHS = 2_000_000
+
+segments = ['A', 'B', 'C']
+sqrt_rho   = np.sqrt(RHO)
+sqrt_1rho  = np.sqrt(1.0 - RHO)
+sigma_eps  = np.sqrt(1.0 - PERS**2)
+alpha = 1.0 - IL  # 0.05
+lo_pct = 100 * alpha / 2       # 2.5
+hi_pct = 100 * (1 - alpha / 2) # 97.5
+
+def sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-np.clip(x, -30, 30)))
+
+# ============================================================
+# Step 1: Fit logit NLS models per segment for pd, lgd, prepay
+# ============================================================
+models = {}
+hist_means = {}
+for seg in segments:
+    d = history[history['segment'] == seg].copy()
+    X = np.column_stack([np.ones(len(d)),
+                         d['unemployment'].values,
+                         d['hpi_growth'].values])
+    models[seg] = {}
+    hist_means[seg] = {}
+    for rate in ['pd', 'lgd', 'prepay']:
+        y = d[rate].values
+        hist_means[seg][rate] = float(y.mean())
+        def nls(beta, X=X, y=y):
+            return np.sum((y - sigmoid(X @ beta)) ** 2)
+        best_res, best_fun = None, np.inf
+        for x0 in [[0, 0, 0], [0, 0.1, -1], [-3, 0.3, -5],
+                    [-2, 0.1, -2], [0, 0.05, -0.5]]:
+            res = minimize(nls, x0, method='Nelder-Mead',
+                           options={'maxiter': 50000, 'xatol': 1e-12,
+                                    'fatol': 1e-14})
+            if res.fun < best_fun:
+                best_fun, best_res = res.fun, res
+        models[seg][rate] = best_res.x
+
+# ============================================================
+# Step 2: Predict forecast rates and build full rate timeline
+#   Quarters 1..FQ:        forecast (from logit model on forecast econ path)
+#   Quarters FQ+1..FQ+RQ:  linear reversion from last forecast to hist mean
+#   Quarters FQ+RQ+1..T_MAX: hold at historical mean
+# ============================================================
+Xf = np.column_stack([np.ones(FQ),
+                      forecast['unemployment'].values,
+                      forecast['hpi_growth'].values])
+
+rate_tl = {}  # rate_tl[seg][rate] = np.array(T_MAX)
+for seg in segments:
+    rate_tl[seg] = {}
+    for rate in ['pd', 'lgd', 'prepay']:
+        fcast = sigmoid(Xf @ models[seg][rate])  # length FQ
+        M = hist_means[seg][rate]
+        F_last = fcast[-1]
+        tl = np.zeros(T_MAX)
+        tl[:FQ] = fcast
+        for i in range(1, RQ + 1):
+            w = i / RQ  # weight on history: 1/RQ, 2/RQ, ..., 1
+            tl[FQ - 1 + i] = (1.0 - w) * F_last + w * M
+        tl[FQ + RQ:] = M
+        rate_tl[seg][rate] = tl
+
+# ============================================================
+# Step 3: Simulate per segment
+#   AR(1) z process: z[0]~N(0,1), z[q]=persistence*z[q-1]+sqrt(1-p^2)*eps
+#   Realized PD = Phi((Phi_inv(mean_PD) + sqrt(rho)*z) / sqrt(1-rho))
+#   LGD and prepay remain deterministic (use mean timeline values)
+#   Pools in a segment share the same z paths
+# ============================================================
+phi_inv_pd = {seg: norm.ppf(rate_tl[seg]['pd']) for seg in segments}
+
+all_results = []
+t0 = time.time()
+
+for seg in segments:
+    # Generate z paths
+    z = np.empty((N_PATHS, T_MAX), dtype=np.float64)
+    z[:, 0] = np.random.randn(N_PATHS)
+    for q in range(1, T_MAX):
+        z[:, q] = PERS * z[:, q - 1] + sigma_eps * np.random.randn(N_PATHS)
+
+    # Compute realized PD for all quarters
+    pd_real = np.empty((N_PATHS, T_MAX), dtype=np.float64)
+    for q in range(T_MAX):
+        pd_real[:, q] = norm.cdf(
+            (phi_inv_pd[seg][q] + sqrt_rho * z[:, q]) / sqrt_1rho
+        )
+    # Free z
+    del z
+
+    # LGD and prepay timelines (deterministic)
+    lgd_tl = rate_tl[seg]['lgd']
+    pp_tl  = rate_tl[seg]['prepay']
+
+    # Process each pool in this segment
+    seg_pools = pools[pools['segment'] == seg]
+    for _, row in seg_pools.iterrows():
+        pid = row['pool_id']
+        B = float(row['balance'])
+        T = int(row['remaining_quarters'])
+
+        pr   = pd_real[:, :T]
+        lgds = lgd_tl[:T]
+        pps  = pp_tl[:T]
+
+        # Vectorized balance recursion over all paths
+        surviving = np.ones(N_PATHS, dtype=np.float64)
+        total_loss = np.zeros(N_PATHS, dtype=np.float64)
+        for q in range(T):
+            P_q = B * (T - q) / T  # beginning principal per surviving loan
+            pd_q = pr[:, q]
+            total_loss += pd_q * surviving * P_q * lgds[q]
+            surviving *= (1.0 - pd_q) * (1.0 - pps[q])
+
+        ecl = float(total_loss.mean())
+        lower = float(np.percentile(total_loss, lo_pct))
+        upper = float(np.percentile(total_loss, hi_pct))
+
+        # Clip to valid range [0, B]
+        ecl   = max(0.0, min(ecl, B))
+        lower = max(0.0, min(lower, B))
+        upper = max(0.0, min(upper, B))
+        if lower > upper:
+            lower, upper = upper, lower
+
+        all_results.append({
+            'pool_id': pid,
+            'ecl': ecl,
+            'ecl_lower': lower,
+            'ecl_upper': upper,
+        })
+        print(f"{pid} (seg={seg}, B={B:.0f}, T={T}): "
+              f"ecl={ecl:.1f} ({ecl/B*100:.3f}%), "
+              f"int=[{lower:.1f}, {upper:.1f}], "
+              f"width={upper-lower:.1f} ({(upper-lower)/B*100:.3f}%), "
+              f"loss_std={total_loss.std():.1f}")
+
+    del pd_real
+
+print(f"\nSimulation time: {time.time()-t0:.1f}s (N={N_PATHS} paths/segment)")
+
+# ============================================================
+# Write predictions.csv
+# ============================================================
+df_out = pd.DataFrame(all_results)[['pool_id', 'ecl', 'ecl_lower', 'ecl_upper']]
+# Sort by pool_id to match input order
+df_out = df_out.sort_values('pool_id').reset_index(drop=True)
+df_out.to_csv('predictions.csv', index=False)
+
+print("\n=== predictions.csv ===")
+print(df_out.to_string())
+print(f"\nPortfolio ECL: {df_out['ecl'].sum():.1f}")
+print(f"Portfolio balance: {pools['balance'].sum():.1f}")
+print(f"Portfolio loss rate: {df_out['ecl'].sum()/pools['balance'].sum():.5f}")
+PYEOF
+python solve_final.py
 ```
 
 ## [30] tool
@@ -2997,7 +3356,7 @@ All checks pass. Let me do a final verification of the CSV file format and confi
 **tool call: bash**
 
 ```
-
+echo "=== FILE CONTENTS ===" && cat data/predictions.csv 2>/dev/null || cat predictions.csv && echo "" && echo "=== LINE COUNT ===" && wc -l predictions.csv
 ```
 
 **tool call: python**

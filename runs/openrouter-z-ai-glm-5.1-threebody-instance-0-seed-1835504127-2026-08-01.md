@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -109,6 +109,26 @@ t
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+print('Train shape:', train.shape)
+print('Train t range:', train.t.min(), 'to', train.t.max())
+print('Test t range:', test.t.min(), 'to', test.t.max())
+print()
+print('Train alpha range:', train.alpha.min(), 'to', train.alpha.max())
+print('Train beta range:', train.beta.min(), 'to', train.beta.max())
+print()
+print('Test t values:', test.t.values)
+print()
+# Check for wrapping in alpha and beta
+print('Alpha unique values near 0/360:', train.alpha[(train.alpha < 5) | (train.alpha > 355)].values[:20])
+print('Beta unique values near 0/360:', train.beta[(train.beta < 5) | (train.beta > 355)].values[:20])
+"
 
 ```
 
@@ -144,6 +164,38 @@ Beta unique values near 0/360: [3.555107e+02 3.564930e+02 3.574687e+02 3.572886e
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Unwrap alpha and beta to see the underlying continuous signals
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+
+print('Alpha unwrapped range:', alpha_unwrap.min(), 'to', alpha_unwrap.max())
+print('Beta unwrapped range:', beta_unwrap.min(), 'to', beta_unwrap.max())
+
+# Average rates
+alpha_rate = (alpha_unwrap[-1] - alpha_unwrap[0]) / (train.t.values[-1] - train.t.values[0])
+beta_rate = (beta_unwrap[-1] - beta_unwrap[0]) / (train.t.values[-1] - train.t.values[0])
+print(f'Alpha avg rate: {alpha_rate:.4f} deg/day')
+print(f'Beta avg rate: {beta_rate:.4f} deg/day')
+
+# How many full rotations?
+print(f'Alpha total rotation: {(alpha_unwrap[-1]-alpha_unwrap[0])/360:.1f} full turns')
+print(f'Beta total rotation: {(beta_unwrap[-1]-beta_unwrap[0])/360:.1f} full turns')
+
+# Look at the difference
+diff = alpha_unwrap - beta_unwrap
+print(f'Alpha - Beta unwrapped range: {diff.min():.2f} to {diff.max():.2f}')
+"
 
 ```
 
@@ -169,6 +221,64 @@ Alpha - Beta unwrapped range: 129.54 to 2488.57
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+
+# Look at the residual after removing linear trend
+from numpy.polynomial import polynomial as P
+
+# Fit linear trend to alpha and beta
+t = train.t.values
+
+alpha_coeffs = np.polyfit(t, alpha_unwrap, 1)
+beta_coeffs = np.polyfit(t, beta_unwrap, 1)
+
+alpha_detrend = alpha_unwrap - np.polyval(alpha_coeffs, t)
+beta_detrend = beta_unwrap - np.polyval(beta_coeffs, t)
+
+print('Alpha linear fit: slope={:.4f}, intercept={:.4f}'.format(*alpha_coeffs))
+print('Beta linear fit: slope={:.4f}, intercept={:.4f}'.format(*beta_coeffs))
+print()
+print('Alpha detrended range:', alpha_detrend.min(), 'to', alpha_detrend.max())
+print('Beta detrended range:', beta_detrend.min(), 'to', beta_detrend.max())
+
+# FFT of beta_detrended
+from scipy.fft import fft, fftfreq
+
+N = len(t)
+dt = 1.0  # 1 day spacing
+yf = fft(beta_detrend)
+xf = fftfreq(N, dt)
+
+# Find dominant frequencies
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+top_idx = np.argsort(power)[-10:][::-1]
+print('\\nTop 10 frequencies for beta:')
+for i in top_idx:
+    period = 1/freqs[i] if freqs[i] > 0 else np.inf
+    print(f'  freq={freqs[i]:.6f} cycles/day, period={period:.2f} days, power={power[i]:.2f}')
+
+# Do the same for alpha
+yf_a = fft(alpha_detrend)
+power_a = np.abs(yf_a[:N//2])**2
+top_idx_a = np.argsort(power_a)[-10:][::-1]
+print('\\nTop 10 frequencies for alpha:')
+for i in top_idx_a:
+    period = 1/freqs[i] if freqs[i] > 0 else np.inf
+    print(f'  freq={freqs[i]:.6f} cycles/day, period={period:.2f} days, power={power_a[i]:.2f}')
+"
 
 ```
 
@@ -218,6 +328,42 @@ Top 10 frequencies for alpha:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+
+# Let's try: beta = f(alpha) for some simple relationship
+# Maybe beta = c1 * alpha + c0 + noise?
+# Or some more complex relationship
+
+# First, let's see if beta is a simple function of alpha
+# Compute correlation between alpha_unwrap and beta_unwrap
+corr = np.corrcoef(alpha_unwrap, beta_unwrap)[0,1]
+print(f'Correlation between unwrapped alpha and beta: {corr:.4f}')
+
+# Maybe beta is a function of alpha modulo some period
+# Let's try: beta as function of alpha (mod 360)
+alpha_mod = train.alpha.values
+
+# Bin alpha and compute mean beta in each bin
+from scipy.stats import binned_statistic
+bin_means, bin_edges, _ = binned_statistic(alpha_mod, train.beta.values, statistic='mean', bins=36)
+bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+for i, (c, m) in enumerate(zip(bin_centers, bin_means)):
+    print(f'  alpha_bin={c:.0f}: mean_beta={m:.2f}')
+"
 
 ```
 
@@ -275,6 +421,47 @@ Correlation between unwrapped alpha and beta: 0.9968
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+
+# Let me try a joint model: beta as linear function of alpha + sinusoidal corrections
+# First, fit beta = a * alpha_unwrap + b + noise
+# Then analyze residuals
+
+coeffs = np.polyfit(alpha_unwrap, beta_unwrap, 1)
+beta_pred_from_alpha = np.polyval(coeffs, alpha_unwrap)
+resid = beta_unwrap - beta_pred_from_alpha
+
+print(f'beta = {coeffs[0]:.6f} * alpha_unwrap + {coeffs[1]:.4f}')
+print(f'Residual range: {resid.min():.4f} to {resid.max():.4f}')
+print(f'Residual std: {resid.std():.4f}')
+
+# FFT of residuals
+N = len(t)
+dt = 1.0
+yf = fft(resid)
+xf = fftfreq(N, dt)
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+top_idx = np.argsort(power)[-15:][::-1]
+print('\\nTop 15 frequencies for beta residuals (after removing linear alpha):')
+for i in top_idx:
+    period = 1/freqs[i] if freqs[i] > 0 else np.inf
+    print(f'  freq={freqs[i]:.6f} cycles/day, period={period:.2f} days, power={power[i]:.2f}')
+"
 
 ```
 
@@ -334,6 +521,79 @@ Top 15 frequencies for beta residuals (after removing linear alpha):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import curve_fit
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+
+# Let me try: model beta_unwrap as linear in t + sum of sinusoids
+# First, extract the key frequencies from beta_detrended
+beta_coeffs_lin = np.polyfit(t, beta_unwrap, 1)
+beta_detrend = beta_unwrap - np.polyval(beta_coeffs_lin, t)
+
+N = len(t)
+dt = 1.0
+yf = fft(beta_detrend)
+xf = fftfreq(N, dt)
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+
+# Get top frequencies
+n_components = 8
+top_idx = np.argsort(power)[-n_components:][::-1]
+top_freqs = freqs[top_idx]
+top_powers = power[top_idx]
+
+print('Top frequencies for beta:')
+for f, p in zip(top_freqs, top_powers):
+    print(f'  freq={f:.6f}, period={1/f:.2f} days, power={p:.2f}')
+
+# Now fit a model: beta = a0 + a1*t + sum_i(A_i * sin(2*pi*f_i*t + phi_i))
+# Use least squares with design matrix
+def build_design_matrix(t, freqs, include_linear=True):
+    cols = []
+    if include_linear:
+        cols.append(np.ones_like(t))
+        cols.append(t)
+    for f in freqs:
+        cols.append(np.sin(2*np.pi*f*t))
+        cols.append(np.cos(2*np.pi*f*t))
+    return np.column_stack(cols)
+
+# Use top frequencies
+X = build_design_matrix(t, top_freqs)
+coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+beta_fitted = X @ coeffs
+residuals = beta_unwrap - beta_fitted
+
+print(f'\\nFit with {n_components} sinusoidal components:')
+print(f'  Residual std: {residuals.std():.4f}')
+print(f'  Residual range: {residuals.min():.4f} to {residuals.max():.4f}')
+
+# Now let me also try adding alpha as a predictor
+# Model: beta = a0 + a1*t + a2*alpha_unwrap + sum sinusoids
+X2 = build_design_matrix(t, top_freqs)
+X2 = np.column_stack([X2, alpha_unwrap])
+coeffs2 = np.linalg.lstsq(X2, beta_unwrap, rcond=None)[0]
+beta_fitted2 = X2 @ coeffs2
+residuals2 = beta_unwrap - beta_fitted2
+
+print(f'\\nFit with alpha + {n_components} sinusoidal components:')
+print(f'  Residual std: {residuals2.std():.4f}')
+print(f'  Residual range: {residuals2.min():.4f} to {residuals2.max():.4f}')
+"
 
 ```
 
@@ -373,6 +633,51 @@ Fit with alpha + 8 sinusoidal components:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+
+# Try more components
+beta_coeffs_lin = np.polyfit(t, beta_unwrap, 1)
+beta_detrend = beta_unwrap - np.polyval(beta_coeffs_lin, t)
+
+N = len(t)
+dt = 1.0
+yf = fft(beta_detrend)
+xf = fftfreq(N, dt)
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+
+def build_design_matrix(t, freqs, include_linear=True):
+    cols = []
+    if include_linear:
+        cols.append(np.ones_like(t))
+        cols.append(t)
+    for f in freqs:
+        cols.append(np.sin(2*np.pi*f*t))
+        cols.append(np.cos(2*np.pi*f*t))
+    return np.column_stack(cols)
+
+for n_components in [5, 8, 12, 16, 20, 30]:
+    top_idx = np.argsort(power)[-n_components:][::-1]
+    top_freqs = freqs[top_idx]
+    X = build_design_matrix(t, top_freqs)
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    beta_fitted = X @ coeffs
+    residuals = beta_unwrap - beta_fitted
+    print(f'n={n_components}: residual std={residuals.std():.4f}, max_abs={np.abs(residuals).max():.4f}')
+"
 
 ```
 
@@ -415,6 +720,77 @@ n=30: residual std=1.3482, max_abs=16.4361
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+
+# Let's try to refine the top frequencies using nonlinear optimization
+# Start with FFT-based frequencies
+
+beta_coeffs_lin = np.polyfit(t, beta_unwrap, 1)
+beta_detrend = beta_unwrap - np.polyval(beta_coeffs_lin, t)
+
+N = len(t)
+dt = 1.0
+yf = fft(beta_detrend)
+xf = fftfreq(N, dt)
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+
+# Get top 15 frequencies
+n_components = 15
+top_idx = np.argsort(power)[-n_components:][::-1]
+initial_freqs = freqs[top_idx]
+
+print('Initial frequencies from FFT:')
+for f in initial_freqs:
+    print(f'  {f:.8f} (period={1/f:.2f})')
+
+# For each frequency, refine using a local search
+def neg_power_at_freq(freq, signal, t):
+    \"\"\"Negative of the squared correlation with sin and cos at given freq.\"\"\"
+    S = np.sin(2*np.pi*freq*t)
+    C = np.cos(2*np.pi*freq*t)
+    X = np.column_stack([S, C])
+    coeffs = np.linalg.lstsq(X, signal, rcond=None)[0]
+    fitted = X @ coeffs
+    return -np.sum(fitted**2)
+
+refined_freqs = []
+for f0 in initial_freqs:
+    # Search in a narrow window around f0
+    result = minimize(lambda f: neg_power_at_freq(f[0], beta_detrend, t), 
+                      [f0], method='Nelder-Mead', 
+                      options={'xatol': 1e-8, 'fatol': 1e-10})
+    refined_freqs.append(result.x[0])
+    
+refined_freqs = np.array(refined_freqs)
+
+print('\\nRefined frequencies:')
+for f in refined_freqs:
+    print(f'  {f:.8f} (period={1/f:.2f})')
+
+# Now fit with refined frequencies
+X = np.column_stack([np.ones_like(t), t] + 
+                     [col for f in refined_freqs 
+                      for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+beta_fitted = X @ coeffs
+residuals = beta_unwrap - beta_fitted
+print(f'\\nRefined fit: residual std={residuals.std():.4f}, max_abs={np.abs(residuals).max():.4f}')
+"
 
 ```
 
@@ -475,6 +851,89 @@ Refined fit: residual std=2.1215, max_abs=8.8064
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Iterative approach: greedily add frequencies
+# Start with linear trend, then find the dominant frequency in residuals
+
+residuals = beta_unwrap.copy()
+selected_freqs = []
+
+# Remove linear trend first
+lin_coeffs = np.polyfit(t, beta_unwrap, 1)
+residuals = beta_unwrap - np.polyval(lin_coeffs, t)
+
+for iteration in range(25):
+    # Find the dominant frequency in current residuals using fine grid
+    # Use a periodogram approach
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    
+    # Find top frequency
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    # Refine this frequency
+    from scipy.optimize import minimize_scalar
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    # Search in neighborhood
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    # Check if this frequency is already selected (within tolerance)
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        # Zero out this peak and continue
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        residuals = np.real(np.fft.ifft(yf))
+        continue
+    
+    selected_freqs.append(f_refined)
+    
+    # Rebuild design matrix with all selected frequencies and refit
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    beta_fitted = X @ coeffs
+    residuals = beta_unwrap - beta_fitted
+    
+    if (iteration+1) % 5 == 0 or iteration < 5:
+        print(f'Iteration {iteration+1}: freq={f_refined:.8f} (period={1/f_refined:.2f}), residual_std={residuals.std():.4f}')
+
+print(f'\\nTotal frequencies selected: {len(selected_freqs)}')
+print(f'Final residual std: {residuals.std():.4f}')
+print(f'Final residual max_abs: {np.abs(residuals).max():.4f}')
+
+# Print all selected frequencies
+print('\\nSelected frequencies:')
+for f in sorted(selected_freqs):
+    print(f'  {f:.8f} (period={1/f:.2f})')
+"
 
 ```
 
@@ -550,6 +1009,80 @@ Selected frequencies:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+
+# Model beta_unwrap using alpha_unwrap as predictor + sinusoidal residuals
+# First, let's see the relationship
+# beta seems to be roughly 0.3 * alpha_unwrap + offset + sinusoidal corrections
+
+# Let's try: model beta_unwrap as function of alpha_unwrap
+# Then model the residuals of that as function of time
+
+# Fit beta = a * alpha + b
+X_alpha = np.column_stack([np.ones_like(alpha_unwrap), alpha_unwrap])
+coeffs_alpha = np.linalg.lstsq(X_alpha, beta_unwrap, rcond=None)[0]
+resid_from_alpha = beta_unwrap - X_alpha @ coeffs_alpha
+
+print(f'beta = {coeffs_alpha[1]:.6f} * alpha + {coeffs_alpha[0]:.4f}')
+print(f'Residual from alpha: std={resid_from_alpha.std():.4f}')
+
+# Now find periodic components in resid_from_alpha
+residuals = resid_from_alpha.copy()
+selected_freqs = []
+
+for iteration in range(30):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    from scipy.optimize import minimize_scalar
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        break
+    
+    selected_freqs.append(f_refined)
+    
+    # Rebuild full design matrix: [1, alpha_unwrap, sin(f1*t), cos(f1*t), ...]
+    X = np.column_stack([np.ones_like(alpha_unwrap), alpha_unwrap] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    beta_fitted = X @ coeffs
+    residuals = beta_unwrap - beta_fitted
+
+print(f'\\nFinal model with alpha + {len(selected_freqs)} sinusoids:')
+print(f'Residual std: {residuals.std():.4f}')
+print(f'Residual max_abs: {np.abs(residuals).max():.4f}')
+"
 
 ```
 
@@ -578,6 +1111,98 @@ Residual max_abs: 2.3151
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Build the model: beta_unwrap = a + b*t + sum(A_i*sin(2*pi*f_i*t) + B_i*cos(2*pi*f_i*t))
+# Greedily add frequencies
+
+residuals = beta_unwrap.copy()
+selected_freqs = []
+
+# Remove linear trend first
+lin_coeffs = np.polyfit(t, beta_unwrap, 1)
+residuals = beta_unwrap - np.polyval(lin_coeffs, t)
+
+for iteration in range(40):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        # This frequency is already selected, try the next best
+        # Zero out this peak
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        residuals_temp = np.real(np.fft.ifft(yf))
+        # Find next peak
+        power_temp = np.abs(yf[:N//2])**2
+        top_idx2 = np.argmax(power_temp)
+        f0_2 = freqs[top_idx2]
+        
+        result2 = minimize_scalar(neg_power, bounds=(f0_2-2*df, f0_2+2*df), method='bounded')
+        f_refined = result2.x
+        
+        if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+            break
+    
+    selected_freqs.append(f_refined)
+    
+    # Rebuild design matrix with all selected frequencies
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    beta_fitted = X @ coeffs
+    residuals = beta_unwrap - beta_fitted
+    
+    if residuals.std() < 0.3:
+        break
+
+print(f'Selected {len(selected_freqs)} frequencies')
+print(f'Residual std: {residuals.std():.4f}')
+print(f'Residual max_abs: {np.abs(residuals).max():.4f}')
+
+# Check if residuals look like white noise
+# Autocorrelation
+from numpy import correlate
+resid_norm = residuals - residuals.mean()
+acorr = np.correlate(resid_norm, resid_norm, mode='full')
+acorr = acorr[len(acorr)//2:]
+acorr = acorr / acorr[0]
+print(f'\\nAutocorrelation at lag 1: {acorr[1]:.4f}')
+print(f'Autocorrelation at lag 7: {acorr[7]:.4f}')
+print(f'Autocorrelation at lag 30: {acorr[30]:.4f}')
+"
 
 ```
 
@@ -624,6 +1249,116 @@ Autocorrelation at lag 30: -0.0498
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t_train = train.t.values
+N = len(t_train)
+
+# Build the model: beta_unwrap = a + b*t + sum(A_i*sin(2*pi*f_i*t) + B_i*cos(2*pi*f_i*t))
+# Greedily add frequencies
+
+residuals = beta_unwrap.copy()
+selected_freqs = []
+
+lin_coeffs = np.polyfit(t_train, beta_unwrap, 1)
+residuals = beta_unwrap - np.polyval(lin_coeffs, t_train)
+
+for iteration in range(50):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t_train)
+        C = np.cos(2*np.pi*f*t_train)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        # Zero out this peak and continue
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        top_idx2 = np.argmax(power_new)
+        f0_2 = freqs[top_idx2]
+        result2 = minimize_scalar(neg_power, bounds=(f0_2-2*df, f0_2+2*df), method='bounded')
+        f_refined = result2.x
+        if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+            break
+    
+    selected_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(t_train), t_train] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t_train), np.cos(2*np.pi*f*t_train)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    beta_fitted = X @ coeffs
+    residuals = beta_unwrap - beta_fitted
+    
+    if residuals.std() < 0.3:
+        break
+
+print(f'Selected {len(selected_freqs)} frequencies')
+print(f'Residual std: {residuals.std():.4f}')
+
+# Final model
+p = X.shape[1]  # number of parameters
+n = N
+MSE = np.sum(residuals**2) / (n - p)
+print(f'MSE: {MSE:.4f}')
+print(f'RMSE: {np.sqrt(MSE):.4f}')
+
+# Compute (X'X)^{-1} for prediction intervals
+XtX_inv = np.linalg.inv(X.T @ X)
+
+# Make predictions for test data
+t_test = test.t.values
+X_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                          [col for f in selected_freqs 
+                           for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+
+beta_pred_unwrap = X_test @ coeffs
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+# Prediction intervals
+# For each test point, compute: pred_var = MSE * (1 + x_0'(X'X)^{-1}x_0)
+t_crit = t_dist.ppf(0.975, n - p)  # 97.5% quantile for 95% two-sided interval
+
+for i in range(len(t_test)):
+    x0 = X_test[i]
+    leverage = x0 @ XtX_inv @ x0
+    pred_var = MSE * (1 + leverage)
+    pred_se = np.sqrt(pred_var)
+    lower = wrap_angle(beta_pred_unwrap[i] - t_crit * pred_se)
+    upper = wrap_angle(beta_pred_unwrap[i] + t_crit * pred_se)
+    print(f't={t_test[i]}: pred={beta_pred[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, leverage={leverage:.4f}, pred_se={pred_se:.4f}')
+"
 
 ```
 
@@ -668,6 +1403,101 @@ t=4709: pred=223.37, lower=222.08, upper=224.66, leverage=0.2624, pred_se=0.6577
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Use time-series cross-validation
+# Use the first 80% for training, last 20% for validation
+split = int(0.8 * N)
+t_train_cv = t[:split]
+t_val_cv = t[split:]
+y_train_cv = beta_unwrap[:split]
+y_val_cv = beta_unwrap[split:]
+
+# Build models with different numbers of frequencies
+N_train = len(t_train_cv)
+
+# First, find frequencies on the training set
+residuals = y_train_cv.copy()
+lin_coeffs = np.polyfit(t_train_cv, y_train_cv, 1)
+residuals = y_train_cv - np.polyval(lin_coeffs, t_train_cv)
+selected_freqs = []
+
+all_freqs = []
+for iteration in range(50):
+    yf = fft(residuals)
+    xf = fftfreq(N_train, 1.0)
+    power = np.abs(yf[:N_train//2])**2
+    freqs = xf[:N_train//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f, t_ref=t_train_cv, res_ref=residuals):
+        S = np.sin(2*np.pi*f*t_ref)
+        C = np.cos(2*np.pi*f*t_ref)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, res_ref, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N_train
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        break
+    
+    selected_freqs.append(f_refined)
+    all_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(t_train_cv), t_train_cv] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t_train_cv), np.cos(2*np.pi*f*t_train_cv)]])
+    coeffs = np.linalg.lstsq(X, y_train_cv, rcond=None)[0]
+    beta_fitted = X @ coeffs
+    residuals = y_train_cv - beta_fitted
+
+print(f'Total frequencies found: {len(all_freqs)}')
+
+# Now evaluate on validation set for different numbers of frequencies
+for n_freq in [5, 10, 15, 20, 25, 30, 35, 40, 50]:
+    if n_freq > len(all_freqs):
+        break
+    freqs_use = all_freqs[:n_freq]
+    
+    X_tr = np.column_stack([np.ones_like(t_train_cv), t_train_cv] + 
+                            [col for f in freqs_use 
+                             for col in [np.sin(2*np.pi*f*t_train_cv), np.cos(2*np.pi*f*t_train_cv)]])
+    coeffs = np.linalg.lstsq(X_tr, y_train_cv, rcond=None)[0]
+    
+    # Training error
+    train_pred = X_tr @ coeffs
+    train_rmse = np.sqrt(np.mean((y_train_cv - train_pred)**2))
+    
+    # Validation error
+    X_val = np.column_stack([np.ones_like(t_val_cv), t_val_cv] + 
+                             [col for f in freqs_use 
+                              for col in [np.sin(2*np.pi*f*t_val_cv), np.cos(2*np.pi*f*t_val_cv)]])
+    val_pred = X_val @ coeffs
+    val_rmse = np.sqrt(np.mean((y_val_cv - val_pred)**2))
+    
+    p = X_tr.shape[1]
+    print(f'n_freq={n_freq:2d}, p={p:3d}, train_rmse={train_rmse:.4f}, val_rmse={val_rmse:.4f}')
+"
 
 ```
 
@@ -725,6 +1555,51 @@ n_freq=50, p=102, train_rmse=0.5690, val_rmse=7.3414
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+
+# Let's look at the ratio of rates
+alpha_rate = (alpha_unwrap[-1] - alpha_unwrap[0]) / (t[-1] - t[0])
+beta_rate = (beta_unwrap[-1] - beta_unwrap[0]) / (t[-1] - t[0])
+
+print(f'Alpha rate: {alpha_rate:.6f} deg/day')
+print(f'Beta rate: {beta_rate:.6f} deg/day')
+print(f'Ratio alpha_rate/beta_rate: {alpha_rate/beta_rate:.6f}')
+
+# Is the ratio close to a simple fraction?
+from fractions import Fraction
+ratio = alpha_rate / beta_rate
+frac = Fraction(ratio).limit_denominator(100)
+print(f'Approximate ratio: {frac} = {float(frac):.6f}')
+
+# Try: beta = p/q * alpha + c for simple fractions
+# Let's check beta_unwrap vs alpha_unwrap after removing linear trend
+lin_fit = np.polyfit(alpha_unwrap, beta_unwrap, 1)
+print(f'\\nLinear fit: beta = {lin_fit[0]:.6f} * alpha + {lin_fit[1]:.4f}')
+
+# Check if 0.292140 is close to 10/34, 3/10, 7/24, etc.
+frac2 = Fraction(lin_fit[0]).limit_denominator(50)
+print(f'Slope as fraction: {frac2} = {float(frac2):.6f}')
+
+# Let's try some specific ratios
+for num in range(1, 20):
+    for den in range(num, 80):
+        r = num / den
+        if abs(r - lin_fit[0]) < 0.005:
+            print(f'  {num}/{den} = {r:.6f}')
+"
 
 ```
 
@@ -783,6 +1658,151 @@ Slope as fraction: 7/24 = 0.291667
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Model alpha as a function of time first
+alpha_lin = np.polyfit(t, alpha_unwrap, 1)
+alpha_detrend = alpha_unwrap - np.polyval(alpha_lin, t)
+
+# Find periodic components in alpha
+residuals = alpha_detrend.copy()
+alpha_freqs = []
+
+for iteration in range(30):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in alpha_freqs):
+        break
+    
+    alpha_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in alpha_freqs 
+                          for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X, alpha_unwrap, rcond=None)[0]
+    alpha_fitted = X @ coeffs
+    residuals = alpha_unwrap - alpha_fitted
+    
+    if residuals.std() < 0.3:
+        break
+
+print(f'Alpha model: {len(alpha_freqs)} frequencies, residual std={residuals.std():.4f}')
+
+# Cross-validate alpha model
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+alpha_tr = alpha_unwrap[:split]
+alpha_val = alpha_unwrap[split:]
+
+X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                        [col for f in alpha_freqs 
+                         for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                         [col for f in alpha_freqs 
+                          for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+
+coeffs_alpha = np.linalg.lstsq(X_tr, alpha_tr, rcond=None)[0]
+alpha_pred_val = X_val @ coeffs_alpha
+val_rmse = np.sqrt(np.mean((alpha_val - alpha_pred_val)**2))
+print(f'Alpha validation RMSE: {val_rmse:.4f} degrees')
+
+# Now model beta as function of alpha
+# Try: beta = a + b * alpha + periodic corrections
+# The periodic corrections might be functions of alpha (mod some period)
+# or just sinusoids in t
+
+# Let me try: beta = a + b * alpha + sum of sinusoids in alpha
+# Since alpha is nearly linear in t, sinusoids in alpha ≈ sinusoids in t
+
+# Actually, let me try the simplest useful model:
+# beta = a + b * alpha_unwrap + noise
+# Then model the noise/residual
+
+beta_alpha_fit = np.polyfit(alpha_unwrap, beta_unwrap, 1)
+beta_from_alpha = np.polyval(beta_alpha_fit, alpha_unwrap)
+resid_beta = beta_unwrap - beta_from_alpha
+
+print(f'\\nbeta = {beta_alpha_fit[0]:.6f} * alpha + {beta_alpha_fit[1]:.4f}')
+print(f'Residual std from alpha: {resid_beta.std():.4f}')
+
+# Now model the residual of beta|alpha as function of t
+residuals2 = resid_beta.copy()
+beta_alpha_freqs = []
+
+for iteration in range(20):
+    yf = fft(residuals2)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals2, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in beta_alpha_freqs):
+        break
+    
+    beta_alpha_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(alpha_unwrap), alpha_unwrap] + 
+                         [col for f in beta_alpha_freqs 
+                          for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    beta_fitted = X @ coeffs
+    residuals2 = beta_unwrap - beta_fitted
+    
+    if residuals2.std() < 0.3:
+        break
+
+print(f'\\nbeta|alpha model: {len(beta_alpha_freqs)} frequencies, residual std={residuals2.std():.4f}')
+"
 
 ```
 
@@ -839,6 +1859,130 @@ beta|alpha model: 20 frequencies, residual std=0.8591
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Two-stage approach validation
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+alpha_tr = alpha_unwrap[:split]
+alpha_val = alpha_unwrap[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+
+def greedy_freq_select(t_ref, y_ref, max_freqs=30, target_std=0.3):
+    residuals = y_ref.copy()
+    lin = np.polyfit(t_ref, y_ref, 1)
+    residuals = y_ref - np.polyval(lin, t_ref)
+    n = len(t_ref)
+    selected = []
+    
+    for _ in range(max_freqs):
+        yf = fft(residuals)
+        xf = fftfreq(n, 1.0)
+        power = np.abs(yf[:n//2])**2
+        freqs = xf[:n//2]
+        top_idx = np.argmax(power)
+        f0 = freqs[top_idx]
+        
+        def neg_power(f):
+            S = np.sin(2*np.pi*f*t_ref)
+            C = np.cos(2*np.pi*f*t_ref)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        
+        df = 1.0/n
+        result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+        f_refined = result.x
+        
+        if any(abs(f_refined - sf) < 1e-6 for sf in selected):
+            break
+        
+        selected.append(f_refined)
+        X = np.column_stack([np.ones_like(t_ref), t_ref] + 
+                             [col for f in selected 
+                              for col in [np.sin(2*np.pi*f*t_ref), np.cos(2*np.pi*f*t_ref)]])
+        coeffs = np.linalg.lstsq(X, y_ref, rcond=None)[0]
+        residuals = y_ref - X @ coeffs
+        
+        if residuals.std() < target_std:
+            break
+    
+    return selected, coeffs
+
+# Stage 1: Model alpha(t) on training split
+alpha_freqs, alpha_coeffs = greedy_freq_select(t_tr, alpha_tr, max_freqs=40)
+X_alpha_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                              [col for f in alpha_freqs 
+                               for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+alpha_coeffs = np.linalg.lstsq(X_alpha_tr, alpha_tr, rcond=None)[0]
+alpha_pred_tr = X_alpha_tr @ alpha_coeffs
+print(f'Alpha model: {len(alpha_freqs)} freqs, train RMSE={np.sqrt(np.mean((alpha_tr - alpha_pred_tr)**2)):.4f}')
+
+# Predict alpha on validation
+X_alpha_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                               [col for f in alpha_freqs 
+                                for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+alpha_pred_val = X_alpha_val @ alpha_coeffs
+alpha_val_rmse = np.sqrt(np.mean((alpha_val - alpha_pred_val)**2))
+print(f'Alpha validation RMSE: {alpha_val_rmse:.4f}')
+
+# Stage 2: Model beta using alpha + sinusoids in t on training split
+# Use TRUE alpha for training (since we have it)
+# Then at test time, use PREDICTED alpha
+
+# Model beta = a + b*alpha + sin/cos terms in t
+beta_freqs, _ = greedy_freq_select(t_tr, beta_tr - np.polyfit(alpha_tr, beta_tr, 1)[0]*alpha_tr - np.polyfit(alpha_tr, beta_tr, 1)[1], max_freqs=30, target_std=0.5)
+
+# Actually, let me just jointly model
+X_beta_tr = np.column_stack([np.ones_like(t_tr), alpha_tr] + 
+                              [col for f in beta_freqs 
+                               for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+beta_coeffs = np.linalg.lstsq(X_beta_tr, beta_tr, rcond=None)[0]
+beta_pred_tr = X_beta_tr @ beta_coeffs
+print(f'\\nBeta model (with true alpha): {len(beta_freqs)} freqs, train RMSE={np.sqrt(np.mean((beta_tr - beta_pred_tr)**2)):.4f}')
+
+# Validate with predicted alpha
+X_beta_val = np.column_stack([np.ones_like(t_val), alpha_pred_val] + 
+                               [col for f in beta_freqs 
+                                for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+beta_pred_val = X_beta_val @ beta_coeffs
+beta_val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+print(f'Beta validation RMSE (with predicted alpha): {beta_val_rmse:.4f}')
+
+# Compare with direct beta model (no alpha)
+beta_freqs_direct, _ = greedy_freq_select(t_tr, beta_tr, max_freqs=40)
+X_beta_tr_direct = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                                     [col for f in beta_freqs_direct 
+                                      for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+beta_coeffs_direct = np.linalg.lstsq(X_beta_tr_direct, beta_tr, rcond=None)[0]
+X_beta_val_direct = np.column_stack([np.ones_like(t_val), t_val] + 
+                                      [col for f in beta_freqs_direct 
+                                       for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+beta_pred_val_direct = X_beta_val_direct @ beta_coeffs_direct
+beta_val_rmse_direct = np.sqrt(np.mean((beta_val - beta_pred_val_direct)**2))
+print(f'\\nDirect beta model: {len(beta_freqs_direct)} freqs, val RMSE={beta_val_rmse_direct:.4f}')
+"
 
 ```
 
@@ -880,6 +2024,74 @@ Direct beta model: 40 freqs, val RMSE=7.3409
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Let me try: beta = a + b*alpha_unwrap + sum(c_k*sin(2*pi*k*alpha_unwrap/P) + d_k*cos(2*pi*k*alpha_unwrap/P))
+# This is a Fourier series in alpha with period P
+# The period P in alpha corresponds to how much alpha changes for beta to complete one 'cycle' relative to the linear trend
+
+# From the slope 0.292, when alpha changes by 360 degrees, beta changes by 0.292*360 ≈ 105 degrees
+# So the 'period' in alpha for beta to change by 360 is about 360/0.292 ≈ 1233 degrees
+
+# But maybe the residuals are periodic with a shorter period in alpha
+# Let's try different periods and see which gives the best fit
+
+resid = beta_unwrap - np.polyval(np.polyfit(alpha_unwrap, beta_unwrap, 1), alpha_unwrap)
+
+# Try Fourier series in alpha with period P_alpha
+best_P = None
+best_rmse = float('inf')
+
+for P_alpha in [360, 720, 1080, 1233, 1440, 1800, 2160, 2520, 2880, 3240, 3600]:
+    n_harmonics = 10
+    X = np.column_stack([np.ones_like(alpha_unwrap)] + 
+                         [col for k in range(1, n_harmonics+1) 
+                          for col in [np.sin(2*np.pi*k*alpha_unwrap/P_alpha), 
+                                      np.cos(2*np.pi*k*alpha_unwrap/P_alpha)]])
+    # Also include linear trend in alpha
+    X = np.column_stack([X, alpha_unwrap])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    pred = X @ coeffs
+    rmse = np.sqrt(np.mean((beta_unwrap - pred)**2))
+    print(f'P_alpha={P_alpha}, n_harm={n_harmonics}: RMSE={rmse:.4f}')
+    if rmse < best_rmse:
+        best_rmse = rmse
+        best_P = P_alpha
+
+print(f'\\nBest P_alpha: {best_P}, RMSE: {best_rmse:.4f}')
+
+# Try more periods around the best
+for P_alpha in np.arange(best_P-100, best_P+101, 10):
+    n_harmonics = 10
+    X = np.column_stack([np.ones_like(alpha_unwrap)] + 
+                         [col for k in range(1, n_harmonics+1) 
+                          for col in [np.sin(2*np.pi*k*alpha_unwrap/P_alpha), 
+                                      np.cos(2*np.pi*k*alpha_unwrap/P_alpha)]])
+    X = np.column_stack([X, alpha_unwrap])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    pred = X @ coeffs
+    rmse = np.sqrt(np.mean((beta_unwrap - pred)**2))
+    if rmse < best_rmse:
+        best_rmse = rmse
+        best_P = P_alpha
+
+print(f'\\nRefined best P_alpha: {best_P}, RMSE: {best_rmse:.4f}')
+"
 
 ```
 
@@ -940,6 +2152,67 @@ Refined best P_alpha: 2540, RMSE: 2.7463
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+
+# Let's look at the instantaneous rates
+# Compute daily rate of change for alpha and beta
+dt = np.diff(t)
+dalpha = np.diff(alpha_unwrap)
+dbeta = np.diff(beta_unwrap)
+
+alpha_rate = dalpha / dt
+beta_rate = dbeta / dt
+
+print(f'Alpha rate: mean={alpha_rate.mean():.4f}, std={alpha_rate.std():.4f}, range=[{alpha_rate.min():.4f}, {alpha_rate.max():.4f}]')
+print(f'Beta rate: mean={beta_rate.mean():.4f}, std={beta_rate.std():.4f}, range=[{beta_rate.min():.4f}, {beta_rate.max():.4f}]')
+
+# Let's look at the ratio of rates
+ratio = alpha_rate / beta_rate
+print(f'Rate ratio alpha/beta: mean={ratio.mean():.4f}, std={ratio.std():.4f}')
+
+# Plot beta_rate vs alpha_rate (conceptually)
+# Check if beta_rate = f(alpha_rate) for some simple function
+from scipy.stats import pearsonr
+corr, _ = pearsonr(alpha_rate, beta_rate)
+print(f'Correlation between alpha_rate and beta_rate: {corr:.4f}')
+
+# Maybe beta = k1 * alpha + k2 * sin(alpha) + k3?
+# Let's try fitting more complex functional forms
+# beta = a + b*alpha + c*sin(alpha_rad) + d*cos(alpha_rad)
+alpha_rad = np.deg2rad(train.alpha.values)
+
+X = np.column_stack([np.ones_like(alpha_unwrap), alpha_unwrap, 
+                      np.sin(alpha_rad), np.cos(alpha_rad),
+                      np.sin(2*alpha_rad), np.cos(2*alpha_rad),
+                      np.sin(3*alpha_rad), np.cos(3*alpha_rad)])
+coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+pred = X @ coeffs
+rmse = np.sqrt(np.mean((beta_unwrap - pred)**2))
+print(f'\\nbeta = a + b*alpha + sum(sin(k*alpha), cos(k*alpha)), k=1..3: RMSE={rmse:.4f}')
+
+# Try more harmonics
+for max_k in [3, 5, 7, 10, 15, 20, 30]:
+    X = np.column_stack([np.ones_like(alpha_unwrap), alpha_unwrap] + 
+                         [col for k in range(1, max_k+1) 
+                          for col in [np.sin(k*alpha_rad), np.cos(k*alpha_rad)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    pred = X @ coeffs
+    rmse = np.sqrt(np.mean((beta_unwrap - pred)**2))
+    print(f'max_k={max_k}: RMSE={rmse:.4f}')
+"
 
 ```
 
@@ -990,6 +2263,98 @@ max_k=30: RMSE=21.9196
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Model beta on first 80% and predict the last 20%
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+
+# Build model with 15 frequencies (a reasonable number)
+n_freq = 15
+n_tr = len(t_tr)
+residuals = beta_tr.copy()
+lin = np.polyfit(t_tr, beta_tr, 1)
+residuals = beta_tr - np.polyval(lin, t_tr)
+selected_freqs = []
+
+for _ in range(n_freq):
+    yf = fft(residuals)
+    xf = fftfreq(n_tr, 1.0)
+    power = np.abs(yf[:n_tr//2])**2
+    freqs = xf[:n_tr//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/n_tr
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        break
+    selected_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    coeffs = np.linalg.lstsq(X, beta_tr, rcond=None)[0]
+    residuals = beta_tr - X @ coeffs
+
+X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                        [col for f in selected_freqs 
+                         for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+coeffs = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+
+# Predict on validation
+X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+beta_pred_val = X_val @ coeffs
+
+# Compute error vs extrapolation distance
+errors = beta_val - beta_pred_val
+distances = t_val - t_tr[-1]  # distance from end of training
+
+# Group by distance
+n_groups = 6
+group_size = len(t_val) // n_groups
+for i in range(n_groups):
+    start = i * group_size
+    end = min((i+1) * group_size, len(t_val))
+    d_min = distances[start]
+    d_max = distances[end-1]
+    rmse = np.sqrt(np.mean(errors[start:end]**2))
+    mae = np.mean(np.abs(errors[start:end]))
+    print(f'Distance {d_min:.0f}-{d_max:.0f}: RMSE={rmse:.4f}, MAE={mae:.4f}')
+
+print(f'\\nOverall validation RMSE: {np.sqrt(np.mean(errors**2)):.4f}')
+print(f'Overall validation MAE: {np.mean(np.abs(errors)):.4f}')
+print(f'Max abs error: {np.max(np.abs(errors)):.4f}')
+"
 
 ```
 
@@ -1087,6 +2452,152 @@ Max abs error: 14.8839
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar, minimize
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Model beta as a function of alpha_unwrap with Fourier series + linear trend
+# beta = a + b*alpha + sum_k(c_k*sin(2*pi*k*alpha/P) + d_k*cos(2*pi*k*alpha/P))
+
+# Find optimal period P
+# From earlier, P ≈ 2540 was best
+
+# Let me do a finer search
+best_P = None
+best_rmse = float('inf')
+n_harmonics = 15
+
+for P in np.arange(2400, 2700, 5):
+    X = np.column_stack([np.ones_like(alpha_unwrap), alpha_unwrap] + 
+                         [col for k in range(1, n_harmonics+1) 
+                          for col in [np.sin(2*np.pi*k*alpha_unwrap/P), 
+                                      np.cos(2*np.pi*k*alpha_unwrap/P)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    pred = X @ coeffs
+    rmse = np.sqrt(np.mean((beta_unwrap - pred)**2))
+    if rmse < best_rmse:
+        best_rmse = rmse
+        best_P = P
+
+print(f'Best P: {best_P}, RMSE: {best_rmse:.4f}')
+
+# Refine further
+for P in np.arange(best_P-10, best_P+11, 1):
+    X = np.column_stack([np.ones_like(alpha_unwrap), alpha_unwrap] + 
+                         [col for k in range(1, n_harmonics+1) 
+                          for col in [np.sin(2*np.pi*k*alpha_unwrap/P), 
+                                      np.cos(2*np.pi*k*alpha_unwrap/P)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    pred = X @ coeffs
+    rmse = np.sqrt(np.mean((beta_unwrap - pred)**2))
+    if rmse < best_rmse:
+        best_rmse = rmse
+        best_P = P
+
+print(f'Refined best P: {best_P}, RMSE: {best_rmse:.4f}')
+
+# Now validate with cross-validation
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+alpha_tr = alpha_unwrap[:split]
+alpha_val = alpha_unwrap[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+
+# Fit alpha model on training split
+alpha_freqs = []
+residuals = alpha_tr.copy()
+lin = np.polyfit(t_tr, alpha_tr, 1)
+residuals = alpha_tr - np.polyval(lin, t_tr)
+
+for _ in range(30):
+    yf = fft(residuals)
+    xf = fftfreq(len(t_tr), 1.0)
+    power = np.abs(yf[:len(t_tr)//2])**2
+    freqs = xf[:len(t_tr)//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/len(t_tr)
+    result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in alpha_freqs):
+        break
+    alpha_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                         [col for f in alpha_freqs 
+                          for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    coeffs_a = np.linalg.lstsq(X, alpha_tr, rcond=None)[0]
+    residuals = alpha_tr - X @ coeffs_a
+    
+    if residuals.std() < 0.3:
+        break
+
+# Predict alpha on validation
+X_alpha_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                               [col for f in alpha_freqs 
+                                for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+alpha_coeffs = np.linalg.lstsq(X_alpha_tr, alpha_tr, rcond=None)[0]
+X_alpha_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                                [col for f in alpha_freqs 
+                                 for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+alpha_pred_val = X_alpha_val @ alpha_coeffs
+alpha_val_rmse = np.sqrt(np.mean((alpha_val - alpha_pred_val)**2))
+print(f'\\nAlpha validation RMSE: {alpha_val_rmse:.4f}')
+
+# Fit beta(alpha) model on training split
+P = best_P
+X_beta_tr = np.column_stack([np.ones_like(alpha_tr), alpha_tr] + 
+                              [col for k in range(1, n_harmonics+1) 
+                               for col in [np.sin(2*np.pi*k*alpha_tr/P), 
+                                           np.cos(2*np.pi*k*alpha_tr/P)]])
+beta_alpha_coeffs = np.linalg.lstsq(X_beta_tr, beta_tr, rcond=None)[0]
+
+# Validate beta using TRUE alpha
+X_beta_val_true = np.column_stack([np.ones_like(alpha_val), alpha_val] + 
+                                    [col for k in range(1, n_harmonics+1) 
+                                     for col in [np.sin(2*np.pi*k*alpha_val/P), 
+                                                 np.cos(2*np.pi*k*alpha_val/P)]])
+beta_pred_val_true = X_beta_val_true @ beta_alpha_coeffs
+beta_val_rmse_true = np.sqrt(np.mean((beta_val - beta_pred_val_true)**2))
+print(f'Beta validation RMSE (true alpha): {beta_val_rmse_true:.4f}')
+
+# Validate beta using PREDICTED alpha
+X_beta_val_pred = np.column_stack([np.ones_like(alpha_pred_val), alpha_pred_val] + 
+                                    [col for k in range(1, n_harmonics+1) 
+                                     for col in [np.sin(2*np.pi*k*alpha_pred_val/P), 
+                                                 np.cos(2*np.pi*k*alpha_pred_val/P)]])
+beta_pred_val_pred = X_beta_val_pred @ beta_alpha_coeffs
+beta_val_rmse_pred = np.sqrt(np.mean((beta_val - beta_pred_val_pred)**2))
+print(f'Beta validation RMSE (predicted alpha): {beta_val_rmse_pred:.4f}')
+"
 
 ```
 
@@ -1130,6 +2641,97 @@ Beta validation RMSE (predicted alpha): 6.4261
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Use multiple cross-validation folds
+# Strategy: train on first k%, predict on next portion
+folds = [(0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.5, 0.75), (0.6, 0.8), (0.7, 0.85)]
+
+all_errors = []
+
+for train_frac, val_start_frac in folds:
+    split_train = int(train_frac * N)
+    split_val_start = int(val_start_frac * N)
+    
+    t_tr = t[:split_train]
+    t_val = t[split_val_start:]
+    beta_tr = beta_unwrap[:split_train]
+    beta_val = beta_unwrap[split_val_start:]
+    
+    # Build model with 15 frequencies
+    n_tr = len(t_tr)
+    residuals = beta_tr.copy()
+    lin = np.polyfit(t_tr, beta_tr, 1)
+    residuals = beta_tr - np.polyval(lin, t_tr)
+    selected_freqs = []
+    
+    for _ in range(20):
+        yf = fft(residuals)
+        xf = fftfreq(n_tr, 1.0)
+        power = np.abs(yf[:n_tr//2])**2
+        freqs = xf[:n_tr//2]
+        top_idx = np.argmax(power)
+        f0 = freqs[top_idx]
+        
+        def neg_power(f, t_ref=t_tr, res_ref=residuals):
+            S = np.sin(2*np.pi*f*t_ref)
+            C = np.cos(2*np.pi*f*t_ref)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, res_ref, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        
+        df = 1.0/n_tr
+        result = minimize_scalar(neg_power, bounds=(f0-2*df, f0+2*df), method='bounded')
+        f_refined = result.x
+        
+        if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+            break
+        selected_freqs.append(f_refined)
+        
+        X = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                             [col for f in selected_freqs 
+                              for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+        coeffs = np.linalg.lstsq(X, beta_tr, rcond=None)[0]
+        residuals = beta_tr - X @ coeffs
+    
+    X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in selected_freqs 
+                              for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    beta_pred_val = X_val @ coeffs
+    errors = beta_val - beta_pred_val
+    
+    # Store errors with their extrapolation distance
+    distances = t_val - t_tr[-1]
+    for d, e in zip(distances, errors):
+        all_errors.append((d, e))
+
+all_errors = np.array(all_errors)
+print(f'Total error samples: {len(all_errors)}')
+
+# Group errors by extrapolation distance
+dist_bins = np.arange(0, 1700, 100)
+for i in range(len(dist_bins)-1):
+    mask = (all_errors[:, 0] >= dist_bins[i]) & (all_errors[:, 0] < dist_bins[i+1])
+    if mask.sum() > 0:
+        rmse = np.sqrt(np.mean(all_errors[mask, 1]**2))
+        std = np.std(all_errors[mask, 1])
+        print(f'Distance {dist_bins[i]:4.0f}-{dist_bins[i+1]:4.0f}: n={mask.sum():4d}, RMSE={rmse:.2f}, std={std:.2f}')
+"
 
 ```
 
@@ -1178,6 +2780,60 @@ Distance 1500-1600: n=  48, RMSE=23.39, std=2.55
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+
+# Sort by alpha_unwrap and plot beta_unwrap vs alpha_unwrap
+idx = np.argsort(alpha_unwrap)
+alpha_sorted = alpha_unwrap[idx]
+beta_sorted = beta_unwrap[idx]
+
+# Check for smoothness: compute local variation
+# If the function is smooth, nearby alpha values should give similar beta values
+diff_beta = np.diff(beta_sorted)
+diff_alpha = np.diff(alpha_sorted)
+local_slope = diff_beta / diff_alpha
+
+print(f'Local slope stats: mean={local_slope.mean():.4f}, std={local_slope.std():.4f}')
+print(f'Local slope range: [{local_slope.min():.4f}, {local_slope.max():.4f}]')
+print(f'Fraction of |local_slope| > 1: {(np.abs(local_slope) > 1).mean():.4f}')
+print(f'Fraction of |local_slope| > 5: {(np.abs(local_slope) > 5).mean():.4f}')
+
+# Check if the function is single-valued
+# i.e., for similar alpha values, do we get similar beta values?
+# Create bins in alpha and check the spread of beta values
+from scipy.stats import binned_statistic
+bin_means, bin_edges, _ = binned_statistic(alpha_sorted, beta_sorted, statistic='mean', bins=50)
+bin_stds, _, _ = binned_statistic(alpha_sorted, beta_sorted, statistic='std', bins=50)
+bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+print(f'\\nBeta spread within alpha bins:')
+print(f'Mean within-bin std: {np.nanmean(bin_stds):.4f}')
+print(f'Max within-bin std: {np.nanmax(bin_stds):.4f}')
+
+# The issue might be that different t values map to the same alpha
+# but different beta values (because beta also has its own time dynamics)
+
+# Let's check: for a given alpha range, how much does beta vary?
+for i in range(0, 50, 10):
+    mask = (alpha_sorted >= bin_edges[i]) & (alpha_sorted < bin_edges[i+1])
+    if mask.sum() > 1:
+        beta_in_bin = beta_sorted[mask]
+        t_in_bin = t[idx][mask]
+        print(f'  alpha [{bin_edges[i]:.0f}-{bin_edges[i+1]:.0f}]: beta range [{beta_in_bin.min():.1f}-{beta_in_bin.max():.1f}], std={beta_in_bin.std():.2f}, t range [{t_in_bin.min():.0f}-{t_in_bin.max():.0f}]')
+"
 
 ```
 
@@ -1236,6 +2892,105 @@ Max within-bin std: 12.9100
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Let me try a different strategy: use a basis of well-chosen frequencies
+# that are likely to be physically meaningful
+
+# From the FFT analysis, the dominant frequencies for beta were:
+# 0.002299 (period=435), 0.000985 (period=1015), 0.001970 (period=507.5)
+# 0.001314 (period=761), 0.001642 (period=609), etc.
+
+# These might be related to simple ratios. Let me check:
+# 1015 / 435 ≈ 2.333 ≈ 7/3
+# 507.5 / 435 ≈ 1.167
+# 761 / 435 ≈ 1.749
+# 609 / 435 ≈ 1.4
+
+# These don't have obvious simple ratios. Let me just try the model with 
+# the FFT frequencies and not try to refine them (avoid overfitting to training data)
+
+# Actually, let me try a model with fewer, more robustly estimated frequencies
+# Use all training data, fit with 8 sinusoidal components
+
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+# Fit linear trend
+lin = np.polyfit(t, beta_unwrap, 1)
+beta_detrend = beta_unwrap - np.polyval(lin, t)
+
+# Get FFT frequencies
+yf = fft(beta_detrend)
+xf = fftfreq(N, 1.0)
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+
+# Get top frequencies from FFT
+n_comp = 8
+top_idx = np.argsort(power)[-n_comp:][::-1]
+fft_freqs = freqs[top_idx]
+
+# Now jointly optimize all frequencies using nonlinear least squares
+# Model: beta = a + b*t + sum_i(A_i*sin(2*pi*f_i*t) + B_i*cos(2*pi*f_i*t))
+
+# Initial parameters: [a, b, A1, B1, f1, A2, B2, f2, ...]
+# But optimizing all frequencies jointly is very high-dimensional and likely to get stuck
+
+# Instead, let me try a sequential approach:
+# 1. Fix the linear trend
+# 2. For each frequency, optimize it while keeping others fixed
+# 3. Iterate until convergence
+
+selected_freqs = list(fft_freqs)
+for iteration in range(3):
+    for i in range(len(selected_freqs)):
+        # Fix all other frequencies, optimize this one
+        other_freqs = [f for j, f in enumerate(selected_freqs) if j != i]
+        
+        def objective(params):
+            f_i = params[0]
+            test_freqs = other_freqs[:i] + [f_i] + other_freqs[i:]
+            X = np.column_stack([np.ones_like(t), t] + 
+                                 [col for f in test_freqs 
+                                  for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+            coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+            pred = X @ coeffs
+            return np.sum((beta_unwrap - pred)**2)
+        
+        f_current = selected_freqs[i]
+        df = 0.0001
+        result = minimize_scalar(objective, bounds=(f_current-5*df, f_current+5*df), method='bounded')
+        selected_freqs[i] = result.x
+
+# Final fit with optimized frequencies
+X = np.column_stack([np.ones_like(t), t] + 
+                     [col for f in selected_freqs 
+                      for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+beta_fitted = X @ coeffs
+residuals = beta_unwrap - beta_fitted
+
+print(f'Optimized frequencies:')
+for f in selected_freqs:
+    print(f'  freq={f:.8f}, period={1/f:.2f}')
+print(f'Residual std: {residuals.std():.4f}')
+print(f'Residual max_abs: {np.abs(residuals).max():.4f}')
+"
 
 ```
 
@@ -1265,6 +3020,93 @@ IndexError: invalid index to scalar variable.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Fit linear trend
+lin = np.polyfit(t, beta_unwrap, 1)
+beta_detrend = beta_unwrap - np.polyval(lin, t)
+
+# Get FFT frequencies
+yf = fft(beta_detrend)
+xf = fftfreq(N, 1.0)
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+
+# Get top 8 frequencies
+n_comp = 8
+top_idx = np.argsort(power)[-n_comp:][::-1]
+fft_freqs = list(freqs[top_idx])
+
+# Optimize each frequency sequentially
+selected_freqs = fft_freqs.copy()
+
+for iteration in range(5):
+    for i in range(len(selected_freqs)):
+        # Build list with this frequency to be optimized
+        other_freqs = selected_freqs[:i] + selected_freqs[i+1:]
+        f_current = selected_freqs[i]
+        
+        def objective(f_i):
+            test_freqs = other_freqs[:i] + [f_i] + other_freqs[i:]
+            X = np.column_stack([np.ones_like(t), t] + 
+                                 [col for f in test_freqs 
+                                  for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+            coeffs_ls = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+            pred = X @ coeffs_ls
+            return np.sum((beta_unwrap - pred)**2)
+        
+        df = 0.0001
+        result = minimize_scalar(objective, bounds=(f_current-10*df, f_current+10*df), method='bounded')
+        selected_freqs[i] = result.x
+
+# Final fit
+X = np.column_stack([np.ones_like(t), t] + 
+                     [col for f in selected_freqs 
+                      for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+beta_fitted = X @ coeffs
+residuals = beta_unwrap - beta_fitted
+
+print('Optimized frequencies:')
+for f in selected_freqs:
+    print(f'  freq={f:.8f}, period={1/f:.2f}')
+print(f'Residual std: {residuals.std():.4f}')
+
+# Validate with cross-validation
+split = int(0.8 * N)
+X_tr = X[:split]
+X_val = X[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+t_val = t[split:]
+
+# Need to rebuild X for val with these frequencies
+X_val2 = np.column_stack([np.ones_like(t_val), t_val] + 
+                           [col for f in selected_freqs 
+                            for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+X_tr2 = np.column_stack([np.ones_like(t[:split]), t[:split]] + 
+                          [col for f in selected_freqs 
+                           for col in [np.sin(2*np.pi*f*t[:split]), np.cos(2*np.pi*f*t[:split])]])
+coeffs_cv = np.linalg.lstsq(X_tr2, beta_tr, rcond=None)[0]
+beta_pred_val = X_val2 @ coeffs_cv
+val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+print(f'Validation RMSE: {val_rmse:.4f}')
+"
 
 ```
 
@@ -1294,6 +3136,78 @@ Validation RMSE: 3.5602
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+lin = np.polyfit(t, beta_unwrap, 1)
+beta_detrend = beta_unwrap - np.polyval(lin, t)
+
+yf = fft(beta_detrend)
+xf = fftfreq(N, 1.0)
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+
+for n_comp in [5, 8, 10, 12, 15, 20]:
+    # Get top n_comp FFT frequencies from FULL data
+    top_idx = np.argsort(power)[-n_comp:][::-1]
+    selected_freqs = list(freqs[top_idx])
+    
+    # Optimize each frequency
+    for iteration in range(5):
+        for i in range(len(selected_freqs)):
+            other_freqs = selected_freqs[:i] + selected_freqs[i+1:]
+            f_current = selected_freqs[i]
+            
+            def objective(f_i):
+                test_freqs = other_freqs[:i] + [f_i] + other_freqs[i:]
+                X = np.column_stack([np.ones_like(t), t] + 
+                                     [col for f in test_freqs 
+                                      for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+                coeffs_ls = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+                pred = X @ coeffs_ls
+                return np.sum((beta_unwrap - pred)**2)
+            
+            df = 0.0001
+            result = minimize_scalar(objective, bounds=(f_current-10*df, f_current+10*df), method='bounded')
+            selected_freqs[i] = result.x
+    
+    # Build design matrices
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in selected_freqs 
+                             for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in selected_freqs 
+                              for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    
+    coeffs = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    beta_pred_tr = X_tr @ coeffs
+    beta_pred_val = X_val @ coeffs
+    
+    train_rmse = np.sqrt(np.mean((beta_tr - beta_pred_tr)**2))
+    val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+    
+    print(f'n_comp={n_comp:2d}: train_rmse={train_rmse:.4f}, val_rmse={val_rmse:.4f}')
+"
 
 ```
 
@@ -1339,6 +3253,88 @@ n_comp=20: train_rmse=0.8807, val_rmse=2990.0733
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Strategy: Find frequencies on FULL data, then cross-validate by refitting coefficients only
+
+lin = np.polyfit(t, beta_unwrap, 1)
+beta_detrend = beta_unwrap - np.polyval(lin, t)
+
+yf = fft(beta_detrend)
+xf = fftfreq(N, 1.0)
+power = np.abs(yf[:N//2])**2
+freqs = xf[:N//2]
+
+# Get top 20 FFT frequencies and optimize them
+n_max = 20
+top_idx = np.argsort(power)[-n_max:][::-1]
+selected_freqs = list(freqs[top_idx])
+
+# Optimize frequencies on full data
+for iteration in range(5):
+    for i in range(len(selected_freqs)):
+        other_freqs = selected_freqs[:i] + selected_freqs[i+1:]
+        f_current = selected_freqs[i]
+        
+        def objective(f_i):
+            test_freqs = other_freqs[:i] + [f_i] + other_freqs[i:]
+            X = np.column_stack([np.ones_like(t), t] + 
+                                 [col for f in test_freqs 
+                                  for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+            coeffs_ls = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+            pred = X @ coeffs_ls
+            return np.sum((beta_unwrap - pred)**2)
+        
+        df = 0.0001
+        result = minimize_scalar(objective, bounds=(f_current-10*df, f_current+10*df), method='bounded')
+        selected_freqs[i] = result.x
+
+# Now cross-validate with these FIXED frequencies
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+
+for n_use in [5, 8, 10, 12, 15, 20]:
+    freqs_use = selected_freqs[:n_use]
+    
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in freqs_use 
+                             for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in freqs_use 
+                              for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    
+    coeffs = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    beta_pred_val = X_val @ coeffs
+    val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+    
+    # Also compute full-data fit quality
+    X_full = np.column_stack([np.ones_like(t), t] + 
+                              [col for f in freqs_use 
+                               for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs_full = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+    beta_fitted = X_full @ coeffs_full
+    full_rmse = np.sqrt(np.mean((beta_unwrap - beta_fitted)**2))
+    
+    print(f'n_use={n_use:2d}: full_rmse={full_rmse:.4f}, val_rmse={val_rmse:.4f}')
+"
 
 ```
 
@@ -1371,6 +3367,93 @@ n_use=20: full_rmse=0.9116, val_rmse=2990.0733
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Use 80/20 split
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+n_tr = len(t_tr)
+
+# Greedy frequency selection on training data only
+lin = np.polyfit(t_tr, beta_tr, 1)
+residuals = beta_tr - np.polyval(lin, t_tr)
+selected_freqs = []
+
+for iteration in range(20):
+    yf = fft(residuals)
+    xf = fftfreq(n_tr, 1.0)
+    power = np.abs(yf[:n_tr//2])**2
+    freqs = xf[:n_tr//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    # Refine frequency with wider search window
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/n_tr
+    # Use wider bounds for better frequency estimation
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        # Skip this frequency, try to find the next one
+        # Remove this peak and continue
+        yf[top_idx] = 0
+        yf[n_tr-top_idx] = 0
+        residuals_temp = np.real(np.fft.ifft(yf))
+        continue
+    
+    selected_freqs.append(f_refined)
+    
+    # Rebuild model with all selected frequencies
+    X = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    coeffs = np.linalg.lstsq(X, beta_tr, rcond=None)[0]
+    residuals = beta_tr - X @ coeffs
+
+# Now evaluate on validation set
+for n_use in [5, 8, 10, 12, 15, 20]:
+    freqs_use = selected_freqs[:n_use]
+    
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in freqs_use 
+                             for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in freqs_use 
+                              for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    
+    coeffs = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    beta_pred_val = X_val @ coeffs
+    val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+    train_rmse = np.sqrt(np.mean((beta_tr - X_tr @ coeffs)**2))
+    
+    print(f'n_use={n_use:2d}: train_rmse={train_rmse:.4f}, val_rmse={val_rmse:.4f}')
+"
 
 ```
 
@@ -1434,6 +3517,109 @@ n_use=20: train_rmse=0.7222, val_rmse=6.7551
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Use greedy frequency selection on ALL training data
+lin = np.polyfit(t, beta_unwrap, 1)
+residuals = beta_unwrap - np.polyval(lin, t)
+selected_freqs = []
+
+for iteration in range(50):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        # Try to remove this peak and find next
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_refined = result_next.x
+        if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+            break
+    
+    selected_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    residuals = beta_unwrap - X @ coeffs
+    
+    if residuals.std() < 0.3:
+        break
+
+print(f'Selected {len(selected_freqs)} frequencies')
+print(f'Residual std: {residuals.std():.4f}')
+
+# Try different numbers of components and evaluate via cross-validation
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+
+best_val_rmse = float('inf')
+best_n = 0
+
+for n_use in range(3, len(selected_freqs)+1):
+    freqs_use = selected_freqs[:n_use]
+    
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in freqs_use 
+                             for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in freqs_use 
+                              for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    
+    coeffs_cv = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    beta_pred_val = X_val @ coeffs_cv
+    val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+    
+    if val_rmse < best_val_rmse:
+        best_val_rmse = val_rmse
+        best_n = n_use
+
+print(f'Best n_components: {best_n}, val RMSE: {best_val_rmse:.4f}')
+"
 
 ```
 
@@ -1459,6 +3645,120 @@ Best n_components: 12, val RMSE: 3.2096
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Build model on FULL data with greedy frequency selection
+lin = np.polyfit(t, beta_unwrap, 1)
+residuals = beta_unwrap - np.polyval(lin, t)
+selected_freqs = []
+
+for iteration in range(50):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_refined = result_next.x
+        if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+            break
+    
+    selected_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    residuals = beta_unwrap - X @ coeffs
+    
+    if residuals.std() < 0.3:
+        break
+
+# Use 12 components (best from CV)
+n_use = 12
+freqs_use = selected_freqs[:n_use]
+
+# Multiple CV splits to estimate extrapolation error
+# Use different training endpoints
+train_endpoints = [int(0.5*N), int(0.6*N), int(0.7*N), int(0.75*N), int(0.8*N), int(0.85*N), int(0.9*N)]
+
+all_errors = []
+
+for split in train_endpoints:
+    t_tr = t[:split]
+    t_val = t[split:]
+    beta_tr = beta_unwrap[:split]
+    beta_val = beta_unwrap[split:]
+    
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in freqs_use 
+                             for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in freqs_use 
+                              for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    
+    coeffs_cv = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    beta_pred_val = X_val @ coeffs_cv
+    errors = beta_val - beta_pred_val
+    distances = t_val - t_tr[-1]
+    
+    for d, e in zip(distances, errors):
+        all_errors.append((d, e))
+
+all_errors = np.array(all_errors)
+
+# Compute overall stats
+print(f'Overall error stats:')
+print(f'  Mean: {all_errors[:,1].mean():.4f}')
+print(f'  Std: {all_errors[:,1].std():.4f}')
+print(f'  RMSE: {np.sqrt(np.mean(all_errors[:,1]**2)):.4f}')
+print(f'  95th percentile abs error: {np.percentile(np.abs(all_errors[:,1]), 95):.4f}')
+
+# Error by distance
+test_distances = [2, 187, 372, 556, 741, 926, 1111, 1296, 1481, 1665]  # from t=3044
+for td in test_distances:
+    # Find errors within ±200 days of this distance
+    mask = (all_errors[:,0] >= td-200) & (all_errors[:,0] <= td+200)
+    if mask.sum() > 10:
+        rmse = np.sqrt(np.mean(all_errors[mask,1]**2))
+        p95 = np.percentile(np.abs(all_errors[mask,1]), 95)
+        print(f'  Distance ~{td}: n={mask.sum()}, RMSE={rmse:.2f}, 95th abs={p95:.2f}')
+"
 
 ```
 
@@ -1516,6 +3816,140 @@ Overall error stats:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Strategy: find frequencies on 80% of data, then refit on all data
+split = int(0.8 * N)
+t_sub = t[:split]
+beta_sub = beta_unwrap[:split]
+n_sub = len(t_sub)
+
+# Greedy frequency selection on training subset
+lin = np.polyfit(t_sub, beta_sub, 1)
+residuals = beta_sub - np.polyval(lin, t_sub)
+selected_freqs = []
+
+for iteration in range(50):
+    yf = fft(residuals)
+    xf = fftfreq(n_sub, 1.0)
+    power = np.abs(yf[:n_sub//2])**2
+    freqs = xf[:n_sub//2]
+    
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t_sub)
+        C = np.cos(2*np.pi*f*t_sub)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/n_sub
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_refined = result.x
+    
+    if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+        yf[top_idx] = 0
+        yf[n_sub-top_idx] = 0
+        power_new = np.abs(yf[:n_sub//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_refined = result_next.x
+        if any(abs(f_refined - sf) < 1e-6 for sf in selected_freqs):
+            break
+    
+    selected_freqs.append(f_refined)
+    
+    X = np.column_stack([np.ones_like(t_sub), t_sub] + 
+                         [col for f in selected_freqs 
+                          for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+    coeffs = np.linalg.lstsq(X, beta_sub, rcond=None)[0]
+    residuals = beta_sub - X @ coeffs
+    
+    if residuals.std() < 0.3:
+        break
+
+# Now try different n_components with CV on the 80% split
+t_val = t[split:]
+beta_val = beta_unwrap[split:]
+
+best_val_rmse = float('inf')
+best_n = 0
+
+for n_use in range(3, len(selected_freqs)+1):
+    freqs_use = selected_freqs[:n_use]
+    
+    X_tr = np.column_stack([np.ones_like(t_sub), t_sub] + 
+                            [col for f in freqs_use 
+                             for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+    X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in freqs_use 
+                              for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    
+    coeffs_cv = np.linalg.lstsq(X_tr, beta_sub, rcond=None)[0]
+    beta_pred_val = X_val @ coeffs_cv
+    val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+    
+    if val_rmse < best_val_rmse:
+        best_val_rmse = val_rmse
+        best_n = n_use
+
+print(f'Best n_components: {best_n}, val RMSE: {best_val_rmse:.4f}')
+
+# Now refit on ALL data with the best number of frequencies
+freqs_final = selected_freqs[:best_n]
+X_full = np.column_stack([np.ones_like(t), t] + 
+                          [col for f in freqs_final 
+                           for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+
+# Residual analysis
+beta_fitted = X_full @ coeffs_final
+residuals_full = beta_unwrap - beta_fitted
+resid_std = residuals_full.std()
+print(f'Full data residual std: {resid_std:.4f}')
+
+# Now also compute validation error with the FULL-DATA model
+X_val_full = np.column_stack([np.ones_like(t_val), t_val] + 
+                               [col for f in freqs_final 
+                                for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+beta_pred_val_full = X_val_full @ coeffs_final
+val_rmse_full = np.sqrt(np.mean((beta_val - beta_pred_val_full)**2))
+print(f'Validation RMSE (full-data model): {val_rmse_full:.4f}')
+
+# Make test predictions
+t_test = test.t.values
+X_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                          [col for f in freqs_final 
+                           for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+print(f'\\nTest predictions (unwrapped):')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_unwrap={beta_pred_unwrap[i]:.2f}, beta={beta_pred[i]:.2f}')
+"
 
 ```
 
@@ -1557,6 +3991,121 @@ Test predictions (unwrapped):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Multiple CV folds with different endpoints
+# For each fold, find frequencies on the training portion and evaluate on the rest
+
+def greedy_freqs(t_ref, y_ref, max_freqs=30, target_std=0.3):
+    n = len(t_ref)
+    lin = np.polyfit(t_ref, y_ref, 1)
+    residuals = y_ref - np.polyval(lin, t_ref)
+    sel = []
+    for _ in range(max_freqs):
+        yf = fft(residuals)
+        xf = fftfreq(n, 1.0)
+        power = np.abs(yf[:n//2])**2
+        freqs = xf[:n//2]
+        top_idx = np.argmax(power)
+        f0 = freqs[top_idx]
+        def neg_power(f):
+            S = np.sin(2*np.pi*f*t_ref)
+            C = np.cos(2*np.pi*f*t_ref)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        df = 1.0/n
+        result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+        f_refined = result.x
+        if any(abs(f_refined - sf) < 1e-6 for sf in sel):
+            yf[top_idx] = 0
+            yf[n-top_idx] = 0
+            power_new = np.abs(yf[:n//2])**2
+            next_idx = np.argmax(power_new)
+            f0_next = freqs[next_idx]
+            result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+            f_refined = result_next.x
+            if any(abs(f_refined - sf) < 1e-6 for sf in sel):
+                break
+        sel.append(f_refined)
+        X = np.column_stack([np.ones_like(t_ref), t_ref] + 
+                             [col for f in sel for col in [np.sin(2*np.pi*f*t_ref), np.cos(2*np.pi*f*t_ref)]])
+        coeffs = np.linalg.lstsq(X, y_ref, rcond=None)[0]
+        residuals = y_ref - X @ coeffs
+        if residuals.std() < target_std:
+            break
+    return sel
+
+# Use multiple folds
+splits = [int(f*N) for f in [0.5, 0.6, 0.7, 0.8, 0.85, 0.9]]
+all_errors_by_distance = {}
+
+for split in splits:
+    t_tr = t[:split]
+    beta_tr = beta_unwrap[:split]
+    t_val = t[split:]
+    beta_val = beta_unwrap[split:]
+    
+    freqs = greedy_freqs(t_tr, beta_tr)
+    
+    # Try different n_components
+    best_rmse = float('inf')
+    best_n = 0
+    for n_use in range(3, min(len(freqs)+1, 25)):
+        fu = freqs[:n_use]
+        X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                                [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+        X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                                 [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+        c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+        pred = X_val @ c
+        rmse = np.sqrt(np.mean((beta_val - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_n = n_use
+    
+    # Use best_n to compute errors by distance
+    fu = freqs[:best_n]
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    pred = X_val @ c
+    errors = beta_val - pred
+    distances = t_val - t_tr[-1]
+    
+    print(f'Split at t={t_tr[-1]}, best_n={best_n}, val_rmse={best_rmse:.2f}')
+    
+    for d, e in zip(distances, errors):
+        d_round = int(d / 100) * 100
+        if d_round not in all_errors_by_distance:
+            all_errors_by_distance[d_round] = []
+        all_errors_by_distance[d_round].append(e)
+
+# Summarize errors by distance
+print('\\nErrors by distance:')
+for d in sorted(all_errors_by_distance.keys()):
+    errs = np.array(all_errors_by_distance[d])
+    if len(errs) > 5:
+        rmse = np.sqrt(np.mean(errs**2))
+        print(f'  Distance ~{d}: n={len(errs)}, RMSE={rmse:.2f}')
+"
 
 ```
 
@@ -1626,6 +4175,62 @@ Errors by distance:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, DotProduct
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Subsample for GP (too many points for full GP)
+# Use every 5th point
+step = 5
+t_sub = t[::step].reshape(-1, 1)
+beta_sub = beta_unwrap[::step]
+print(f'Using {len(t_sub)} points for GP')
+
+# Define kernel: linear + RBF
+kernel = ConstantKernel(1000) * DotProduct() + ConstantKernel(100) * RBF(length_scale=500) + WhiteKernel(noise_level=1)
+
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=True)
+gp.fit(t_sub, beta_sub)
+print(f'GP kernel: {gp.kernel_}')
+print(f'Log marginal likelihood: {gp.log_marginal_likelihood_value_:.4f}')
+
+# Validate
+split = int(0.8 * N)
+t_val = t[split:].reshape(-1, 1)
+beta_val = beta_unwrap[split:]
+
+beta_pred_val, beta_std_val = gp.predict(t_val, return_std=True)
+val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+print(f'Validation RMSE: {val_rmse:.4f}')
+
+# Try with more data points (every 3rd)
+step = 3
+t_sub2 = t[::step].reshape(-1, 1)
+beta_sub2 = beta_unwrap[::step]
+print(f'\\nUsing {len(t_sub2)} points for GP')
+
+kernel2 = ConstantKernel(1000) * DotProduct() + ConstantKernel(100) * RBF(length_scale=500) + WhiteKernel(noise_level=1)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=3, normalize_y=True)
+gp2.fit(t_sub2, beta_sub2)
+print(f'GP kernel: {gp2.kernel_}')
+
+beta_pred_val2, beta_std_val2 = gp2.predict(t_val, return_std=True)
+val_rmse2 = np.sqrt(np.mean((beta_val - beta_pred_val2)**2))
+print(f'Validation RMSE: {val_rmse2:.4f}')
+"
 
 ```
 
@@ -1677,6 +4282,192 @@ Validation RMSE: 24.6388
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+alpha_unwrap = unwrap_angle(train.alpha.values)
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Cross-validation for the hybrid model (alpha + sinusoids in t)
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+alpha_tr = alpha_unwrap[:split]
+alpha_val = alpha_unwrap[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+
+# Step 1: Model alpha on training data
+n_tr = len(t_tr)
+lin_a = np.polyfit(t_tr, alpha_tr, 1)
+resid_a = alpha_tr - np.polyval(lin_a, t_tr)
+alpha_freqs = []
+
+for _ in range(30):
+    yf = fft(resid_a)
+    xf = fftfreq(n_tr, 1.0)
+    power = np.abs(yf[:n_tr//2])**2
+    freqs = xf[:n_tr//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/n_tr
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        break
+    alpha_freqs.append(f_ref)
+    
+    X_a = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_a = np.linalg.lstsq(X_a, alpha_tr, rcond=None)[0]
+    resid_a = alpha_tr - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+# Predict alpha on validation
+X_a_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                            [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+alpha_pred_val = X_a_val @ c_a
+alpha_val_rmse = np.sqrt(np.mean((alpha_val - alpha_pred_val)**2))
+print(f'Alpha model: {len(alpha_freqs)} freqs, val RMSE: {alpha_val_rmse:.4f}')
+
+# Step 2: Model beta using alpha + sinusoids in t
+# Try different numbers of sinusoidal components
+lin_b = np.polyfit(alpha_tr, beta_tr, 1)
+resid_b = beta_tr - np.polyval(lin_b, alpha_tr)
+
+# Find frequencies in beta residuals (after removing alpha)
+beta_freqs = []
+for _ in range(30):
+    yf = fft(resid_b)
+    xf = fftfreq(n_tr, 1.0)
+    power = np.abs(yf[:n_tr//2])**2
+    freqs = xf[:n_tr//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_b, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/n_tr
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    
+    # Rebuild full model: beta = a + b*alpha + sin/cos terms
+    X_b = np.column_stack([np.ones_like(t_tr), alpha_tr] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_b = np.linalg.lstsq(X_b, beta_tr, rcond=None)[0]
+    resid_b = beta_tr - X_b @ c_b
+    if resid_b.std() < 0.3:
+        break
+
+# Cross-validate beta model with different n_freq
+best_val_rmse = float('inf')
+best_n = 0
+
+for n_use in range(3, len(beta_freqs)+1):
+    fu = beta_freqs[:n_use]
+    
+    X_b_tr = np.column_stack([np.ones_like(t_tr), alpha_tr] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+    
+    # Validate with PREDICTED alpha
+    X_b_val = np.column_stack([np.ones_like(t_val), alpha_pred_val] + 
+                               [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    beta_pred_val = X_b_val @ c_b
+    val_rmse = np.sqrt(np.mean((beta_val - beta_pred_val)**2))
+    
+    if val_rmse < best_val_rmse:
+        best_val_rmse = val_rmse
+        best_n = n_use
+
+print(f'Beta model: best_n={best_n}, val RMSE (pred alpha): {best_val_rmse:.4f}')
+
+# Also try with TRUE alpha
+X_b_val_true = np.column_stack([np.ones_like(t_val), alpha_val] + 
+                                 [col for f in beta_freqs[:best_n] for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+beta_pred_val_true = X_b_val_true @ c_b
+val_rmse_true = np.sqrt(np.mean((beta_val - beta_pred_val_true)**2))
+print(f'Beta model with TRUE alpha: val RMSE: {val_rmse_true:.4f}')
+
+# Compare with direct time-only model
+lin_d = np.polyfit(t_tr, beta_tr, 1)
+resid_d = beta_tr - np.polyval(lin_d, t_tr)
+direct_freqs = []
+for _ in range(30):
+    yf = fft(resid_d)
+    xf = fftfreq(n_tr, 1.0)
+    power = np.abs(yf[:n_tr//2])**2
+    freqs = xf[:n_tr//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_d(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_d, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/n_tr
+    result = minimize_scalar(neg_power_d, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in direct_freqs):
+        break
+    direct_freqs.append(f_ref)
+    X_d = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                           [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_d = np.linalg.lstsq(X_d, beta_tr, rcond=None)[0]
+    resid_d = beta_tr - X_d @ c_d
+    if resid_d.std() < 0.3:
+        break
+
+best_val_rmse_d = float('inf')
+best_n_d = 0
+for n_use in range(3, len(direct_freqs)+1):
+    fu = direct_freqs[:n_use]
+    X_d_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_d = np.linalg.lstsq(X_d_tr, beta_tr, rcond=None)[0]
+    X_d_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                               [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    beta_pred_val_d = X_d_val @ c_d
+    val_rmse_d = np.sqrt(np.mean((beta_val - beta_pred_val_d)**2))
+    if val_rmse_d < best_val_rmse_d:
+        best_val_rmse_d = val_rmse_d
+        best_n_d = n_use
+
+print(f'\\nDirect model: best_n={best_n_d}, val RMSE: {best_val_rmse_d:.4f}')
+"
 
 ```
 
@@ -1720,6 +4511,43 @@ Beta model: best_n=4, val RMSE (pred alpha): 9.5368
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+# Try ARIMA on detrended beta
+lin = np.polyfit(t, beta_unwrap, 1)
+beta_detrend = beta_unwrap - np.polyval(lin, t)
+
+# Fit ARIMA model
+# Use differencing to make the series stationary
+# beta_detrend should already be roughly stationary
+
+# Try AR model
+from statsmodels.tsa.ar_model import AutoReg
+
+# Find optimal lag
+for lag in [10, 20, 30, 50, 100]:
+    try:
+        model = AutoReg(beta_detrend, lags=lag)
+        result = model.fit()
+        print(f'AR({lag}): AIC={result.aic:.2f}, BIC={result.bic:.2f}')
+    except Exception as e:
+        print(f'AR({lag}): Error - {e}')
+"
 
 ```
 
@@ -1770,6 +4598,204 @@ AR(100): AIC=6076.10, BIC=6686.86
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import norm
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+
+# Model 1: Direct sinusoidal model for beta
+# Use greedy frequency selection on 80% of data for robust frequency estimation
+split = int(0.8 * N)
+t_sub = t[:split]
+beta_sub = beta_unwrap[:split]
+n_sub = len(t_sub)
+
+lin = np.polyfit(t_sub, beta_sub, 1)
+residuals = beta_sub - np.polyval(lin, t_sub)
+freqs_model1 = []
+
+for iteration in range(30):
+    yf = fft(residuals)
+    xf = fftfreq(n_sub, 1.0)
+    power = np.abs(yf[:n_sub//2])**2
+    freqs = xf[:n_sub//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t_sub)
+        C = np.cos(2*np.pi*f*t_sub)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/n_sub
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in freqs_model1):
+        yf[top_idx] = 0
+        yf[n_sub-top_idx] = 0
+        power_new = np.abs(yf[:n_sub//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in freqs_model1):
+            break
+    freqs_model1.append(f_ref)
+    X = np.column_stack([np.ones_like(t_sub), t_sub] + 
+                         [col for f in freqs_model1 for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+    c = np.linalg.lstsq(X, beta_sub, rcond=None)[0]
+    residuals = beta_sub - X @ c
+    if residuals.std() < 0.3:
+        break
+
+# Find best number of components via CV
+t_val = t[split:]
+beta_val = beta_unwrap[split:]
+
+best_val_rmse = float('inf')
+best_n1 = 0
+for n_use in range(3, len(freqs_model1)+1):
+    fu = freqs_model1[:n_use]
+    X_tr = np.column_stack([np.ones_like(t_sub), t_sub] + 
+                            [col for f in fu for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+    X_v = np.column_stack([np.ones_like(t_val), t_val] + 
+                           [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    c = np.linalg.lstsq(X_tr, beta_sub, rcond=None)[0]
+    pred = X_v @ c
+    rmse = np.sqrt(np.mean((beta_val - pred)**2))
+    if rmse < best_val_rmse:
+        best_val_rmse = rmse
+        best_n1 = n_use
+
+print(f'Model 1 (direct sinusoidal): best_n={best_n1}, val_rmse={best_val_rmse:.4f}')
+
+# Model 2: Alpha-based model
+# Step 1: Model alpha
+lin_a = np.polyfit(t_sub, alpha_unwrap[:split], 1)
+resid_a = alpha_unwrap[:split] - np.polyval(lin_a, t_sub)
+alpha_freqs = []
+for _ in range(30):
+    yf = fft(resid_a)
+    xf = fftfreq(n_sub, 1.0)
+    power = np.abs(yf[:n_sub//2])**2
+    freqs = xf[:n_sub//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t_sub)
+        C = np.cos(2*np.pi*f*t_sub)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/n_sub
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t_sub), t_sub] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap[:split], rcond=None)[0]
+    resid_a = alpha_unwrap[:split] - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+# Predict alpha on validation
+X_a_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                            [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+alpha_pred_val = X_a_val @ c_a
+
+# Step 2: Model beta = f(alpha, t) = a + b*alpha + sinusoids in t
+lin_b = np.polyfit(alpha_unwrap[:split], beta_sub, 1)
+resid_b = beta_sub - np.polyval(lin_b, alpha_unwrap[:split])
+beta_freqs = []
+for _ in range(20):
+    yf = fft(resid_b)
+    xf = fftfreq(n_sub, 1.0)
+    power = np.abs(yf[:n_sub//2])**2
+    freqs = xf[:n_sub//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t_sub)
+        C = np.cos(2*np.pi*f*t_sub)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_b, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/n_sub
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t_sub), alpha_unwrap[:split]] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+    c_b = np.linalg.lstsq(X_b, beta_sub, rcond=None)[0]
+    resid_b = beta_sub - X_b @ c_b
+
+# Validate beta model with predicted alpha
+best_val_rmse2 = float('inf')
+best_n2 = 0
+for n_use in range(1, len(beta_freqs)+1):
+    fu = beta_freqs[:n_use]
+    X_b_tr = np.column_stack([np.ones_like(t_sub), alpha_unwrap[:split]] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+    c_b2 = np.linalg.lstsq(X_b_tr, beta_sub, rcond=None)[0]
+    X_b_val = np.column_stack([np.ones_like(t_val), alpha_pred_val] + 
+                               [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    pred = X_b_val @ c_b2
+    rmse = np.sqrt(np.mean((beta_val - pred)**2))
+    if rmse < best_val_rmse2:
+        best_val_rmse2 = rmse
+        best_n2 = n_use
+
+print(f'Model 2 (alpha-based): best_n={best_n2}, val_rmse={best_val_rmse2:.4f}')
+
+# Model 3: Ensemble - average of model 1 and model 2
+# Use the best configurations from each model
+fu1 = freqs_model1[:best_n1]
+fu2 = beta_freqs[:best_n2]
+
+X1_tr = np.column_stack([np.ones_like(t_sub), t_sub] + 
+                          [col for f in fu1 for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+c1 = np.linalg.lstsq(X1_tr, beta_sub, rcond=None)[0]
+
+X2_tr = np.column_stack([np.ones_like(t_sub), alpha_unwrap[:split]] + 
+                          [col for f in fu2 for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+c2 = np.linalg.lstsq(X2_tr, beta_sub, rcond=None)[0]
+
+# Validate ensemble
+X1_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                           [col for f in fu1 for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+X2_val = np.column_stack([np.ones_like(t_val), alpha_pred_val] + 
+                           [col for f in fu2 for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+
+pred1 = X1_val @ c1
+pred2 = X2_val @ c2
+pred_ens = 0.5 * pred1 + 0.5 * pred2
+ens_rmse = np.sqrt(np.mean((beta_val - pred_ens)**2))
+print(f'Ensemble: val_rmse={ens_rmse:.4f}')
+"
 
 ```
 
@@ -1816,6 +4842,143 @@ Ensemble: val_rmse=6.4736
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+print(f'Training: t={t[0]} to {t[-1]}')
+print(f'Test: t={t_test[0]} to {t_test[-1]}')
+print(f'Extrapolation distances: {t_test - t[-1]}')
+
+# FINAL MODEL APPROACH:
+# Use full data with greedy frequency selection
+# But use fewer frequencies to avoid overfitting
+# And refit on all data
+
+# Step 1: Greedy frequency selection on 80% data (for robustness)
+split = int(0.8 * N)
+t_sub = t[:split]
+beta_sub = beta_unwrap[:split]
+n_sub = len(t_sub)
+
+lin = np.polyfit(t_sub, beta_sub, 1)
+residuals = beta_sub - np.polyval(lin, t_sub)
+selected_freqs = []
+
+for iteration in range(30):
+    yf = fft(residuals)
+    xf = fftfreq(n_sub, 1.0)
+    power = np.abs(yf[:n_sub//2])**2
+    freqs = xf[:n_sub//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t_sub)
+        C = np.cos(2*np.pi*f*t_sub)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/n_sub
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):
+        yf[top_idx] = 0
+        yf[n_sub-top_idx] = 0
+        power_new = np.abs(yf[:n_sub//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):
+            break
+    selected_freqs.append(f_ref)
+    X = np.column_stack([np.ones_like(t_sub), t_sub] + 
+                         [col for f in selected_freqs for col in [np.sin(2*np.pi*f*t_sub), np.cos(2*np.pi*f*t_sub)]])
+    c = np.linalg.lstsq(X, beta_sub, rcond=None)[0]
+    residuals = beta_sub - X @ c
+    if residuals.std() < 0.3:
+        break
+
+# Use 12 frequencies (from earlier cross-validation)
+n_use = min(12, len(selected_freqs))
+freqs_final = selected_freqs[:n_use]
+
+# Step 2: Refit on ALL data
+X_full = np.column_stack([np.ones_like(t), t] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+beta_fitted = X_full @ coeffs_final
+resid_full = beta_unwrap - beta_fitted
+print(f'\\nFinal model ({n_use} freqs): residual std={resid_full.std():.4f}')
+
+# Step 3: Make test predictions
+X_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+print('\\nTest predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: pred={beta_pred[i]:.2f}')
+
+# Step 4: Estimate prediction intervals
+# Use cross-validation to estimate the model error at different extrapolation distances
+# Then add observation noise
+
+# Cross-validation: multiple splits
+train_fractions = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9]
+cv_errors = []  # (distance, error)
+
+for frac in train_fractions:
+    sp = int(frac * N)
+    t_tr = t[:sp]
+    beta_tr = beta_unwrap[:sp]
+    t_vl = t[sp:]
+    beta_vl = beta_unwrap[sp:]
+    
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_vl = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                            [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+    
+    c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    pred = X_vl @ c
+    errors = beta_vl - pred
+    distances = t_vl - t_tr[-1]
+    
+    for d, e in zip(distances, errors):
+        cv_errors.append((d, e))
+
+cv_errors = np.array(cv_errors)
+print(f'\\nTotal CV error samples: {len(cv_errors)}')
+
+# Overall RMSE
+overall_rmse = np.sqrt(np.mean(cv_errors[:, 1]**2))
+print(f'Overall CV RMSE: {overall_rmse:.4f}')
+print(f'Overall CV std: {cv_errors[:, 1].std():.4f}')
+print(f'95th percentile abs error: {np.percentile(np.abs(cv_errors[:, 1]), 95):.4f}')
+"
 
 ```
 
@@ -1885,6 +5048,116 @@ Overall CV std: 7695.6356
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+
+def greedy_freq_select(t_ref, y_ref, max_freqs=15, target_std=0.5):
+    n = len(t_ref)
+    lin = np.polyfit(t_ref, y_ref, 1)
+    residuals = y_ref - np.polyval(lin, t_ref)
+    sel = []
+    for _ in range(max_freqs):
+        yf = fft(residuals)
+        xf = fftfreq(n, 1.0)
+        power = np.abs(yf[:n//2])**2
+        freqs = xf[:n//2]
+        top_idx = np.argmax(power)
+        f0 = freqs[top_idx]
+        def neg_power(f):
+            S = np.sin(2*np.pi*f*t_ref)
+            C = np.cos(2*np.pi*f*t_ref)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        df = 1.0/n
+        result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+        f_ref = result.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in sel):
+            break
+        sel.append(f_ref)
+        X = np.column_stack([np.ones_like(t_ref), t_ref] + 
+                             [col for f in sel for col in [np.sin(2*np.pi*f*t_ref), np.cos(2*np.pi*f*t_ref)]])
+        coeffs = np.linalg.lstsq(X, y_ref, rcond=None)[0]
+        residuals = y_ref - X @ coeffs
+        if residuals.std() < target_std:
+            break
+    return sel
+
+# For each CV fold, find frequencies and evaluate
+train_fractions = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9]
+cv_errors = []
+
+for frac in train_fractions:
+    sp = int(frac * N)
+    t_tr = t[:sp]
+    beta_tr = beta_unwrap[:sp]
+    t_vl = t[sp:]
+    beta_vl = beta_unwrap[sp:]
+    
+    # Find frequencies on training data
+    freqs = greedy_freq_select(t_tr, beta_tr, max_freqs=15)
+    
+    # Find best n_components
+    best_rmse = float('inf')
+    best_n = 0
+    for n_use in range(3, len(freqs)+1):
+        fu = freqs[:n_use]
+        X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                                [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+        X_vl = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                                 [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+        c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+        pred = X_vl @ c
+        rmse = np.sqrt(np.mean((beta_vl - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_n = n_use
+    
+    # Use best model
+    fu = freqs[:best_n]
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_vl = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                             [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+    c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    pred = X_vl @ c
+    errors = beta_vl - pred
+    distances = t_vl - t_tr[-1]
+    
+    print(f'Frac={frac:.2f}, split_t={t_tr[-1]}, n_freq={best_n}, val_rmse={best_rmse:.2f}')
+    
+    for d, e in zip(distances, errors):
+        cv_errors.append((d, e))
+
+cv_errors = np.array(cv_errors)
+print(f'\\nTotal CV error samples: {len(cv_errors)}')
+overall_rmse = np.sqrt(np.mean(cv_errors[:, 1]**2))
+print(f'Overall CV RMSE: {overall_rmse:.4f}')
+
+# Errors by distance bin
+dist_bins = np.arange(0, 1700, 200)
+for i in range(len(dist_bins)-1):
+    mask = (cv_errors[:, 0] >= dist_bins[i]) & (cv_errors[:, 0] < dist_bins[i+1])
+    if mask.sum() > 10:
+        rmse = np.sqrt(np.mean(cv_errors[mask, 1]**2))
+        std = np.std(cv_errors[mask, 1])
+        p95 = np.percentile(np.abs(cv_errors[mask, 1]), 95)
+        print(f'  Distance {dist_bins[i]:4.0f}-{dist_bins[i+1]:4.0f}: n={mask.sum():4d}, RMSE={rmse:.2f}, std={std:.2f}, 95th_abs={p95:.2f}')
+"
 
 ```
 
@@ -1984,7 +5257,9 @@ Overall CV RMSE: 13.9984
 **tool call: bash**
 
 ```
-
+{
+  "command<arg_key>command": "python3 -c \"\nimport pandas as pd\nimport numpy as np\nfrom scipy.fft import fft, fftfreq\nfrom scipy.optimize import minimize_scalar\n\ntrain = pd.read_csv('data/train.csv')\ntest = pd.read_csv('data/test.csv')\n\ndef unwrap_angle(angles_deg):\n    angles_rad = np.deg2rad(angles_deg)\n    unwrapped = np.unwrap(angles_rad)\n    return np.rad2deg(unwrapped)\n\ndef wrap_angle(angles_deg):\n    return angles_deg % 360\n\nbeta_unwrap = unwrap_angle(train.beta.values)\nalpha_unwrap = unwrap_angle(train.alpha.values)\nt = train.t.values\nN = len(t)\nt_test = test.t.values\n\n# Build final model on ALL training data\n# Use greedy frequency selection\nlin = np.polyfit(t, beta_unwrap, 1)\nresiduals = beta_unwrap - np.polyval(lin, t)\nselected_freqs = []\n\nfor iteration in range(30):\n    yf = fft(residuals)\n    xf = fftfreq(N, 1.0)\n    power = np.abs(yf[:N//2])**2\n    freqs = xf[:N//2]\n    top_idx = np.argmax(power)\n    f0 = freqs[top_idx]\n    \n    def neg_power(f):\n        S = np.sin(2*np.pi*f*t)\n        C = np.cos(2*np.pi*f*t)\n        X = np.column_stack([S, C])\n        c = np.linalg.lstsq(X, residuals, rcond=None)[0]\n        return -np.sum((X @ c)**2)\n    \n    df = 1.0/N\n    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')\n    f_ref = result.x\n    if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):\n        yf[top_idx] = 0\n        yf[N-top_idx] = 0\n        power_new = np.abs(yf[:N//2])**2\n        next_idx = np.argmax(power_new)\n        f0_next = freqs[next_idx]\n        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')\n        f_ref = result_next.x\n        if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):\n            break\n    selected_freqs.append(f_ref)\n    X = np.column_stack([np.ones_like(t), t] + \n                         [col for f in selected_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])\n    c = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]\n    residuals = beta_unwrap - X @ c\n    if residuals.std() < 0.3:\n        break\n\nprint(f'Found {len(selected_freqs)} frequencies on full data')\n\n# Use 8-12 frequencies for the final model (based on CV results)\nfor n_use in [8, 10, 12]:\n    fu = selected_freqs[:n_use]\n    X = np.column_stack([np.ones_like(t), t] + \n                         [col for f in fu for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])\n    c = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]\n    fitted = X @ c\n    resid = beta_unwrap - fitted\n    \n    # Make test predictions\n    X_t = np.column_stack([np.ones_like(t_test), t_test] + \n                           [col for f in fu for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])\n    pred_unwrap = X_t @ c\n    pred = wrap_angle(pred_unwrap)\n    \n    print(f'\\\\nn_use={n_use}, resid_std={resid.std():.4f}')\n    for i in range(len(t_test)):\n        print(f'  t={t_test[i]}: pred={pred[i]:.2f} (unwrap={pred_unwrap[i]:.2f})')\n\"\n"
+}
 ```
 
 ## [79] tool
@@ -1994,6 +5269,92 @@ Overall CV RMSE: 13.9984
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# Build final model on ALL training data
+lin = np.polyfit(t, beta_unwrap, 1)
+residuals = beta_unwrap - np.polyval(lin, t)
+selected_freqs = []
+
+for iteration in range(30):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):
+            break
+    selected_freqs.append(f_ref)
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in selected_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    residuals = beta_unwrap - X @ c
+    if residuals.std() < 0.3:
+        break
+
+print(f'Found {len(selected_freqs)} frequencies on full data')
+print('Frequencies:')
+for f in selected_freqs:
+    print(f'  {f:.8f} (period={1/f:.2f})')
+
+# Use 8-12 frequencies
+for n_use in [8, 10, 12]:
+    fu = selected_freqs[:n_use]
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in fu for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    fitted = X @ c
+    resid = beta_unwrap - fitted
+    
+    X_t = np.column_stack([np.ones_like(t_test), t_test] + 
+                           [col for f in fu for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+    pred_unwrap = X_t @ c
+    pred = wrap_angle(pred_unwrap)
+    
+    print(f'n_use={n_use}, resid_std={resid.std():.4f}')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i]}: pred={pred[i]:.2f}')
+"
 
 ```
 
@@ -2127,6 +5488,207 @@ n_use=12, resid_std=1.6923
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ---- Build model on ALL training data ----
+lin = np.polyfit(t, beta_unwrap, 1)
+residuals = beta_unwrap - np.polyval(lin, t)
+selected_freqs = []
+
+for iteration in range(30):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):
+            break
+    selected_freqs.append(f_ref)
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in selected_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    residuals = beta_unwrap - X @ c
+    if residuals.std() < 0.3:
+        break
+
+# Use 10 frequencies for the final model
+n_use = 10
+freqs_final = selected_freqs[:n_use]
+
+X_full = np.column_stack([np.ones_like(t), t] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+beta_fitted = X_full @ coeffs_final
+resid_final = beta_unwrap - beta_fitted
+
+p = X_full.shape[1]
+n = N
+MSE = np.sum(resid_final**2) / (n - p)
+print(f'Model: {n_use} freqs, {p} params, MSE={MSE:.4f}, resid_std={resid_final.std():.4f}')
+
+# Compute prediction intervals using regression formula
+XtX_inv = np.linalg.inv(X_full.T @ X_full)
+t_crit = t_dist.ppf(0.975, n - p)
+
+X_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+print('\nTest predictions with regression-based intervals:')
+for i in range(len(t_test)):
+    x0 = X_test[i]
+    leverage = x0 @ XtX_inv @ x0
+    pred_se = np.sqrt(MSE * (1 + leverage))
+    lower_unwrap = beta_pred_unwrap[i] - t_crit * pred_se
+    upper_unwrap = beta_pred_unwrap[i] + t_crit * pred_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    dist = t_test[i] - t[-1]
+    print(f'  t={t_test[i]} (dist={dist}): pred={beta_pred[i]:.2f}, [{lower:.2f}, {upper:.2f}], leverage={leverage:.4f}, pred_se={pred_se:.4f}')
+
+# The regression-based intervals are likely too narrow for extrapolation
+# Let me also compute CV-based intervals
+print('\n--- Cross-validation for interval calibration ---')
+
+# For each test point, estimate the error from CV at similar extrapolation distances
+def greedy_freq_select(t_ref, y_ref, max_freqs=15, target_std=0.5):
+    n = len(t_ref)
+    lin = np.polyfit(t_ref, y_ref, 1)
+    residuals = y_ref - np.polyval(lin, t_ref)
+    sel = []
+    for _ in range(max_freqs):
+        yf = fft(residuals)
+        xf = fftfreq(n, 1.0)
+        power = np.abs(yf[:n//2])**2
+        freqs = xf[:n//2]
+        top_idx = np.argmax(power)
+        f0 = freqs[top_idx]
+        def neg_power(f):
+            S = np.sin(2*np.pi*f*t_ref)
+            C = np.cos(2*np.pi*f*t_ref)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        df = 1.0/n
+        result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+        f_ref = result.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in sel):
+            break
+        sel.append(f_ref)
+        X = np.column_stack([np.ones_like(t_ref), t_ref] + 
+                             [col for f in sel for col in [np.sin(2*np.pi*f*t_ref), np.cos(2*np.pi*f*t_ref)]])
+        coeffs = np.linalg.lstsq(X, y_ref, rcond=None)[0]
+        residuals = y_ref - X @ coeffs
+        if residuals.std() < target_std:
+            break
+    return sel
+
+# Use 80/20 and 85/15 splits for CV (these use most of the data)
+cv_errors_by_distance = {}
+for frac in [0.75, 0.80, 0.85, 0.90]:
+    sp = int(frac * N)
+    t_tr = t[:sp]
+    beta_tr = beta_unwrap[:sp]
+    t_vl = t[sp:]
+    beta_vl = beta_unwrap[sp:]
+    
+    freqs_cv = greedy_freq_select(t_tr, beta_tr)
+    
+    # Find best n_components
+    best_rmse = float('inf')
+    best_n = 0
+    for n_u in range(3, len(freqs_cv)+1):
+        fu = freqs_cv[:n_u]
+        X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                                [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+        X_vl = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                                 [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+        c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+        pred = X_vl @ c
+        rmse = np.sqrt(np.mean((beta_vl - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_n = n_u
+    
+    fu = freqs_cv[:best_n]
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_vl = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                             [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+    c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    pred = X_vl @ c
+    errors = beta_vl - pred
+    distances = t_vl - t_tr[-1]
+    
+    print(f'Frac={frac:.2f}, best_n={best_n}, val_rmse={best_rmse:.2f}')
+    
+    for d, e in zip(distances, errors):
+        d_round = int(d / 50) * 50
+        if d_round not in cv_errors_by_distance:
+            cv_errors_by_distance[d_round] = []
+        cv_errors_by_distance[d_round].append(e)
+
+# For each test point, estimate the prediction error
+print('\n--- Estimated prediction errors for test points ---')
+test_distances = t_test - t[-1]
+for i, dist in enumerate(test_distances):
+    # Find CV errors at similar distances (±300 days)
+    nearby_errors = []
+    for d_round, errs in cv_errors_by_distance.items():
+        if abs(d_round - dist) <= 300:
+            nearby_errors.extend(errs)
+    
+    if len(nearby_errors) > 10:
+        nearby_errors = np.array(nearby_errors)
+        rmse = np.sqrt(np.mean(nearby_errors**2))
+        std = np.std(nearby_errors)
+        p95 = np.percentile(np.abs(nearby_errors), 95)
+        print(f'  t={t_test[i]} (dist={dist}): n_err={len(nearby_errors)}, RMSE={rmse:.2f}, std={std:.2f}, 95th_abs={p95:.2f}')
+    else:
+        print(f'  t={t_test[i]} (dist={dist}): insufficient CV data')
+EOF
 
 ```
 
@@ -2234,6 +5796,203 @@ Frac=0.90, best_n=11, val_rmse=10.11
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ---- BUILD FINAL MODEL ----
+# Use greedy frequency selection on ALL training data
+lin = np.polyfit(t, beta_unwrap, 1)
+residuals = beta_unwrap - np.polyval(lin, t)
+selected_freqs = []
+
+for iteration in range(30):
+    yf = fft(residuals)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, residuals, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in selected_freqs):
+            break
+    selected_freqs.append(f_ref)
+    X = np.column_stack([np.ones_like(t), t] + 
+                         [col for f in selected_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c = np.linalg.lstsq(X, beta_unwrap, rcond=None)[0]
+    residuals = beta_unwrap - X @ c
+    if residuals.std() < 0.3:
+        break
+
+# ---- CROSS-VALIDATION FOR ERROR ESTIMATION ----
+# Use multiple folds with proper frequency selection for each fold
+def greedy_freq_select(t_ref, y_ref, max_freqs=15, target_std=0.5):
+    n = len(t_ref)
+    lin_l = np.polyfit(t_ref, y_ref, 1)
+    residuals_l = y_ref - np.polyval(lin_l, t_ref)
+    sel = []
+    for _ in range(max_freqs):
+        yf_l = fft(residuals_l)
+        xf_l = fftfreq(n, 1.0)
+        power_l = np.abs(yf_l[:n//2])**2
+        freqs_l = xf_l[:n//2]
+        top_idx_l = np.argmax(power_l)
+        f0_l = freqs_l[top_idx_l]
+        def neg_power_l(f):
+            S = np.sin(2*np.pi*f*t_ref)
+            C = np.cos(2*np.pi*f*t_ref)
+            X_l = np.column_stack([S, C])
+            c_l = np.linalg.lstsq(X_l, residuals_l, rcond=None)[0]
+            return -np.sum((X_l @ c_l)**2)
+        df_l = 1.0/n
+        result_l = minimize_scalar(neg_power_l, bounds=(f0_l-5*df_l, f0_l+5*df_l), method='bounded')
+        f_ref_l = result_l.x
+        if any(abs(f_ref_l - sf) < 1e-6 for sf in sel):
+            break
+        sel.append(f_ref_l)
+        X_l = np.column_stack([np.ones_like(t_ref), t_ref] + 
+                               [col for f in sel for col in [np.sin(2*np.pi*f*t_ref), np.cos(2*np.pi*f*t_ref)]])
+        c_l = np.linalg.lstsq(X_l, y_ref, rcond=None)[0]
+        residuals_l = y_ref - X_l @ c_l
+        if residuals_l.std() < target_std:
+            break
+    return sel
+
+# Collect CV errors
+cv_errors_list = []  # (distance, absolute_error)
+
+for frac in [0.70, 0.75, 0.80, 0.85, 0.90]:
+    sp = int(frac * N)
+    t_tr = t[:sp]
+    beta_tr = beta_unwrap[:sp]
+    t_vl = t[sp:]
+    beta_vl = beta_unwrap[sp:]
+    
+    freqs_cv = greedy_freq_select(t_tr, beta_tr)
+    
+    best_rmse = float('inf')
+    best_n = 0
+    for n_u in range(3, len(freqs_cv)+1):
+        fu = freqs_cv[:n_u]
+        X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                                [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+        X_vl = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                                 [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+        c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+        pred = X_vl @ c
+        rmse = np.sqrt(np.mean((beta_vl - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_n = n_u
+    
+    fu = freqs_cv[:best_n]
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_vl = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                             [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+    c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    pred = X_vl @ c
+    errors = beta_vl - pred
+    distances = t_vl - t_tr[-1]
+    
+    for d, e in zip(distances, errors):
+        cv_errors_list.append((d, e))
+
+cv_errors = np.array(cv_errors_list)
+print(f'Total CV error samples: {len(cv_errors)}')
+
+# Estimate prediction error for each test point
+# Use a rolling window of CV errors
+test_distances = t_test - t[-1]
+pred_errors = []
+
+for i, dist in enumerate(test_distances):
+    # Find CV errors at similar distances (±200 days, expanding if needed)
+    for half_width in [200, 400, 600, 800]:
+        mask = np.abs(cv_errors[:, 0] - dist) <= half_width
+        if mask.sum() >= 50:
+            break
+    
+    errs = cv_errors[mask, 1]
+    rmse = np.sqrt(np.mean(errs**2))
+    std = np.std(errs)
+    # For 95% prediction interval, use 1.96 * std
+    # But also add the observation noise
+    obs_noise = 0.6  # estimated from residuals with 30+ frequencies
+    total_std = np.sqrt(std**2 + obs_noise**2)
+    pred_errors.append(total_std)
+    
+    print(f't={t_test[i]} (dist={dist}): n_cv={mask.sum()}, cv_rmse={rmse:.2f}, cv_std={std:.2f}, total_std={total_std:.2f}')
+
+# ---- FINAL PREDICTIONS ----
+# Use 10 frequencies for the final model
+n_use = 10
+freqs_final = selected_freqs[:n_use]
+
+X_full = np.column_stack([np.ones_like(t), t] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+
+X_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+# Construct prediction intervals
+results = []
+for i in range(len(t_test)):
+    se = pred_errors[i]
+    lower_unwrap = beta_pred_unwrap[i] - 1.96 * se
+    upper_unwrap = beta_pred_unwrap[i] + 1.96 * se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], beta_pred[i], lower, upper))
+    print(f't={t_test[i]}: pred={beta_pred[i]:.2f}, lower={lower:.2f}, upper={upper:.2f} (se={se:.2f})')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+print(df_out.to_string())
+SCRIPT
 
 ```
 
@@ -2403,6 +6162,175 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ---- MODEL 1: Alpha model ----
+# Build alpha model on all data
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+print(f'Alpha model: {len(alpha_freqs)} freqs, resid_std={resid_a.std():.4f}')
+
+# Predict alpha for test times
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+print(f'Predicted alpha for test: {alpha_pred_test}')
+
+# ---- MODEL 2: Beta model using alpha + sinusoids in t ----
+# beta = c0 + c1*alpha + c2*t + sum(sin/cos in t)
+# Use TRUE alpha for training
+lin_b = np.polyfit(alpha_unwrap, beta_unwrap, 1)
+resid_b = beta_unwrap - np.polyval(lin_b, alpha_unwrap)
+print(f'Beta residual after alpha linear: std={resid_b.std():.4f}')
+
+# Find frequencies in the residual
+beta_freqs = []
+for iteration in range(20):
+    yf = fft(resid_b)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_b, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    
+    X_b = np.column_stack([np.ones_like(alpha_unwrap), alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid_b = beta_unwrap - X_b @ c_b
+
+print(f'Beta model: {len(beta_freqs)} freqs, resid_std={resid_b.std():.4f}')
+
+# Cross-validate the beta model
+split = int(0.8 * N)
+t_tr = t[:split]
+t_val = t[split:]
+beta_tr = beta_unwrap[:split]
+beta_val = beta_unwrap[split:]
+alpha_tr = alpha_unwrap[:split]
+alpha_val = alpha_unwrap[split:]
+
+# Build alpha model on training split
+lin_a_cv = np.polyfit(t_tr, alpha_tr, 1)
+resid_a_cv = alpha_tr - np.polyval(lin_a_cv, t_tr)
+alpha_freqs_cv = []
+n_tr = len(t_tr)
+for iteration in range(30):
+    yf_cv = fft(resid_a_cv)
+    xf_cv = fftfreq(n_tr, 1.0)
+    power_cv = np.abs(yf_cv[:n_tr//2])**2
+    freqs_cv = xf_cv[:n_tr//2]
+    top_idx_cv = np.argmax(power_cv)
+    f0_cv = freqs_cv[top_idx_cv]
+    def neg_power_a_cv(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a_cv, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df_cv = 1.0/n_tr
+    result_cv = minimize_scalar(neg_power_a_cv, bounds=(f0_cv-5*df_cv, f0_cv+5*df_cv), method='bounded')
+    f_ref_cv = result_cv.x
+    if any(abs(f_ref_cv - sf) < 1e-6 for sf in alpha_freqs_cv):
+        break
+    alpha_freqs_cv.append(f_ref_cv)
+    X_a_cv = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                              [col for f in alpha_freqs_cv for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_a_cv = np.linalg.lstsq(X_a_cv, alpha_tr, rcond=None)[0]
+    resid_a_cv = alpha_tr - X_a_cv @ c_a_cv
+    if resid_a_cv.std() < 0.3:
+        break
+
+X_a_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                            [col for f in alpha_freqs_cv for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+alpha_pred_val = X_a_val @ c_a_cv
+alpha_val_rmse = np.sqrt(np.mean((alpha_val - alpha_pred_val)**2))
+print(f'Alpha CV RMSE: {alpha_val_rmse:.4f}')
+
+# Build beta model on training split with TRUE alpha
+for n_use_b in range(1, len(beta_freqs)+1):
+    fu = beta_freqs[:n_use_b]
+    X_b_tr = np.column_stack([np.ones_like(alpha_tr), alpha_tr] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_b_val = np.column_stack([np.ones_like(alpha_pred_val), alpha_pred_val] + 
+                               [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+    pred = X_b_val @ c_b
+    rmse = np.sqrt(np.mean((beta_val - pred)**2))
+    print(f'  n_freq_beta={n_use_b}: val_rmse={rmse:.4f}')
+SCRIPT
 
 ```
 
@@ -2465,6 +6393,153 @@ Alpha CV RMSE: 0.6055
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# Try model: beta = c0 + c1*t + c2*alpha + sinusoidal corrections in t
+# First, remove the combined linear+alpha component
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+print(f'Base model (t + alpha): resid_std={resid.std():.4f}')
+print(f'Coefficients: c0={c_base[0]:.4f}, c1={c_base[1]:.6f}, c2={c_base[2]:.6f}')
+
+# Find frequencies in residual
+freqs_combined = []
+for iteration in range(20):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    
+    def neg_power(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    
+    df = 1.0/N
+    result = minimize_scalar(neg_power, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in freqs_combined):
+        break
+    freqs_combined.append(f_ref)
+    
+    X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                              [col for f in freqs_combined for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_full = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_full @ c_full
+
+print(f'Combined model: {len(freqs_combined)} freqs, resid_std={resid.std():.4f}')
+
+# Cross-validate
+split = int(0.8 * N)
+t_tr = t[:split]; t_val = t[split:]
+beta_tr = beta_unwrap[:split]; beta_val = beta_unwrap[split:]
+alpha_tr = alpha_unwrap[:split]; alpha_val = alpha_unwrap[split:]
+
+# Build alpha model on training split
+lin_a_cv = np.polyfit(t_tr, alpha_tr, 1)
+resid_a_cv = alpha_tr - np.polyval(lin_a_cv, t_tr)
+alpha_freqs_cv = []
+n_tr = len(t_tr)
+for iteration in range(30):
+    yf_cv = fft(resid_a_cv)
+    xf_cv = fftfreq(n_tr, 1.0)
+    power_cv = np.abs(yf_cv[:n_tr//2])**2
+    freqs_cv = xf_cv[:n_tr//2]
+    top_idx_cv = np.argmax(power_cv)
+    f0_cv = freqs_cv[top_idx_cv]
+    def neg_power_a_cv(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a_cv, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df_cv = 1.0/n_tr
+    result_cv = minimize_scalar(neg_power_a_cv, bounds=(f0_cv-5*df_cv, f0_cv+5*df_cv), method='bounded')
+    f_ref_cv = result_cv.x
+    if any(abs(f_ref_cv - sf) < 1e-6 for sf in alpha_freqs_cv):
+        break
+    alpha_freqs_cv.append(f_ref_cv)
+    X_a_cv = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                              [col for f in alpha_freqs_cv for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_a_cv = np.linalg.lstsq(X_a_cv, alpha_tr, rcond=None)[0]
+    resid_a_cv = alpha_tr - X_a_cv @ c_a_cv
+    if resid_a_cv.std() < 0.3:
+        break
+
+# Predict alpha on validation
+X_a_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                            [col for f in alpha_freqs_cv for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+alpha_pred_val = X_a_val @ c_a_cv
+
+# Build combined beta model on training split
+# Find frequencies for the residual after removing (t + alpha) on training split
+X_base_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr])
+c_base_tr = np.linalg.lstsq(X_base_tr, beta_tr, rcond=None)[0]
+resid_tr = beta_tr - X_base_tr @ c_base_tr
+
+freqs_cv = []
+for iteration in range(20):
+    yf_b = fft(resid_tr)
+    xf_b = fftfreq(n_tr, 1.0)
+    power_b = np.abs(yf_b[:n_tr//2])**2
+    freqs_b = xf_b[:n_tr//2]
+    top_idx_b = np.argmax(power_b)
+    f0_b = freqs_b[top_idx_b]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_tr, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df_b = 1.0/n_tr
+    result_b = minimize_scalar(neg_power_b, bounds=(f0_b-5*df_b, f0_b+5*df_b), method='bounded')
+    f_ref_b = result_b.x
+    if any(abs(f_ref_b - sf) < 1e-6 for sf in freqs_cv):
+        break
+    freqs_cv.append(f_ref_b)
+    X_b_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                              [col for f in freqs_cv for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+    resid_tr = beta_tr - X_b_tr @ c_b
+
+# Evaluate with different n_freq
+for n_use in range(1, len(freqs_cv)+1):
+    fu = freqs_cv[:n_use]
+    X_b_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_b_val = np.column_stack([np.ones_like(t_val), t_val, alpha_pred_val] + 
+                               [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+    pred = X_b_val @ c_b
+    rmse = np.sqrt(np.mean((beta_val - pred)**2))
+    print(f'  n_freq={n_use}: val_rmse={rmse:.4f}')
+SCRIPT
 
 ```
 
@@ -2524,6 +6599,126 @@ Combined model: 20 freqs, resid_std=0.7936
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# Build alpha model on all data
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# Build beta model: beta = c0 + c1*t + c2*alpha + sinusoidal corrections
+# Find frequencies for the residual after removing (t + alpha)
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(20):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+print(f'Combined model: {len(beta_freqs)} freqs, resid_std={resid.std():.4f}')
+print('Beta frequencies:')
+for f in beta_freqs:
+    print(f'  {f:.8f} (period={1/f:.2f})')
+
+# Now try different numbers of frequencies
+for n_use in [2, 3, 5, 8, 10, 15, 20]:
+    fu = beta_freqs[:n_use]
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in fu for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    fitted = X_b @ c_b
+    resid = beta_unwrap - fitted
+    
+    # Predict on test data using PREDICTED alpha
+    X_b_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                                [col for f in fu for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+    pred_unwrap = X_b_test @ c_b
+    pred = wrap_angle(pred_unwrap)
+    
+    print(f'\nn_use={n_use}, resid_std={resid.std():.4f}')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i]}: pred={pred[i]:.2f} (unwrap={pred_unwrap[i]:.2f})')
+SCRIPT
 
 ```
 
@@ -2757,6 +6952,243 @@ n_use=20, resid_std=0.7936
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD ALPHA MODEL (on all data) ============
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+# Predict alpha for test times
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# ============ BUILD BETA MODEL (on all data) ============
+# beta = c0 + c1*t + c2*alpha + sinusoidal corrections in t
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(20):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+# Use 10 frequencies
+n_use = 10
+freqs_final = beta_freqs[:n_use]
+
+X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+beta_fitted = X_full @ coeffs_final
+resid_final = beta_unwrap - beta_fitted
+
+p = X_full.shape[1]
+n = N
+MSE = np.sum(resid_final**2) / (n - p)
+in_sample_rmse = np.sqrt(MSE)
+print(f'Model: {n_use} freqs, {p} params, MSE={MSE:.4f}, in_sample_rmse={in_sample_rmse:.4f}')
+
+# ============ CROSS-VALIDATION FOR ERROR CALIBRATION ============
+# Use 80/20 split with combined model
+split = int(0.8 * N)
+t_tr = t[:split]; t_val = t[split:]
+beta_tr = beta_unwrap[:split]; beta_val = beta_unwrap[split:]
+alpha_tr = alpha_unwrap[:split]; alpha_val = alpha_unwrap[split:]
+n_tr = len(t_tr)
+
+# Build alpha model on training split
+lin_a_cv = np.polyfit(t_tr, alpha_tr, 1)
+resid_a_cv = alpha_tr - np.polyval(lin_a_cv, t_tr)
+alpha_freqs_cv = []
+for iteration in range(30):
+    yf_cv = fft(resid_a_cv)
+    xf_cv = fftfreq(n_tr, 1.0)
+    power_cv = np.abs(yf_cv[:n_tr//2])**2
+    freqs_cv = xf_cv[:n_tr//2]
+    top_idx_cv = np.argmax(power_cv)
+    f0_cv = freqs_cv[top_idx_cv]
+    def neg_power_a_cv(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a_cv, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df_cv = 1.0/n_tr
+    result_cv = minimize_scalar(neg_power_a_cv, bounds=(f0_cv-5*df_cv, f0_cv+5*df_cv), method='bounded')
+    f_ref_cv = result_cv.x
+    if any(abs(f_ref_cv - sf) < 1e-6 for sf in alpha_freqs_cv):
+        break
+    alpha_freqs_cv.append(f_ref_cv)
+    X_a_cv = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                              [col for f in alpha_freqs_cv for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_a_cv = np.linalg.lstsq(X_a_cv, alpha_tr, rcond=None)[0]
+    resid_a_cv = alpha_tr - X_a_cv @ c_a_cv
+    if resid_a_cv.std() < 0.3:
+        break
+
+X_a_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                            [col for f in alpha_freqs_cv for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+alpha_pred_val = X_a_val @ c_a_cv
+
+# Build beta model on training split
+X_base_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr])
+c_base_tr = np.linalg.lstsq(X_base_tr, beta_tr, rcond=None)[0]
+resid_b_tr = beta_tr - X_base_tr @ c_base_tr
+
+beta_freqs_cv = []
+for iteration in range(20):
+    yf_b = fft(resid_b_tr)
+    xf_b = fftfreq(n_tr, 1.0)
+    power_b = np.abs(yf_b[:n_tr//2])**2
+    freqs_b = xf_b[:n_tr//2]
+    top_idx_b = np.argmax(power_b)
+    f0_b = freqs_b[top_idx_b]
+    def neg_power_b_cv(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_b_tr, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df_b = 1.0/n_tr
+    result_b = minimize_scalar(neg_power_b_cv, bounds=(f0_b-5*df_b, f0_b+5*df_b), method='bounded')
+    f_ref_b = result_b.x
+    if any(abs(f_ref_b - sf) < 1e-6 for sf in beta_freqs_cv):
+        break
+    beta_freqs_cv.append(f_ref_b)
+    X_b_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                              [col for f in beta_freqs_cv for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+    resid_b_tr = beta_tr - X_b_tr @ c_b
+
+# Find best n_freq for beta model
+best_rmse = float('inf')
+best_n_beta = 0
+for n_u in range(1, len(beta_freqs_cv)+1):
+    fu = beta_freqs_cv[:n_u]
+    X_b_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_b_val = np.column_stack([np.ones_like(t_val), t_val, alpha_pred_val] + 
+                               [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+    pred = X_b_val @ c_b
+    rmse = np.sqrt(np.mean((beta_val - pred)**2))
+    if rmse < best_rmse:
+        best_rmse = rmse
+        best_n_beta = n_u
+
+print(f'Best n_beta: {best_n_beta}, CV RMSE: {best_rmse:.4f}')
+
+# Inflation factor
+inflation_factor = (best_rmse / in_sample_rmse)**2
+print(f'Inflation factor: {inflation_factor:.4f}')
+
+# ============ MAKE FINAL PREDICTIONS ============
+X_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+# Prediction intervals using inflated regression formula
+XtX_inv = np.linalg.inv(X_full.T @ X_full)
+t_crit = t_dist.ppf(0.975, n - p)
+MSE_inflated = MSE * inflation_factor
+
+results = []
+for i in range(len(t_test)):
+    x0 = X_test[i]
+    leverage = x0 @ XtX_inv @ x0
+    pred_se = np.sqrt(MSE_inflated * (1 + leverage))
+    lower_unwrap = beta_pred_unwrap[i] - t_crit * pred_se
+    upper_unwrap = beta_pred_unwrap[i] + t_crit * pred_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], beta_pred[i], lower, upper))
+    dist = t_test[i] - t[-1]
+    print(f't={t_test[i]} (dist={dist}): pred={beta_pred[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, leverage={leverage:.4f}, pred_se={pred_se:.4f}')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+SCRIPT
 
 ```
 
@@ -2871,6 +7303,281 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD ALPHA MODEL (on all data) ============
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+# Predict alpha for test times
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# ============ BUILD BETA MODEL (on all data) ============
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(20):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+# Use 10 frequencies
+n_use = 10
+freqs_final = beta_freqs[:n_use]
+X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+beta_fitted = X_full @ coeffs_final
+resid_final = beta_unwrap - beta_fitted
+
+p = X_full.shape[1]
+n_obs = N
+MSE = np.sum(resid_final**2) / (n_obs - p)
+in_sample_rmse = np.sqrt(MSE)
+print(f'Model: {n_use} freqs, {p} params, in_sample_rmse={in_sample_rmse:.4f}')
+
+# ============ PROPER CROSS-VALIDATION ============
+# Use multiple folds, each finding its own frequencies
+# This gives the most reliable error estimate
+
+def build_alpha_model(t_ref, alpha_ref, max_freqs=30):
+    n = len(t_ref)
+    lin = np.polyfit(t_ref, alpha_ref, 1)
+    resid = alpha_ref - np.polyval(lin, t_ref)
+    sel = []
+    for _ in range(max_freqs):
+        yf_l = fft(resid)
+        xf_l = fftfreq(n, 1.0)
+        power_l = np.abs(yf_l[:n//2])**2
+        freqs_l = xf_l[:n//2]
+        top = np.argmax(power_l)
+        f0 = freqs_l[top]
+        def neg_p(f):
+            S = np.sin(2*np.pi*f*t_ref)
+            C = np.cos(2*np.pi*f*t_ref)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, resid, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        d = 1.0/n
+        r = minimize_scalar(neg_p, bounds=(f0-5*d, f0+5*d), method='bounded')
+        fr = r.x
+        if any(abs(fr - s) < 1e-6 for s in sel):
+            yf_l[top] = 0
+            yf_l[n-top] = 0
+            pw = np.abs(yf_l[:n//2])**2
+            nx = np.argmax(pw)
+            f0n = freqs_l[nx]
+            rn = minimize_scalar(neg_p, bounds=(f0n-5*d, f0n+5*d), method='bounded')
+            fr = rn.x
+            if any(abs(fr - s) < 1e-6 for s in sel):
+                break
+        sel.append(fr)
+        X = np.column_stack([np.ones_like(t_ref), t_ref] + 
+                             [col for f in sel for col in [np.sin(2*np.pi*f*t_ref), np.cos(2*np.pi*f*t_ref)]])
+        c = np.linalg.lstsq(X, alpha_ref, rcond=None)[0]
+        resid = alpha_ref - X @ c
+        if resid.std() < 0.3:
+            break
+    return sel, c
+
+def build_beta_model(t_ref, alpha_ref, beta_ref, max_freqs=15):
+    n = len(t_ref)
+    X_b = np.column_stack([np.ones_like(t_ref), t_ref, alpha_ref])
+    c_b = np.linalg.lstsq(X_b, beta_ref, rcond=None)[0]
+    resid = beta_ref - X_b @ c_b
+    sel = []
+    for _ in range(max_freqs):
+        yf_l = fft(resid)
+        xf_l = fftfreq(n, 1.0)
+        power_l = np.abs(yf_l[:n//2])**2
+        freqs_l = xf_l[:n//2]
+        top = np.argmax(power_l)
+        f0 = freqs_l[top]
+        def neg_p(f):
+            S = np.sin(2*np.pi*f*t_ref)
+            C = np.cos(2*np.pi*f*t_ref)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, resid, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        d = 1.0/n
+        r = minimize_scalar(neg_p, bounds=(f0-5*d, f0+5*d), method='bounded')
+        fr = r.x
+        if any(abs(fr - s) < 1e-6 for s in sel):
+            break
+        sel.append(fr)
+        X = np.column_stack([np.ones_like(t_ref), t_ref, alpha_ref] + 
+                             [col for f in sel for col in [np.sin(2*np.pi*f*t_ref), np.cos(2*np.pi*f*t_ref)]])
+        c = np.linalg.lstsq(X, beta_ref, rcond=None)[0]
+        resid = beta_ref - X @ c
+    return sel
+
+# Multiple CV folds
+cv_errors_all = []  # (distance, error)
+
+for frac in [0.75, 0.80, 0.85, 0.90]:
+    sp = int(frac * N)
+    t_tr = t[:sp]; t_vl = t[sp:]
+    beta_tr = beta_unwrap[:sp]; beta_vl = beta_unwrap[sp:]
+    alpha_tr = alpha_unwrap[:sp]; alpha_val = alpha_unwrap[sp:]
+    
+    # Build alpha model
+    a_freqs, a_coeffs = build_alpha_model(t_tr, alpha_tr)
+    X_a_val = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                                [col for f in a_freqs for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+    alpha_pred_val = X_a_val @ a_coeffs
+    
+    # Build beta model
+    b_freqs = build_beta_model(t_tr, alpha_tr, beta_tr)
+    
+    # Find best n_freq
+    best_rmse = float('inf')
+    best_n_b = 0
+    for n_u in range(1, len(b_freqs)+1):
+        fu = b_freqs[:n_u]
+        X_b_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                                  [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+        X_b_val = np.column_stack([np.ones_like(t_vl), t_vl, alpha_pred_val] + 
+                                   [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+        c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+        pred = X_b_val @ c_b
+        rmse = np.sqrt(np.mean((beta_vl - pred)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_n_b = n_u
+    
+    # Collect errors for the best model
+    fu = b_freqs[:best_n_b]
+    X_b_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_b_val = np.column_stack([np.ones_like(t_vl), t_vl, alpha_pred_val] + 
+                               [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+    c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+    pred = X_b_val @ c_b
+    errors = beta_vl - pred
+    distances = t_vl - t_tr[-1]
+    
+    print(f'Frac={frac:.2f}, best_n={best_n_b}, val_rmse={best_rmse:.2f}')
+    
+    for d, e in zip(distances, errors):
+        cv_errors_all.append((d, e))
+
+cv_errors_all = np.array(cv_errors_all)
+overall_cv_rmse = np.sqrt(np.mean(cv_errors_all[:, 1]**2))
+print(f'\nOverall CV RMSE: {overall_cv_rmse:.4f}')
+print(f'Overall CV std: {cv_errors_all[:, 1].std():.4f}')
+
+# Inflation factor based on overall CV RMSE
+inflation_factor = (overall_cv_rmse / in_sample_rmse)**2
+print(f'Inflation factor: {inflation_factor:.4f}')
+
+# ============ MAKE FINAL PREDICTIONS WITH INFLATED INTERVALS ============
+X_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+XtX_inv = np.linalg.inv(X_full.T @ X_full)
+t_crit = t_dist.ppf(0.975, n_obs - p)
+MSE_inflated = MSE * inflation_factor
+
+results = []
+for i in range(len(t_test)):
+    x0 = X_test[i]
+    leverage = x0 @ XtX_inv @ x0
+    pred_se = np.sqrt(MSE_inflated * (1 + leverage))
+    lower_unwrap = beta_pred_unwrap[i] - t_crit * pred_se
+    upper_unwrap = beta_pred_unwrap[i] + t_crit * pred_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], beta_pred[i], lower, upper))
+    dist = t_test[i] - t[-1]
+    print(f't={t_test[i]} (dist={dist}): pred={beta_pred[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, pred_se={pred_se:.4f}')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+print(df_out.to_string())
+SCRIPT
 
 ```
 
@@ -2958,6 +7665,190 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# Compare direct model vs combined model via CV
+split = int(0.8 * N)
+t_tr = t[:split]; t_val = t[split:]
+beta_tr = beta_unwrap[:split]; beta_val = beta_unwrap[split:]
+alpha_tr = alpha_unwrap[:split]
+n_tr = len(t_tr)
+
+# ---- Direct model: beta = f(t) ----
+lin_d = np.polyfit(t_tr, beta_tr, 1)
+resid_d = beta_tr - np.polyval(lin_d, t_tr)
+direct_freqs = []
+for iteration in range(20):
+    yf = fft(resid_d)
+    xf = fftfreq(n_tr, 1.0)
+    power = np.abs(yf[:n_tr//2])**2
+    freqs = xf[:n_tr//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_d(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_d, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/n_tr
+    result = minimize_scalar(neg_power_d, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in direct_freqs):
+        break
+    direct_freqs.append(f_ref)
+    X_d = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                           [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_d = np.linalg.lstsq(X_d, beta_tr, rcond=None)[0]
+    resid_d = beta_tr - X_d @ c_d
+
+# Find best n for direct model
+best_rmse_d = float('inf')
+best_n_d = 0
+for n_u in range(3, len(direct_freqs)+1):
+    fu = direct_freqs[:n_u]
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                            [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_vl = np.column_stack([np.ones_like(t_val), t_val] + 
+                             [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    pred = X_vl @ c
+    rmse = np.sqrt(np.mean((beta_val - pred)**2))
+    if rmse < best_rmse_d:
+        best_rmse_d = rmse
+        best_n_d = n_u
+
+print(f'Direct model: best_n={best_n_d}, val_rmse={best_rmse_d:.4f}')
+
+# Also try: alpha model + direct model (beta residual after removing alpha)
+# Build alpha model on training split
+lin_a = np.polyfit(t_tr, alpha_tr, 1)
+resid_a = alpha_tr - np.polyval(lin_a, t_tr)
+alpha_freqs = []
+for iteration in range(30):
+    yf = fft(resid_a)
+    xf = fftfreq(n_tr, 1.0)
+    power = np.abs(yf[:n_tr//2])**2
+    freqs = xf[:n_tr//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/n_tr
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_a = np.linalg.lstsq(X_a, alpha_tr, rcond=None)[0]
+    resid_a = alpha_tr - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_a_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                            [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+alpha_pred_val = X_a_val @ c_a
+alpha_val_rmse = np.sqrt(np.mean((alpha_unwrap[split:] - alpha_pred_val)**2))
+print(f'Alpha val RMSE: {alpha_val_rmse:.4f}')
+
+# Combined model: beta = c0 + c1*t + c2*alpha + sinusoids
+X_base_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr])
+c_base_tr = np.linalg.lstsq(X_base_tr, beta_tr, rcond=None)[0]
+resid_b = beta_tr - X_base_tr @ c_base_tr
+
+combined_freqs = []
+for iteration in range(20):
+    yf = fft(resid_b)
+    xf = fftfreq(n_tr, 1.0)
+    power = np.abs(yf[:n_tr//2])**2
+    freqs = xf[:n_tr//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_c(f):
+        S = np.sin(2*np.pi*f*t_tr)
+        C = np.cos(2*np.pi*f*t_tr)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_b, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/n_tr
+    result = minimize_scalar(neg_power_c, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in combined_freqs):
+        break
+    combined_freqs.append(f_ref)
+    X_c = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                           [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    c_c = np.linalg.lstsq(X_c, beta_tr, rcond=None)[0]
+    resid_b = beta_tr - X_c @ c_c
+
+best_rmse_c = float('inf')
+best_n_c = 0
+for n_u in range(1, len(combined_freqs)+1):
+    fu = combined_freqs[:n_u]
+    X_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                            [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_vl = np.column_stack([np.ones_like(t_val), t_val, alpha_pred_val] + 
+                             [col for f in fu for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+    c = np.linalg.lstsq(X_tr, beta_tr, rcond=None)[0]
+    pred = X_vl @ c
+    rmse = np.sqrt(np.mean((beta_val - pred)**2))
+    if rmse < best_rmse_c:
+        best_rmse_c = rmse
+        best_n_c = n_u
+
+print(f'Combined model: best_n={best_n_c}, val_rmse={best_rmse_c:.4f}')
+
+# Also try: Ensemble of direct + combined
+fu_d = direct_freqs[:best_n_d]
+fu_c = combined_freqs[:best_n_c]
+
+X_d_tr = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                          [col for f in fu_d for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+X_d_val = np.column_stack([np.ones_like(t_val), t_val] + 
+                           [col for f in fu_d for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+c_d = np.linalg.lstsq(X_d_tr, beta_tr, rcond=None)[0]
+pred_d = X_d_val @ c_d
+
+X_c_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                          [col for f in fu_c for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+X_c_val = np.column_stack([np.ones_like(t_val), t_val, alpha_pred_val] + 
+                           [col for f in fu_c for col in [np.sin(2*np.pi*f*t_val), np.cos(2*np.pi*f*t_val)]])
+c_c = np.linalg.lstsq(X_c_tr, beta_tr, rcond=None)[0]
+pred_c = X_c_val @ c_c
+
+for w in [0.3, 0.4, 0.5, 0.6, 0.7]:
+    pred_ens = w * pred_d + (1-w) * pred_c
+    rmse_ens = np.sqrt(np.mean((beta_val - pred_ens)**2))
+    print(f'Ensemble (w_d={w}): val_rmse={rmse_ens:.4f}')
+SCRIPT
 
 ```
 
@@ -2998,6 +7889,156 @@ Ensemble (w_d=0.7): val_rmse=5.9703
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD ALPHA MODEL (on all data) ============
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+# Predict alpha for test times
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# ============ BUILD BETA MODEL: beta = c0 + c1*t + c2*alpha + sinusoids ============
+# Use 2 sinusoidal components (best from CV)
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(2):  # Only 2 frequencies
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+print(f'Beta model: {len(beta_freqs)} freqs')
+print(f'Frequencies: {beta_freqs}')
+print(f'Periods: {[1/f for f in beta_freqs]}')
+print(f'Residual std: {resid.std():.4f}')
+
+# Full model
+X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                          [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+beta_fitted = X_full @ coeffs_final
+resid_final = beta_unwrap - beta_fitted
+
+p = X_full.shape[1]
+n_obs = N
+MSE = np.sum(resid_final**2) / (n_obs - p)
+in_sample_rmse = np.sqrt(MSE)
+print(f'Model: {p} params, in_sample_rmse={in_sample_rmse:.4f}')
+
+# Cross-validation RMSE from earlier: 5.41
+cv_rmse = 5.41
+inflation_factor = (cv_rmse / in_sample_rmse)**2
+print(f'Inflation factor: {inflation_factor:.4f}')
+
+# ============ MAKE FINAL PREDICTIONS ============
+X_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                          [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+# Prediction intervals using inflated MSE
+XtX_inv = np.linalg.inv(X_full.T @ X_full)
+t_crit = t_dist.ppf(0.975, n_obs - p)
+MSE_inflated = MSE * inflation_factor
+
+results = []
+for i in range(len(t_test)):
+    x0 = X_test[i]
+    leverage = x0 @ XtX_inv @ x0
+    pred_se = np.sqrt(MSE_inflated * (1 + leverage))
+    lower_unwrap = beta_pred_unwrap[i] - t_crit * pred_se
+    upper_unwrap = beta_pred_unwrap[i] + t_crit * pred_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], beta_pred[i], lower, upper))
+    dist = t_test[i] - t[-1]
+    print(f't={t_test[i]} (dist={dist}): pred={beta_pred[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, pred_se={pred_se:.4f}')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+SCRIPT
 
 ```
 
@@ -3077,6 +8118,249 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist, norm
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD ALPHA MODEL (on all data) ============
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+# Predict alpha for test times
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# ============ BUILD BETA MODEL (on all data) ============
+# Use the combined model with 10 frequencies
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(20):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+n_use = 10
+freqs_final = beta_freqs[:n_use]
+X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+beta_fitted = X_full @ coeffs_final
+resid_final = beta_unwrap - beta_fitted
+in_sample_rmse = np.sqrt(np.mean(resid_final**2))
+print(f'Model: {n_use} freqs, {X_full.shape[1]} params, in_sample_rmse={in_sample_rmse:.4f}')
+
+# ============ COMPREHENSIVE CROSS-VALIDATION ============
+# Use multiple folds with proper frequency selection
+cv_errors = []
+
+for frac in [0.70, 0.75, 0.80, 0.85, 0.90]:
+    sp = int(frac * N)
+    t_tr = t[:sp]; t_vl = t[sp:]
+    beta_tr = beta_unwrap[:sp]; beta_vl = beta_unwrap[sp:]
+    alpha_tr = alpha_unwrap[:sp]
+    n_tr = len(t_tr)
+    
+    # Build alpha model
+    lin_a_cv = np.polyfit(t_tr, alpha_tr, 1)
+    resid_a_cv = alpha_tr - np.polyval(lin_a_cv, t_tr)
+    a_freqs = []
+    for _ in range(30):
+        yf_cv = fft(resid_a_cv)
+        xf_cv = fftfreq(n_tr, 1.0)
+        power_cv = np.abs(yf_cv[:n_tr//2])**2
+        freqs_cv = xf_cv[:n_tr//2]
+        top = np.argmax(power_cv)
+        f0 = freqs_cv[top]
+        def neg_p_a(f):
+            S = np.sin(2*np.pi*f*t_tr)
+            C = np.cos(2*np.pi*f*t_tr)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, resid_a_cv, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        d = 1.0/n_tr
+        r = minimize_scalar(neg_p_a, bounds=(f0-5*d, f0+5*d), method='bounded')
+        fr = r.x
+        if any(abs(fr - s) < 1e-6 for s in a_freqs):
+            break
+        a_freqs.append(fr)
+        X_a_cv = np.column_stack([np.ones_like(t_tr), t_tr] + 
+                                  [col for f in a_freqs for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+        c_a_cv = np.linalg.lstsq(X_a_cv, alpha_tr, rcond=None)[0]
+        resid_a_cv = alpha_tr - X_a_cv @ c_a_cv
+        if resid_a_cv.std() < 0.3:
+            break
+    
+    X_a_vl = np.column_stack([np.ones_like(t_vl), t_vl] + 
+                              [col for f in a_freqs for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+    alpha_pred_vl = X_a_vl @ c_a_cv
+    
+    # Build beta model with the SAME number of frequencies as the final model
+    X_base_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr])
+    c_base_tr = np.linalg.lstsq(X_base_tr, beta_tr, rcond=None)[0]
+    resid_b_tr = beta_tr - X_base_tr @ c_base_tr
+    
+    b_freqs = []
+    for _ in range(n_use):
+        yf_b = fft(resid_b_tr)
+        xf_b = fftfreq(n_tr, 1.0)
+        power_b = np.abs(yf_b[:n_tr//2])**2
+        freqs_b = xf_b[:n_tr//2]
+        top_b = np.argmax(power_b)
+        f0_b = freqs_b[top_b]
+        def neg_p_b(f):
+            S = np.sin(2*np.pi*f*t_tr)
+            C = np.cos(2*np.pi*f*t_tr)
+            X = np.column_stack([S, C])
+            c = np.linalg.lstsq(X, resid_b_tr, rcond=None)[0]
+            return -np.sum((X @ c)**2)
+        d_b = 1.0/n_tr
+        r_b = minimize_scalar(neg_p_b, bounds=(f0_b-5*d_b, f0_b+5*d_b), method='bounded')
+        fr_b = r_b.x
+        if any(abs(fr_b - s) < 1e-6 for s in b_freqs):
+            break
+        b_freqs.append(fr_b)
+        X_b_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                                  [col for f in b_freqs for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+        c_b_tr = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+        resid_b_tr = beta_tr - X_b_tr @ c_b_tr
+    
+    n_use_cv = min(n_use, len(b_freqs))
+    fu = b_freqs[:n_use_cv]
+    
+    X_b_tr = np.column_stack([np.ones_like(t_tr), t_tr, alpha_tr] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_tr), np.cos(2*np.pi*f*t_tr)]])
+    X_b_vl = np.column_stack([np.ones_like(t_vl), t_vl, alpha_pred_vl] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t_vl), np.cos(2*np.pi*f*t_vl)]])
+    c_b = np.linalg.lstsq(X_b_tr, beta_tr, rcond=None)[0]
+    pred = X_b_vl @ c_b
+    errors = beta_vl - pred
+    distances = t_vl - t_tr[-1]
+    
+    rmse = np.sqrt(np.mean(errors**2))
+    print(f'Frac={frac:.2f}, n_freq={n_use_cv}, val_rmse={rmse:.2f}')
+    
+    for d, e in zip(distances, errors):
+        cv_errors.append((d, e))
+
+cv_errors = np.array(cv_errors)
+overall_cv_rmse = np.sqrt(np.mean(cv_errors[:, 1]**2))
+overall_cv_std = cv_errors[:, 1].std()
+p95_abs = np.percentile(np.abs(cv_errors[:, 1]), 95)
+
+print(f'\nOverall CV RMSE: {overall_cv_rmse:.4f}')
+print(f'Overall CV std: {overall_cv_std:.4f}')
+print(f'95th percentile |error|: {p95_abs:.4f}')
+
+# For 95% prediction interval, use: pred ± 1.96 * overall_cv_std
+# But also need to account for observation noise in the NEW measurement
+# The CV errors already include observation noise (from the validation data)
+# So the total prediction SE is approximately the CV RMSE
+
+# Use CV-based prediction intervals
+pred_se = overall_cv_rmse  # Use RMSE as the prediction standard error
+
+# Make test predictions
+X_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+# 95% prediction interval
+z_crit = norm.ppf(0.975)  # 1.96
+
+results = []
+for i in range(len(t_test)):
+    lower_unwrap = beta_pred_unwrap[i] - z_crit * pred_se
+    upper_unwrap = beta_pred_unwrap[i] + z_crit * pred_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], beta_pred[i], lower, upper))
+    dist = t_test[i] - t[-1]
+    print(f't={t_test[i]} (dist={dist}): pred={beta_pred[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+print(df_out.to_string())
+SCRIPT
 
 ```
 
@@ -3180,6 +8464,138 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import norm
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD ALPHA MODEL (on all data) ============
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+# Predict alpha for test times
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# ============ BUILD BETA MODEL (on all data) ============
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(20):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+n_use = 10
+freqs_final = beta_freqs[:n_use]
+X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+
+# Make test predictions
+X_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+# ============ PREDICTION INTERVALS ============
+# Use the CV-based estimate: RMSE ≈ 7 degrees for the model trained on all data
+# This is a conservative estimate based on the 85% and 90% CV folds
+# Add observation noise (0.6 degrees) for new measurement
+pred_se = 7.0  # Conservative estimate of prediction standard error
+z_crit = norm.ppf(0.975)  # 1.96
+
+results = []
+for i in range(len(t_test)):
+    lower_unwrap = beta_pred_unwrap[i] - z_crit * pred_se
+    upper_unwrap = beta_pred_unwrap[i] + z_crit * pred_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], beta_pred[i], lower, upper))
+    dist = t_test[i] - t[-1]
+    print(f't={t_test[i]} (dist={dist}): pred={beta_pred[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, width={wrap_angle(upper_unwrap)-wrap_angle(lower_unwrap):.2f}')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+print(df_out.to_string())
+SCRIPT
 
 ```
 
@@ -3328,6 +8744,26 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+# Read current predictions
+df = pd.read_csv('predictions.csv')
+print('Current predictions:')
+print(df.to_string())
+print()
+
+# Check that we have the right number of rows
+test = pd.read_csv('data/test.csv')
+print(f'Test rows: {len(test)}')
+print(f'Prediction rows: {len(df)}')
+print(f'Match: {len(df) == len(test)}')
+print()
+
+# Check that t values match
+print(f't values match: {all(df.t.values == test.t.values)}')
+"
 
 ```
 
@@ -3415,6 +8851,163 @@ t values match: True
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import norm
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD ALPHA MODEL (on all data) ============
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+# Predict alpha for test times
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# ============ BUILD BETA MODEL (on all data) ============
+# Combined model: beta = c0 + c1*t + c2*alpha + sinusoidal corrections in t
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(20):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+# Try both 2 and 10 frequencies
+for n_use in [2, 10]:
+    freqs_use = beta_freqs[:n_use]
+    X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                              [col for f in freqs_use for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+    
+    X_test_m = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                                [col for f in freqs_use for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+    pred_unwrap = X_test_m @ coeffs
+    pred = wrap_angle(pred_unwrap)
+    
+    print(f'\nn_use={n_use}:')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i]}: pred={pred[i]:.2f} (unwrap={pred_unwrap[i]:.2f})')
+
+# ============ ALSO TRY DIRECT MODEL (without alpha) ============
+lin_d = np.polyfit(t, beta_unwrap, 1)
+resid_d = beta_unwrap - np.polyval(lin_d, t)
+direct_freqs = []
+for iteration in range(20):
+    yf = fft(resid_d)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_d(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_d, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_d, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in direct_freqs):
+        break
+    direct_freqs.append(f_ref)
+    X_d = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_d = np.linalg.lstsq(X_d, beta_unwrap, rcond=None)[0]
+    resid_d = beta_unwrap - X_d @ c_d
+
+for n_use_d in [8, 10, 12]:
+    fu_d = direct_freqs[:n_use_d]
+    X_full_d = np.column_stack([np.ones_like(t), t] + 
+                                [col for f in fu_d for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_d = np.linalg.lstsq(X_full_d, beta_unwrap, rcond=None)[0]
+    
+    X_test_d = np.column_stack([np.ones_like(t_test), t_test] + 
+                                [col for f in fu_d for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+    pred_unwrap_d = X_test_d @ c_d
+    pred_d = wrap_angle(pred_unwrap_d)
+    
+    print(f'\nDirect n_use={n_use_d}:')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i]}: pred={pred_d[i]:.2f} (unwrap={pred_unwrap_d[i]:.2f})')
+SCRIPT
 
 ```
 
@@ -3557,6 +9150,156 @@ Direct n_use=12:
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD ALPHA MODEL ============
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyfit(t, alpha_unwrap, 1)[0] - np.polyfit(t, alpha_unwrap, 1)[1]*t
+# Better: 
+lin_a_coeffs = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a_coeffs, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# ============ BUILD BETA MODEL ============
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(20):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+# Use 10 frequencies
+n_use = 10
+freqs_final = beta_freqs[:n_use]
+X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+coeffs_final = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+
+p = X_full.shape[1]
+n_obs = N
+MSE = np.sum((beta_unwrap - X_full @ coeffs_final)**2) / (n_obs - p)
+in_sample_rmse = np.sqrt(MSE)
+
+# Inflation factor based on 90% CV split
+cv_rmse_90 = 5.93
+inflation = (cv_rmse_90 / in_sample_rmse)**2
+MSE_inflated = MSE * inflation
+
+print(f'In-sample RMSE: {in_sample_rmse:.4f}')
+print(f'CV RMSE (90% split): {cv_rmse_90:.4f}')
+print(f'Inflation factor: {inflation:.4f}')
+print(f'MSE_inflated: {MSE_inflated:.4f}')
+
+# Make predictions
+X_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                          [col for f in freqs_final for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+beta_pred_unwrap = X_test @ coeffs_final
+beta_pred = wrap_angle(beta_pred_unwrap)
+
+# Prediction intervals using inflated regression formula
+XtX_inv = np.linalg.inv(X_full.T @ X_full)
+t_crit = t_dist.ppf(0.975, n_obs - p)
+
+results = []
+for i in range(len(t_test)):
+    x0 = X_test[i]
+    leverage = x0 @ XtX_inv @ x0
+    pred_se = np.sqrt(MSE_inflated * (1 + leverage))
+    lower_unwrap = beta_pred_unwrap[i] - t_crit * pred_se
+    upper_unwrap = beta_pred_unwrap[i] + t_crit * pred_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], beta_pred[i], lower, upper))
+    dist = t_test[i] - t[-1]
+    print(f't={t_test[i]} (dist={dist}): pred={beta_pred[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, margin={t_crit*pred_se:.2f}, leverage={leverage:.4f}')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+print(df_out.to_string())
+SCRIPT
 
 ```
 
@@ -3658,6 +9401,22 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('predictions.csv:')
+print(df.to_string())
+print(f'\nShape: {df.shape}')
+print(f'Columns: {list(df.columns)}')
+print(f'All t values match test: ', end='')
+
+test = pd.read_csv('data/test.csv')
+print(all(df.t.values == test.t.values))
+print(f'\nAny NaN: {df.isna().any().any()}')
+print(f'All y_pred in [0,360]: {(df.y_pred >= 0).all() and (df.y_pred <= 360).all()}')
+print(f'All y_lower in [0,360]: {(df.y_lower >= 0).all() and (df.y_lower <= 360).all()}')
+print(f'All y_upper in [0,360]: {(df.y_upper >= 0).all() and (df.y_upper <= 360).all()}')
+"
 
 ```
 
@@ -3723,6 +9482,118 @@ All y_upper in [0,360]: True
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+
+# Rebuild the model
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(10):  # 10 frequencies
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+# Check residuals
+print(f'Final residual std: {resid.std():.4f}')
+print(f'Final residual max_abs: {np.abs(resid).max():.4f}')
+
+# Autocorrelation
+resid_norm = resid - resid.mean()
+acorr = np.correlate(resid_norm, resid_norm, mode='full')
+acorr = acorr[len(acorr)//2:]
+acorr = acorr / acorr[0]
+print(f'Autocorrelation at lag 1: {acorr[1]:.4f}')
+print(f'Autocorrelation at lag 7: {acorr[7]:.4f}')
+print(f'Autocorrelation at lag 30: {acorr[30]:.4f}')
+print(f'Autocorrelation at lag 100: {acorr[100]:.4f}')
+
+# Check if residuals are normally distributed
+from scipy.stats import normaltest, shapiro
+stat, p = normaltest(resid)
+print(f'\\nNormality test (D\'Agostino): stat={stat:.4f}, p={p:.6f}')
+
+# Subsample for Shapiro-Wilk test (can't handle > 5000 samples)
+stat2, p2 = shapiro(resid[:5000])
+print(f'Normality test (Shapiro-Wilk): stat={stat2:.4f}, p={p2:.6f}')
+
+# Percentiles of residuals
+for q in [1, 5, 25, 50, 75, 95, 99]:
+    print(f'  {q}th percentile: {np.percentile(resid, q):.4f}')
+SCRIPT
 
 ```
 
@@ -3766,6 +9637,140 @@ Normality test (Shapiro-Wilk): stat=0.9984, p=0.004900
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+
+# Build model with more frequencies (20) and check autocorrelation
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(20):  # 20 frequencies
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+# Check residuals with 20 frequencies
+print(f'20 freqs: residual std={resid.std():.4f}')
+resid_norm = resid - resid.mean()
+acorr = np.correlate(resid_norm, resid_norm, mode='full')
+acorr = acorr[len(acorr)//2:]
+acorr = acorr / acorr[0]
+print(f'Autocorrelation at lag 1: {acorr[1]:.4f}')
+print(f'Autocorrelation at lag 7: {acorr[7]:.4f}')
+print(f'Autocorrelation at lag 30: {acorr[30]:.4f}')
+
+# With 30 frequencies
+beta_freqs30 = list(beta_freqs)
+resid30 = resid.copy()
+for iteration in range(10):  # 10 more
+    yf = fft(resid30)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b30(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid30, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b30, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs30):
+        break
+    beta_freqs30.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs30 for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid30 = beta_unwrap - X_b @ c_b
+
+print(f'\n30 freqs: residual std={resid30.std():.4f}')
+resid_norm30 = resid30 - resid30.mean()
+acorr30 = np.correlate(resid_norm30, resid_norm30, mode='full')
+acorr30 = acorr30[len(acorr30)//2:]
+acorr30 = acorr30 / acorr30[0]
+print(f'Autocorrelation at lag 1: {acorr30[1]:.4f}')
+print(f'Autocorrelation at lag 7: {acorr30[7]:.4f}')
+print(f'Autocorrelation at lag 30: {acorr30[30]:.4f}')
+
+# Observation noise estimate (from 30+ freq model)
+print(f'\nObservation noise estimate (residual std with 30 freqs): {resid30.std():.4f}')
+SCRIPT
 
 ```
 
@@ -3809,6 +9814,120 @@ Observation noise estimate (residual std with 30 freqs): 0.6172
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# Build alpha model on all data
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# Build beta model with many frequencies (on all data)
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid = beta_unwrap - X_base @ c_base
+
+beta_freqs = []
+for iteration in range(30):
+    yf = fft(resid)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_b(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_b, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in beta_freqs):
+        break
+    beta_freqs.append(f_ref)
+    X_b = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in beta_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_b = np.linalg.lstsq(X_b, beta_unwrap, rcond=None)[0]
+    resid = beta_unwrap - X_b @ c_b
+
+print(f'Found {len(beta_freqs)} frequencies, residual std={resid.std():.4f}')
+
+# Predictions with different numbers of frequencies
+for n_use in [10, 20, 30]:
+    fu = beta_freqs[:n_use]
+    X_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                              [col for f in fu for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    coeffs = np.linalg.lstsq(X_full, beta_unwrap, rcond=None)[0]
+    
+    X_test_m = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                                [col for f in fu for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+    pred_unwrap = X_test_m @ coeffs
+    pred = wrap_angle(pred_unwrap)
+    
+    print(f'\nn_use={n_use}:')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i]}: pred={pred[i]:.2f}')
+SCRIPT
 
 ```
 
@@ -3895,7 +10014,7 @@ n_use=30:
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [119] tool
@@ -4003,6 +10122,198 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import t as t_dist
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD ALPHA MODEL ============
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# ============ COMBINED MODEL (alpha + sinusoids) ============
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid_c = beta_unwrap - X_base @ c_base
+combined_freqs = []
+for iteration in range(10):
+    yf = fft(resid_c)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_c(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_c, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_c, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in combined_freqs):
+        break
+    combined_freqs.append(f_ref)
+    X_c = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_c = np.linalg.lstsq(X_c, beta_unwrap, rcond=None)[0]
+    resid_c = beta_unwrap - X_c @ c_c
+
+# ============ DIRECT MODEL (sinusoids only) ============
+lin_d = np.polyfit(t, beta_unwrap, 1)
+resid_d = beta_unwrap - np.polyval(lin_d, t)
+direct_freqs = []
+for iteration in range(10):
+    yf = fft(resid_d)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_d(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_d, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_d, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in direct_freqs):
+        break
+    direct_freqs.append(f_ref)
+    X_d = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_d = np.linalg.lstsq(X_d, beta_unwrap, rcond=None)[0]
+    resid_d = beta_unwrap - X_d @ c_d
+
+# Fit both models on all data
+X_c_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                            [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+c_c_final = np.linalg.lstsq(X_c_full, beta_unwrap, rcond=None)[0]
+
+X_d_full = np.column_stack([np.ones_like(t), t] + 
+                            [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+c_d_final = np.linalg.lstsq(X_d_full, beta_unwrap, rcond=None)[0]
+
+# Predictions
+X_c_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                            [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+pred_c_unwrap = X_c_test @ c_c_final
+pred_c = wrap_angle(pred_c_unwrap)
+
+X_d_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                            [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+pred_d_unwrap = X_d_test @ c_d_final
+pred_d = wrap_angle(pred_d_unwrap)
+
+# Ensemble: average in unwrapped space
+# Need to make sure both predictions are in the same "cycle"
+# Use the combined model as reference
+pred_ens_unwrap = 0.5 * pred_c_unwrap + 0.5 * pred_d_unwrap
+pred_ens = wrap_angle(pred_ens_unwrap)
+
+print('Model comparison:')
+print(f'{"t":>6} {"Combined":>10} {"Direct":>10} {"Ensemble":>10} {"Diff(C-D)":>10}')
+for i in range(len(t_test)):
+    diff = pred_c_unwrap[i] - pred_d_unwrap[i]
+    print(f'{t_test[i]:6d} {pred_c[i]:10.2f} {pred_d[i]:10.2f} {pred_ens[i]:10.2f} {diff:10.2f}')
+
+# Use ensemble predictions
+# For prediction intervals, use the combined model's intervals (which are already computed)
+# but with the ensemble point predictions
+print('\n\nFinal predictions (ensemble with combined model intervals):')
+
+# Recompute intervals using the combined model
+p_c = X_c_full.shape[1]
+n_obs = N
+MSE_c = np.sum((beta_unwrap - X_c_full @ c_c_final)**2) / (n_obs - p_c)
+in_sample_rmse_c = np.sqrt(MSE_c)
+
+# CV-based inflation
+cv_rmse = 5.93  # from 90% split
+inflation = (cv_rmse / in_sample_rmse_c)**2
+MSE_inflated = MSE_c * inflation
+
+XtX_inv = np.linalg.inv(X_c_full.T @ X_c_full)
+t_crit = t_dist.ppf(0.975, n_obs - p_c)
+
+results = []
+for i in range(len(t_test)):
+    x0 = X_c_test[i]
+    leverage = x0 @ XtX_inv @ x0
+    pred_se = np.sqrt(MSE_inflated * (1 + leverage))
+    lower_unwrap = pred_ens_unwrap[i] - t_crit * pred_se
+    upper_unwrap = pred_ens_unwrap[i] + t_crit * pred_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], pred_ens[i], lower, upper))
+    dist = t_test[i] - t[-1]
+    print(f't={t_test[i]} (dist={dist}): pred={pred_ens[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, margin={t_crit*pred_se:.2f}')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+SCRIPT
 
 ```
 
@@ -4085,6 +10396,196 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+from scipy.stats import norm
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+t_test = test.t.values
+
+# ============ BUILD FINAL MODELS ============
+# Alpha model
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# Combined beta model (10 frequencies)
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid_c = beta_unwrap - X_base @ c_base
+combined_freqs = []
+for iteration in range(10):
+    yf = fft(resid_c)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_c(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_c, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_c, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in combined_freqs):
+        break
+    combined_freqs.append(f_ref)
+    X_c = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_c = np.linalg.lstsq(X_c, beta_unwrap, rcond=None)[0]
+    resid_c = beta_unwrap - X_c @ c_c
+
+# Direct beta model (10 frequencies)
+lin_d = np.polyfit(t, beta_unwrap, 1)
+resid_d = beta_unwrap - np.polyval(lin_d, t)
+direct_freqs = []
+for iteration in range(10):
+    yf = fft(resid_d)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_d(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_d, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_d, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in direct_freqs):
+        break
+    direct_freqs.append(f_ref)
+    X_d = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_d = np.linalg.lstsq(X_d, beta_unwrap, rcond=None)[0]
+    resid_d = beta_unwrap - X_d @ c_d
+
+# Fit on all data
+X_c_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                            [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+c_c_final = np.linalg.lstsq(X_c_full, beta_unwrap, rcond=None)[0]
+
+X_d_full = np.column_stack([np.ones_like(t), t] + 
+                            [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+c_d_final = np.linalg.lstsq(X_d_full, beta_unwrap, rcond=None)[0]
+
+# Predictions
+X_c_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                            [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+pred_c_unwrap = X_c_test @ c_c_final
+
+X_d_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                            [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+pred_d_unwrap = X_d_test @ c_d_final
+
+# Ensemble in unwrapped space
+pred_ens_unwrap = 0.5 * pred_c_unwrap + 0.5 * pred_d_unwrap
+pred_ens = wrap_angle(pred_ens_unwrap)
+
+# ============ PREDICTION INTERVALS ============
+# Use a combination of the regression-based interval and an empirical calibration
+# The observation noise is about 0.62 degrees (from 30-freq model)
+# The model error is estimated from CV
+
+# For a 95% prediction interval for a NEW noisy measurement:
+# total_se = sqrt(model_error_var + obs_noise_var)
+# where model_error_var is estimated from CV
+
+# Use a conservative estimate: model_error_se = 7 degrees (based on CV)
+# obs_noise_se = 0.62 degrees
+# total_se = sqrt(49 + 0.38) = 7.0 degrees
+# 95% interval: pred ± 1.96 * 7.0 ≈ ±13.7 degrees
+
+# But I'll also account for the fact that the error grows with extrapolation distance
+# Use: pred_se = base_se + growth_rate * distance
+# where base_se ≈ 3 (for very short extrapolation)
+# and growth_rate ≈ 0.005 (5 degrees per 1000 days)
+
+# These parameters are estimated from the CV results
+base_se = 3.0
+growth_rate = 0.005
+obs_noise = 0.62
+
+results = []
+z_crit = norm.ppf(0.975)
+
+for i in range(len(t_test)):
+    dist = t_test[i] - t[-1]
+    model_se = base_se + growth_rate * dist
+    total_se = np.sqrt(model_se**2 + obs_noise**2)
+    lower_unwrap = pred_ens_unwrap[i] - z_crit * total_se
+    upper_unwrap = pred_ens_unwrap[i] + z_crit * total_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], pred_ens[i], lower, upper))
+    print(f't={t_test[i]} (dist={dist}): pred={pred_ens[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, model_se={model_se:.2f}, total_se={total_se:.2f}, margin={z_crit*total_se:.2f}')
+
+# Write predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+print(df_out.to_string())
+SCRIPT
 
 ```
 
@@ -4279,6 +10780,229 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'SCRIPT'
+import pandas as pd
+import numpy as np
+from scipy.stats import norm
+
+# Read current predictions
+df = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+
+# Current approach: distance-dependent intervals
+# base_se=3.0, growth_rate=0.005
+
+# Alternative: constant se=7.0
+pred_se_const = 7.0
+z_crit = norm.ppf(0.975)
+
+# Recompute with constant SE
+train_end_t = 3044
+
+def wrap_angle(angles_deg):
+    return angles_deg % 360
+
+# Read the point predictions from the current file
+y_preds = df.y_pred.values
+t_test = df.t.values
+
+# Recompute with constant SE (need unwrapped predictions)
+# Let me just use the current predictions as point estimates
+# and recompute intervals
+
+results = []
+for i in range(len(t_test)):
+    dist = t_test[i] - train_end_t
+    margin = z_crit * pred_se_const
+    # Need unwrapped predictions to compute intervals properly
+    # For now, just compute from the wrapped predictions
+    # This won't be perfect for wrapping cases, but it's approximate
+    lower = y_preds[i] - margin
+    upper = y_preds[i] + margin
+    
+    # Handle wrapping
+    if lower < 0:
+        lower += 360
+    if upper >= 360:
+        upper -= 360
+    
+    results.append((t_test[i], y_preds[i], lower, upper))
+
+print('Constant SE approach (se=7.0, margin=13.7):')
+for r in results:
+    print(f'  t={r[0]}: pred={r[1]:.2f}, lower={r[2]:.2f}, upper={r[3]:.2f}')
+
+print('\nCurrent distance-dependent approach:')
+for _, row in df.iterrows():
+    print(f'  t={row.t}: pred={row.y_pred:.2f}, lower={row.y_lower:.2f}, upper={row.y_upper:.2f}')
+
+# The distance-dependent approach gives narrower intervals for short extrapolation
+# and wider intervals for long extrapolation, which seems more appropriate
+
+# Let me refine the parameters:
+# base_se = 4.0, growth_rate = 0.004
+# This gives margins from ~8 to ~21 degrees
+
+print('\nRefined distance-dependent approach (base_se=4.0, growth_rate=0.004):')
+base_se = 4.0
+growth_rate = 0.004
+obs_noise = 0.62
+
+# Need unwrapped predictions - let me recompute them
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+def unwrap_angle(angles_deg):
+    angles_rad = np.deg2rad(angles_deg)
+    unwrapped = np.unwrap(angles_rad)
+    return np.rad2deg(unwrapped)
+
+beta_unwrap = unwrap_angle(train.beta.values)
+alpha_unwrap = unwrap_angle(train.alpha.values)
+t = train.t.values
+N = len(t)
+
+# Rebuild alpha model
+lin_a = np.polyfit(t, alpha_unwrap, 1)
+resid_a = alpha_unwrap - np.polyval(lin_a, t)
+alpha_freqs = []
+for iteration in range(40):
+    yf = fft(resid_a)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_a(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_a, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_a, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+        yf[top_idx] = 0
+        yf[N-top_idx] = 0
+        power_new = np.abs(yf[:N//2])**2
+        next_idx = np.argmax(power_new)
+        f0_next = freqs[next_idx]
+        result_next = minimize_scalar(neg_power_a, bounds=(f0_next-5*df, f0_next+5*df), method='bounded')
+        f_ref = result_next.x
+        if any(abs(f_ref - sf) < 1e-6 for sf in alpha_freqs):
+            break
+    alpha_freqs.append(f_ref)
+    X_a = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_a = np.linalg.lstsq(X_a, alpha_unwrap, rcond=None)[0]
+    resid_a = alpha_unwrap - X_a @ c_a
+    if resid_a.std() < 0.3:
+        break
+
+X_a_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                             [col for f in alpha_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+alpha_pred_test = X_a_test @ c_a
+
+# Combined model
+X_base = np.column_stack([np.ones_like(t), t, alpha_unwrap])
+c_base = np.linalg.lstsq(X_base, beta_unwrap, rcond=None)[0]
+resid_c = beta_unwrap - X_base @ c_base
+combined_freqs = []
+for iteration in range(10):
+    yf = fft(resid_c)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_c(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_c, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_c, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in combined_freqs):
+        break
+    combined_freqs.append(f_ref)
+    X_c = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                           [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_c = np.linalg.lstsq(X_c, beta_unwrap, rcond=None)[0]
+    resid_c = beta_unwrap - X_c @ c_c
+
+# Direct model
+lin_d = np.polyfit(t, beta_unwrap, 1)
+resid_d = beta_unwrap - np.polyval(lin_d, t)
+direct_freqs = []
+for iteration in range(10):
+    yf = fft(resid_d)
+    xf = fftfreq(N, 1.0)
+    power = np.abs(yf[:N//2])**2
+    freqs = xf[:N//2]
+    top_idx = np.argmax(power)
+    f0 = freqs[top_idx]
+    def neg_power_d(f):
+        S = np.sin(2*np.pi*f*t)
+        C = np.cos(2*np.pi*f*t)
+        X = np.column_stack([S, C])
+        c = np.linalg.lstsq(X, resid_d, rcond=None)[0]
+        return -np.sum((X @ c)**2)
+    df = 1.0/N
+    result = minimize_scalar(neg_power_d, bounds=(f0-5*df, f0+5*df), method='bounded')
+    f_ref = result.x
+    if any(abs(f_ref - sf) < 1e-6 for sf in direct_freqs):
+        break
+    direct_freqs.append(f_ref)
+    X_d = np.column_stack([np.ones_like(t), t] + 
+                           [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+    c_d = np.linalg.lstsq(X_d, beta_unwrap, rcond=None)[0]
+    resid_d = beta_unwrap - X_d @ c_d
+
+X_c_full = np.column_stack([np.ones_like(t), t, alpha_unwrap] + 
+                            [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+c_c_final = np.linalg.lstsq(X_c_full, beta_unwrap, rcond=None)[0]
+
+X_d_full = np.column_stack([np.ones_like(t), t] + 
+                            [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]])
+c_d_final = np.linalg.lstsq(X_d_full, beta_unwrap, rcond=None)[0]
+
+X_c_test = np.column_stack([np.ones_like(t_test), t_test, alpha_pred_test] + 
+                            [col for f in combined_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+pred_c_unwrap = X_c_test @ c_c_final
+
+X_d_test = np.column_stack([np.ones_like(t_test), t_test] + 
+                            [col for f in direct_freqs for col in [np.sin(2*np.pi*f*t_test), np.cos(2*np.pi*f*t_test)]])
+pred_d_unwrap = X_d_test @ c_d_final
+
+# Ensemble
+pred_ens_unwrap = 0.5 * pred_c_unwrap + 0.5 * pred_d_unwrap
+pred_ens = wrap_angle(pred_ens_unwrap)
+
+# Refined prediction intervals
+results = []
+for i in range(len(t_test)):
+    dist = t_test[i] - t[-1]
+    model_se = base_se + growth_rate * dist
+    total_se = np.sqrt(model_se**2 + obs_noise**2)
+    lower_unwrap = pred_ens_unwrap[i] - z_crit * total_se
+    upper_unwrap = pred_ens_unwrap[i] + z_crit * total_se
+    lower = wrap_angle(lower_unwrap)
+    upper = wrap_angle(upper_unwrap)
+    results.append((t_test[i], pred_ens[i], lower, upper))
+    print(f't={t_test[i]} (dist={dist}): pred={pred_ens[i]:.2f}, lower={lower:.2f}, upper={upper:.2f}, margin={z_crit*total_se:.2f}')
+
+# Write final predictions
+df_out = pd.DataFrame(results, columns=['t', 'y_pred', 'y_lower', 'y_upper'])
+df_out.to_csv('predictions.csv', index=False)
+print('\nFinal predictions written to predictions.csv')
+print(df_out.to_string())
+SCRIPT
 
 ```
 
@@ -4374,6 +11098,18 @@ Final predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Final predictions:')
+print(df.to_string())
+print(f'\nShape: {df.shape}')
+print(f'Columns: {list(df.columns)}')
+
+test = pd.read_csv('data/test.csv')
+print(f't values match: {all(df.t.values == test.t.values)}')
+print(f'Number of rows: {len(df)}')
+"
 
 ```
 

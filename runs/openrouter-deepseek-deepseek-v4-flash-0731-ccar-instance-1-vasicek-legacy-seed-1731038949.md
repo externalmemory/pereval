@@ -56,13 +56,13 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+cd /workspace 2>/dev/null || cd ~; pwd; ls -la; find . -name "*.csv" 2>/dev/null | head
 ```
 
 **tool call: bash**
 
 ```
-
+find / -name "train.csv" 2>/dev/null | head; find / -name "scenario.csv" 2>/dev/null | head
 ```
 
 ## [3] tool
@@ -87,7 +87,7 @@ drwxr-xr-x 2 root root 4096 Aug 11 05:15 data
 **tool call: bash**
 
 ```
-
+cd /workspace; cat data/train.csv; echo "---SCENARIO---"; cat data/scenario.csv
 ```
 
 ## [6] tool
@@ -2443,7 +2443,19 @@ RF importance: {'gdp': np.float64(0.068), 'unemployment': np.float64(0.446), 'hp
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+sc=pd.read_csv('data/scenario.csv')
+p=pd.read_csv('predictions.csv')
+print('train default mean/median/std:', round(tr.default_rate.mean(),4), round(tr.default_rate.median(),4), round(tr.default_rate.std(),4))
+print('train unemp mean/median:', round(tr.unemployment.mean(),3), round(tr.unemployment.median(),3))
+print('scenario unemp:', sc.unemployment.round(2).tolist())
+print()
+print(p)
+print('columns:', list(p.columns))
+print('n rows:', len(p), '== scenario rows:', len(sc))
+"
 ```
 
 ## [54] tool
@@ -2713,7 +2725,16 @@ I've done thorough analysis: unemployment is the only stable, correctly-signed d
 **tool call: bash**
 
 ```
-
+cd /workspace; cat predictions.csv; echo; python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); s=pd.read_csv('data/scenario.csv')
+assert list(p.columns)==['quarter','y_pred','y_lower','y_upper'], p.columns
+assert len(p)==len(s)==9
+assert (p.quarter.values==s.quarter.values).all()
+assert (p.y_lower<=p.y_pred).all() and (p.y_pred<=p.y_upper).all()
+assert (p.y_lower>=0).all() and (p.y_upper<=1).all()
+print('OK: format valid, intervals cover point estimates')
+"
 ```
 
 ## [60] tool
@@ -2780,7 +2801,7 @@ My analysis is complete. Let me summarize my approach and confirm the final deli
 **tool call: bash**
 
 ```
-
+cd /workspace; echo "Final predictions.csv:"; cat predictions.csv; echo; wc -l predictions.csv
 ```
 
 ## [62] tool

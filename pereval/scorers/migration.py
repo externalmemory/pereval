@@ -1,14 +1,25 @@
-"""Score a projected rating-migration cohort on four equally weighted components.
+"""Score a projected rating-migration cohort on four equally weighted components
+per scenario.
 
 The submission is the original cohort's distribution over seven rating grades
-plus default, at two checkpoint quarters. From it the scorer derives four
-components:
+plus default, at two checkpoint quarters, under each of three scenarios that
+share one history and one estimated model. From it the scorer derives four
+components per scenario:
 
     KS on the live grades at quarter 4 and at quarter 9
     the cumulative default rate at quarter 4 and at quarter 9
 
 Two components for migration shape, two for loss, and both checkpoints, so the
-trajectory is tested rather than just the endpoint.
+trajectory is tested rather than just the endpoint. Twelve in all, averaged.
+
+The three scenarios share the fit, so their errors are strongly correlated and
+the average is one observation of modelling skill rather than three. What the
+breakdown buys is the gradient. The severe path drives the systematic factor
+outside the range the model was estimated on, so a model that interpolates its
+own sample scores well on baseline and badly on severe, and the aggregate hides
+that. Measured on the one-factor reference over twelve instances the
+per-scenario composites run 0.228, 0.284 and 0.343, monotone in severity, which
+is the extrapolation penalty the single-scenario design could not see at all.
 
 Why they are split. A sup-norm distance over the whole eight-state distribution
 can mask the default error: the supremum is usually attained mid-distribution
@@ -26,9 +37,11 @@ components the degenerate predicts zero defaults, so the ratio is exactly the
 relative error. The composite is the plain mean of the four, which gives each
 equal weight by construction rather than by a chosen constant.
 
-Measured on the one-factor reference over twelve instances, the four components
-come out at 0.159, 0.104, 0.131 and 0.167, so the normalisation does equalise
-them in practice and no single component drives the composite.
+Measured on the one-factor reference over twelve instances, the twelve
+components run from 0.160 to 0.384, with the KS and default pairs within a
+scenario close to each other at every severity, so the normalisation does
+equalise them in practice and no single component drives the composite. The
+spread that remains is severity, not scale.
 
 Hosmer-Lemeshow is reported alongside as a diagnostic. It separates the
 reference from the degenerate by 172x against KS's 12x, and it is not merely
@@ -53,6 +66,12 @@ ORDER = ("AAA", "AA", "A", "BBB", "BB", "B", "CCC/C", "D")
 LIVE_STATES = ORDER[:-1]
 D_INDEX = len(LIVE_STATES)
 
+#: Scenario names the key contract is written against. A task that carries a
+#: different set still scores, but Inspect aggregates a keyed metric by pulling
+#: the key from every sample, so the REPORTED_KEYS list has to be fixed at import
+#: time and these are the names it is fixed to.
+SCENARIO_KEYS = ("baseline", "adverse", "severe")
+
 #: A component is capped at this multiple of the degenerate answer, so one
 #: blown-out component cannot swamp the other three. A valid but poor answer can
 #: still score far worse than the degenerate, as elsewhere in the suite.
@@ -66,6 +85,33 @@ PROMINENCE_FLOOR = 0.25
 #: Floor on a degenerate value before dividing, for instances where the
 #: uninformative answer happens to be nearly right on one component.
 DEGENERATE_FLOOR = 1e-4
+
+#: Near-tie tolerance wherever an ordering is read off submitted numbers,
+#: relative plus absolute. An agent writes its matrices to a CSV at whatever
+#: precision it chooses, and six decimals on a default probability of 1e-3
+#: leaves differences between adjacent quarters at the rounding step. Without a
+#: relative floor those rounded ties flip at random and a compliant submission
+#: reads a non-zero discordance.
+TIE_TOL_REL = 1e-6
+TIE_TOL_ABS = 1e-9
+
+#: Notch bands the shape diagnostics are cut on, as offsets from the diagonal
+#: inside the live block. `NEAR` is the adjacent grade, which every method gets
+#: roughly right and which therefore serves as the control. `FAR` is three
+#: grades or worse, the upper right corner of the matrix. The scale is seven
+#: rating CATEGORIES rather than notches, so a far cell exists only in the top
+#: four rows and there are ten of them in all: four from AAA, three from AA, two
+#: from A and one from BBB.
+NEAR_NOTCHES = 1
+FAR_NOTCHES = 3
+
+
+def _tied(a: float, b: float) -> bool:
+    """Equal to the precision a rounded CSV can carry. Used by every statistic
+    here that reads an ordering off submitted numbers, so that a submission
+    written to four decimal places is not credited with distinctions it did not
+    make."""
+    return abs(a - b) <= TIE_TOL_ABS + TIE_TOL_REL * max(abs(a), abs(b))
 
 
 def ks_distance(pred: np.ndarray, truth: np.ndarray) -> float:
@@ -85,82 +131,124 @@ def _live(v: np.ndarray) -> np.ndarray:
     return live / total if total > 0 else np.full(D_INDEX, 1.0 / D_INDEX)
 
 
-def parse_predictions(text: str | None) -> dict[int, np.ndarray]:
-    """quarter,state,share rows into normalised 8-vectors, or {} if unusable."""
+def parse_predictions(text: str | None) -> dict[str, dict[int, np.ndarray]]:
+    """scenario,quarter,state,share rows into {scenario: {quarter: 8-vector}}.
+
+    A malformed file is rejected whole, which couples the three scenarios: one
+    unreadable row costs all of them. That is deliberate. The submission is one
+    artefact produced by one model, and a file that cannot be parsed is a
+    completeness failure rather than a partially correct answer. The scorer still
+    falls back to the degenerate for a scenario or checkpoint that is simply
+    absent, so an agent that runs out of budget after two scenarios keeps credit
+    for the two it finished.
+    """
     if not text:
         return {}
-    raw: dict[int, dict[str, float]] = {}
-    seen: set[tuple[int, str]] = set()
+    raw: dict[tuple[str, int], dict[str, float]] = {}
+    seen: set[tuple[str, int, str]] = set()
     for row in csv.DictReader(io.StringIO(text)):
         try:
+            scen = str(row["scenario"]).strip()
             q = int(float(row["quarter"]))
             state = str(row["state"]).strip()
             share = float(row["share"])
         except (KeyError, TypeError, ValueError):
             return {}
-        if (q, state) in seen or state not in ORDER:
+        if (scen, q, state) in seen or state not in ORDER:
             return {}
-        seen.add((q, state))
-        raw.setdefault(q, {})[state] = share
-    out = {}
-    for q, d in raw.items():
+        seen.add((scen, q, state))
+        raw.setdefault((scen, q), {})[state] = share
+    out: dict[str, dict[int, np.ndarray]] = {}
+    for (scen, q), d in raw.items():
         if set(d) != set(ORDER):
             return {}
-        v = np.array([d[s] for s in ORDER], dtype=float)
+        v = np.array([d[st] for st in ORDER], dtype=float)
         if not np.isfinite(v).all() or (v < 0).any():
             return {}
         total = v.sum()
         if not 0.5 <= total <= 1.5:
             return {}
-        out[q] = v / total
+        out.setdefault(scen, {})[q] = v / total
     return out
 
 
 def score_predictions(truth: dict, text: str | None) -> dict[str, float]:
-    """truth needs rating_distribution (per checkpoint, 8 states) and start_mix."""
-    dists = {int(q): np.array([v[s] for s in ORDER], dtype=float)
-             for q, v in truth["rating_distribution"].items()}
+    """truth needs `scenarios` (per name: rating_distribution) and start_mix.
+
+    Four components per scenario, two per checkpoint, averaged over all of them.
+    The three scenarios share one model, so their component errors are strongly
+    correlated and averaging them is noise reduction on one draw of modelling
+    skill, not three independent draws. What the per-scenario breakdown is for is
+    reading WHERE a model fails: the severe path runs outside the historical
+    range of the factor, so a model that interpolates its own sample scores well
+    on baseline and badly on severe, and the aggregate alone would hide that.
+    """
+    names = list(truth.get("scenario_names") or truth["scenarios"])
     start = np.array([truth["start_mix"].get(s, 0.0) for s in ORDER], dtype=float)
     preds = parse_predictions(text)
-    quarters = sorted(dists)
 
     raw, degen, norm = {}, {}, {}
-    for q in quarters:
-        t = dists[q]
-        d_true = float(t[D_INDEX])
-        degen[f"ks_q{q}"] = max(ks_distance(_live(start), _live(t)), DEGENERATE_FLOOR)
-        degen[f"default_q{q}"] = max(abs(0.0 - d_true), DEGENERATE_FLOOR)
-        p = preds.get(q)
-        if p is None:
-            raw[f"ks_q{q}"] = degen[f"ks_q{q}"]
-            raw[f"default_q{q}"] = degen[f"default_q{q}"]
-        else:
-            raw[f"ks_q{q}"] = ks_distance(_live(p), _live(t))
-            raw[f"default_q{q}"] = abs(float(p[D_INDEX]) - d_true)
+    per_scenario: dict[str, list[str]] = {}
+    quarters_by: dict[str, list[int]] = {}
+    for name in names:
+        dists = {int(q): np.array([v[st] for st in ORDER], dtype=float)
+                 for q, v in truth["scenarios"][name]["rating_distribution"].items()}
+        quarters_by[name] = sorted(dists)
+        keys = []
+        for q in quarters_by[name]:
+            t = dists[q]
+            d_true = float(t[D_INDEX])
+            ks_key, pd_key = f"ks_{name}_q{q}", f"default_{name}_q{q}"
+            degen[ks_key] = max(ks_distance(_live(start), _live(t)), DEGENERATE_FLOOR)
+            degen[pd_key] = max(abs(0.0 - d_true), DEGENERATE_FLOOR)
+            p = preds.get(name, {}).get(q)
+            if p is None:
+                raw[ks_key] = degen[ks_key]
+                raw[pd_key] = degen[pd_key]
+            else:
+                raw[ks_key] = ks_distance(_live(p), _live(t))
+                raw[pd_key] = abs(float(p[D_INDEX]) - d_true)
+            keys.extend((ks_key, pd_key))
+        per_scenario[name] = keys
 
     for k, v in raw.items():
         norm[k] = min(v / degen[k], COMPONENT_CAP)
 
-    missing = sum(1 for q in quarters if q not in preds)
+    cells = [(name, q) for name in names for q in quarters_by[name]]
+    missing = sum(1 for name, q in cells if q not in preds.get(name, {}))
     result = {
-        "score": float(np.mean(list(norm.values()))),
+        "score": float(np.mean([norm[k] for k in norm])),
         "score_degenerate": 1.0,
-        "completion": 1.0 - missing / len(quarters),
+        "completion": 1.0 - missing / len(cells),
         "runs": 1.0,
         "regret_spread": 0.0,
     }
     result["regret_worst"] = result["score"]
+    for name in names:
+        result[f"score_{name}"] = float(np.mean([norm[k] for k in per_scenario[name]]))
     for k in raw:
         result[f"{k}_norm"] = norm[k]
         result[f"{k}_raw"] = raw[k]
-    if not missing:
-        last = max(quarters)
-        result["default_rate_predicted"] = float(preds[last][D_INDEX])
-        result["default_rate_true"] = float(dists[last][D_INDEX])
-        result["default_rate_bias"] = (result["default_rate_predicted"]
-                                       - result["default_rate_true"])
-        result["hosmer_lemeshow"] = float(np.mean(
-            [hosmer_lemeshow(_live(preds[q]), _live(dists[q])) for q in quarters]))
+
+    # Signed default bias and Hosmer-Lemeshow, over the scenarios that are
+    # complete. A scenario the agent never got to contributes nothing rather than
+    # a zero, which would read as unbiased.
+    biases, hl = [], []
+    for name in names:
+        qs = quarters_by[name]
+        got = preds.get(name, {})
+        if any(q not in got for q in qs):
+            continue
+        dists = {int(q): np.array([v[st] for st in ORDER], dtype=float)
+                 for q, v in truth["scenarios"][name]["rating_distribution"].items()}
+        last = max(qs)
+        bias = float(got[last][D_INDEX]) - float(dists[last][D_INDEX])
+        biases.append(bias)
+        result[f"default_rate_bias_{name}"] = bias
+        hl.extend(hosmer_lemeshow(_live(got[q]), _live(dists[q])) for q in qs)
+    if biases:
+        result["default_rate_bias"] = float(np.mean(biases))
+        result["hosmer_lemeshow"] = float(np.mean(hl))
     return result
 
 
@@ -168,8 +256,8 @@ def score_predictions(truth: dict, text: str | None) -> dict[str, float]:
 MATRIX_COLS = tuple(f"to_{s.replace('/', '_')}" for s in ORDER)
 
 
-def parse_matrices(text: str | None) -> dict[int, np.ndarray]:
-    """quarter,from_rating,to_* rows into {quarter: 8x8}. Permissive on purpose.
+def parse_matrices(text: str | None) -> dict[str, dict[int, np.ndarray]]:
+    """scenario,quarter,from_rating,to_* rows into {scenario: {quarter: 8x8}}.
 
     This parser does NOT reject a matrix for being inadmissible. Negative mass,
     rows that miss one, exact zeros and non-monotone default are exactly what the
@@ -178,9 +266,10 @@ def parse_matrices(text: str | None) -> dict[int, np.ndarray]:
     """
     if not text:
         return {}
-    raw: dict[int, dict[str, np.ndarray]] = {}
+    raw: dict[tuple[str, int], dict[str, np.ndarray]] = {}
     for row in csv.DictReader(io.StringIO(text)):
         try:
+            scen = str(row["scenario"]).strip()
             q = int(float(row["quarter"]))
             frm = str(row["from_rating"]).strip()
             vals = np.array([float(row[c]) for c in MATRIX_COLS], dtype=float)
@@ -188,21 +277,80 @@ def parse_matrices(text: str | None) -> dict[int, np.ndarray]:
             return {}
         if frm not in LIVE_STATES or not np.isfinite(vals).all():
             return {}
-        raw.setdefault(q, {})[frm] = vals
-    out = {}
-    for q, rows in raw.items():
+        raw.setdefault((scen, q), {})[frm] = vals
+    out: dict[str, dict[int, np.ndarray]] = {}
+    for (scen, q), rows in raw.items():
         if set(rows) != set(LIVE_STATES):
             continue
         m = np.zeros((len(ORDER), len(ORDER)))
         for i, st in enumerate(LIVE_STATES):
             m[i] = rows[st]
         m[D_INDEX, D_INDEX] = 1.0
-        out[q] = m
+        out.setdefault(scen, {})[q] = m
     return out
 
 
+def one_model_discordance(mats: dict[str, dict[int, np.ndarray]],
+                          weights: np.ndarray) -> tuple[float, int]:
+    """Fraction of rating-pair orderings that no single-factor model could produce.
+
+    The instructions ask for one model estimated on one history, applied to three
+    scenario paths. Nothing in the submitted matrices says which model produced
+    them, so compliance has to be inferred from a property the asked-for model
+    has and some departures from it do not.
+
+    That property is comonotonicity. Under any one-factor threshold-shift law the
+    whole matrix is a monotone function of a single scalar, so if one quarter is
+    worse than another for the portfolio as a whole it is worse for EVERY rating
+    at once; the grades cannot cross. Order the submitted matrices by their
+    portfolio-weighted default probability and the per-rating default
+    probabilities must agree with that order.
+
+    Read as zero against non-zero, not as a magnitude. The one-factor reference
+    reads exactly 0.0 over 2457 comparable pairs, so any violation at all is a
+    finding, and the measured magnitudes are small: re-estimating the base matrix
+    on the severe scenario alone reads 0.77%, a scenario-specific overlay applied
+    to the speculative grades 0.81%, a flat one point add-on 0.12%.
+
+    The blind spot is the important part, and it is the commonest case. A model
+    re-estimated per scenario that stays inside the same one-factor family, so
+    that only the macro coefficients and hence z differ, reads exactly 0.00%:
+    scaling the severe path's factor by 0.6 leaves every grade's ordering intact
+    because the family is comonotone whatever z does. So this statistic detects a
+    change of FORM, not a change of fit. It cannot certify compliance, and a
+    submission reading zero has not been shown to use one model.
+
+    Returned as the fraction of comparable pairs that are discordant, with the
+    number of pairs, so a reader can tell a clean submission from one with too
+    few matrices to judge. It is a diagnostic and does not enter `score`.
+    """
+    flat = [m for scen in sorted(mats) for _, m in sorted(mats[scen].items())]
+    if len(flat) < 2:
+        return float("nan"), 0
+    w = weights[:D_INDEX]
+    w = w / w.sum() if w.sum() > 0 else np.full(D_INDEX, 1.0 / D_INDEX)
+    pds = np.array([m[:D_INDEX, D_INDEX] for m in flat], dtype=float)
+    ref = pds @ w
+    tied = _tied
+
+    discordant = pairs = 0
+    for i in range(len(flat)):
+        for j in range(i + 1, len(flat)):
+            if tied(ref[i], ref[j]):
+                continue
+            sign = np.sign(ref[i] - ref[j])
+            for r in range(D_INDEX):
+                if tied(pds[i, r], pds[j, r]):
+                    continue
+                pairs += 1
+                discordant += int(np.sign(pds[i, r] - pds[j, r]) != sign)
+    if not pairs:
+        return float("nan"), 0
+    return discordant / pairs, pairs
+
+
 def matrix_diagnostics(text: str | None, start: np.ndarray,
-                       submitted: dict[int, np.ndarray],
+                       submitted: dict[str, dict[int, np.ndarray]],
                        checkpoints) -> dict[str, float]:
     """Admissibility of the submitted quarterly matrices, reported not scored.
 
@@ -213,14 +361,21 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
     worsens, and that the documented model must actually reproduce the reported
     projection.
 
+    The admissibility statistics pool every matrix of every scenario, because
+    each is a per-matrix property and a defect is a defect wherever it sits. The
+    monotonicity check is therefore run inside each scenario separately and then
+    summed, which is the form the check has to take: comparing grades across
+    scenarios would confound credit quality with severity.
+
     None of this enters `score`. It is measurement, pending a decision on whether
     and how admissibility should affect the headline number.
     """
     mats = parse_matrices(text)
     if not mats:
         return {"matrix_provided": 0.0}
-    quarters = sorted(mats)
-    live = [mats[q][:D_INDEX] for q in quarters]
+    per_scenario = {scen: sorted(mats[scen]) for scen in sorted(mats)}
+    live = [mats[scen][q][:D_INDEX] for scen in per_scenario
+            for q in per_scenario[scen]]
     stacked = np.concatenate(live, axis=0)
 
     row_err = float(np.max(np.abs(stacked.sum(axis=1) - 1.0)))
@@ -232,7 +387,8 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
     zeros = int(zero_mask.sum())
     smallest_positive = float(stacked[stacked > 0].min()) if (stacked > 0).any() else 0.0
 
-    # default probability must not fall as credit quality worsens
+    # default probability must not fall as credit quality worsens, within a
+    # scenario quarter
     violations, checks = 0, 0
     for m in live:
         pd = m[:, D_INDEX]
@@ -258,12 +414,14 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
     rows_valid = row_err <= 1e-6
     nonneg = negatives == 0
     admissible = rows_valid and nonneg and zeros == 0 and violations == 0
+    quarters_per = {len(v) for v in per_scenario.values()}
     out = {
         "matrix_provided": 1.0,
         "matrix_rows_valid": float(rows_valid),
         "matrix_nonnegative": float(nonneg),
         "matrix_admissible": float(admissible),
-        "matrix_quarters": float(len(quarters)),
+        "matrix_scenarios": float(len(per_scenario)),
+        "matrix_quarters": float(min(quarters_per)),
         "matrix_row_sum_error": row_err,
         "matrix_rows_off_one": float(np.sum(np.abs(stacked.sum(axis=1) - 1.0) > 1e-6)),
         "matrix_negative_cells": float(negatives),
@@ -273,18 +431,250 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
         "matrix_default_monotonicity_violations": float(violations),
         "matrix_monotonicity_checks": float(checks),
     }
+    discord, pairs = one_model_discordance(mats, start)
+    out["matrix_one_model_discordance"] = discord
+    out["matrix_one_model_pairs"] = float(pairs)
 
     # does the documented model reproduce the reported projection?
-    if submitted and len(quarters) >= max(checkpoints):
+    gaps = []
+    for scen, quarters in per_scenario.items():
+        got = submitted.get(scen, {})
+        if not got or len(quarters) < max(checkpoints):
+            continue
         v = start.copy()
-        gaps = []
         for t, q in enumerate(quarters, start=1):
-            v = v @ mats[q]
-            if t in checkpoints and t in submitted:
-                gaps.append(ks_distance(v, submitted[t]))
-        if gaps:
-            out["matrix_submission_gap"] = float(np.mean(gaps))
+            v = v @ mats[scen][q]
+            if t in checkpoints and t in got:
+                gaps.append(ks_distance(v, got[t]))
+    if gaps:
+        out["matrix_submission_gap"] = float(np.mean(gaps))
     return out
+
+
+def _row_weights(start: np.ndarray) -> np.ndarray:
+    """The published cohort mix over live grades, renormalised to one.
+
+    Rows are weighted by it throughout the shape diagnostics, because the
+    question a reviewer asks is how much of THIS portfolio the matrix sends
+    three grades down, not how distorted the AAA row is in isolation. AAA holds
+    1% of the book and BBB holds 40%, and an unweighted sum would let the
+    thinnest row drive the statistic.
+    """
+    w = np.asarray(start, dtype=float)[:D_INDEX]
+    return w / w.sum() if w.sum() > 0 else np.full(D_INDEX, 1.0 / D_INDEX)
+
+
+def _band_masses(m: np.ndarray, w: np.ndarray) -> tuple[float, float]:
+    """Mix-weighted near and far DOWNGRADE mass, over the rows that have both.
+
+    Default is excluded. It is an absorbing state at the bottom of the scale
+    rather than a grade three notches down, it is already scored directly in two
+    of the twelve components, and including it would let a correct default
+    column hide a collapsed migration tail.
+
+    Both bands are summed over the same rows, the top four, so that their ratio
+    is a statement about shape and not about which rows happen to be included.
+    """
+    near = far = 0.0
+    for i in range(D_INDEX - FAR_NOTCHES):
+        near += w[i] * float(m[i, i + NEAR_NOTCHES])
+        far += w[i] * float(m[i, i + FAR_NOTCHES:D_INDEX].sum())
+    return near, far
+
+
+def _downgrade_mass(m: np.ndarray, w: np.ndarray) -> float:
+    """Mix-weighted probability of any downgrade, default excluded.
+
+    Over every row that has a worse grade to move to, so CCC/C contributes
+    nothing. Default is excluded deliberately: the point of the statistic is to
+    ask whether the MIGRATION body responds to the macro path, and a model that
+    moves only its default column would otherwise pass on the strength of the
+    one column that is already scored.
+    """
+    return float(sum(w[i] * m[i, i + 1:D_INDEX].sum() for i in range(D_INDEX - 1)))
+
+
+def notch_diagnostics(text: str | None, start: np.ndarray,
+                      truth: dict) -> dict[str, float]:
+    """Shape of the submitted matrices: the far corner, and the macro response.
+
+    Two questions that nothing else here asks, both reported and neither scored.
+
+    FIRST, the upper right corner. A quarterly matrix obtained by rooting or
+    exponentiating an annual one carries multi-grade mass correctly, because that
+    operation is the exact inverse of compounding. What does not survive is the
+    CONDITIONING: under the threshold-shift law that generates these instances,
+    a worse factor moves every threshold at once, so the far cells grow faster
+    than the near ones. Measured on the oracle at rho 0.109, the share of AAA
+    downgrade mass that travels two grades or more runs 0.033 at z = 0 and 0.147
+    at z = 4, and the absolute three-grade-or-worse mass grows by more than an
+    order of magnitude over the same range. A model that freezes its migration
+    body and moves only the default column keeps that share fixed, and the
+    distortion is concentrated exactly where the user of a stress test looks:
+    the investment-grade rows, in the trough quarters.
+
+    `matrix_down3_ratio` is the submitted far mass over the oracle's, pooled over
+    every scenario and quarter. Pooling the two sums rather than averaging their
+    ratios is deliberate: the denominator is largest in the stressed quarters, so
+    those quarters dominate without any need to choose a stress window.
+
+    `matrix_down1_ratio` is the same ratio on the adjacent-grade band, over the
+    same rows, and it is the control. A model that is uniformly too mild reads
+    low on both. `matrix_down3_shape` divides the far ratio by the near ratio and
+    is therefore blind to a uniform error of level: it reads about one when the
+    far corner is no more distorted than the body, and well below one when the
+    tail specifically has been thinned.
+
+    The far ratio is an exact measurement rather than a proxy. Thinning the
+    oracle's far corner to a fixed fraction of itself and folding the remainder
+    into the two-notch cell, so that rows still close and the default column is
+    untouched, makes it read that fraction back: 0.750, 0.500, 0.250, 0.100 and
+    0.000 for those five submissions, identically on all twelve instances. What
+    bounds the usable sensitivity is not the statistic but the scatter of an
+    honest estimate. Over twelve instances the shipped one-factor reference reads
+    0.55 to 4.09 on the far ratio and 0.74 to 3.42 on the shape, with medians
+    1.31 and 1.57; it OVERSTATES the far corner, because it estimates its base
+    from twenty years that contain stressed ones and so inherits a tail fattened
+    by the cycle. So a reading below about 0.5 is a finding and a reading above
+    one is not, which is the same one-sided convention the stress diagnostics
+    use. That calibration is seed-set dependent and should not be promoted to a
+    gate as it stands: these twelve instances are `generate(seed=k)` for k in
+    1..12, and over the first twelve the task actually draws the reference reads
+    0.354 to 5.079 with median 1.043, dipping below 0.5 on one of them. See
+    docs/tasks/migration.md.
+
+    The score cannot do this work. Collapsing the far corner entirely moves the
+    composite from 0.000-0.003 to 0.011-0.020 over those twelve instances,
+    against a reference composite of 0.285. A submission can abolish every
+    three-notch downgrade and still score two orders of magnitude better than the
+    anchor, which is why this is measured separately and why it is measured
+    against the oracle rather than inferred from the projection.
+
+    SECOND, whether the migration body moves with the macros at all. Default is
+    excluded from every statistic in this group, so a model cannot pass on the
+    strength of a default column it fitted separately.
+
+    `matrix_downgrade_concordance` is the fraction of matrix pairs, ordered by
+    the true factor, whose submitted downgrade mass moves the same way as the
+    factor. A near-tie counts as DISCORDANT here, which is the opposite of the
+    convention in `one_model_discordance` and is the point: a frozen body is the
+    failure being looked for, so it has to read zero rather than drop out for
+    want of comparable pairs. `matrix_downgrade_slope` separates a flat body from
+    a perverse one, since both read zero on concordance; it is the slope of log
+    downgrade mass on the factor, an elasticity, with the oracle's slope reported
+    beside it for scale. `matrix_downgrade_response` is the cruder version a
+    reviewer can check by hand, the downgrade mass in the worst quarter divided
+    by the mass in the mildest.
+
+    Measured over twelve instances on 351 comparable pairs each: the oracle reads
+    concordance 1.000 and a slope of 0.72 to 1.12. A model that holds its
+    migration body at the long-run average and moves only the default column
+    reads concordance 0.000 on every instance, with a slope of -0.022 to -0.0015,
+    flat to within noise and faintly perverse because renormalising the row to
+    absorb a rising default probability shrinks every migration cell. The shipped
+    reference reads 0.846 to 0.994, median 0.963, and a slope of 0.66 to 1.25
+    against the oracle's 0.72 to 1.12: it responds, with the ordering errors its
+    estimated factor makes. So concordance separates no response at all from an
+    imperfect one by a clear margin, and it does not pretend to grade the quality
+    of a response that exists.
+
+    The two groups are deliberately independent, and each is blind where the
+    other sees. Folding all multi-notch mass into the adjacent grade leaves the
+    total downgrade mass unchanged, so it reads concordance 1.000 and the
+    oracle's own slope while the far ratio reads 0.000. A frozen body leaves the
+    far corner's SHAPE roughly intact, reading 0.39 to 1.19 on the shape ratio
+    and so overlapping the reference's honest range, while concordance reads
+    exactly 0.000. Neither group alone would catch both failures.
+
+    The oracle is rebuilt here from `quarterly_base`, the factor path in truth
+    and the drawn correlation, so these are comparisons against the exact
+    conditional law rather than against a convention. Submitted quarters are
+    paired with the factor path positionally after sorting, as in
+    `matrix_submission_gap`, so a submission that numbers its quarters from the
+    end of the history rather than from one is still read correctly.
+
+    Everything returns an empty dict rather than a NaN-filled one when there is
+    nothing to measure, so `score_value` can fill the keys itself.
+    """
+    from pereval.tasks.migration.generator import conditional_matrix, quarterly_base
+
+    mats = parse_matrices(text)
+    rho = truth.get("rho")
+    scenarios = truth.get("scenarios") or {}
+    if not mats or rho is None:
+        return {}
+
+    w = _row_weights(start)
+    base = quarterly_base()
+    rows: list[tuple[float, float, float, float, float, float]] = []
+    for name in sorted(mats):
+        z_path = (scenarios.get(name) or {}).get("z_scenario")
+        if not z_path:
+            continue
+        for q, z in zip(sorted(mats[name]), [float(x) for x in z_path]):
+            sub = mats[name][q]
+            orc = conditional_matrix(base, z, float(rho))
+            near_s, far_s = _band_masses(sub, w)
+            near_o, far_o = _band_masses(orc, w)
+            rows.append((z, near_s, far_s, near_o, far_o,
+                         _downgrade_mass(sub, w)))
+    if not rows:
+        return {}
+
+    z = np.array([r[0] for r in rows])
+    near_s, far_s = sum(r[1] for r in rows), sum(r[2] for r in rows)
+    near_o, far_o = sum(r[3] for r in rows), sum(r[4] for r in rows)
+    down = np.array([r[5] for r in rows])
+    down_o = np.array([_downgrade_mass(conditional_matrix(base, zz, float(rho)), w)
+                       for zz in z])
+
+    out = {
+        "matrix_down3_mass": far_s / len(rows),
+        "matrix_down3_mass_oracle": far_o / len(rows),
+        "matrix_down1_ratio": float(near_s / near_o) if near_o > 0 else float("nan"),
+        "matrix_down3_ratio": float(far_s / far_o) if far_o > 0 else float("nan"),
+    }
+    if near_o > 0 and far_o > 0 and near_s > 0:
+        out["matrix_down3_shape"] = float((far_s / far_o) / (near_s / near_o))
+    else:
+        out["matrix_down3_shape"] = float("nan")
+
+    order = np.argsort(z)
+    concordant = pairs = 0
+    for a in range(len(order)):
+        for b in range(a + 1, len(order)):
+            i, j = order[a], order[b]
+            if _tied(z[i], z[j]):
+                continue
+            pairs += 1
+            concordant += int(not _tied(down[i], down[j])
+                              and (down[j] - down[i]) * (z[j] - z[i]) > 0)
+    out["matrix_downgrade_pairs"] = float(pairs)
+    out["matrix_downgrade_concordance"] = (concordant / pairs if pairs
+                                           else float("nan"))
+    out["matrix_downgrade_response"] = float(
+        down[int(np.argmax(z))] / down[int(np.argmin(z))]
+        if down[int(np.argmin(z))] > 0 else float("nan"))
+    out["matrix_downgrade_response_oracle"] = float(
+        down_o[int(np.argmax(z))] / down_o[int(np.argmin(z))])
+    out["matrix_downgrade_slope"] = _log_slope(z, down)
+    out["matrix_downgrade_slope_oracle"] = _log_slope(z, down_o)
+    return out
+
+
+def _log_slope(x: np.ndarray, y: np.ndarray) -> float:
+    """Least-squares slope of log y on x. NaN when it cannot be formed.
+
+    The log is taken because the oracle's response is multiplicative: a threshold
+    shift scales the far cells by a factor rather than adding to them. A floor
+    keeps a submitted zero from taking the whole statistic to negative infinity,
+    at the cost of reading such a submission as merely very small.
+    """
+    if len(x) < 2 or float(np.ptp(x)) <= 0.0:
+        return float("nan")
+    ly = np.log(np.maximum(np.asarray(y, dtype=float), 1e-15))
+    xc = np.asarray(x, dtype=float) - np.mean(x)
+    return float(np.dot(xc, ly - ly.mean()) / np.dot(xc, xc))
 
 
 def parse_backtest(text: str | None) -> dict[int, float]:
@@ -373,7 +763,7 @@ def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
 
 
 def stress_diagnostics(text: str | None, start: np.ndarray,
-                       submitted: dict[int, np.ndarray],
+                       submitted: dict[str, dict[int, np.ndarray]],
                        truth: dict) -> dict[str, float]:
     """One-sided check on the model's response under stress, reported not scored.
 
@@ -391,6 +781,15 @@ def stress_diagnostics(text: str | None, start: np.ndarray,
     0.51, 0.66, 1.07. It is monotone, it spans a factor of four, and it needs no
     interval construction.
 
+    The headline is taken from the MOST SEVERE scenario the instance carries,
+    not averaged over the three. Two reasons. The severe path is the one that
+    pushes the systematic factor outside its historical range, so it is the only
+    one that tests extrapolation rather than interpolation, and a model that
+    cannot leave its own sample reads near one on baseline and low here. And
+    averaging would let a conservative baseline offset an understated severe,
+    which is exactly the trade a stress reviewer refuses. The per-scenario
+    ratios are reported alongside so the gradient is visible.
+
     `stress_peak_ratio` compares the peaks, and `stress_peak_lag` the timing: a
     model may get the level right and put the peak in the wrong quarter, which a
     reviewer reads off the chart immediately and no distance metric at a
@@ -399,37 +798,49 @@ def stress_diagnostics(text: str | None, start: np.ndarray,
     The checkpoint ratios come from `predictions.csv` alone, so they survive a
     submission that omits the matrices.
     """
-    out: dict[str, float] = {}
-    true_cum = {int(q): float(v["D"]) for q, v in truth["rating_distribution"].items()}
-    for q, cum in sorted(true_cum.items()):
-        if q in submitted and cum > 0.0:
-            out[f"default_ratio_q{q}"] = float(submitted[q][D_INDEX] / cum)
-
-    inc_true = np.asarray(truth.get("default_increments", ()), dtype=float)
+    names = list(truth.get("scenario_names") or truth["scenarios"])
+    headline = names[-1]
     mats = parse_matrices(text)
-    if inc_true.size == 0 or not mats or len(mats) < inc_true.size:
-        return out
+    out: dict[str, float] = {}
+    for name in names:
+        tscen = truth["scenarios"][name]
+        got = submitted.get(name, {})
+        true_cum = {int(q): float(v["D"])
+                    for q, v in tscen["rating_distribution"].items()}
+        for q, cum in sorted(true_cum.items()):
+            if q in got and cum > 0.0:
+                ratio = float(got[q][D_INDEX] / cum)
+                if name == headline:
+                    out[f"default_ratio_q{q}"] = ratio
 
-    v, inc_sub = start.copy(), []
-    prev = float(start[D_INDEX])
-    for q in sorted(mats)[:inc_true.size]:
-        v = v @ mats[q]
-        inc_sub.append(float(v[D_INDEX]) - prev)
-        prev = float(v[D_INDEX])
-    inc_sub = np.asarray(inc_sub, dtype=float)
+        inc_true = np.asarray(tscen.get("default_increments", ()), dtype=float)
+        scen_mats = mats.get(name, {})
+        if inc_true.size == 0 or len(scen_mats) < inc_true.size:
+            continue
+        v, inc_sub = start.copy(), []
+        prev = float(start[D_INDEX])
+        for q in sorted(scen_mats)[:inc_true.size]:
+            v = v @ scen_mats[q]
+            inc_sub.append(float(v[D_INDEX]) - prev)
+            prev = float(v[D_INDEX])
+        inc_sub = np.asarray(inc_sub, dtype=float)
 
-    # the stressed half of the horizon, chosen on the truth so that a model
-    # cannot define its own stress window
-    stressed = inc_true >= np.median(inc_true)
-    denom_mean = float(inc_true[stressed].mean())
-    denom_peak = float(inc_true.max())
-    if denom_mean > 0.0:
-        out["stress_mean_ratio"] = float(inc_sub[stressed].mean() / denom_mean)
-    if denom_peak > 0.0:
-        out["stress_peak_ratio"] = float(inc_sub.max() / denom_peak)
-    if float(np.ptp(inc_sub)) > 0.0:     # a flat path has no peak to be early or late
-        out["stress_peak_lag"] = float(
-            int(np.argmax(inc_sub)) - int(np.argmax(inc_true)))
+        # the stressed half of the horizon, chosen on the truth so that a model
+        # cannot define its own stress window
+        stressed = inc_true >= np.median(inc_true)
+        denom_mean = float(inc_true[stressed].mean())
+        denom_peak = float(inc_true.max())
+        if denom_mean > 0.0:
+            mean_ratio = float(inc_sub[stressed].mean() / denom_mean)
+            out[f"stress_mean_ratio_{name}"] = mean_ratio
+            if name == headline:
+                out["stress_mean_ratio"] = mean_ratio
+        if denom_peak > 0.0 and name == headline:
+            out["stress_peak_ratio"] = float(inc_sub.max() / denom_peak)
+        # a flat path has no peak to be early or late
+        if name == headline and float(np.ptp(inc_sub)) > 0.0:
+            out["stress_peak_lag"] = float(
+                int(np.argmax(inc_sub)) - int(np.argmax(inc_true)))
     return out
 
 
@@ -438,17 +849,29 @@ def stress_diagnostics(text: str | None, start: np.ndarray,
 #: value: absent raises, NaN is skipped. Since every diagnostic is conditional
 #: on something, `score_value` fills what does not apply with NaN.
 REPORTED_KEYS = (
-    "score_degenerate", "ks_q4_norm", "ks_q9_norm", "default_q4_norm",
-    "default_q9_norm", "default_rate_bias", "hosmer_lemeshow",
+    "score_degenerate",
+    *(f"score_{n}" for n in SCENARIO_KEYS),
+    *(f"{c}_{n}_q{q}_norm" for n in SCENARIO_KEYS
+      for c in ("ks", "default") for q in (4, 9)),
+    "default_rate_bias", "hosmer_lemeshow",
     "completion", "runs", "regret_worst", "regret_spread",
     # diagnostics only: deliberately excluded from `score`
     "matrix_provided", "matrix_rows_valid", "matrix_nonnegative",
-    "matrix_admissible", "matrix_row_sum_error", "matrix_rows_off_one",
-    "matrix_negative_cells", "matrix_most_negative", "matrix_zero_cells",
-    "matrix_smallest_positive", "matrix_default_monotonicity_violations",
-    "matrix_submission_gap",
+    "matrix_admissible", "matrix_scenarios", "matrix_row_sum_error",
+    "matrix_rows_off_one", "matrix_negative_cells", "matrix_most_negative",
+    "matrix_zero_cells", "matrix_smallest_positive",
+    "matrix_default_monotonicity_violations",
+    "matrix_one_model_discordance", "matrix_submission_gap",
+    # shape of the matrices: the far downgrade corner, and whether the
+    # migration body responds to the macro path at all
+    "matrix_down3_mass", "matrix_down3_mass_oracle",
+    "matrix_down1_ratio", "matrix_down3_ratio", "matrix_down3_shape",
+    "matrix_downgrade_pairs", "matrix_downgrade_concordance",
+    "matrix_downgrade_response", "matrix_downgrade_response_oracle",
+    "matrix_downgrade_slope", "matrix_downgrade_slope_oracle",
     # one-sided stress response, also diagnostics only
     "default_ratio_q4", "default_ratio_q9", "stress_mean_ratio",
+    *(f"stress_mean_ratio_{n}" for n in SCENARIO_KEYS),
     "stress_peak_ratio", "stress_peak_lag",
     "fit_provided", "fit_years", "fit_stress_mean_ratio", "fit_peak_ratio",
     "fit_all_years_ratio", "fit_peak_prominence", "fit_peak_lag",
@@ -461,8 +884,11 @@ def score_value(truth: dict, text: str | None, mtext: str | None,
     v = score_predictions(truth, text)
     start = np.array([truth["start_mix"].get(s, 0.0) for s in ORDER], dtype=float)
     submitted = parse_predictions(text)
-    v.update(matrix_diagnostics(mtext, start, submitted,
-                                [int(q) for q in truth["rating_distribution"]]))
+    names = list(truth.get("scenario_names") or truth["scenarios"])
+    checkpoints = [int(q) for q in
+                   truth["scenarios"][names[0]]["rating_distribution"]]
+    v.update(matrix_diagnostics(mtext, start, submitted, checkpoints))
+    v.update(notch_diagnostics(mtext, start, truth))
     v.update(stress_diagnostics(mtext, start, submitted, truth))
     v.update(fit_diagnostics(btext, truth.get("observed_annual_default_rate", ())))
     for k in REPORTED_KEYS:
@@ -475,13 +901,17 @@ def explain(v: dict[str, float]) -> str:
     import math
 
     bits = [f"score {v['score']:.4f} (1.0 = no migration)",
-            "components " + "/".join(
-                f"{v[f'{k}_norm']:.3f}" for k in
-                ("ks_q4", "ks_q9", "default_q4", "default_q9")),
+            "by scenario " + "/".join(
+                f"{v[f'score_{n}']:.3f}" for n in SCENARIO_KEYS
+                if f"score_{n}" in v),
             f"completion {v['completion']:.0%}"]
-    for key, label, fmt in (("default_rate_bias", "default bias", "+.3%"),
-                            ("stress_mean_ratio", "stress response", ".2f"),
-                            ("fit_stress_mean_ratio", "backtest stress", ".2f")):
+    for key, label, fmt in (("matrix_down3_shape", "far-corner shape", ".2f"),
+                            ("matrix_downgrade_concordance", "macro response", ".1%"),
+                            ("default_rate_bias", "default bias", "+.3%"),
+                            ("stress_mean_ratio", "severe stress response", ".2f"),
+                            ("fit_stress_mean_ratio", "backtest stress", ".2f"),
+                            ("matrix_one_model_discordance", "cross-scenario discordance",
+                             ".1%")):
         x = v.get(key, float("nan"))
         if not math.isnan(x):
             suffix = "x" if fmt == ".2f" else ""

@@ -109,7 +109,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool

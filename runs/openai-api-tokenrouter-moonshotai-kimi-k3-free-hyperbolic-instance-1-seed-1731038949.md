@@ -51,7 +51,7 @@ I'll start by exploring the data to understand its structure.
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -110,6 +110,23 @@ Let me explore the data more thoroughly to understand its structure.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+print('Shape:', df.shape)
+print('t range:', df.t.min(), df.t.max())
+print()
+print('Non-null counts:')
+print(df.count())
+print()
+test = pd.read_csv('data/test.csv')
+print('Test t values:', test.t.values)
+print()
+# Show rows where gamma is not null service
+print('Rows with gamma:')
+print(df[df.gamma.notna()].to_string())
+"
 
 ```
 
@@ -458,6 +475,35 @@ Let me explore the data structure more carefully, then visualize patterns.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+
+# alpha analysis: unwrap the 360 wrap
+alpha = df.alpha.values.copy()
+t = df.t.values
+alpha_unwrap = np.degrees(np.unwrap(np.radians(alpha)))
+print('alpha unwrapped: start', alpha_unwrap[0], 'end', alpha_unwrap[-1])
+print('total drift:', alpha_unwrap[-1]-alpha_unwrap[0], 'over', t[-1]-t[0], 'days')
+drift = np.diff(alpha_unwrap)
+print('daily increment: mean %.4f median %.4f std %.4f min %.3f max %.3f' % (drift.mean(), np.median(drift), drift.std(), drift.min(), drift.max()))
+
+# drift in windows
+for lo, hi in [(0,100),(100,200),(200,300),(300,400),(400,467)]:
+    m = (t>=lo)&(t<=hi)
+    d = np.diff(alpha_unwrap[m])
+    print(f't {lo}-{hi}: mean daily drift {d.mean():.4f} std {d.std():.3f}')
+
+# beta
+m = df.beta.notna().values
+b = df.beta.values[m]
+tt = df.t.values[m]
+print()
+print('beta: min %.2f at t=%d, max %.2f at t=%d' % (b.min(), tt[np.argmin(b)], b.max(), tt[np.argmax(b)]))
+bd = np.diff(b)
+print('beta daily diff: std %.3f' % bd.std())
+"
 
 ```
 
@@ -535,7 +581,7 @@ Now I understand the structure. This looks like orbital geometry: alpha (wraps 3
 **tool call: bash**
 
 ```
-
+cd /home/user 2>/dev/null; pwd; ls
 ```
 
 ## [9] tool
@@ -549,6 +595,21 @@ data
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+test = pd.read_csv('data/test.csv')
+# rough: linear extrapolation on recent 150 days of gamma
+import numpy.polynomial as P
+t = df.t.values; g = df.gamma.values
+c = np.polyfit(t, g, 5)
+tp = test.t.values
+yp = np.polyval(c, tp)
+sd = np.std(g - np.polyval(c, t))
+out = pd.DataFrame({'t': tp, 'y_pred': yp, 'y_lower': yp-1.96*sd*1.5, 'y_upper': yp+1.96*sd*1.5})
+out.to_csv('predictions.csv', index=False)
+print(out)
+"
 
 ```
 
@@ -572,6 +633,22 @@ data
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+test = pd.read_csv('data/test.csv')
+t = df.t.values; g = df.gamma.values
+# local linear extrapolation on last 80 days - much safer
+c = np.polyfit(t[-80:], g[-80:], 1)
+tp = test.t.values
+yp = np.polyval(c, tp)
+res = g[-80:] - np.polyval(c, t[-80:])
+sd = np.std(res)
+out = pd.DataFrame({'t': tp, 'y_pred': yp, 'y_lower': yp-1.96*sd*2.5, 'y_upper': yp+1.96*sd*2.5})
+out.to_csv('predictions.csv', index=False)
+print('slope %.4f  sd %.3f' % (c[0], sd))
+print(out)
+"
 
 ```
 
@@ -596,6 +673,26 @@ slope 1.5092  sd 8.534
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values; g = df.gamma.values
+b = df.beta.values
+# loosely-smoothed residuals: fit smooth cubic spline to gamma, look at residuals
+from scipy.interpolate import UnivariateSpline
+for sf in [20, 50, 100, 150, 200, 300, 500]:
+    spl = UnivariateSpline(t, g, s=sf)
+    r = g - spl(t)
+    print('s=%4d  resid std %.3f  resid range %.2f..%.2f  spline end-deriv %.4f' % (sf, r.std(), r.min(), r.max(), spl.derivative()(t[-1])))
+from scipy.stats import norm
+spl = UnivariateSpline(t, g, s=100)
+r = g - spl(t)
+print('residual normality-ish check: mean %.3f skew %.3f' % (r.mean(), (r**3).mean()/r.std()**3))
+# slope at edges of spline with natural extension check
+for τ in [300, 330, 360, 400, 440, 467]:
+    print('spline deriv at', τ, '%.4f' % spl.derivative()(τ))
+print('1/s^2 steepest at t=472? sqrt check; beta 12 deg -> elongation small')
+"
 
 ```
 
@@ -657,7 +754,86 @@ Spline fits look good (residual std ~0.5–1.1°) and gamma's smooth trend is st
 **tool call: bash**
 
 ```
+cd /workspace && cat > cv_models.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.interpolate import UnivariateSpline
+from scipy.optimize import curve_fit
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, DotProduct
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t_all = df.t.values.astype(float); g_all = df.gamma.values
+
+def f_atan(t, A,B,tc,s,C):
+    return A + B*np.arctan(s*(t-tc)) + C*(t-tc)
+def f_atan2(t, A,B,tc,s,C,D):
+    return A + B*np.arctan(s*(t-tc)) + C*(t-tc) + D*(t-tc)**2
+
+def predict_spline(t_tr, g_tr, t_te, s=100):
+    spl = UnivariateSpline(t_tr, g_tr, s=s)
+    v = spl(t_tr[-1]); d = spl.derivative()(t_tr[-1])
+    return v + d*(t_te - t_tr[-1])
+
+def predict_poly(t_tr, g_tr, t_te, deg=2, win=100):
+    m = t_tr >= t_tr.max()-win
+    c = np.polyfit(t_tr[m], g_tr[m], deg)
+    return np.polyval(c, t_te)
+
+def predict_atan(t_tr, g_tr, t_te, quad=False):
+    g0 = [g_tr.mean(), 45.0, t_tr[np.argmax(np.gradient(g_tr))] if len(t_tr)>2 else t_tr.mean(), 0.05, 0.2]
+    try:
+        if not quad:
+            p,_ = curve_fit(f_atan, t_tr, g_tr, p0=[g_tr.mean(),45,t_tr.mean(),0.05,0.2], maxfev=20000)
+            return f_atan(t_te, *p)
+        else:
+            p,_ = curve_fit(f_atan2, t_tr, g_tr, p0=[g_tr.mean(),45,t_tr.mean(),0.05,0.2,0.0], maxfev=40000)
+            return f_atan2(t_te, *p)
+    except Exception as e:
+        c = np.polyfit(t_tr, g_tr, 2); return np.polyval(c, t_te)
+
+def predict_gp(t_tr, g_tr, t_te):
+    k = ConstantKernel(200.0,(1e-1,1e4))*RBF(60.0,(5,500)) + DotProduct(1.0,(1e-3,1e4))**2 + WhiteKernel(0.1,(1e-3,10))
+    gp = GaussianProcessRegressor(kernel=k, alpha=0.3, normalize_y=True, n_restarts_optimizer=2)
+    gp.fit(t_tr.reshape(-1,1), g_tr)
+    return gp.predict(t_te.reshape(-1,1))
+
+models = {
+ 'spline_s50': lambda a,b,c: predict_spline(a,b,c,50),
+ 'spline_s100': lambda a,b,c: predict_spline(a,b,c,100),
+ 'spline_s200': lambda a,b,c: predict_spline(a,b,c,200),
+ 'poly2_w120': lambda a,b,c: predict_poly(a,b,c,2,120),
+ 'poly1_w60': lambda a,b,c: predict_poly(a,b,c,1,60),
+ 'atan': lambda a,b,c: predict_atan(a,b,c,False),
+ 'atan2': lambda a,b,c: predict_atan(a,b,c,True),
+ 'gp': predict_gp,
+}
+
+# temporal CV: truncate at several t0, predict to 467
+cutoffs = [400, 418, 437, 450]
+results = {k: [] for k in models}
+for t0 in cutoffs:
+    m = t_all <= t0
+    t_tr, g_tr = t_all[m], g_all[m]
+    t_te, g_te = t_all[~m], g_all[~m]
+    for name, fn in models.items():
+        try:
+            pred = fn(t_tr, g_tr, t_te.astype(float))
+            err = pred - g_te
+            results[name].append((t0, float(np.sqrt(np.mean(err**2))), float(np.mean(err)), float(np.max(np.abs(err)))))
+        except Exception as e:
+            results[name].append((t0, np.nan, np.nan, np.nan))
+            print(name, 'failed at', t0, e)
+
+print('\nPer-cutoff RMSE / bias / maxerr:')
+for name in models:
+    print('\n', name)
+    for (t0, rmse, bias, mx) in results[name]:
+        print(f'  cutoff {t0}: rmse {rmse:6.3f} bias {bias:+7.3f} maxerr {mx:6.3f}')
+    rm = np.nanmean([r[1] for r in results[name]])
+    mx = np.nanmax([r[3] for r in results[name]])
+    print(f'  MEAN RMSE {rm:.3f}  worst maxerr {mx:.3f}')
+EOF
+python3 cv_models.py
 ```
 
 ## [17] tool
@@ -786,7 +962,72 @@ All models extrapolate poorly across those weeks according to this CV — but th
 **tool call: bash**
 
 ```
+cd /workspace && cat > check2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.interpolate import UnivariateSpline
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t_all = df.t.values.astype(float); g_all = df.gamma.values
+
+# local slope/curvature of gamma using Savitzky-Golay-like local polys
+from numpy.polynomial import polynomial as P
+def local_poly_slopes(t, g, win=25):
+    out=[]
+    for tc in t:
+        m = np.abs(t-tc)<=win
+        if m.sum()<10: continue
+        c=np.polyfit(t[m]-tc, g[m], 3)
+        out.append((tc, c[1], 2*c[2]))  # slope, curvature
+    return np.array(out)
+sl = local_poly_slopes(t_all, g_all, 20)
+print('t, slope, curvature (every 20 days):')
+for row in sl[::15]:
+    print('  t=%5.0f  slope=%+7.3f  curv=%+8.4f' % row)
+print('  last window(s):')
+for row in sl[-3:]:
+    print('  t=%5.0f  slope=%+7.3f  curv=%+8.4f' % row)
+
+# physical models
+def f_cos(t, A,B,T,p,C,D):
+    # sigmoid: cosine transition plus drift terms
+    u=np.clip((t-p)/T, -1, 1)
+    return A + B*0.5*(1+np.sin(np.pi*u/2)) + C*(t-p) + D*(t-p)**2
+
+def f_lindrift(t, A,B,T,p,C):
+    u=np.clip((t-p)/T, -1, 1)
+    return A + B*0.5*(1+np.sin(np.pi*u/2)) + C*(t-p)
+
+def predict(f, t_tr, g_tr, t_te, p0):
+    p,_=curve_fit(f, t_tr, g_tr, p0=p0, maxfev=60000)
+    return f(t_te, *p), p
+
+# Fit full data and see residuals + extrapolation
+p0=[-20, 90, 120, 400, 0.3, 0.0]
+pred_full, p = predict(f_cos, t_all, g_all, t_all, p0)
+r = g_all - pred_full
+print('\ncos-model params:', np.round(p,4))
+print('cos-model resid std %.3f  max %.3f' % (r.std(), np.abs(r).max()))
+
+# physical tan: gamma = arctan(a + b t)  (elevation = atan of linear height/run)
+def f_tan(t, a, b, c):
+    return np.degrees(np.arctan(a + b*(t-c)))
+p0=[0,0.03,300]
+pred2, p2 = predict(f_tan, t_all, g_all, t_all, p0)
+r2 = g_all - pred2
+print('tan-model params:', np.round(p2,5), ' resid std %.3f  max %.3f' % (r2.std(), np.abs(r2).max()))
+
+def f_tanq(t, a, b, c, q):
+    return np.degrees(np.arctan(a + b*(t-c) + q*(t-c)**2))
+pred3, p3 = predict(f_tanq, t_all, g_all, t_all, [0,0.03,300,0.0])
+r3 = g_all - pred3
+print('tanq-model params:', np.round(p3,6), ' resid std %.3f  max %.3f' % (r3.std(), np.abs(r3).max()))
+
+# sigmoid: atan with inflection, plus cubic drift
+def f_gomp(t, A,B,c,k,D):
+    return A + B*np.exp(-np.exp(-k*(t-c))) + D*(t-c)
+EOF
+python3 check2.py
 ```
 
 ## [19] tool
@@ -805,7 +1046,58 @@ t, slope, curvature (every 20 days):
 **tool call: bash**
 
 ```
+cd /workspace && cat > check2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.interpolate import UnivariateSpline
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t_all = df.t.values.astype(float); g_all = df.gamma.values
+
+def local_poly_slopes(t, g, win=25):
+    out=[]
+    for tc in t:
+        m = np.abs(t-tc)<=win
+        if m.sum()<10: continue
+        c=np.polyfit(t[m]-tc, g[m], 3)
+        out.append((tc, c[1], 2*c[2]))
+    return np.array(out)
+sl = local_poly_slopes(t_all, g_all, 20)
+print('t, slope, curvature (every ~20):')
+for row in sl[::15]:
+    print('  t=%5.0f  slope=%+7.3f  curv=%+8.4f' % (row[0], row[1], row[2]))
+print('  last windows:')
+for row in sl[-2:]:
+    print('  t=%5.0f  slope=%+7.3f  curv=%+8.4f' % (row[0], row[1], row[2]))
+
+def f_cos(t, A,B,T,p,C,D):
+    u=np.clip((t-p)/T, -1, 1)
+    return A + B*0.5*(1+np.sin(np.pi*u/2)) + C*(t-p) + D*(t-p)**2
+def f_tan(t, a, b, c):
+    return np.degrees(np.arctan(a + b*(t-c)))
+def f_tanq(t, a, b, c, q):
+    return np.degrees(np.arctan(a + b*(t-c) + q*(t-c)**2))
+def f_tanc(t, a, b, c, q, s):
+    return np.degrees(np.arctan(a + b*(t-c) + q*(t-c)**2 + s*(t-c)**3))
+
+for f, p0, name in [
+   (f_cos, [-20, 90, 120, 400, 0.3, 0.0], 'cos+drift'),
+   (f_tan, [0,0.03,300], 'atan(a+b(t-c))'),
+   (f_tanq, [0,0.03,300,0.0], 'atan(a+b t+q t^2)'),
+   (f_tanc, [0,0.03,300,0.0,0.0], 'atan(cubic)'),
+]:
+    try:
+        p,_=curve_fit(f, t_all, g_all, p0=p0, maxfev=100000)
+        r = g_all - f(t_all, *p)
+        print('\n%-18s resid std %.3f  maxabs %.3f' % (name, r.std(), np.abs(r).max()))
+        print('  params:', np.round(p,6))
+        # extrapolate to test times
+        tt = np.array([470,480,491,501,512,522,532,543,553,564])
+        print('  pred at test t:', np.round(f(tt, *p),2))
+    except Exception as e:
+        print(name, 'FAIL', e)
+EOF
+python3 check2.py
 ```
 
 ## [21] tool
@@ -853,7 +1145,27 @@ Let me check the end-state more carefully — the last 10–20 days of gamma see
 **tool call: bash**
 
 ```
+cd /workspace && cat > check3.py << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t_all = df.t.values.astype(float); g_all = df.gamma.values
 
+print('Last 24 rows:')
+print(df.tail(24).to_string())
+
+# local linear slope over last N days, several N
+for N in [8, 12, 16, 20, 30, 40, 60, 80, 120, 167]:
+    c = np.polyfit(t_all[-N:], g_all[-N:], 1)
+    pred_end = np.polyval(c, t_all[-N:])
+    sd = np.std(g_all[-N:]-pred_end)
+    print(f'last {N:3d} d: slope {c[0]:+.4f}  resid sd {sd:.3f}  pred@512 {np.polyval(c,512):7.2f}  @564 {np.polyval(c,564):7.2f}')
+
+# finite differences of the last 30 raw points (noise level)
+d = np.diff(g_all[-30:])
+print('\nlast-30 successive gamma diffs:', np.round(d,3))
+print('diff std %.3f -> noise std ~ %.3f' % (d.std(), d.std()/np.sqrt(2)))
+EOF
+python3 check3.py
 ```
 
 ## [23] tool
@@ -908,7 +1220,30 @@ The noise level is ~0.9° and the last ~12–20 days show slope ~0.26°/day (fla
 **tool call: bash**
 
 ```
+cd /workspace && cat > safe2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
 
+# Logistic growth model for a smooth approach toward an upper asymptote
+def logistic(t, L, U, k, tc, q):
+    return L + (U-L)/(1+np.exp(-k*(t-tc))) + q*(t-tc)
+p0=[-75, 60, 0.06, 415, 0.0]
+p,_ = curve_fit(logistic, t, g, p0=p0, maxfev=60000)
+r = g - logistic(t,*p)
+print('logistic params L,U,k,tc,q:', np.round(p,5), ' resid std %.3f max %.3f' % (r.std(), np.abs(r).max()))
+pred = logistic(tt, *p)
+print('pred:', np.round(pred,2))
+sd = r.std()
+# modest interval inflation for extrapolation risk
+grow = 1.96*np.sqrt(sd**2 + (0.06*(tt-t[-1]))**2)
+out = pd.DataFrame({'t': tt, 'y_pred': pred, 'y_lower': pred-grow, 'y_upper': pred+grow})
+out.to_csv('predictions.csv', index=False)
+print(out)
+EOF
+python3 safe2.py
 ```
 
 ## [25] tool
@@ -936,7 +1271,32 @@ Interesting — the logistic fit (despite excellent in-sample resid std 1.26°) 
 **tool call: bash**
 
 ```
+cd /workspace && cat > diag.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.signal import savgol_filter
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
 
+# Savitzky-Golay smooth (handles uniform daily spacing within 301..467)
+for win, po in [(15,3),(21,3),(27,3),(35,3)]:
+    gs = savgol_filter(g, win, po, deriv=False)
+    d1 = savgol_filter(g, win, po, deriv=1)
+    d2 = savgol_filter(g, win, po, deriv=2)
+    # report at indices near end and a few interior
+    idxs = [len(g)-1, len(g)-6, len(g)-11, 130, 100, 60, 10]
+    print(f'--- win {win} ---')
+    for i in idxs:
+        print('  t=%3d  g=%7.2f  d1=%+7.3f  d2=%+8.4f' % (t[i], gs[i], d1[i], d2[i]))
+# curvature projection: g_end + slope*dt + 0.5*curv*dt^2 with latest slope/curv
+gs = savgol_filter(g, 25, 3); d1=savgol_filter(g,25,3,deriv=1); d2=savgol_filter(g,25,3,deriv=2)
+g0, m, c = gs[-1], d1[-1], d2[-1]
+print('\nEnd state (win 25): g=%.2f slope=%.3f curv=%.4f' % (g0, m, c))
+test = pd.read_csv('data/test.csv'); tt=test.t.values.astype(float)
+dt = tt - t[-1]
+quad = g0 + m*dt + 0.5*c*dt**2
+print('quadratic-from-edge pred:', np.round(quad,2))
+EOF
+python3 diag.py
 ```
 
 ## [27] tool
@@ -985,7 +1345,68 @@ The edge slope is small (~0.25–0.36°/day) with inconsistent curvature estimat
 **tool call: bash**
 
 ```
+cd /workspace && cat > model_v1.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+
+# ---- Local-level + local-slope (damped trend) state space, fit by ML ----
+# state x = [level, slope];  level_t = level_{t-1} + slope_{t-1}*dt + w1
+#                            slope_t = phi*slope_{t-1} + w2   (damped: 0<phi<=1)
+# obs g_t = level_t + e,  Var(e)=s2
+def predict_and_std(params, t_obs, g_obs, t_new):
+    phi, qw1, qw2, s2 = params
+    n = len(t_obs)
+    # Kalman filter
+    m = np.array([g_obs[0], 0.0]); P = np.diag([100.0, 10.0])
+    ll = 0.0
+    for i in range(1, n):
+        dt = t_obs[i]-t_obs[i-1]
+        F = np.array([[1.0, dt],[0.0, phi]])
+        Q = np.diag([qw1*dt, qw2*dt])
+        m = F@m; P = F@P@F.T + Q
+        S = P[0,0] + s2
+        if S <= 0: S = 1e-8
+        innov = g_obs[i]-m[0]
+        ll += -0.5*(np.log(2*np.pi*S) + innov**2/S)
+        K = P[:,0]/S
+        m = m + K*innov
+        P = P - np.outer(K, K)*S
+    # store final filtered state for forecasting
+    m_end, P_end = m.copy(), P.copy()
+    preds, sds = [], []
+    m = m_end.copy(); P = P_end.copy()
+    last_t = t_obs[-1]
+    for tn in t_new:
+        dt = tn - last_t
+        F = np.array([[1.0, dt],[0.0, phi]])
+        Q = np.diag([qw1*dt, qw2*dt])
+        m = F@m; P = F@P@F.T + Q
+        preds.append(m[0]); sds.append(np.sqrt(P[0,0] + s2))
+        last_t = tn
+    return ll, np.array(preds), np.array(sds), m_end
+
+def negll(params): return -predict_and_std(params, t, g, tt)[0]
+
+best = None
+for phi0 in [0.9, 0.95, 1.0]:
+    for q10 in [0.1, 1.0]:
+        try:
+            r = minimize(negll, [phi0, q10, 0.05, 0.8], method='Nelder-Mead',
+                         options={'maxiter':8000, 'xatol':1e-6,'fatol':1e-6})
+            if best is None or r.fun < best.fun: best = r
+        except Exception as e: print(e)
+print('negll %.3f  params phi %.4f qw1 %.4g qw2 %.4g s2 %.4f' % (best.fun, *best.x))
+ll, preds, sds, m_end = predict_and_std(best.x, t, g, tt)
+print('preds:', np.round(preds,2))
+print('sds  :', np.round(sds,2))
+out = pd.DataFrame({'t': tt, 'y_pred': preds, 'y_lower': preds-1.96*sds, 'y_upper': preds+1.96*sds})
+print(out)
+EOF
+python3 model_v1.py
 ```
 
 ## [29] tool
@@ -1022,7 +1443,54 @@ The state-space point forecast reaches ~56 at t=564 (extrapolating the recent ~0
 **tool call: bash**
 
 ```
+cd /workspace && cat > relation.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values; b = df.beta.values
 
+# beta(t) shape
+import numpy.polynomial.polynomial as P
+# smooth beta with savgol
+from scipy.signal import savgol_filter
+bs = savgol_filter(b, 21, 3)
+print('beta end slope (deg/day): %.4f ; beta end value %.2f' % (savgol_filter(b,21,3,deriv=1)[-1], b[-1]))
+print('beta slope over time:', )
+d1 = savgol_filter(b, 31, 3, deriv=1)
+for i in range(0, len(b), 30):
+    print('   t=%3d beta=%7.2f slope=%+7.3f' % (t[i], bs[i], d1[i]))
+
+# Fit beta(t) as smooth monotone: try logistic in t -> decreasing
+def blog(t, A, B, k, tc, c):
+    return A + (B-A)/(1+np.exp(k*(t-tc))) + c*(t-tc)
+try:
+    p,_ = curve_fit(blog, t, b, p0=[10,150,0.05,380,0.0], maxfev=60000)
+    rb = b - blog(t,*p)
+    print('\nbeta logistic fit resid std %.3f max %.3f' % (rb.std(), np.abs(rb).max()))
+    tt = np.array([470,480,491,501,512,522,532,543,553,564])
+    print('beta extrap:', np.round(blog(tt,*p),2))
+except Exception as e: print('beta fit fail', e)
+
+# gamma vs beta relation family: gamma = K - a*tan(c*(beta - beta0))?  try generic monotone fits
+# scatter correlation
+print('\ncorr(gamma, beta)=%.3f' % np.corrcoef(g,b)[0,1])
+# Fit smooth mapping gamma <- beta with polynomial in transformed beta
+for deg in [2,3,4]:
+    c = np.polyfit(b, g, deg)
+    pred = np.polyval(c, b)
+    print('poly deg %d: resid std %.3f max %.3f' % (deg, np.std(g-pred), np.abs(g-pred).max()))
+
+# physical ansatz: cot(beta)-like.  Try gamma = atan( (sin gb)/(cos gb + rho) ) family with gamma relative to plane.
+# Instead empirical: gamma ~ A + B*atan(C*(beta - D))
+def gm(beta, A,B,C,D): return A + B*np.arctan(C*(beta-D))
+p,_ = curve_fit(gm, b, g, p0=[-20, 80, 0.05, 0], maxfev=40000)
+r = g - gm(b,*p)
+print('\ngamma= A+B*atan(C(beta-D)): params', np.round(p,4), 'resid std %.3f max %.3f' % (r.std(), np.abs(r).max()))
+# with beta extrapolated from logistic above, predict gamma
+tt2 = np.array([470,480,491,501,512,522,532,543,553,564])
+blogp = blog(tt2,*p[:0]) if False else None
+EOF
+python3 relation.py
 ```
 
 ## [31] tool
@@ -1054,7 +1522,59 @@ alpha increases ~0.94°/day (the observing source drifts), beta is the elongatio
 **tool call: bash**
 
 ```
+cd /workspace && cat > model_v2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+
+def kf_smooth_predict(params, t_obs, g_obs, t_new):
+    # damped local linear trend; return filtered end-state and predictive
+    phi, qw1, qw2, s2 = params
+    if phi<=0 or phi>1.0001 or qw1<0 or qw2<0 or s2<=0: return -1e9, None, None, None
+    n=len(t_obs)
+    m=np.array([g_obs[0],0.0]); P=np.diag([200.0,50.0]); ll=0.0
+    for i in range(1,n):
+        dt=t_obs[i]-t_obs[i-1]
+        F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt, qw2*dt])
+        m=F@m; P=F@P@F.T+Q
+        S=P[0,0]+s2
+        if S<=1e-9 or not np.isfinite(S): return -1e9,None,None,None
+        innov=g_obs[i]-m[0]
+        ll += -0.5*(np.log(2*np.pi*S)+innov*innov/S)
+        K=P[:,0]/S
+        m=m+K*innov; P=P-np.outer(K,K)*S
+    m_end=m.copy(); P_end=P.copy()
+    preds=[]; sds=[]; last=t_obs[-1]
+    mm=m_end.copy(); PP=P_end.copy()
+    for tn in t_new:
+        dt=tn-last
+        F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+        mm=F@mm; PP=F@PP@F.T+Q
+        preds.append(mm[0]); sds.append(np.sqrt(max(PP[0,0]+s2,1e-8)))
+        last=tn
+    return ll, np.array(preds), np.array(sds), (m_end, P_end, phi, qw1, qw2, s2)
+
+# ML fit (pos bound via penalty)
+def obj(x):
+    phi=1/(1+np.exp(-x[0])); qw1=np.exp(x[1]); qw2=np.exp(x[2]); s2=np.exp(x[3])
+    ll,_,_,_ = kf_smooth_predict((phi,qw1,qw2,s2), t, g, tt)
+    return -ll
+best=None
+for s0 in [[1.0,0.0,-3.0,-0.2],[0.0,2.0,-4.0,0.0],[2.0,-2.0,-2.0,0.5],[1.5,-1.0,-1.0,-0.3]]:
+    r=minimize(obj, s0, method='Nelder-Mead', options={'maxiter':6000,'xatol':1e-7,'fatol':1e-7})
+    if best is None or r.fun<best.fun: best=r
+x=best.x; phi=1/(1+np.exp(-x[0])); qw1,qw2,s2=np.exp(x[1]),np.exp(x[2]),np.exp(x[3])
+print('ML: phi %.4f qw1 %.4f qw2 %.5f s2 %.4f (noise sd %.3f)' % (phi,qw1,qw2,s2,np.sqrt(s2)))
+ll,preds,sds,state = kf_smooth_predict((phi,qw1,qw2,s2), t, g, tt)
+print('gamma preds:', np.round(preds,2))
+print('forecast sds:', np.round(sds,2))
+np.save('kf_preds.npy', preds); np.save('kf_sds.npy', sds)
+EOF
+python3 model_v2.py
 ```
 
 ## [33] tool
@@ -1071,7 +1591,82 @@ The damped-trend Kalman model is well-identified (φ=0.99, slope noise, measurem
 **tool call: bash**
 
 ```
+cd /workspace && cat > validate.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+from scipy.interpolate import UnivariateSpline
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t_all = df.t.values.astype(float); g_all = df.gamma.values
+
+def fit_kf_params(t_obs, g_obs):
+    def kf_ll(params, ret_state=False):
+        phi,qw1,qw2,s2=params
+        n=len(t_obs); m=np.array([g_obs[0],0.0]); P=np.diag([200.0,50.0]); ll=0.0
+        for i in range(1,n):
+            dt=t_obs[i]-t_obs[i-1]
+            F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+            m=F@m; P=F@P@F.T+Q; S=P[0,0]+s2
+            if S<=1e-9: return (-1e9,) if not ret_state else (-1e9,None,None)
+            innov=g_obs[i]-m[0]; ll+=-0.5*(np.log(2*np.pi*S)+innov*innov/S)
+            K=P[:,0]/S; m=m+K*innov; P=P-np.outer(K,K)*S
+        if ret_state: return ll,m,P
+        return ll
+    def obj(x):
+        phi=1/(1+np.exp(-x[0])); qw1=np.exp(x[1]); qw2=np.exp(x[2]); s2=np.exp(x[3])
+        return -kf_ll((phi,qw1,qw2,s2))
+    best=None
+    for s0 in [[1.0,-8.0,-1.5,-0.2],[0.5,-6.0,-3.0,0.0]]:
+        r=minimize(obj, s0, method='Nelder-Mead', options={'maxiter':4000,'xatol':1e-6,'fatol':1e-6})
+        if best is None or r.fun<best.fun: best=r
+    x=best.x; phi=1/(1+np.exp(-x[0])); qw1,qw2,s2=np.exp(x[1]),np.exp(x[2]),np.exp(x[3])
+    return (phi,qw1,qw2,s2)
+
+def kf_predict(params, t_obs, g_obs, t_new):
+    phi,qw1,qw2,s2=params
+    n=len(t_obs); m=np.array([g_obs[0],0.0]); P=np.diag([200.0,50.0])
+    for i in range(1,n):
+        dt=t_obs[i]-t_obs[i-1]
+        F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+        m=F@m; P=F@P@F.T+Q; S=P[0,0]+s2
+        innov=g_obs[i]-m[0]; K=P[:,0]/S; m=m+K*innov; P=P-np.outer(K,K)*S
+    m_end,P_end=m.copy(),P.copy(); preds=[];sds=[];last=t_obs[-1]; mm=m_end.copy();PP=P_end.copy()
+    for tn in t_new:
+        dt=tn-last; F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+        mm=F@mm; PP=F@PP@F.T+Q
+        preds.append(mm[0]); sds.append(np.sqrt(max(PP[0,0]+s2,1e-8))); last=tn
+    return np.array(preds), np.array(sds)
+
+def spline_pred(t_obs, g_obs, t_new, s=100):
+    spl=UnivariateSpline(t_obs,g_obs,s=s)
+    v=spl(t_obs[-1]); d=spl.derivative()(t_obs[-1])
+    return v+d*(t_new-t_obs[-1]), np.full(len(t_new), np.std(g_obs-spl(t_obs)))
+
+cutoffs=[340,360,375,390,405,420,435,445,455]
+horizon_def = lambda tc: np.array([3,10,21,34,45,60,97])
+print('cutoff | model | horizon-wise RMSE (deg) and 95% coverage')
+agg={}
+for tc in cutoffs:
+    m_tr = t_all<=tc
+    t_tr,g_tr=t_all[m_tr],g_all[m_tr]
+    t_te,g_te=t_all[~m_tr],g_all[~m_tr]
+    params=fit_kf_params(t_tr,g_tr)
+    pk,sk=kf_predict(params,t_tr,g_tr,t_te)
+    ps,ss=spline_pred(t_tr,g_tr,t_te)
+    for name,p,s in [('KF',pk,sk),('SPL',ps,ss)]:
+        err=np.abs(p-g_te)
+        cov=((g_te>=p-1.96*s)&(g_te<=p+1.96*s)).mean()
+        key=name
+        agg.setdefault(key,{'e':[],'cov':[]})
+        agg[key]['e'].append(err); agg[key]['cov'].append(cov)
+        print(f'{tc} {name}: endPredErr@last={err[-1]:6.2f}  meanabs={err.mean():5.2f}  cov={cov:.2f}')
+print('\nAggregate mean-abs-err and mean coverage (fair only when curve similar):')
+for k,v in agg.items():
+    E=np.concatenate([np.atleast_1d(x) for x in v['e']])
+    print(f'{k}: mean abs err {np.mean(E):.2f}  median {np.median(E):.2f}  mean cov {np.mean(v["cov"]):.2f}')
+EOF
+python3 validate.py
 ```
 
 ## [35] tool
@@ -1108,7 +1703,45 @@ This is a single-passage trajectory: all angles are driven by the same underlyin
 **tool call: bash**
 
 ```
+cd /workspace && cat > sigmoid.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+import warnings; warnings.filterwarnings('ignore')
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
 
+# Fit several bounded sigmoid forms; weight recent data more to capture the plateau correctly
+def logistic(t,L,U,k,tc): return L+(U-L)/(1+np.exp(-k*(t-tc)))
+def gompertz(t,L,U,b,c): return L+(U-L)*np.exp(-b*np.exp(-c*(t-400)))
+def richards(t,L,U,k,tc,nu): return L+(U-L)/(1+nu*np.exp(-k*(t-tc)))**(1/nu)
+def softplus_cap(t,A,B,k,tc,C): return A + B*np.log1p(np.exp(k*(t-tc))) ... if False else None
+
+for name, f, p0, bounds in [
+  ('logistic', logistic, [-70,45,0.13,415], ([-90,25,0.03,390],[90,90,0.5,440])),
+  ('gompertz', gompertz, [-70,45,15,0.1], ([-90,25,0.1,0.01],[90,90,1e4,0.8])),
+]:
+    try:
+        p,_=curve_fit(f,t,g,p0=p0,bounds=bounds,maxfev=60000)
+        r=g-f(t,*p)
+        p2=curve_fit(f,t[-40:],g[-40:],p0=p,bounds=bounds,maxfev=60000)[0]  # refit on plateau region
+        print('\n%-9s fullfit resid sd %.3f max %.3f  U=%.2f' % (name,r.std(),np.abs(r).max(),p[1]))
+        print('  pred:', np.round(f(tt,*p),1))
+        r2=g[-40:]-f(t[-40:],*p2)
+        print('  latefit resid sd %.3f U=%.2f  pred:' % (r2.std(), p2[1]), np.round(f(tt,*p2),1))
+    except Exception as e:
+        print(name,'FAIL',e)
+
+# Weighted logistic: emphasize recent data to nail the plateau
+w = np.exp((t-t[-1])/60.0)  # increasing weights toward end
+try:
+    p,_=curve_fit(logistic,t,g,p0=[-70,45,0.13,415],sigma=1/w,bounds=([-90,25,0.03,390],[90,90,0.5,440]),maxfev=60000)
+    print('\nweighted logistic U=%.2f k=%.4f tc=%.1f L=%.1f' % (p[1],p[2],p[3],p[0]))
+    print('  pred:', np.round(logistic(tt,*p),2))
+    r=g-logistic(t,*p); print('  resid sd %.3f, last20 resid sd %.3f' % (r.std(), r[-20:].std()))
+except Exception as e: print('w fail', e)
+EOF
+python3 sigmoid.py
 ```
 
 ## [37] tool
@@ -1125,7 +1758,7 @@ SyntaxError: invalid syntax
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i '/softplus_cap/d' sigmoid.py && python3 sigmoid.py
 ```
 
 ## [39] tool
@@ -1149,7 +1782,90 @@ weighted logistic U=31.71 k=0.1036 tc=419.0 L=-70.0
 **tool call: bash**
 
 ```
+cd /workspace && cat > final_model.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+
+# ---------- Model A: damped local linear trend (Kalman, ML) ----------
+def fit_kf(t_obs, g_obs):
+    def kf_ll(p):
+        phi,qw1,qw2,s2=p
+        n=len(t_obs); m=np.array([g_obs[0],0.0]); P=np.diag([200.0,50.0]); ll=0.0
+        for i in range(1,n):
+            dt=t_obs[i]-t_obs[i-1]
+            F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+            m=F@m; P=F@P@F.T+Q; S=P[0,0]+s2
+            if S<=1e-9: return -1e9
+            iv=g_obs[i]-m[0]; ll+=-0.5*(np.log(2*np.pi*S)+iv*iv/S)
+            K=P[:,0]/S; m=m+K*iv; P=P-np.outer(K,K)*S
+        return ll
+    def obj(x):
+        phi=1/(1+np.exp(-x[0])); return -kf_ll((phi,np.exp(x[1]),np.exp(x[2]),np.exp(x[3])))
+    best=None
+    for s0 in [[1.0,-8,-1.5,-0.2],[0.5,-6,-3,0.0]]:
+        r=minimize(obj,s0,method='Nelder-Mead',options={'maxiter':4000,'xatol':1e-6,'fatol':1e-6})
+        if best is None or r.fun<best.fun: best=r
+    x=best.x
+    return (1/(1+np.exp(-x[0])),np.exp(x[1]),np.exp(x[2]),np.exp(x[3]))
+
+def kf_pred(p,t_obs,g_obs,t_new):
+    phi,qw1,qw2,s2=p
+    n=len(t_obs); m=np.array([g_obs[0],0.0]); P=np.diag([200.0,50.0])
+    for i in range(1,n):
+        dt=t_obs[i]-t_obs[i-1]
+        F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+        m=F@m; P=F@P@F.T+Q; S=P[0,0]+s2; K=P[:,0]/S
+        m=m+K*(g_obs[i]-m[0]); P=P-np.outer(K,K)*S
+    mm=m.copy();PP=P.copy();last=t_obs[-1];pr=[];sd=[]
+    for tn in t_new:
+        dt=tn-last; F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+        mm=F@mm;PP=F@PP@F.T+Q; pr.append(mm[0]); sd.append(np.sqrt(PP[0,0]+s2)); last=tn
+    return np.array(pr),np.array(sd)
+
+params=fit_kf(t,g)
+pA,sdA=kf_pred(params,t,g,tt)
+print('KF model (damped trend): preds', np.round(pA,2))
+
+# ---------- Model B: exponential approach to asymptote ----------
+def expapp_f(tt_, a,k,c): return a-c*np.exp(-k*(tt_-t[0]))
+def fit_expapp(t_obs,g_obs):
+    def rss(p):
+        a,k,c=p
+        if k<=0: return 1e12
+        r=g_obs-(a-c*np.exp(-k*(t_obs-t_obs[0]))); return np.sum(r*r)
+    best=None
+    for a0,c0,k0 in [(34,104,0.02),(36,105,0.025),(40,110,0.015),(50,120,0.01),(38,107,0.03)]:
+        r=minimize(rss,[a0,k0,c0],method='Nelder-Mead',options={'maxiter':8000,'xatol':1e-8,'fatol':1e-8})
+        if best is None or r.fun<best.fun: best=r
+    resid=g_obs-expapp_f(t_obs,*best.x)
+    return best.x, resid
+(a,k,c),resB=fit_expapp(t,g)
+pB=expapp_f(tt,a,k,c)
+print('Exp-approach: a=%.3f k=%.5f c=%.2f resid sd=%.3f last20 sd=%.3f'%(a,k,c,resB.std(),resB[-20:].std()))
+print('Exp preds:', np.round(pB,2))
+
+# ---------- Model C: spline edge linear extrapol (50) + (cos+drift) ----------
+from scipy.interpolate import UnivariateSpline
+from scipy.optimize import curve_fit
+def f_cos(t_,A,B,T,p,C,D):
+    u=np.clip((t_-p)/T,-1,1); return A+B*0.5*(1+np.sin(np.pi*u/2))+C*(t_-p)+D*(t_-p)**2
+spl=UnivariateSpline(t,g,s=50); v=spl(t[-1]); d=spl.derivative()(t[-1])
+pC1=v+d*(tt-t[-1]); rC1=g-spl(t); sdC1=rC1.std()
+pcos,_=curve_fit(f_cos,t,g,p0=[-20,90,120,400,0.3,0.0],maxfev=100000)
+pC2=f_cos(tt,*pcos); rC2=g-f_cos(t,*pcos); sdC2=rC2.std()
+print('Spline-edge preds:', np.round(pC1,2),' resid sd %.3f'%sdC1)
+print('Cos+drift  preds:', np.round(pC2,2),' resid sd %.3f'%sdC2)
+
+print('\nSummary of point preds at t=470/512/564:')
+for n,p in [('KF',pA),('ExpApp',pB),('SplineLin',pC1),('CosDrift',pC2)]:
+    print('  %-9s %6.2f %6.2f %6.2f'%(n,p[0],p[4],p[-1]))
+EOF
+python3 final_model.py
 ```
 
 ## [41] tool
@@ -1174,7 +1890,55 @@ The sigmoid fits say gamma plateaus near 31–33 (they flatten it), trend/Kalman
 **tool call: bash**
 
 ```
+cd /workspace && cat > damp.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.signal import savgol_filter
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
 
+# Estimate the local slope over windows, see how it decays after peak (~t=425)
+# slope per small window (local linear fit), then look at log-decay of slope
+win=15
+slopes=[]
+for i in range(win, len(g)):
+    c=np.polyfit(t[i-win:i+1]-t[i], g[i-win:i+1], 1)
+    slopes.append((t[i], c[0]))
+sl=np.array(slopes)
+# focus after peak slope
+imax=np.argmax(sl[:,1])
+print('peak slope %.3f at t=%.0f (index %d)' % (sl[imax,1], sl[imax,0], imax))
+# daily damping factor: slope[i+1]/slope[i] after peak, restricted where slope>0 and smooth
+post=sl[imax:]
+print('post-peak slope series (t, slope):')
+for row in post[::8]:
+    print('  t=%.0f slope=%.4f' % (row[0], row[1]))
+# estimate decay rate via regressing log(slope) on t for segment where slope healthy positive
+mask=(post[:,1]>0.05)
+if mask.sum()>5:
+    tt=post[mask,0]; ls=np.log(post[mask,1])
+    A=np.polyfit(tt,ls,1)
+    print('\ndamped slope: log-slope decay rate %.5f /day -> half-life %.1f d, implied damping phi^(1)=%.4f'%(A[0], -np.log(2)/A[0], np.exp(A[0])))
+    # forecast slope at future t and integrate gamma from t=467,g=32 using model slope(t)=s0*phi^(t-425)+noise
+    s0=np.exp(A[1]); ph=np.exp(A[0])
+    t0=467.0; g0=32.0
+    # slope between 425 and now: model slope = s0*ph^(t-425); value at t0:
+    slope_t0=s0*ph**(t0-425)
+    print('model slope at t0=%.0f : %.4f (data last slope %.4f)'%(t0,slope_t0,sl[-1,1]))
+    test=pd.read_csv('data/test.csv'); ttst=test.t.values.astype(float)
+    # integrate: g(t)=g0 + slope_t0 * sum_{k=1..dt} ph^(k-1)
+    dt=ttst-t0
+    integ=np.where(np.abs(ph-1)<1e-9, dt, slope_t0*(ph**0- ph**dt)/(1-ph))
+    # add g0 measured at 467. But t=467 has noise; use local smooth level ~32
+    pred=g0+integ
+    print('damped-integration asymptote = %.2f' % (g0 + slope_t0/(1-ph) if ph<1 else np.inf))
+    print('damped-integration preds:', np.round(pred,2))
+
+# Compare: simple exponential fit to the LAST 40 days (post-transition) only
+late=(t>=430)
+c=np.polyfit(1-np.exp(-(t[late]-430)/20.0), g[late],1)
+print('\nlast-40d exponential-approach fit: asymp=%.2f  (implied)'% (np.polyval(c,1),))
+EOF
+python3 damp.py
 ```
 
 ## [43] tool
@@ -1203,7 +1967,54 @@ last-40d exponential-approach fit: asymp=36.88  (implied)
 **tool call: bash**
 
 ```
+cd /workspace && cat > damp2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.signal import savgol_filter
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+
+# smooth slope via savitzky-golay
+d1 = savgol_filter(g, 27, 3, deriv=1)
+peak_i = int(np.argmax(d1))
+print('S-G smooth peak slope %.2f at t=%d' % (d1[peak_i], t[peak_i]))
+
+# fit ratio d1[i+1]/d1[i] in post-peak region (where d1 still positive)
+idx = np.arange(len(g))
+post = idx[peak_i:]
+valid = post[d1[post] > 0.05]
+phis = d1[valid[1:]] / d1[valid[:-1]]
+print('slope ratio across post-peak valid days: mean %.4f median %.4f (n=%d)' % (phis.mean(), np.median(phis), len(phis)))
+
+# fit phi by linear regression on log d1 vs t in post-peak region
+tt = t[valid]; y = np.log(d1[valid])
+A = np.polyfit(tt, y, 1)
+phi = np.exp(A[0])
+print('post-peak damping fit: phi per day = %.4f (half-life %.1f d), slope(427)=%.3f' % (phi, -np.log(2)/A[0], np.exp(A[1])))
+
+# residual standard error of that log-linear fit
+res = y - np.polyval(A, tt)
+print('log-slope fit resid sd %.3f' % res.std())
+
+# integrate the exponential-decay slope from END of data (t0=467) with current smooth slope
+t0 = t[-1]
+slope0 = d1[-1]
+g0 = savgol_filter(g, 27, 3)[-1]
+test = pd.read_csv('data/test.csv'); ttst = test.t.values.astype(float)
+dtn = ttst - t0
+# g(t0+q) = g0 + slope0 * sum_{j=1..q} phi^(j-1)  ~ geometric; as q->inf asymp = g0 + slope0/(1-phi)
+asymp = g0 + slope0 / (1 - phi)
+sums = np.where(np.isclose(phi,1), dtn, slope0*(1 - phi**dtn)/(1 - phi))
+pred = g0 + sums
+print('\nEnd-state smoothed: g0=%.2f slope0=%.3f  implied asymptote=%.2f' % (g0, slope0, asymp))
+print('Exponential-decay( damped ) point preds:', np.round(pred, 2))
+
+# What phi would make asymp ~40 or ~45 consistent with late plateau fits?
+for target in [36, 38, 40, 45, 50]:
+    ph_req = 1 - slope0/(target-g0)
+    print('  to reach asymp=%d requires phi=%.4f' % (target, ph_req))
+EOF
+python3 damp2.py
 ```
 
 ## [45] tool
@@ -1231,7 +2042,75 @@ This is the key insight. The slope is decaying geometrically with φ≈0.94/day 
 **tool call: bash**
 
 ```
+cd /workspace && cat > final.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+from scipy.signal import savgol_filter
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+
+# ---------- measurement-noise scale ----------
+diff = np.diff(g)
+sd_eps_raw = diff.std()/np.sqrt(2.0)
+
+# ---------- Kalman damped-trend ML fit ----------
+def fit_kf(t_obs,g_obs):
+    def kf_ll(p):
+        phi,qw1,qw2,s2=p
+        n=len(t_obs); m=np.array([g_obs[0],0.0]); P=np.diag([200.0,50.0]); ll=0.0
+        for i in range(1,n):
+            dt=t_obs[i]-t_obs[i-1]
+            F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+            m=F@m; P=F@P@F.T+Q; S=P[0,0]+s2
+            if S<=1e-9: return -1e9
+            iv=g_obs[i]-m[0]; ll+=-0.5*(np.log(2*np.pi*S)+iv*iv/S)
+            K=P[:,0]/S; m=m+K*iv; P=P-np.outer(K,K)*S
+        return ll
+    def obj(x):
+        phi=1/(1+np.exp(-x[0])); return -kf_ll((phi,np.exp(x[1]),np.exp(x[2]),np.exp(x[3])))
+    best=None
+    for s0 in [[1.0,-8,-1.5,-0.2],[0.5,-6,-3,0.0],[ -0.5,-9,-1.0,-0.3]]:
+        r=minimize(obj,s0,method='Nelder-Mead',options={'maxiter':5000,'xatol':1e-7,'fatol':1e-7})
+        if best is None or r.fun<best.fun: best=r
+    x=best.x
+    return dict(phi=1/(1+np.exp(-x[0])),qw1=np.exp(x[1]),qw2=np.exp(x[2]),s2=np.exp(x[3]))
+
+def kf_pred(p,t_obs,g_obs,t_new):
+    phi,qw1,qw2,s2=p['phi'],p['qw1'],p['qw2'],p['s2']
+    n=len(t_obs); m=np.array([g_obs[0],0.0]); P=np.diag([200.0,50.0])
+    for i in range(1,n):
+        dt=t_obs[i]-t_obs[i-1]
+        F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+        m=F@m; P=F@P@F.T+Q; S=P[0,0]+s2; K=P[:,0]/S
+        m=m+K*(g_obs[i]-m[0]); P=P-np.outer(K,K)*S
+    mm=m.copy();PP=P.copy();last=t_obs[-1];pr=[];sd=[]
+    for tn in t_new:
+        dt=tn-last; F=np.array([[1.0,dt],[0.0,phi]]); Q=np.diag([qw1*dt,qw2*dt])
+        mm=F@mm;PP=F@PP@F.T+Q; pr.append(mm[0]); sd.append(np.sqrt(PP[0,0]+s2)); last=tn
+    return np.array(pr),np.array(sd),m[0],m[1]
+
+pkf=fit_kf(t,g); pA,sdA,lvl,slp=kf_pred(pkf,t,g,tt)
+print('Kalman ML: phi=%.4f qw1=%.2e qw2=%.4f s2=%.4f'%(pkf['phi'],pkf['qw1'],pkf['qw2'],pkf['s2']))
+print('  end level %.2f slope %.3f'%(lvl,slp))
+
+# ---------- direct estimate of post-peak damping phi from smoothed slopes ----------
+d1=savgol_filter(g,27,3,deriv=1)
+peak_i=int(np.argmax(d1))
+idx=np.arange(len(g)); post=idx[peak_i:]; valid=post[d1[post]>0.05]
+ph_ratio=(d1[valid[1:]]/d1[valid[:-1]])
+phi_direct=float(np.median(ph_ratio))
+print('Direct post-peak slope damping phi=%.4f'%phi_direct)
+
+# ---------- forced-strong-damping integration prediction (physics-anchored) ----------
+g0=savgol_filter(g,27,3)[-1]; slope0=d1[-1]
+for phi in [0.90,0.94,0.97]:
+    dtn=tt-t[-1]; sums=slope0*(1-phi**dtn)/(1-phi)
+    print('  phi=%.2f -> asymp %.1f  preds'%(phi,g0+slope0/(1-phi)),np.round(g0+sums,1))
+EOF
+python3 final.py
 ```
 
 ## [47] tool
@@ -1253,7 +2132,82 @@ Let me build the final model: strong-damping integration as the primary point pr
 **tool call: bash**
 
 ```
+cd /workspace && cat > final2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+from scipy.signal import savgol_filter
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+dtn = tt - t[-1]
+
+# Robust end state via lowess-like robust local fit (Tukey biweight, quadratic, h=24)
+def robust_end_state(t,g,h=24, deriv=0):
+    tc=t[-1]; u=(t-tc)/h; w=(1-np.clip(np.abs(u),0,1)**2)**2
+    deg=max(deriv+1,2)
+    c=np.polyfit(u[ w>1e-9 ], g[w>1e-9], deg, w=np.sqrt(w[w>1e-9]))
+    # poly coefficients in u; convert derivative wrt t at u=0
+    if deriv==0: return np.polyval(c,0.0)
+    if deriv==1: return c[-2]/h
+    if deriv==2: return 2*c[-3]/h**2
+g0r=robust_end_state(t,g,24,0); s0r=robust_end_state(t,g,24,1)
+g0s=float(savgol_filter(g,27,3)[-1]); s0s=float(savgol_filter(g,27,3,deriv=1)[-1])
+g0=np.mean([g0r,g0s]); slope0=np.mean([s0r,s0s])
+print('End state robust/SG: g0 %.2f (r %.2f s %.2f), slope %.3f (r %.3f s %.3f)'%(g0,g0r,g0s,slope0,s0r,s0s))
+
+# phi direct from ratio of smoothed slopes post-peak with robust window choice
+def direct_phi(win):
+    d1=savgol_filter(g,win,3,deriv=1)
+    peak_i=int(np.argmax(d1)); post=np.arange(len(g))[peak_i:]
+    valid=post[d1[post]>0.06]
+    return float(np.median(d1[valid[1:]]/d1[valid[:-1]]))
+phis=[direct_phi(w) for w in [21,25,27,31,35]]
+phi_dir=float(np.median(phis))
+print('direct phi across windows:', np.round(phis,4), 'median %.4f'%phi_dir)
+
+# ----- measurement noise for NEW noisy obs -----
+diff=np.diff(g); sd_eps=float((diff[16:]).std()/np.sqrt(2.0))  # avoid earliest noisier part
+# also local residual around smooth plateau
+from scipy.interpolate import UnivariateSpline
+spl=UnivariateSpline(t,g,s=80)
+sd_eps=float(np.mean([sd_eps, np.std(g-spl(t))]))
+print('measurement noise sd_eps ~ %.3f deg'%sd_eps)
+
+# ----- Asymptote uncertainty: span of scenarios -----
+def integ(phi):
+    return g0 + slope0*(1-phi**dtn)/(1-phi)
+scen={
+ 'phi=0.92':integ(0.92),
+ 'phi=0.94':integ(0.94),
+ 'phi=0.95':integ(0.95),
+ 'phi=0.96':integ(0.96),
+ 'phi=0.97':integ(0.97),
+}
+for k,v in scen.items(): print(k, 'asymp %.1f'%(g0+slope0/(1-float(k.split('=')[1]))), 'preds', np.round(v,2))
+
+# central point: use phi=0.95
+yc = integ(0.95)
+# model-form std across scenarios (point-wise, across scenario spread + asymp spread)
+allscen=np.vstack(list(scen.values()))
+model_sd = allscen.std(axis=0)
+print('yc:', np.round(yc,2))
+print('scenario pointwise sd:', np.round(model_sd,2))
+
+# total predictive sd: scenario uncertainty + process noise growth + measurement noise
+# process noise growth: slope perturbations accumulate ~ sqrt(dt)*slope_process_sd
+q_slope_sd = 0.15   # deg/day/sqrt(day) approximate
+proc_sd = np.sqrt(dtn)*q_slope_sd + 0.0
+tot_sd = np.sqrt(sd_eps**2 + model_sd**2 + proc_sd**2 + (0.02*dtn)**2)
+print('total sd:', np.round(tot_sd,2))
+lo=yc-1.96*tot_sd; hi=yc+1.96*tot_sd
+out=pd.DataFrame({'t':tt,'y_pred':yc,'y_lower':lo,'y_upper':hi})
+out.to_csv('predictions.csv',index=False)
+print('\nWRITTEN predictions.csv:')
+print(out.to_string())
+EOF
+python3 final2.py
 ```
 
 ## [49] tool
@@ -1291,7 +2245,67 @@ The intervals (±~6° at far end) are likely too narrow given the true model-for
 **tool call: bash**
 
 ```
+cd /workspace && cat > cv_interval.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.signal import savgol_filter
+from scipy.interpolate import UnivariateSpline
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t_all = df.t.values.astype(float); g_all = df.gamma.values
+
+def end_state(t,g,win=27):
+    return float(savgol_filter(g,win,3)[-1]), float(savgol_filter(g,win,3,deriv=1)[-1])
+
+def direct_phi(g, win=27):
+    d1=savgol_filter(g,win,3,deriv=1); peak_i=int(np.argmax(d1)); post=np.arange(len(g))[peak_i:]
+    valid=post[d1[post]>0.06]
+    if len(valid)<2: return 0.97
+    return float(np.median(d1[valid[1:]]/d1[valid[:-1]]))
+
+# candidate method: damped integration with phi from data; intervals include asymptote-uncertainty
+def forecast(t_tr,g_tr,tt, sd_eps=0.9, q=0.15):
+    g0,s0=end_state(t_tr,g_tr)
+    phi=direct_phi(g_tr)
+    dtn=tt-t_tr[-1]
+    def integ(p): return g0+s0*(1-np.clip(p**dtn,0,10**6))/(1-p)
+    phis=np.array([max(phi-0.03,0.80), phi, min(phi+0.03,0.995)])
+    scen=np.vstack([integ(p) for p in phis])
+    yc=integ(phi); msd=scen.std(axis=0)
+    sds=np.sqrt(sd_eps**2+msd**2+(np.sqrt(dtn)*q)**2+(0.02*dtn)**2)
+    return yc,sds,phi
+
+# grid over scaling factor for the model_sd and extra inflation; choose to approach 95% coverage at horizon>=14d
+def coverage(K_ms, K_time, verbose=False, cutoffs=[445,450,455,458,462]):
+    covs=[]; errs=[]
+    for tc in cutoffs:
+        m=t_all<=tc; t_tr,g_tr=t_all[m],g_all[m]; t_te,g_te=t_all[~m],g_all[~m]
+        sds_eps=0.9
+        g0,s0=end_state(t_tr,g_tr); phi=direct_phi(g_tr); dtn=t_te-t_tr[-1]
+        def integ(p): return g0+s0*(1-np.clip(p**dtn,0,1e6))/(1-p)
+        scen=np.vstack([integ(p) for p in [max(phi-0.03,0.8),phi,min(phi+0.03,0.995)]])
+        yc=integ(phi); msd=scen.std(axis=0)
+        sds=np.sqrt(sds_eps**2+(K_ms*msd)**2+(np.sqrt(dtn)*0.15)**2+(K_time*0.02*dtn)**2)
+        cov=((g_te>=yc-1.96*sds)&(g_te<=yc+1.96*sds)).mean()
+        # only long-horizon (>=14d) relevance
+        lh=dtn>=14
+        covs.append(((g_te[lh]>=yc[lh]-1.96*sds[lh])&(g_te[lh]<=yc[lh]+1.96*sds[lh])).mean())
+        errs.append(np.abs(yc-g_te)[lh])
+        if verbose: print(' cutoff %d phi=%.3f cov(all)=%.2f cov(>=14d)=%.2f meanabs(>=14d)=%.2f'%(tc,phi,cov,covs[-1],errs[-1].mean()))
+    return np.mean(covs), np.concatenate(errs).mean()
+
+print('grid search inflation params targeting ~0.95 coverage at >=14d horizon')
+best=None
+for K_ms in [1,2,3,4,5,6]:
+    for K_time in [1,2,3,4,6,8]:
+        cov,me=coverage(K_ms,K_time)
+        d=abs(cov-0.95)
+        if best is None or d<best[0]: best=(d,K_ms,K_time,cov,me)
+print('best K_ms=%s K_time=%s -> long-horizon cov=%.3f meanabs=%.2f'%(best[1],best[2],best[3],best[4]))
+# detailed with best
+print('detail:'); coverage(best[1],best[2],verbose=True)
+EOF
+python3 cv_interval.py
 ```
 
 ## [51] tool
@@ -1313,7 +2327,72 @@ The damped-integration point forecasts are excellent at post-plateau origins (me
 **tool call: bash**
 
 ```
+cd /workspace && cat > produce.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.signal import savgol_filter
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+dtn = tt - t[-1]
+
+# 1) Measurement / observation noise (for a NEW noisy measurement)
+diff = np.diff(g)
+sd_eps = float(diff[16:].std()/np.sqrt(2.0))          # average differenced-noise
+# cross-check vs in-sample smooth-spline residual
+from scipy.interpolate import UnivariateSpline
+spl = UnivariateSpline(t, g, s=80)
+sd_eps2 = float(np.std(g - spl(t)))
+sd_obs = float(np.mean([sd_eps, sd_eps2]))            # ~0.9 deg
+
+# 2) End state (level & slope) robustly
+def end_state(g, win=27):
+    return float(savgol_filter(g, win, 3)[-1]), float(savgol_filter(g, win, 3, deriv=1)[-1])
+g0, slope0 = end_state(g, 27)
+
+# 3) Direct damping factor of the post-peak slope
+def direct_phi(g, win):
+    d1 = savgol_filter(g, win, 3, deriv=1)
+    pk = int(np.argmax(d1)); post = np.arange(len(g))[pk:]
+    valid = post[d1[post] > 0.06]
+    return float(np.median(d1[valid[1:]]/d1[valid[:-1]])) if len(valid) > 2 else 0.97
+phi = float(np.median([direct_phi(g, w) for w in (21,25,27,31,35)]))
+print('g0=%.2f slope0=%.3f phi=%.4f sd_obs=%.3f' % (g0, slope0, phi, sd_obs))
+
+# 4) Point estimate: damped-slope integration (phi from data)
+def integ(p): return g0 + slope0*(1-np.clip(p**dtn, 0, 1e9))/(1-p)
+yc = integ(phi)
+
+# 5) Structural/asymptote uncertainty via scenario spread across plausible damping/basins
+#    near-term anchored by data; far-term reflects uncertainty about where gamma settles.
+phis_scen = np.array([max(phi-0.05, 0.85), phi-0.02, phi, min(phi+0.03,0.995), min(phi+0.05,0.997)])
+scen = np.vstack([integ(p) for p in phis_scen])
+sd_struct = scen.std(axis=0)
+# widen far-horizon structural term so asymptote uncertainty (plateau ~33 up to continued-rise ~55) is captured:
+# extra linear-in-horizon uncertainty term
+sd_extra = 0.045*dtn          # deg of additional sigma per day of horizon
+# process wiggle that accumulates with sqrt horizon
+q = 0.12
+sd_proc = np.sqrt(dtn)*q
+
+sd_tot = np.sqrt(sd_obs**2 + sd_struct**2 + sd_extra**2 + sd_proc**2)
+lo = yc - 1.96*sd_tot
+hi = yc + 1.96*sd_tot
+# physical bounds for an elevation angle
+lo = np.clip(lo, -90, 90); hi = np.clip(hi, -90, 90)
+
+out = pd.DataFrame({'t': test.t, 'y_pred': yc, 'y_lower': lo, 'y_upper': hi})
+out.to_csv('predictions.csv', index=False)
+print('\nDamping scenario preds (phi set %s):' % np.round(phis_scen,3))
+for i,p in enumerate(phis_scen): print('  phi=%.3f asymp=%5.1f  -> %s' % (p, g0+slope0/(1-p), np.round(scen[i],1)))
+print('\nsd_struct', np.round(sd_struct,2))
+print('sd_extra ', np.round(sd_extra,2))
+print('sd_tot   ', np.round(sd_tot,2))
+print('\nFINAL predictions:')
+print(out.to_string())
+EOF
+python3 produce.py
 ```
 
 ## [53] tool
@@ -1352,7 +2431,52 @@ The φ=0.997 scenario (asymptote 147) over-weights the upside; the Kalman weak-d
 **tool call: bash**
 
 ```
+cd /workspace && cat > produce.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.signal import savgol_filter
+from scipy.interpolate import UnivariateSpline
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+dtn = tt - t[-1]
+
+# --- observation noise ---
+diff = np.diff(g)
+sd_eps = float(diff[16:].std()/np.sqrt(2.0))
+spl = UnivariateSpline(t, g, s=80)
+sd_obs = float(np.mean([sd_eps, float(np.std(g-spl(t)))]))
+
+# --- end state & damping ---
+g0 = float(savgol_filter(g,27,3)[-1]); slope0 = float(savgol_filter(g,27,3,deriv=1)[-1])
+def direct_phi(win):
+    d1=savgol_filter(g,win,3,deriv=1); pk=int(np.argmax(d1)); post=np.arange(len(g))[pk:]
+    v=post[d1[post]>0.06]
+    return float(np.median(d1[v[1:]]/d1[v[:-1]])) if len(v)>2 else 0.97
+phi=float(np.median([direct_phi(w) for w in (21,25,27,31,35)]))
+
+def integ(p): return g0 + slope0*(1-np.clip(p**dtn,0,1e9))/(1-p)
+yc = integ(phi)
+
+# structural scenarios: defensible damping range phi in [0.90,0.99] -> asymp ~35 to ~52
+phis_scen=np.array([0.90,0.93,0.95,0.97,0.99])
+scen=np.vstack([integ(p) for p in phis_scen])
+sd_struct=scen.std(axis=0)
+# mild extra far-horizon uncertainty (model-form not fully captured by phi spread)
+sd_extra=0.02*dtn
+q=0.12; sd_proc=np.sqrt(dtn)*q
+sd_tot=np.sqrt(sd_obs**2+sd_struct**2+sd_extra**2+sd_proc**2)
+lo=np.clip(yc-1.96*sd_tot,-90,90); hi=np.clip(yc+1.96*sd_tot,-90,90)
+
+out=pd.DataFrame({'t':test.t,'y_pred':yc,'y_lower':lo,'y_upper':hi})
+out.to_csv('predictions.csv',index=False)
+print('g0=%.2f slope0=%.3f phi=%.4f sd_obs=%.3f'%(g0,slope0,phi,sd_obs))
+print('asymp by scenario:', np.round([g0+slope0/(1-p) for p in phis_scen],1))
+print('sd_tot:', np.round(sd_tot,2))
+print(out.to_string())
+EOF
+python3 produce.py
 ```
 
 ## [55] tool
@@ -1380,7 +2504,41 @@ Let me validate the near-term intervals are well-calibrated and run a complete o
 **tool call: bash**
 
 ```
+cd /workspace && cat > sanity.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.signal import savgol_filter
+import warnings; warnings.filterwarnings('ignore')
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
 
+# 5-fold rolling-origin within the last 25 days (short holdouts 1..6) to test near-term accuracy
+print('Short-horizon rolling-origin test of damped-integration point forecasts:')
+errs=[]
+for cut in range(len(g)-6, len(g)):
+    g_tr=g[:cut]; t_tr=t[:cut]
+    g0=float(savgol_filter(g_tr,15,3)[-1]) if len(g_tr)>=15 else g_tr[-1]
+    s0=float(savgol_filter(g_tr,15,3,deriv=1)[-1]) if len(g_tr)>=15 else 0.0
+    d1=savgol_filter(g_tr,15,3,deriv=1)
+    # estimate phi
+    pk=int(np.argmax(d1)); post=np.arange(len(g_tr))[pk:]; v=post[d1[post]>0.06]
+    phi=float(np.median(d1[v[1:]]/d1[v[:-1]])) if len(v)>2 else 0.95
+    for j in range(cut,len(g)):
+        dt=t[j]-t_tr[-1]
+        pred=g0+s0*(1-phi**dt)/(1-phi)
+        errs.append(pred-g[j])
+errs=np.array(errs)
+print('  n=%d  bias %+.3f  meanabs %.3f  rmse %.3f'%(len(errs),errs.mean(),np.abs(errs).mean(),np.sqrt((errs**2).mean())))
+
+# sensitivity of final yc to smoothing window
+test = pd.read_csv('data/test.csv'); tt=test.t.values.astype(float); dtn=tt-t[-1]
+for win in [17,21,25,27,31,37]:
+    g0=float(savgol_filter(g,win,3)[-1]); s0=float(savgol_filter(g,win,3,deriv=1)[-1])
+    d1=savgol_filter(g,win,3,deriv=1); pk=int(np.argmax(d1)); post=np.arange(len(g))[pk:]; v=post[d1[post]>0.06]
+    phi=float(np.median(d1[v[1:]]/d1[v[:-1]]))
+    yc=g0+s0*(1-np.clip(phi**dtn,0,1e9))/(1-phi)
+    print('  win=%2d: g0=%.2f s0=%.3f phi=%.3f  yc[470..564]=%s'%(win,g0,s0,phi,np.round(yc,1)))
+EOF
+python3 sanity.py
 ```
 
 ## [57] tool
@@ -1402,7 +2560,52 @@ The point forecasts are robust (37–45 at the far end depending on smoothing wi
 **tool call: bash**
 
 ```
+cd /workspace && cat > produce_final.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.signal import savgol_filter
+from scipy.interpolate import UnivariateSpline
+import warnings; warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t = df.t.values.astype(float); g = df.gamma.values
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+dtn = tt - t[-1]
+
+# observation noise for a NEW measurement
+diff = np.diff(g); sd_eps = float(diff[16:].std()/np.sqrt(2.0))
+spl = UnivariateSpline(t, g, s=80)
+sd_obs = float(np.mean([sd_eps, float(np.std(g-spl(t)))]))
+
+# ensemble of smoothing windows -> robust point estimate + window-induced spread
+def integ(g0,s0,phi): return g0 + s0*(1-np.clip(phi**dtn,0,1e9))/(1-phi)
+W=[21,25,27,31,37]
+ycs=[]; ends=[]
+for win in W:
+    g0=float(savgol_filter(g,win,3)[-1]); s0=float(savgol_filter(g,win,3,deriv=1)[-1])
+    d1=savgol_filter(g,win,3,deriv=1); pk=int(np.argmax(d1)); post=np.arange(len(g))[pk:]; v=post[d1[post]>0.06]
+    phi=float(np.median(d1[v[1:]]/d1[v[:-1]]))
+    ycs.append(integ(g0,s0,phi)); ends.append(g0+s0/(1-phi))
+ycs=np.array(ycs)
+yc=ycs.mean(axis=0)
+print('window ensemble end-asymptote:', np.round(ends,1))
+print('yc:', np.round(yc,2))
+
+# structural scenario spread: damping phi in defensible [0.90,0.99] about median end-state
+g0m=float(savgol_filter(g,27,3)[-1]); s0m=float(savgol_filter(g,27,3,deriv=1)[-1])
+scen=np.vstack([integ(g0m,s0m,p) for p in (0.90,0.93,0.95,0.97,0.99)])
+sd_struct=scen.std(axis=0)
+sd_window=ycs.std(axis=0)
+sd_extra=0.02*dtn               # residual model-form risk with horizon
+q=0.12; sd_proc=np.sqrt(dtn)*q  # accumulating process wiggle
+sd_tot=np.sqrt(sd_obs**2+sd_struct**2+sd_window**2+sd_extra**2+sd_proc**2)
+
+lo=np.clip(yc-1.96*sd_tot,-90,90); hi=np.clip(yc+1.96*sd_tot,-90,90)
+out=pd.DataFrame({'t':test.t,'y_pred':yc,'y_lower':lo,'y_upper':hi})
+out.to_csv('predictions.csv',index=False)
+print('sd_tot:', np.round(sd_tot,2))
+print(out.to_string())
+EOF
+python3 produce_final.py
 ```
 
 ## [59] tool
@@ -1430,7 +2633,21 @@ Now a final independent verification of the file: column names/types, row count 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+test = pd.read_csv('data/test.csv')
+p = pd.read_csv('predictions.csv')
+print('columns:', list(p.columns))
+assert list(p.columns)==['t','y_pred','y_lower','y_upper']
+assert len(p)==len(test), (len(p), len(test))
+assert np.allclose(p.t.values, test.t.values, atol=1e-9), 't mismatch'
+assert (p.y_lower<=p.y_pred).all() and (p.y_pred<=p.y_upper).all()
+assert p[['y_pred','y_lower','y_upper']].notnull().all().all()
+assert (p.y_lower>=-90).all() and (p.y_upper<=90).all()
+print('rows:', len(p), ' OK; within bounds; intervals ordered')
+print()
+print(p.to_string(index=False))
+"
 ```
 
 ## [61] tool

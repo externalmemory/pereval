@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -109,6 +109,29 @@ t
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+print('Train shape:', train.shape)
+print('Train t range:', train.t.min(), 'to', train.t.max())
+print('Test t range:', test.t.min(), 'to', test.t.max())
+print()
+print('Train alpha range:', train.alpha.min(), 'to', train.alpha.max())
+print('Train beta range:', train.beta.min(), 'to', train.beta.max())
+print()
+print('Test t values:')
+print(test.t.values)
+print()
+print('Train head:')
+print(train.head(20))
+print()
+print('Train tail:')
+print(train.tail(20))
+"
 
 ```
 
@@ -182,6 +205,54 @@ Train tail:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Look at the relationship between alpha and beta
+# Both seem to be angles that evolve over time
+
+# Let's look at the circular nature - convert to radians and compute sin/cos
+alpha_rad = np.deg2rad(train.alpha)
+beta_rad = np.deg2rad(train.beta)
+
+# Let's look at how alpha and beta change
+dalpha = np.diff(train.alpha)
+dbeta = np.diff(train.beta)
+
+# Handle wrapping for alpha
+dalpha_unwrap = np.where(dalpha > 180, dalpha - 360, np.where(dalpha < -180, dalpha + 360, dalpha))
+dbeta_unwrap = np.where(dbeta > 180, dbeta - 360, np.where(dbeta < -180, dbeta + 360, dbeta))
+
+print('Alpha daily change stats (unwrapped):', np.mean(dalpha_unwrap), np.std(dalpha_unwrap))
+print('Beta daily change stats (unwrapped):', np.mean(dbeta_unwrap), np.std(dbeta_unwrap))
+
+# Unwrap alpha and beta to get continuous versions
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+
+print()
+print('Alpha unwrapped range:', alpha_unwrapped.min(), 'to', alpha_unwrapped.max())
+print('Beta unwrapped range:', beta_unwrapped.min(), 'to', beta_unwrapped.max())
+
+# Total change over the training period
+print()
+print('Total alpha change (unwrapped):', alpha_unwrapped[-1] - alpha_unwrapped[0])
+print('Total beta change (unwrapped):', beta_unwrapped[-1] - beta_unwrapped[0])
+
+# Rate of change
+print()
+print('Alpha rate per day:', (alpha_unwrapped[-1] - alpha_unwrapped[0]) / (train.t.iloc[-1] - train.t.iloc[0]))
+print('Beta rate per day:', (beta_unwrapped[-1] - beta_unwrapped[0]) / (train.t.iloc[-1] - train.t.iloc[0]))
+
+# Relationship between alpha and beta
+diff_unwrapped = beta_unwrapped - alpha_unwrapped
+print()
+print('Beta - Alpha (unwrapped) range:', diff_unwrapped.min(), 'to', diff_unwrapped.max())
+print('Beta - Alpha (unwrapped) mean:', np.mean(diff_unwrapped))
+"
 
 ```
 
@@ -214,6 +285,67 @@ Beta - Alpha (unwrapped) mean: -1009.2280605707952
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Unwrap both angles
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+
+# Let's look at the residual after removing linear trend
+from numpy.polynomial import polynomial as P
+
+# Fit linear trend to alpha
+alpha_coef = np.polyfit(train.t, alpha_unwrapped, 1)
+alpha_trend = np.polyval(alpha_coef, train.t)
+alpha_resid = alpha_unwrapped - alpha_trend
+
+# Fit linear trend to beta
+beta_coef = np.polyfit(train.t, beta_unwrapped, 1)
+beta_trend = np.polyval(beta_coef, train.t)
+beta_resid = beta_unwrapped - beta_trend
+
+print('Alpha linear trend coeffs:', alpha_coef)
+print('Beta linear trend coeffs:', beta_coef)
+
+print()
+print('Alpha residual stats: mean={:.4f}, std={:.4f}'.format(np.mean(alpha_resid), np.std(alpha_resid)))
+print('Beta residual stats: mean={:.4f}, std={:.4f}'.format(np.mean(beta_resid), np.std(beta_resid)))
+
+# Check if there's a periodic component in the residuals
+# Use FFT on the residuals
+from scipy.fft import fft, fftfreq
+
+n = len(alpha_resid)
+dt = 1  # 1 day
+yf_alpha = fft(alpha_resid)
+yf_beta = fft(beta_resid)
+xf = fftfreq(n, dt)
+
+# Find dominant frequencies for alpha residuals
+power_alpha = np.abs(yf_alpha[:n//2])
+power_beta = np.abs(yf_beta[:n//2])
+freqs = xf[:n//2]
+
+# Top 5 frequencies
+top_alpha_idx = np.argsort(power_alpha[1:])[-5:][::-1] + 1
+top_beta_idx = np.argsort(power_beta[1:])[-5:][::-1] + 1
+
+print()
+print('Alpha residual top frequencies (cycles/day):')
+for i in top_alpha_idx:
+    period = 1/freqs[i] if freqs[i] > 0 else float('inf')
+    print(f'  freq={freqs[i]:.6f}, period={period:.1f} days, power={power_alpha[i]:.2f}')
+
+print()
+print('Beta residual top frequencies (cycles/day):')
+for i in top_beta_idx:
+    period = 1/freqs[i] if freqs[i] > 0 else float('inf')
+    print(f'  freq={freqs[i]:.6f}, period={period:.1f} days, power={power_beta[i]:.2f}')
+"
 
 ```
 
@@ -255,6 +387,77 @@ Beta residual top frequencies (cycles/day):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Unwrap both angles
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+
+# Let's see if beta can be predicted from alpha
+# Maybe beta = f(alpha) + noise for some function f
+# Let's look at beta vs alpha directly
+
+# Both are periodic with different periods
+# alpha period ~ 360 days (1 deg/day)
+# beta period ~ 1139 days (0.317 deg/day) -- but that doesn't match the FFT results
+
+# Let me look at the actual periods
+# alpha increases 3604 degrees in 3609 days -> period = 3609/3604*360 ≈ 360.5 days
+# beta increases 1142 degrees in 3609 days -> period = 3609/1142*360 ≈ 1137.6 days
+
+# Interesting: 3 * alpha_period ≈ 1081.5, and beta_period ≈ 1137.6
+# Not exactly 3:1 ratio
+
+# Let me look more carefully at the relationship between beta and alpha
+# If we plot beta_unwrapped vs alpha_unwrapped, what does it look like?
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+fig, axes = plt.subplots(3, 2, figsize=(14, 12))
+
+# Plot raw data
+axes[0,0].plot(train.t, train.alpha, '.', markersize=1)
+axes[0,0].set_title('Alpha vs time')
+axes[0,0].set_xlabel('t')
+
+axes[0,1].plot(train.t, train.beta, '.', markersize=1)
+axes[0,1].set_title('Beta vs time')
+axes[0,1].set_xlabel('t')
+
+# Plot unwrapped
+axes[1,0].plot(train.t, alpha_unwrapped, '.', markersize=1)
+axes[1,0].set_title('Alpha unwrapped vs time')
+axes[1,0].set_xlabel('t')
+
+axes[1,1].plot(train.t, beta_unwrapped, '.', markersize=1)
+axes[1,1].set_title('Beta unwrapped vs time')
+axes[1,1].set_xlabel('t')
+
+# Plot beta vs alpha
+axes[2,0].plot(alpha_unwrapped, beta_unwrapped, '.', markersize=1)
+axes[2,0].set_title('Beta unwrapped vs Alpha unwrapped')
+axes[2,0].set_xlabel('Alpha unwrapped')
+axes[2,0].set_ylabel('Beta unwrapped')
+
+# Plot beta residual vs alpha residual
+alpha_coef = np.polyfit(train.t, alpha_unwrapped, 1)
+beta_coef = np.polyfit(train.t, beta_unwrapped, 1)
+alpha_resid = alpha_unwrapped - np.polyval(alpha_coef, train.t)
+beta_resid = beta_unwrapped - np.polyval(beta_coef, train.t)
+axes[2,1].plot(alpha_resid, beta_resid, '.', markersize=1)
+axes[2,1].set_title('Beta residual vs Alpha residual')
+axes[2,1].set_xlabel('Alpha residual')
+axes[2,1].set_ylabel('Beta residual')
+
+plt.tight_layout()
+plt.savefig('data_exploration.png', dpi=150)
+print('Saved plot')
+"
 
 ```
 
@@ -277,6 +480,66 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+
+# Unwrap both angles
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+
+# Let's look at the relationship beta = a * alpha + b
+# If we regress beta_unwrapped on alpha_unwrapped
+from numpy.polynomial import polynomial as P
+
+coef = np.polyfit(alpha_unwrapped, beta_unwrapped, 1)
+print('Beta = {:.6f} * Alpha + {:.4f}'.format(coef[0], coef[1]))
+
+resid = beta_unwrapped - np.polyval(coef, alpha_unwrapped)
+print('Residual std: {:.4f}'.format(np.std(resid)))
+print('Residual range: {:.4f} to {:.4f}'.format(np.min(resid), np.max(resid)))
+
+# The ratio of rates: beta_rate / alpha_rate = 0.3166/0.9989 ≈ 0.317
+# This is close to 1/3 but not exact
+print()
+print('Rate ratio beta/alpha: {:.6f}'.format(0.3166207594235033/0.9989043791574279))
+print('1/3 = {:.6f}'.format(1/3))
+
+# Let's look at if beta depends on alpha more directly
+# Maybe beta = alpha * k + offset (mod 360)
+# Let's check the correlation between residuals
+from scipy.stats import pearsonr
+r, p = pearsonr(alpha_unwrapped - np.polyval(np.polyfit(train.t, alpha_unwrapped, 1), train.t),
+                beta_unwrapped - np.polyval(np.polyfit(train.t, beta_unwrapped, 1), train.t))
+print()
+print('Correlation between alpha residual and beta residual: {:.4f}'.format(r))
+
+# Let's try a more sophisticated approach: 
+# Model beta_unwrapped as a function of alpha_unwrapped and t
+# First let's look at the structure more carefully
+
+# Look at beta - (1/3)*alpha_unwrapped 
+# Actually let me think about this differently
+# Both angles seem to have a linear trend + periodic components
+# The periodic component of alpha has period ~360 days
+# The periodic component of beta seems to have multiple periods
+
+# Let me try: predict beta_unwrapped from alpha_unwrapped with polynomial regression
+# Or better: use the fact that both are angles from the same vantage point
+
+# Let me check if there's a simpler relationship
+# Maybe beta = alpha + constant (mod 360) but with different rates?
+# Or maybe beta depends on alpha nonlinearly
+
+# Let me look at the first few and last few values more carefully
+print()
+print('First 30 rows:')
+for i in range(30):
+    print(f't={train.t.iloc[i]}, alpha={train.alpha.iloc[i]:.4f}, beta={train.beta.iloc[i]:.4f}, alpha_uw={alpha_unwrapped[i]:.4f}, beta_uw={beta_unwrapped[i]:.4f}')
+"
 
 ```
 
@@ -343,6 +606,60 @@ t=29, alpha=185.7392, beta=3.6366, alpha_uw=185.7392, beta_uw=363.6366
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+
+# Unwrap both angles
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+
+# Focus on beta prediction
+# Remove linear trend from beta
+beta_coef = np.polyfit(train.t, beta_unwrapped, 1)
+beta_trend = np.polyval(beta_coef, train.t)
+beta_resid = beta_unwrapped - beta_trend
+
+print('Beta linear trend: slope={:.6f}, intercept={:.4f}'.format(beta_coef[0], beta_coef[1]))
+
+# FFT analysis of beta residuals
+n = len(beta_resid)
+dt = 1
+yf = fft(beta_resid)
+xf = fftfreq(n, dt)
+power = np.abs(yf[:n//2])
+freqs = xf[:n//2]
+
+# Top 20 frequencies for beta
+top_idx = np.argsort(power[1:])[-20:][::-1] + 1
+print()
+print('Beta residual top 20 frequencies:')
+for i in top_idx:
+    period = 1/freqs[i] if freqs[i] > 0 else float('inf')
+    print(f'  freq={freqs[i]:.8f}, period={period:.2f} days, power={power[i]:.2f}, amp={np.abs(yf[i])/n:.4f}')
+
+# Let me also look at what the signal structure might be
+# If alpha is like a 'sun' angle (1 degree/day = Earth's orbit)
+# then beta might be a function of alpha that has some physical meaning
+# Like beta = alpha - 2*delta (mod 360) where delta is the elongation
+# or beta could be related to the moon's position
+
+# Let me try another approach: model beta as a function of alpha directly
+# Since alpha wraps every ~360 days, and beta wraps every ~1137 days,
+# the relationship might be: beta_mod360 = f(alpha_mod360) + noise
+# where f is a function with period 360
+
+# Let's compute the circular distance between beta and alpha
+diff = (train.beta - train.alpha + 180) % 360 - 180
+print()
+print('Circular diff (beta - alpha) stats:')
+print('  mean: {:.4f}'.format(np.mean(diff)))
+print('  std: {:.4f}'.format(np.std(diff)))
+print('  min: {:.4f}, max: {:.4f}'.format(np.min(diff), np.max(diff)))
+"
 
 ```
 
@@ -408,6 +725,50 @@ Circular diff (beta - alpha) stats:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Unwrap both angles
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+
+# Let me look at the relationship more carefully
+# Maybe beta depends on alpha in a circular way
+
+# Let's compute: for each alpha (mod 360), what is the typical beta?
+# This would show if there's a phase relationship
+
+# Create phase bins for alpha
+alpha_mod = train.alpha % 360
+n_bins = 36  # 10 degree bins
+bin_edges = np.linspace(0, 360, n_bins + 1)
+bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+# For each bin, compute mean beta
+beta_means = []
+beta_stds = []
+for i in range(n_bins):
+    mask = (alpha_mod >= bin_edges[i]) & (alpha_mod < bin_edges[i+1])
+    if mask.sum() > 0:
+        # Need to handle circular mean
+        b = train.beta[mask]
+        bm = np.degrees(np.arctan2(np.mean(np.sin(np.radians(b))), np.mean(np.cos(np.radians(b)))))
+        if bm < 0:
+            bm += 360
+        beta_means.append(bm)
+        beta_stds.append(np.std(b))
+    else:
+        beta_means.append(np.nan)
+        beta_stds.append(np.nan)
+
+print('Alpha bin center -> Beta circular mean:')
+for i in range(n_bins):
+    if not np.isnan(beta_means[i]):
+        print(f'  alpha ~ {bin_centers[i]:.0f}: beta_mean = {beta_means[i]:.1f}, std = {beta_stds[i]:.1f}')
+"
 
 ```
 
@@ -518,6 +879,85 @@ Alpha bin center -> Beta circular mean:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Approach: fit beta_unwrapped = a*t + b + sum_k [A_k*sin(2*pi*f_k*t) + B_k*cos(2*pi*f_k*t)]
+# Use dominant frequencies from FFT
+
+# First, let's do FFT on detrended beta
+beta_coef_lin = np.polyfit(t, beta_unwrapped, 1)
+beta_trend = np.polyval(beta_coef_lin, t)
+beta_detrended = beta_unwrapped - beta_trend
+
+n = len(beta_detrended)
+from scipy.fft import fft, fftfreq
+
+yf = fft(beta_detrended)
+xf = fftfreq(n, 1)
+power = np.abs(yf[:n//2])
+freqs = xf[:n//2]
+
+# Select top K frequencies
+K = 10
+top_idx = np.argsort(power[1:])[-K:][::-1] + 1
+selected_freqs = freqs[top_idx]
+print('Selected frequencies (cycles/day):')
+for f in selected_freqs:
+    print(f'  f={f:.8f}, period={1/f:.2f} days')
+
+# Now fit the full model: linear + sinusoids
+def model(t, a, b, *params):
+    result = a * t + b
+    n_harmonics = len(params) // 2
+    for i in range(n_harmonics):
+        A = params[2*i]
+        B = params[2*i + 1]
+        f = selected_freqs[i]
+        result = result + A * np.sin(2 * np.pi * f * t) + B * np.cos(2 * np.pi * f * t)
+    return result
+
+# Initial guesses
+p0 = [beta_coef_lin[0], beta_coef_lin[1]]
+for i in range(K):
+    p0.extend([0.0, 0.0])
+
+# Fit
+try:
+    popt, pcov = curve_fit(model, t, beta_unwrapped, p0=p0, maxfev=50000)
+    print()
+    print('Fit successful!')
+    print('Linear coeffs: a={:.6f}, b={:.4f}'.format(popt[0], popt[1]))
+    
+    # Residuals
+    pred = model(t, *popt)
+    resid = beta_unwrapped - pred
+    print('Residual std: {:.4f}'.format(np.std(resid)))
+    print('Residual max abs: {:.4f}'.format(np.max(np.abs(resid))))
+    
+    # Predict for test
+    test_t = test.t.values
+    test_pred_uw = model(test_t, *popt)
+    
+    # Wrap to [0, 360)
+    test_pred = test_pred_uw % 360
+    print()
+    print('Test predictions (unwrapped):')
+    for i, tt in enumerate(test_t):
+        print(f'  t={tt}: beta_uw={test_pred_uw[i]:.4f}, beta={test_pred[i]:.4f}')
+    
+except Exception as e:
+    print(f'Fit failed: {e}')
+"
 
 ```
 
@@ -589,6 +1029,101 @@ Test predictions (unwrapped):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap both angles
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Step 1: Model alpha as function of t
+# Alpha has a very clean periodic structure with period ~360 days
+
+# Detrend alpha
+alpha_coef_lin = np.polyfit(t, alpha_unwrapped, 1)
+alpha_trend = np.polyval(alpha_coef_lin, t)
+alpha_detrended = alpha_unwrapped - alpha_trend
+
+# FFT on alpha detrended
+n = len(alpha_detrended)
+yf_alpha = fft(alpha_detrended)
+xf = fftfreq(n, 1)
+power_alpha = np.abs(yf_alpha[:n//2])
+freqs_alpha = xf[:n//2]
+
+# Top frequencies for alpha
+K_alpha = 15
+top_alpha_idx = np.argsort(power_alpha[1:])[-K_alpha:][::-1] + 1
+selected_alpha_freqs = freqs_alpha[top_alpha_idx]
+print('Alpha top frequencies:')
+for f in selected_alpha_freqs:
+    print(f'  f={f:.8f}, period={1/f:.2f} days, power={power_alpha[np.argmin(np.abs(freqs_alpha-f))]:.2f}')
+
+# Fit alpha model
+from scipy.optimize import curve_fit
+
+def alpha_model(t, a, b, *params):
+    result = a * t + b
+    n_h = len(params) // 2
+    for i in range(n_h):
+        result = result + params[2*i] * np.sin(2*np.pi*selected_alpha_freqs[i]*t) + params[2*i+1] * np.cos(2*np.pi*selected_alpha_freqs[i]*t)
+    return result
+
+p0 = [alpha_coef_lin[0], alpha_coef_lin[1]]
+for i in range(K_alpha):
+    p0.extend([0.0, 0.0])
+
+popt_alpha, _ = curve_fit(alpha_model, t, alpha_unwrapped, p0=p0, maxfev=100000)
+alpha_pred = alpha_model(t, *popt_alpha)
+alpha_resid = alpha_unwrapped - alpha_pred
+print(f'Alpha model residual std: {np.std(alpha_resid):.4f}')
+
+# Step 2: Now model beta as function of alpha_unwrapped AND t
+# Try: beta_unwrapped = c1 * alpha_unwrapped + c2 + sinusoidal terms
+
+# Let's first look at: beta_unwrapped vs alpha_unwrapped after removing their linear trends
+beta_coef_lin = np.polyfit(t, beta_unwrapped, 1)
+beta_trend = np.polyval(beta_coef_lin, t)
+beta_detrended = beta_unwrapped - beta_trend
+
+# Correlation between detrended alpha and detrended beta
+corr = np.corrcoef(alpha_detrended, beta_detrended)[0,1]
+print(f'Correlation between detrended alpha and beta: {corr:.4f}')
+
+# Try regression: beta_detrended = sum of alpha_detrended harmonics + t harmonics
+# Actually, let me try: beta = f(alpha) using the unwrapped values
+# Since alpha is well-predicted from t, I can predict alpha for test data
+# and then use it to predict beta
+
+# But let me first check: can we predict beta better from alpha than from t alone?
+# Fit: beta_detrended = sum of sin/cos terms of alpha
+# Since alpha ~ t (linearly), this is almost equivalent
+
+# Let me try a different approach: use BOTH alpha and t as predictors
+# Model: beta_unwrapped = a*t + b + sum_k [A_k*sin(2*pi*f_k*t) + B_k*cos(2*pi*f_k*t)]
+# where the f_k are selected more carefully
+
+# Actually, let me check if using alpha_unwrapped directly helps
+# Fit: beta_unwrapped = c * alpha_unwrapped + d + residual
+# Then model the residual
+
+coef_ab = np.polyfit(alpha_unwrapped, beta_unwrapped, 1)
+resid_ab = beta_unwrapped - np.polyval(coef_ab, alpha_unwrapped)
+print(f'Beta = {coef_ab[0]:.6f} * Alpha + {coef_ab[1]:.4f}')
+print(f'Residual from alpha: std = {np.std(resid_ab):.4f}')
+
+# This residual of ~35 degrees is still large. Let me try higher-order polynomial
+for deg in [1, 2, 3, 4, 5]:
+    coef = np.polyfit(alpha_unwrapped, beta_unwrapped, deg)
+    r = beta_unwrapped - np.polyval(coef, alpha_unwrapped)
+    print(f'  Poly deg {deg}: residual std = {np.std(r):.4f}')
+"
 
 ```
 
@@ -651,6 +1186,51 @@ Residual from alpha: std = 34.9059
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.optimize import curve_fit
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Let me try different numbers of harmonics and see how residual improves
+beta_coef_lin = np.polyfit(t, beta_unwrapped, 1)
+beta_detrended = beta_unwrapped - np.polyval(beta_coef_lin, t)
+
+n = len(beta_detrended)
+yf = fft(beta_detrended)
+xf = fftfreq(n, 1)
+power = np.abs(yf[:n//2])
+freqs = xf[:n//2]
+
+for K in [5, 10, 15, 20, 30, 40, 50]:
+    top_idx = np.argsort(power[1:])[-K:][::-1] + 1
+    selected_freqs = freqs[top_idx]
+    
+    def model(t, a, b, *params):
+        result = a * t + b
+        for i in range(K):
+            result = result + params[2*i] * np.sin(2*np.pi*selected_freqs[i]*t) + params[2*i+1] * np.cos(2*np.pi*selected_freqs[i]*t)
+        return result
+    
+    p0 = [beta_coef_lin[0], beta_coef_lin[1]]
+    for i in range(K):
+        p0.extend([0.0, 0.0])
+    
+    try:
+        popt, _ = curve_fit(model, t, beta_unwrapped, p0=p0, maxfev=200000)
+        pred = model(t, *popt)
+        resid = beta_unwrapped - pred
+        print(f'K={K}: residual std={np.std(resid):.4f}, max_abs={np.max(np.abs(resid)):.4f}')
+    except Exception as e:
+        print(f'K={K}: failed - {e}')
+"
 
 ```
 
@@ -717,6 +1297,56 @@ K=50: residual std=0.6187, max_abs=3.1294
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar, minimize
+from scipy.fft import fft, fftfreq
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Linear trend
+beta_coef_lin = np.polyfit(t, beta_unwrapped, 1)
+beta_detrended = beta_unwrapped - np.polyval(beta_coef_lin, t)
+
+# FFT
+n = len(beta_detrended)
+yf = fft(beta_detrended)
+xf = fftfreq(n, 1)
+power = np.abs(yf[:n//2])
+freqs = xf[:n//2]
+
+# Select top K frequencies
+K = 20
+top_idx = np.argsort(power[1:])[-K:][::-1] + 1
+fft_freqs = freqs[top_idx]
+
+print('FFT frequencies and refined frequencies:')
+refined_freqs = []
+
+for i, f_fft in enumerate(fft_freqs):
+    # Refine frequency by searching in a narrow window
+    def neg_power(f):
+        # Compute the power at frequency f using least squares
+        A = np.column_stack([np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)])
+        coef = np.linalg.lstsq(A, beta_detrended, rcond=None)[0]
+        pred = A @ coef
+        return -np.sum(pred**2)  # negative because we minimize
+    
+    # Search in a narrow window around the FFT frequency
+    delta = 0.0003  # slightly wider than frequency resolution
+    result = minimize_scalar(neg_power, bounds=(f_fft - delta, f_fft + delta), method='bounded')
+    f_refined = result.x
+    refined_freqs.append(f_refined)
+    
+    power_improvement = (-result.fun) / power[top_idx[i]]
+    print(f'  FFT: f={f_fft:.8f} (period={1/f_fft:.2f}), Refined: f={f_refined:.8f} (period={1/f_refined:.2f}), power ratio={power_improvement:.4f}')
+
+refined_freqs = np.array(refined_freqs)
+"
 
 ```
 
@@ -774,6 +1404,86 @@ FFT frequencies and refined frequencies:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Let me try a more principled approach:
+# Identify a small number of fundamental frequencies and their harmonics
+# Then fit the full model
+
+# From the refined frequency analysis, the key periods seem to be:
+# ~1070 days, ~360 days, ~738 days, ~443 days, ~321 days, ~200 days
+
+# Let me try fitting with specific periods and their harmonics
+# Actually, let me try a nonlinear approach where I optimize the frequencies
+
+# Step 1: Linear trend
+beta_coef_lin = np.polyfit(t, beta_unwrapped, 1)
+print(f'Linear trend: slope={beta_coef_lin[0]:.6f}, intercept={beta_coef_lin[1]:.4f}')
+
+# Step 2: Iteratively identify frequencies
+# Start with detrended data
+residual = beta_unwrapped - np.polyval(beta_coef_lin, t)
+
+identified_freqs = []
+identified_amps = []
+
+for iteration in range(30):
+    # FFT of residual
+    from scipy.fft import fft, fftfreq
+    n = len(residual)
+    yf = fft(residual)
+    xf = fftfreq(n, 1)
+    power = np.abs(yf[:n//2])
+    freqs = xf[:n//2]
+    
+    # Find dominant frequency
+    top_idx = np.argmax(power[1:]) + 1
+    f_fft = freqs[top_idx]
+    
+    # Refine frequency
+    def neg_power(f):
+        A = np.column_stack([np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)])
+        coef = np.linalg.lstsq(A, residual, rcond=None)[0]
+        pred = A @ coef
+        return -np.sum(pred**2)
+    
+    from scipy.optimize import minimize_scalar
+    delta = 0.0003
+    result = minimize_scalar(neg_power, bounds=(max(f_fft - delta, 1e-6), f_fft + delta), method='bounded')
+    f_refined = result.x
+    
+    # Fit the sinusoid with this frequency
+    A = np.column_stack([np.sin(2*np.pi*f_refined*t), np.cos(2*np.pi*f_refined*t)])
+    coef = np.linalg.lstsq(A, residual, rcond=None)[0]
+    pred = A @ coef
+    
+    amp = np.sqrt(coef[0]**2 + coef[1]**2)
+    identified_freqs.append(f_refined)
+    identified_amps.append(amp)
+    
+    # Remove this component
+    residual = residual - pred
+    
+    if amp < 0.3:  # stop when amplitudes become small
+        print(f'Stopping at iteration {iteration}, amp={amp:.4f}')
+        break
+    
+    print(f'Iter {iteration}: f={f_refined:.8f}, period={1/f_refined:.2f}, amp={amp:.4f}, residual_std={np.std(residual):.4f}')
+
+print()
+print(f'Final residual std: {np.std(residual):.4f}')
+print(f'Number of identified frequencies: {len(identified_freqs)}')
+"
 
 ```
 
@@ -863,6 +1573,82 @@ Number of identified frequencies: 17
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Key frequencies identified from iterative analysis
+freqs_list = [
+    0.00093647,  # period ~1068
+    0.00185444,  # period ~539
+    0.00463526,  # period ~216
+    0.00278304,  # period ~359
+    0.00078741,  # period ~1270
+    0.00371147,  # period ~269
+    0.00015170,  # period ~6592 - EXCLUDE (too long for reliable estimation)
+    0.00105167,  # period ~951
+    0.00741868,  # period ~135
+    0.00648070,  # period ~154
+    0.00050838,  # period ~1967 - EXCLUDE (too long for reliable estimation)
+    0.00556861,  # period ~180
+    0.00173811,  # period ~575
+    0.00926357,  # period ~108
+    0.00197207,  # period ~507
+    0.01019247,  # period ~98
+]
+
+# Exclude very long periods that can't be reliably estimated
+freqs_use = [f for f in freqs_list if 1/f < 3000]
+print(f'Using {len(freqs_use)} frequencies')
+
+# Fit the full model: beta_unwrapped = a*t + b + sum(A_k*sin(2*pi*f_k*t) + B_k*cos(2*pi*f_k*t))
+K = len(freqs_use)
+
+def model(t, a, b, *params):
+    result = a * t + b
+    for i in range(K):
+        result = result + params[2*i] * np.sin(2*np.pi*freqs_use[i]*t) + params[2*i+1] * np.cos(2*np.pi*freqs_use[i]*t)
+    return result
+
+# Initial guess from linear fit
+beta_coef_lin = np.polyfit(t, beta_unwrapped, 1)
+p0 = [beta_coef_lin[0], beta_coef_lin[1]]
+for i in range(K):
+    p0.extend([0.0, 0.0])
+
+popt, pcov = curve_fit(model, t, beta_unwrapped, p0=p0, maxfev=500000)
+
+pred = model(t, *popt)
+resid = beta_unwrapped - pred
+sigma_noise = np.std(resid)
+print(f'Fitted slope: {popt[0]:.6f}')
+print(f'Fitted intercept: {popt[1]:.4f}')
+print(f'Residual std: {sigma_noise:.4f}')
+print(f'Max residual: {np.max(np.abs(resid)):.4f}')
+
+# Check normality of residuals
+from scipy import stats
+ks_stat, ks_p = stats.kstest(resid, 'norm', args=(np.mean(resid), np.std(resid)))
+print(f'KS test for normality: stat={ks_stat:.4f}, p={ks_p:.4f}')
+
+# Predict for test data
+test_t = test.t.values
+test_pred_uw = model(test_t, *popt)
+test_pred = test_pred_uw % 360
+
+print()
+print('Test predictions:')
+for i, tt in enumerate(test_t):
+    print(f'  t={tt}: beta_uw={test_pred_uw[i]:.4f}, beta={test_pred[i]:.4f}')
+"
 
 ```
 
@@ -922,6 +1708,109 @@ Max residual: 1.6044
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Key frequencies (excluding very long periods)
+freqs_list = [
+    0.00093647,  # period ~1068
+    0.00185444,  # period ~539
+    0.00463526,  # period ~216
+    0.00278304,  # period ~359
+    0.00078741,  # period ~1270
+    0.00371147,  # period ~269
+    # 0.00015170,  # period ~6592 - EXCLUDE
+    0.00105167,  # period ~951
+    0.00741868,  # period ~135
+    0.00648070,  # period ~154
+    # 0.00050838,  # period ~1967 - EXCLUDE
+    0.00556861,  # period ~180
+    0.00173811,  # period ~575
+    0.00926357,  # period ~108
+    0.00197207,  # period ~507
+    0.01019247,  # period ~98
+]
+
+K = len(freqs_list)
+
+def model(t, a, b, *params):
+    result = a * t + b
+    for i in range(K):
+        result = result + params[2*i] * np.sin(2*np.pi*freqs_list[i]*t) + params[2*i+1] * np.cos(2*np.pi*freqs_list[i]*t)
+    return result
+
+# Fit
+beta_coef_lin = np.polyfit(t, beta_unwrapped, 1)
+p0 = [beta_coef_lin[0], beta_coef_lin[1]]
+for i in range(K):
+    p0.extend([0.0, 0.0])
+
+popt, pcov = curve_fit(model, t, beta_unwrapped, p0=p0, maxfev=500000)
+
+pred = model(t, *popt)
+resid = beta_unwrapped - pred
+sigma_noise = np.std(resid)
+print(f'Number of parameters: {len(popt)}')
+print(f'Residual std: {sigma_noise:.4f}')
+
+# Compute model prediction variance for test points using the Jacobian
+# The prediction variance for a new observation at t_new is:
+# var = sigma^2 + J @ pcov @ J.T
+# where J is the Jacobian of the model w.r.t. parameters at t_new
+
+test_t = test.t.values
+n_test = len(test_t)
+
+# Compute Jacobian numerically
+def compute_jacobian(t_val, popt, model_func, eps=1e-6):
+    n_params = len(popt)
+    J = np.zeros(n_params)
+    f0 = model_func(np.array([t_val]), *popt)[0]
+    for i in range(n_params):
+        p_plus = popt.copy()
+        p_plus[i] += eps
+        f_plus = model_func(np.array([t_val]), *p_plus)[0]
+        J[i] = (f_plus - f0) / eps
+    return J
+
+# Compute prediction intervals
+pred_vars = []
+for tt in test_t:
+    J = compute_jacobian(tt, popt, model)
+    model_var = J @ pcov @ J
+    pred_var = sigma_noise**2 + model_var
+    pred_vars.append(pred_var)
+
+pred_vars = np.array(pred_vars)
+pred_stds = np.sqrt(pred_vars)
+
+# Test predictions
+test_pred_uw = model(test_t, *popt)
+test_pred = test_pred_uw % 360
+
+# 95% prediction intervals
+z = 1.96
+test_lower_uw = test_pred_uw - z * pred_stds
+test_upper_uw = test_pred_uw + z * pred_stds
+
+# Wrap to [0, 360)
+test_lower = test_lower_uw % 360
+test_upper = test_upper_uw % 360
+
+print()
+print('Test predictions with 95% prediction intervals:')
+for i, tt in enumerate(test_t):
+    print(f'  t={tt}: pred={test_pred[i]:.4f}, lower={test_lower[i]:.4f}, upper={test_upper[i]:.4f}, pred_std={pred_stds[i]:.4f}')
+"
 
 ```
 
@@ -970,6 +1859,105 @@ Test predictions with 95% prediction intervals:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+
+train = pd.read_csv('data/train.csv')
+
+# Cross-validation: hold out last 500 days and see how well we extrapolate
+# This simulates the extrapolation task
+
+# Unwrap beta
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Split: use first 3109 days for training, last 500 for testing
+train_mask = t < 3109
+val_mask = t >= 3109
+
+t_train = t[train_mask]
+y_train = beta_unwrapped[train_mask]
+t_val = t[val_mask]
+y_val = beta_unwrapped[val_mask]
+
+print(f'Training: {len(t_train)} points, t range [{t_train.min()}, {t_train.max()}]')
+print(f'Validation: {len(t_val)} points, t range [{t_val.min()}, {t_val.max()}]')
+
+# Iterative frequency identification on training data
+from scipy.fft import fft, fftfreq
+from scipy.optimize import minimize_scalar
+
+residual = y_train - np.polyval(np.polyfit(t_train, y_train, 1), t_train)
+identified_freqs = []
+
+for iteration in range(20):
+    n = len(residual)
+    yf = fft(residual)
+    xf = fftfreq(n, 1)
+    power = np.abs(yf[:n//2])
+    freqs = xf[:n//2]
+    
+    top_idx = np.argmax(power[1:]) + 1
+    f_fft = freqs[top_idx]
+    
+    def neg_power(f):
+        A = np.column_stack([np.sin(2*np.pi*f*t_train), np.cos(2*np.pi*f*t_train)])
+        coef = np.linalg.lstsq(A, residual, rcond=None)[0]
+        pred = A @ coef
+        return -np.sum(pred**2)
+    
+    delta = 0.0005
+    result = minimize_scalar(neg_power, bounds=(max(f_fft - delta, 1e-6), f_fft + delta), method='bounded')
+    f_refined = result.x
+    
+    A = np.column_stack([np.sin(2*np.pi*f_refined*t_train), np.cos(2*np.pi*f_refined*t_train)])
+    coef = np.linalg.lstsq(A, residual, rcond=None)[0]
+    pred = A @ coef
+    
+    amp = np.sqrt(coef[0]**2 + coef[1]**2)
+    
+    if amp < 0.3:
+        break
+    
+    identified_freqs.append(f_refined)
+    residual = residual - pred
+    print(f'  f={f_refined:.8f}, period={1/f_refined:.2f}, amp={amp:.4f}')
+
+print(f'Identified {len(identified_freqs)} frequencies')
+
+# Filter out very long periods
+freqs_use = [f for f in identified_freqs if 1/f < 3000]
+K = len(freqs_use)
+
+# Fit model on training data
+def model(t, a, b, *params):
+    result = a * t + b
+    for i in range(K):
+        result = result + params[2*i] * np.sin(2*np.pi*freqs_use[i]*t) + params[2*i+1] * np.cos(2*np.pi*freqs_use[i]*t)
+    return result
+
+beta_coef_lin = np.polyfit(t_train, y_train, 1)
+p0 = [beta_coef_lin[0], beta_coef_lin[1]]
+for i in range(K):
+    p0.extend([0.0, 0.0])
+
+popt, _ = curve_fit(model, t_train, y_train, p0=p0, maxfev=500000)
+
+# Evaluate on validation data
+val_pred_uw = model(t_val, *popt)
+val_resid = y_val - val_pred_uw
+
+print(f'Validation residual mean: {np.mean(val_resid):.4f}')
+print(f'Validation residual std: {np.std(val_resid):.4f}')
+print(f'Validation max abs residual: {np.max(np.abs(val_resid)):.4f}')
+
+# Compare with training residual
+train_pred_uw = model(t_train, *popt)
+train_resid = y_train - train_pred_uw
+print(f'Training residual std: {np.std(train_resid):.4f}')
+"
 
 ```
 
@@ -1036,6 +2024,44 @@ Training residual std: 0.4671
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Unwrap both
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Linear relationship: beta = (1/3)*alpha + offset + residual
+# Actually, the slope is 0.333372, very close to 1/3
+# Let me try: beta_unwrapped = (1/3)*alpha_unwrapped + offset + periodic_function(alpha mod 360) + noise
+
+# Fit: beta_uw = a * alpha_uw + b + f(alpha_uw mod 360)
+# where f is a periodic function
+
+# First, compute the residual after removing the linear trend
+coef = np.polyfit(alpha_unwrapped, beta_unwrapped, 1)
+print(f'Linear fit: beta = {coef[0]:.6f} * alpha + {coef[1]:.4f}')
+resid = beta_unwrapped - np.polyval(coef, alpha_unwrapped)
+print(f'Residual std: {np.std(resid):.4f}')
+
+# Now look at the residual as a function of alpha (mod 360)
+alpha_mod = alpha_unwrapped % 360
+
+# Sort by alpha_mod
+sort_idx = np.argsort(alpha_mod)
+alpha_mod_sorted = alpha_mod[sort_idx]
+resid_sorted = resid[sort_idx]
+
+# Print residual at different alpha values
+for a_val in [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]:
+    mask = (alpha_mod_sorted >= a_val - 15) & (alpha_mod_sorted < a_val + 15)
+    if mask.sum() > 0:
+        print(f'  alpha ~ {a_val}: residual mean = {np.mean(resid_sorted[mask]):.2f}, std = {np.std(resid_sorted[mask]):.2f}, n = {mask.sum()}')
+"
 
 ```
 
@@ -1106,6 +2132,58 @@ Residual std: 34.9059
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+t = train.t.values
+
+# Try modeling beta_unwrapped as a function of alpha_unwrapped
+# Using Fourier series: beta = a * alpha + b + sum_k [A_k*sin(2*pi*k*alpha/P) + B_k*cos(2*pi*k*alpha/P)]
+# where P = 360 (since alpha is an angle that wraps at 360)
+
+# Model beta as function of alpha with Fourier series (period 360 in alpha)
+# First find the linear relationship
+# beta = a*alpha + b + periodic(alpha mod 360) + noise
+
+# Let me try: beta = a * alpha + b + sum_{k=1}^{K} [A_k*sin(2*pi*k*alpha/360) + B_k*cos(2*pi*k*alpha/360)]
+
+for K in [5, 10, 15, 20, 30]:
+    # Build design matrix
+    n = len(t)
+    X = np.zeros((n, 2 + 2*K))
+    X[:, 0] = alpha_unwrapped  # linear term
+    X[:, 1] = 1  # intercept
+    for k in range(1, K+1):
+        X[:, 1 + 2*(k-1) + 1] = np.sin(2*np.pi*k*alpha_unwrapped/360)
+        X[:, 1 + 2*(k-1) + 2] = np.cos(2*np.pi*k*alpha_unwrapped/360)
+    
+    # Wait, let me redo the indexing
+    X = np.zeros((n, 2 + 2*K))
+    X[:, 0] = alpha_unwrapped
+    X[:, 1] = 1
+    for k in range(1, K+1):
+        X[:, 1 + 2*k] = np.sin(2*np.pi*k*alpha_unwrapped/360)
+        X[:, 2 + 2*k] = np.cos(2*np.pi*k*alpha_unwrapped/360)
+    
+    # Hmm, let me just build it more carefully
+    cols = [alpha_unwrapped, np.ones(n)]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*alpha_unwrapped/360))
+        cols.append(np.cos(2*np.pi*k*alpha_unwrapped/360))
+    X = np.column_stack(cols)
+    
+    # Fit
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    pred = X @ coef
+    resid = beta_unwrapped - pred
+    print(f'K={K}: params={X.shape[1]}, residual_std={np.std(resid):.4f}')
+"
 
 ```
 
@@ -1122,6 +2200,32 @@ IndexError: index 12 is out of bounds for axis 1 with size 12
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+t = train.t.values
+
+# Model beta as function of alpha with Fourier series (period 360 in alpha)
+for K in [5, 10, 15, 20, 30, 40]:
+    # Build design matrix
+    n = len(t)
+    cols = [alpha_unwrapped, np.ones(n)]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*alpha_unwrapped/360))
+        cols.append(np.cos(2*np.pi*k*alpha_unwrapped/360))
+    X = np.column_stack(cols)
+    
+    # Fit
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    pred = X @ coef
+    resid = beta_unwrapped - pred
+    print(f'K={K}: params={X.shape[1]}, residual_std={np.std(resid):.4f}, max_abs={np.max(np.abs(resid)):.4f}')
+"
 
 ```
 
@@ -1150,6 +2254,53 @@ K=40: params=82, residual_std=32.0749, max_abs=58.8003
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Model: beta = a*t + b + sum_{k=1}^{K} [A_k*sin(2*pi*k*t/P) + B_k*cos(2*pi*k*t/P)]
+# Find the best period P
+
+def compute_residual_std(P, K=10):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*t/P))
+        cols.append(np.cos(2*np.pi*k*t/P))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    pred = X @ coef
+    resid = beta_unwrapped - pred
+    return np.std(resid)
+
+# Search for the best period P
+# The FFT suggested P ≈ 1068 days
+# Let's search more carefully
+periods = np.linspace(900, 1200, 301)
+residuals = [compute_residual_std(P, K=5) for P in periods]
+
+best_idx = np.argmin(residuals)
+best_P = periods[best_idx]
+print(f'Best period (K=5): P={best_P:.2f}, residual_std={residuals[best_idx]:.4f}')
+
+# Refine
+periods2 = np.linspace(best_P - 10, best_P + 10, 201)
+residuals2 = [compute_residual_std(P, K=5) for P in periods2]
+best_idx2 = np.argmin(residuals2)
+best_P2 = periods2[best_idx2]
+print(f'Refined period (K=5): P={best_P2:.4f}, residual_std={residuals2[best_idx2]:.4f}')
+
+# Now check different K values at the refined period
+for K in [5, 10, 15, 20, 30]:
+    rs = compute_residual_std(best_P2, K)
+    print(f'  K={K}: residual_std={rs:.4f}')
+"
 
 ```
 
@@ -1179,6 +2330,69 @@ Refined period (K=5): P=1079.8000, residual_std=1.7794
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Fine-tune the period with higher K
+def compute_residual_std(P, K):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*t/P))
+        cols.append(np.cos(2*np.pi*k*t/P))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    pred = X @ coef
+    resid = beta_unwrapped - pred
+    return np.std(resid)
+
+# Search around 1080 with finer resolution
+for K in [10, 15, 20]:
+    periods = np.linspace(1070, 1090, 401)
+    residuals = [compute_residual_std(P, K) for P in periods]
+    best_idx = np.argmin(residuals)
+    best_P = periods[best_idx]
+    print(f'K={K}: best period={best_P:.4f}, residual_std={residuals[best_idx]:.4f}')
+
+# Let me also try a two-period model: P1 ≈ 1080 and P2 ≈ 360
+print()
+print('Two-period model:')
+
+def compute_residual_std_2period(P1, P2, K1, K2):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1))
+        cols.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    pred = X @ coef
+    resid = beta_unwrapped - pred
+    return np.std(resid), coef, X
+
+# Search over P1 and P2
+# Fix P2 ≈ 360 and search P1
+best_overall = 1e10
+best_P1 = 0
+for P1 in np.linspace(1070, 1090, 41):
+    for P2 in [355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365]:
+        rs, _, _ = compute_residual_std_2period(P1, P2, 15, 5)
+        if rs < best_overall:
+            best_overall = rs
+            best_P1 = P1
+            best_P2 = P2
+
+print(f'Best P1={best_P1:.2f}, P2={best_P2:.2f}, residual_std={best_overall:.4f}')
+"
 
 ```
 
@@ -1205,6 +2419,61 @@ Best P1=1080.00, P2=355.00, residual_std=0.3060
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Cross-validation: use first 3000 days for training, test on days 3000-3608
+# Then try first 2500, test on 2500-3608
+
+def cv_test(train_end, P=1080, K=15):
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    
+    t_tr = t[train_mask]
+    y_tr = beta_unwrapped[train_mask]
+    t_te = t[test_mask]
+    y_te = beta_unwrapped[test_mask]
+    
+    # Fit model
+    n = len(t_tr)
+    cols = [t_tr, np.ones(n)]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*t_tr/P))
+        cols.append(np.cos(2*np.pi*k*t_tr/P))
+    X_tr = np.column_stack(cols)
+    coef = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+    
+    # Training residual
+    pred_tr = X_tr @ coef
+    resid_tr = y_tr - pred_tr
+    train_std = np.std(resid_tr)
+    
+    # Test prediction
+    n_te = len(t_te)
+    cols_te = [t_te, np.ones(n_te)]
+    for k in range(1, K+1):
+        cols_te.append(np.sin(2*np.pi*k*t_te/P))
+        cols_te.append(np.cos(2*np.pi*k*t_te/P))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef
+    
+    resid_te = y_te - pred_te
+    test_std = np.std(resid_te)
+    test_max = np.max(np.abs(resid_te))
+    test_mean = np.mean(resid_te)
+    
+    print(f'train_end={train_end}: train_std={train_std:.4f}, test_std={test_std:.4f}, test_mean={test_mean:.4f}, test_max_abs={test_max:.4f}')
+
+# Test with different training cutoffs
+for train_end in [3000, 2500, 2000, 1500, 1000]:
+    cv_test(train_end, P=1080, K=15)
+"
 
 ```
 
@@ -1239,6 +2508,68 @@ train_end=1000: train_std=0.2552, test_std=8.4366, test_mean=-19.8049, test_max_
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Fine-tune the period with cross-validation
+# Use training up to day 2500, validate on 2500-3608
+
+def cv_metric(P, K=15, train_end=2500):
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    
+    t_tr = t[train_mask]
+    y_tr = beta_unwrapped[train_mask]
+    t_te = t[test_mask]
+    y_te = beta_unwrapped[test_mask]
+    
+    n = len(t_tr)
+    cols = [t_tr, np.ones(n)]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*t_tr/P))
+        cols.append(np.cos(2*np.pi*k*t_tr/P))
+    X_tr = np.column_stack(cols)
+    coef = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+    
+    # Test prediction
+    n_te = len(t_te)
+    cols_te = [t_te, np.ones(n_te)]
+    for k in range(1, K+1):
+        cols_te.append(np.sin(2*np.pi*k*t_te/P))
+        cols_te.append(np.cos(2*np.pi*k*t_te/P))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef
+    
+    resid_te = y_te - pred_te
+    return np.std(resid_te)
+
+# Search period around 1080
+periods = np.linspace(1075, 1085, 101)
+cv_stds = [cv_metric(P) for P in periods]
+best_idx = np.argmin(cv_stds)
+best_P = periods[best_idx]
+print(f'CV best period: {best_P:.2f}, cv_std={cv_stds[best_idx]:.4f}')
+
+# Finer search
+periods2 = np.linspace(best_P - 1, best_P + 1, 201)
+cv_stds2 = [cv_metric(P) for P in periods2]
+best_idx2 = np.argmin(cv_stds2)
+best_P2 = periods2[best_idx2]
+print(f'CV refined period: {best_P2:.4f}, cv_std={cv_stds2[best_idx2]:.4f}')
+
+# Even finer
+periods3 = np.linspace(best_P2 - 0.1, best_P2 + 0.1, 201)
+cv_stds3 = [cv_metric(P) for P in periods3]
+best_idx3 = np.argmin(cv_stds3)
+best_P3 = periods3[best_idx3]
+print(f'CV very refined period: {best_P3:.6f}, cv_std={cv_stds3[best_idx3]:.4f}')
+"
 
 ```
 
@@ -1262,6 +2593,106 @@ CV very refined period: 1079.898000, cv_std=0.4241
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+t = train.t.values
+
+# Let me try a different approach: model beta as function of alpha
+# Since alpha has a clean period of ~360 days, and we can predict alpha accurately,
+# we can use alpha as a predictor
+
+# But first, let me check: what's the residual if I model beta as a Fourier series of alpha?
+# beta_uw = a*alpha_uw + b + sum_k [A_k*sin(2*pi*k*alpha_uw/360) + B_k*cos(2*pi*k*alpha_uw/360)]
+
+# The issue before was that the Fourier series in alpha didn't help much.
+# But maybe I need to think about the right period in alpha.
+
+# The period of beta is ~1080 days. In alpha, this corresponds to 1080/360 * 360 = 1080 degrees,
+# or 3 full cycles of alpha. So the relationship between beta and alpha should have a period
+# of 3*360 = 1080 degrees in alpha.
+
+# Wait, that's not right. Let me think again.
+# alpha increases at 1.001 deg/day, so it wraps every ~360 days
+# beta increases at 0.334 deg/day, so it wraps every ~1080 days
+# In the rotating frame of alpha, beta increases at 0.334 - 1.001 = -0.667 deg/day (in alpha frame)
+# Wait, no. Beta is not in the alpha frame.
+
+# Let me try: beta = c1*alpha + c2 + f(t) where f is periodic with period 1080
+# The coefficient c1 from the linear fit was 0.333, which is close to 1/3
+# So maybe: beta = (1/3)*alpha + f(t) where f is periodic with some period
+
+# Actually, let me just try the time-based Fourier model with P=1080 and also include alpha as a feature
+
+P = 1079.9
+K = 15
+
+# Model 1: beta = a*t + b + Fourier(t, P=1080, K=15)
+n = len(t)
+cols1 = [t, np.ones(n)]
+for k in range(1, K+1):
+    cols1.append(np.sin(2*np.pi*k*t/P))
+    cols1.append(np.cos(2*np.pi*k*t/P))
+X1 = np.column_stack(cols1)
+coef1 = np.linalg.lstsq(X1, beta_unwrapped, rcond=None)[0]
+resid1 = beta_unwrapped - X1 @ coef1
+print(f'Model 1 (time-based Fourier, P={P}): std={np.std(resid1):.4f}')
+
+# Model 2: Same but also include alpha
+cols2 = [t, alpha_unwrapped, np.ones(n)]
+for k in range(1, K+1):
+    cols2.append(np.sin(2*np.pi*k*t/P))
+    cols2.append(np.cos(2*np.pi*k*t/P))
+X2 = np.column_stack(cols2)
+coef2 = np.linalg.lstsq(X2, beta_unwrapped, rcond=None)[0]
+resid2 = beta_unwrapped - X2 @ coef2
+print(f'Model 2 (time+alpha Fourier, P={P}): std={np.std(resid2):.4f}')
+
+# Model 3: beta = (1/3)*alpha + Fourier(t, P=1080, K=15)
+# Fix the alpha coefficient at 1/3
+beta_minus_alpha3 = beta_unwrapped - (1/3)*alpha_unwrapped
+cols3 = [t, np.ones(n)]
+for k in range(1, K+1):
+    cols3.append(np.sin(2*np.pi*k*t/P))
+    cols3.append(np.cos(2*np.pi*k*t/P))
+X3 = np.column_stack(cols3)
+coef3 = np.linalg.lstsq(X3, beta_minus_alpha3, rcond=None)[0]
+resid3 = beta_minus_alpha3 - X3 @ coef3
+print(f'Model 3 (alpha/3 + time Fourier, P={P}): std={np.std(resid3):.4f}')
+
+# Cross-validation for Model 1 (our best bet so far)
+print()
+print('Cross-validation for Model 1:')
+for train_end in [3000, 2500, 2000]:
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    t_tr, y_tr = t[train_mask], beta_unwrapped[train_mask]
+    t_te, y_te = t[test_mask], beta_unwrapped[test_mask]
+    
+    n_tr = len(t_tr)
+    cols_tr = [t_tr, np.ones(n_tr)]
+    for k in range(1, K+1):
+        cols_tr.append(np.sin(2*np.pi*k*t_tr/P))
+        cols_tr.append(np.cos(2*np.pi*k*t_tr/P))
+    X_tr = np.column_stack(cols_tr)
+    coef = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+    
+    n_te = len(t_te)
+    cols_te = [t_te, np.ones(n_te)]
+    for k in range(1, K+1):
+        cols_te.append(np.sin(2*np.pi*k*t_te/P))
+        cols_te.append(np.cos(2*np.pi*k*t_te/P))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef
+    
+    resid_te = y_te - pred_te
+    print(f'  train_end={train_end}: test_std={np.std(resid_te):.4f}, max_abs={np.max(np.abs(resid_te)):.4f}')
+"
 
 ```
 
@@ -1313,6 +2744,56 @@ Cross-validation for Model 1:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P = 1079.9
+
+# Try different K values with cross-validation
+for K in [10, 12, 14, 15, 16, 18, 20]:
+    # Cross-validation
+    train_end = 2500
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    t_tr, y_tr = t[train_mask], beta_unwrapped[train_mask]
+    t_te, y_te = t[test_mask], beta_unwrapped[test_mask]
+    
+    n_tr = len(t_tr)
+    cols_tr = [t_tr, np.ones(n_tr)]
+    for k in range(1, K+1):
+        cols_tr.append(np.sin(2*np.pi*k*t_tr/P))
+        cols_tr.append(np.cos(2*np.pi*k*t_tr/P))
+    X_tr = np.column_stack(cols_tr)
+    coef = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+    
+    n_te = len(t_te)
+    cols_te = [t_te, np.ones(n_te)]
+    for k in range(1, K+1):
+        cols_te.append(np.sin(2*np.pi*k*t_te/P))
+        cols_te.append(np.cos(2*np.pi*k*t_te/P))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef
+    
+    resid_te = y_te - pred_te
+    
+    # Also full training residual
+    n = len(t)
+    cols_full = [t, np.ones(n)]
+    for k in range(1, K+1):
+        cols_full.append(np.sin(2*np.pi*k*t/P))
+        cols_full.append(np.cos(2*np.pi*k*t/P))
+    X_full = np.column_stack(cols_full)
+    coef_full = np.linalg.lstsq(X_full, beta_unwrapped, rcond=None)[0]
+    resid_full = beta_unwrapped - X_full @ coef_full
+    
+    print(f'K={K}: train_std={np.std(resid_full):.4f}, cv_std={np.std(resid_te):.4f}, cv_max={np.max(np.abs(resid_te)):.4f}')
+"
 
 ```
 
@@ -1340,6 +2821,63 @@ K=20: train_std=0.3088, cv_std=0.4167, cv_max=1.3118
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Try very fine period search with K=18
+K = 18
+
+def full_train_std(P):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*t/P))
+        cols.append(np.cos(2*np.pi*k*t/P))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    return np.std(resid)
+
+# Fine search
+periods = np.linspace(1079.0, 1081.0, 1001)
+stds = [full_train_std(P) for P in periods]
+best_idx = np.argmin(stds)
+best_P = periods[best_idx]
+print(f'Best P (K=18): {best_P:.4f}, std={stds[best_idx]:.4f}')
+
+# Ultra-fine search
+periods2 = np.linspace(best_P - 0.05, best_P + 0.05, 101)
+stds2 = [full_train_std(P) for P in periods2]
+best_idx2 = np.argmin(stds2)
+best_P2 = periods2[best_idx2]
+print(f'Refined P (K=18): {best_P2:.6f}, std={stds2[best_idx2]:.4f}')
+
+# Now let me also try an additive model with TWO periods
+# P1 ≈ 1080 (beta's fundamental period)  
+# P2 ≈ 360 (alpha's period, which might modulate beta)
+
+for K1, K2 in [(15, 5), (15, 10), (15, 15), (18, 5), (18, 10)]:
+    for P2 in [359, 360, 361]:
+        n = len(t)
+        cols = [t, np.ones(n)]
+        for k in range(1, K1+1):
+            cols.append(np.sin(2*np.pi*k*t/best_P2))
+            cols.append(np.cos(2*np.pi*k*t/best_P2))
+        for k in range(1, K2+1):
+            cols.append(np.sin(2*np.pi*k*t/P2))
+            cols.append(np.cos(2*np.pi*k*t/P2))
+        X = np.column_stack(cols)
+        coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+        resid = beta_unwrapped - X @ coef
+        if np.std(resid) < 0.31:
+            print(f'K1={K1}, K2={K2}, P2={P2}: std={np.std(resid):.4f}')
+"
 
 ```
 
@@ -1375,6 +2913,52 @@ K1=18, K2=10, P2=361: std=0.2993
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P1 = 1079.91
+P2 = 360
+
+# Cross-validation for two-period model vs single-period model
+for K1, K2, label in [(18, 0, 'single'), (18, 5, 'two'), (15, 5, 'two')]:
+    for train_end in [2000, 2500, 3000]:
+        train_mask = t < train_end
+        test_mask = t >= train_end
+        t_tr, y_tr = t[train_mask], beta_unwrapped[train_mask]
+        t_te, y_te = t[test_mask], beta_unwrapped[test_mask]
+        
+        n_tr = len(t_tr)
+        cols_tr = [t_tr, np.ones(n_tr)]
+        for k in range(1, K1+1):
+            cols_tr.append(np.sin(2*np.pi*k*t_tr/P1))
+            cols_tr.append(np.cos(2*np.pi*k*t_tr/P1))
+        for k in range(1, K2+1):
+            cols_tr.append(np.sin(2*np.pi*k*t_tr/P2))
+            cols_tr.append(np.cos(2*np.pi*k*t_tr/P2))
+        X_tr = np.column_stack(cols_tr)
+        coef = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+        
+        n_te = len(t_te)
+        cols_te = [t_te, np.ones(n_te)]
+        for k in range(1, K1+1):
+            cols_te.append(np.sin(2*np.pi*k*t_te/P1))
+            cols_te.append(np.cos(2*np.pi*k*t_te/P1))
+        for k in range(1, K2+1):
+            cols_te.append(np.sin(2*np.pi*k*t_te/P2))
+            cols_te.append(np.cos(2*np.pi*k*t_te/P2))
+        X_te = np.column_stack(cols_te)
+        pred_te = X_te @ coef
+        
+        resid_te = y_te - pred_te
+        print(f'{label} K1={K1},K2={K2}, train_end={train_end}: cv_std={np.std(resid_te):.4f}, cv_max={np.max(np.abs(resid_te)):.4f}')
+    print()
+"
 
 ```
 
@@ -1443,6 +3027,89 @@ two K1=15,K2=5, train_end=3000: cv_std=0.4207, cv_max=1.1244
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P1 = 1079.91
+P2 = 360
+K1 = 18
+K2 = 5
+
+# Use full training data to build the model
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols.append(np.sin(2*np.pi*k*t/P2))
+    cols.append(np.cos(2*np.pi*k*t/P2))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+pred = X @ coef
+resid = beta_unwrapped - pred
+sigma_train = np.std(resid)
+print(f'Training residual std: {sigma_train:.4f}')
+print(f'Training residual max: {np.max(np.abs(resid)):.4f}')
+
+# Now check: are the residuals normally distributed?
+from scipy.stats import norm
+# QQ-like check: sort residuals and compare to normal quantiles
+sorted_resid = np.sort(resid)
+n_pts = len(sorted_resid)
+expected_quantiles = norm.ppf(np.linspace(0.001, 0.999, n_pts))
+# Check at specific quantiles
+for q in [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]:
+    actual = np.percentile(resid, q*100)
+    expected = norm.ppf(q) * sigma_train
+    print(f'  q={q}: actual={actual:.4f}, expected={expected:.4f}')
+
+# Cross-validation prediction errors
+print()
+print('CV prediction errors:')
+for train_end in [2500]:
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    t_tr, y_tr = t[train_mask], beta_unwrapped[train_mask]
+    t_te, y_te = t[test_mask], beta_unwrapped[test_mask]
+    
+    n_tr = len(t_tr)
+    cols_tr = [t_tr, np.ones(n_tr)]
+    for k in range(1, K1+1):
+        cols_tr.append(np.sin(2*np.pi*k*t_tr/P1))
+        cols_tr.append(np.cos(2*np.pi*k*t_tr/P1))
+    for k in range(1, K2+1):
+        cols_tr.append(np.sin(2*np.pi*k*t_tr/P2))
+        cols_tr.append(np.cos(2*np.pi*k*t_tr/P2))
+    X_tr = np.column_stack(cols_tr)
+    coef_cv = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+    
+    n_te = len(t_te)
+    cols_te = [t_te, np.ones(n_te)]
+    for k in range(1, K1+1):
+        cols_te.append(np.sin(2*np.pi*k*t_te/P1))
+        cols_te.append(np.cos(2*np.pi*k*t_te/P1))
+    for k in range(1, K2+1):
+        cols_te.append(np.sin(2*np.pi*k*t_te/P2))
+        cols_te.append(np.cos(2*np.pi*k*t_te/P2))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef_cv
+    
+    resid_te = y_te - pred_te
+    
+    # Check what fraction of residuals fall within different widths
+    for width in [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]:
+        frac = np.mean(np.abs(resid_te) <= width)
+        print(f'  |error| <= {width}: {frac:.4f}')
+    
+    print(f'  std={np.std(resid_te):.4f}, max={np.max(np.abs(resid_te)):.4f}')
+"
 
 ```
 
@@ -1509,6 +3176,99 @@ CV prediction errors:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Model parameters
+P1 = 1079.91  # beta's fundamental period
+P2 = 360.0    # alpha's period
+K1 = 18
+K2 = 5
+
+# Build design matrix for full training data
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols.append(np.sin(2*np.pi*k*t/P2))
+    cols.append(np.cos(2*np.pi*k*t/P2))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+
+# Training residual
+pred = X @ coef
+resid = beta_unwrapped - pred
+sigma_noise = np.std(resid)
+print(f'Training residual std: {sigma_noise:.4f}')
+
+# Predict for test data
+test_t = test.t.values
+n_test = len(test_t)
+cols_test = [test_t, np.ones(n_test)]
+for k in range(1, K1+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+for k in range(1, K2+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+X_test = np.column_stack(cols_test)
+
+test_pred_uw = X_test @ coef
+
+# Wrap to [0, 360)
+test_pred = test_pred_uw % 360
+
+# For prediction interval, we need the prediction uncertainty
+# From cross-validation: σ_pred ≈ 0.4-0.5 degrees
+# Let me compute this more carefully using the parameter covariance matrix
+
+# Compute residual standard error
+n_params = X.shape[1]
+sigma2 = np.sum(resid**2) / (n - n_params)
+print(f'Residual variance estimate: {sigma2:.6f}')
+print(f'Residual std estimate: {np.sqrt(sigma2):.4f}')
+
+# Parameter covariance
+XtX_inv = np.linalg.inv(X.T @ X)
+param_cov = sigma2 * XtX_inv
+
+# Prediction variance for each test point
+# var(y_new) = sigma2 * (1 + x_new' * (X'X)^{-1} * x_new)
+pred_vars = []
+for i in range(n_test):
+    x_new = X_test[i, :]
+    model_var = x_new @ param_cov @ x_new
+    pred_var = sigma2 + model_var  # noise + model uncertainty
+    pred_vars.append(pred_var)
+
+pred_vars = np.array(pred_vars)
+pred_stds = np.sqrt(pred_vars)
+print(f'Prediction stds: {pred_stds}')
+
+# 95% prediction interval (in unwrapped space)
+z = 1.96
+test_lower_uw = test_pred_uw - z * pred_stds
+test_upper_uw = test_pred_uw + z * pred_stds
+
+# Wrap to [0, 360)
+test_lower = test_lower_uw % 360
+test_upper = test_upper_uw % 360
+
+print()
+print('Test predictions:')
+for i in range(n_test):
+    print(f'  t={test_t[i]}: pred={test_pred[i]:.4f}, lower={test_lower[i]:.4f}, upper={test_upper[i]:.4f}, std={pred_stds[i]:.4f}')
+"
 
 ```
 
@@ -1595,6 +3355,103 @@ Test predictions:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P1 = 1079.91
+P2 = 360.0
+K1 = 18
+K2 = 5
+
+# Cross-validation: train on days 0-2499, predict on days 2500-3608
+train_mask = t < 2500
+test_mask = t >= 2500
+t_tr, y_tr = t[train_mask], beta_unwrapped[train_mask]
+t_te, y_te = t[test_mask], beta_unwrapped[test_mask]
+
+n_tr = len(t_tr)
+cols_tr = [t_tr, np.ones(n_tr)]
+for k in range(1, K1+1):
+    cols_tr.append(np.sin(2*np.pi*k*t_tr/P1))
+    cols_tr.append(np.cos(2*np.pi*k*t_tr/P1))
+for k in range(1, K2+1):
+    cols_tr.append(np.sin(2*np.pi*k*t_tr/P2))
+    cols_tr.append(np.cos(2*np.pi*k*t_tr/P2))
+X_tr = np.column_stack(cols_tr)
+coef_cv = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+
+n_te = len(t_te)
+cols_te = [t_te, np.ones(n_te)]
+for k in range(1, K1+1):
+    cols_te.append(np.sin(2*np.pi*k*t_te/P1))
+    cols_te.append(np.cos(2*np.pi*k*t_te/P1))
+for k in range(1, K2+1):
+    cols_te.append(np.sin(2*np.pi*k*t_te/P2))
+    cols_te.append(np.cos(2*np.pi*k*t_te/P2))
+X_te = np.column_stack(cols_te)
+pred_te = X_te @ coef_cv
+
+resid_te = y_te - pred_te
+
+# Percentiles of absolute errors
+abs_errors = np.abs(resid_te)
+print(f'CV prediction errors:')
+print(f'  mean: {np.mean(resid_te):.4f}')
+print(f'  std: {np.std(resid_te):.4f}')
+print(f'  max: {np.max(abs_errors):.4f}')
+print(f'  90th percentile: {np.percentile(abs_errors, 90):.4f}')
+print(f'  95th percentile: {np.percentile(abs_errors, 95):.4f}')
+print(f'  99th percentile: {np.percentile(abs_errors, 99):.4f}')
+
+# Also do CV with train_end=2000
+train_mask2 = t < 2000
+test_mask2 = t >= 2000
+t_tr2, y_tr2 = t[train_mask2], beta_unwrapped[train_mask2]
+t_te2, y_te2 = t[test_mask2], beta_unwrapped[test_mask2]
+
+n_tr2 = len(t_tr2)
+cols_tr2 = [t_tr2, np.ones(n_tr2)]
+for k in range(1, K1+1):
+    cols_tr2.append(np.sin(2*np.pi*k*t_tr2/P1))
+    cols_tr2.append(np.cos(2*np.pi*k*t_tr2/P1))
+for k in range(1, K2+1):
+    cols_tr2.append(np.sin(2*np.pi*k*t_tr2/P2))
+    cols_tr2.append(np.cos(2*np.pi*k*t_tr2/P2))
+X_tr2 = np.column_stack(cols_tr2)
+coef_cv2 = np.linalg.lstsq(X_tr2, y_tr2, rcond=None)[0]
+
+n_te2 = len(t_te2)
+cols_te2 = [t_te2, np.ones(n_te2)]
+for k in range(1, K1+1):
+    cols_te2.append(np.sin(2*np.pi*k*t_te2/P1))
+    cols_te2.append(np.cos(2*np.pi*k*t_te2/P1))
+for k in range(1, K2+1):
+    cols_te2.append(np.sin(2*np.pi*k*t_te2/P2))
+    cols_te2.append(np.cos(2*np.pi*k*t_te2/P2))
+X_te2 = np.column_stack(cols_te2)
+pred_te2 = X_te2 @ coef_cv2
+
+resid_te2 = y_te2 - pred_te2
+abs_errors2 = np.abs(resid_te2)
+print(f'\\nCV prediction errors (train_end=2000):')
+print(f'  std: {np.std(resid_te2):.4f}')
+print(f'  max: {np.max(abs_errors2):.4f}')
+print(f'  95th percentile: {np.percentile(abs_errors2, 95):.4f}')
+
+# Also check: what fraction of errors are within different multiples of sigma
+sigma_est = np.std(resid_te)
+print(f'\\nFraction of CV errors within k*sigma (sigma={sigma_est:.4f}):')
+for k_mult in [1.0, 1.5, 1.96, 2.0, 2.5, 3.0]:
+    frac = np.mean(abs_errors <= k_mult * sigma_est)
+    expected = 2 * (0.5 + 0.5 * np.math.erf(k_mult / np.sqrt(2))) - 1 if k_mult > 0 else 0
+    print(f'  {k_mult:.1f}*sigma: actual={frac:.4f}, expected_normal={expected:.4f}')
+"
 
 ```
 
@@ -1663,6 +3520,89 @@ Fraction of CV errors within k*sigma (sigma=0.3924):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Model: beta_uw = a*t + b + Fourier(P1=1080, K1=18) + Fourier(P2=360, K2=5)
+P1 = 1079.91
+P2 = 360.0
+K1 = 18
+K2 = 5
+
+# Build design matrix
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols.append(np.sin(2*np.pi*k*t/P2))
+    cols.append(np.cos(2*np.pi*k*t/P2))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+
+# Training residual
+pred = X @ coef
+resid = beta_unwrapped - pred
+sigma_train = np.std(resid)
+print(f'Training residual std: {sigma_train:.4f}')
+
+# Predict for test data
+test_t = test.t.values
+n_test = len(test_t)
+cols_test = [test_t, np.ones(n_test)]
+for k in range(1, K1+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+for k in range(1, K2+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+X_test = np.column_stack(cols_test)
+
+test_pred_uw = X_test @ coef
+test_pred = test_pred_uw % 360
+
+# Prediction interval width
+# From CV, sigma_pred ≈ 0.4-0.5 degrees
+# Using conservative estimate of 0.5
+sigma_pred = 0.5
+interval_width = 1.96 * sigma_pred
+print(f'95% prediction interval width: ±{interval_width:.4f} degrees')
+
+# Compute lower and upper bounds (in unwrapped space, then wrap)
+test_lower_uw = test_pred_uw - interval_width
+test_upper_uw = test_pred_uw + interval_width
+
+# Wrap to [0, 360)
+test_lower = test_lower_uw % 360
+test_upper = test_upper_uw % 360
+
+# Check for wrapping issues: if the interval crosses 0/360
+# For example, if pred=359 and lower=358, upper=360 (should be 0)
+# We need to handle this case
+# Actually, the wrapping is correct as long as the interval doesn't wrap
+# If lower > upper after wrapping, the interval wraps around 0
+for i in range(n_test):
+    if test_lower[i] > test_upper[i]:
+        # The interval wraps around 0/360
+        # In this case, we should set lower to 0 or adjust
+        # But actually, the interval [lower, upper] where lower > upper
+        # means the interval is [lower, 360) ∪ [0, upper]
+        # For a simple interval, we can just note this case
+        print(f'  WARNING: Interval wraps at t={test_t[i]}, pred={test_pred[i]:.2f}, lower={test_lower[i]:.2f}, upper={test_upper[i]:.2f}')
+
+print()
+print('Test predictions:')
+for i in range(n_test):
+    print(f'  t={test_t[i]}: pred={test_pred[i]:.4f}, lower={test_lower[i]:.4f}, upper={test_upper[i]:.4f}')
+"
 
 ```
 
@@ -1739,6 +3679,77 @@ Test predictions:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P1 = 1079.91
+P2 = 360.0
+K1 = 18
+K2 = 5
+
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols.append(np.sin(2*np.pi*k*t/P2))
+    cols.append(np.cos(2*np.pi*k*t/P2))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+
+# Check predictions at end of training
+t_end = np.array([3605, 3606, 3607, 3608])
+n_end = len(t_end)
+cols_end = [t_end, np.ones(n_end)]
+for k in range(1, K1+1):
+    cols_end.append(np.sin(2*np.pi*k*t_end/P1))
+    cols_end.append(np.cos(2*np.pi*k*t_end/P1))
+for k in range(1, K2+1):
+    cols_end.append(np.sin(2*np.pi*k*t_end/P2))
+    cols_end.append(np.cos(2*np.pi*k*t_end/P2))
+X_end = np.column_stack(cols_end)
+pred_end_uw = X_end @ coef
+
+# Actual values at end
+actual_end_uw = beta_unwrapped[-4:]
+actual_end = train.beta.values[-4:]
+
+print('End of training:')
+for i in range(4):
+    print(f'  t={t_end[i]}: actual_uw={actual_end_uw[i]:.4f}, pred_uw={pred_end_uw[i]:.4f}, actual={actual_end[i]:.4f}, pred_wrapped={pred_end_uw[i]%360:.4f}')
+
+# Test predictions (unwrapped)
+test_t = test.t.values
+n_test = len(test_t)
+cols_test = [test_t, np.ones(n_test)]
+for k in range(1, K1+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+for k in range(1, K2+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+X_test = np.column_stack(cols_test)
+test_pred_uw = X_test @ coef
+
+print()
+print('Test predictions:')
+for i in range(n_test):
+    pred_deg = test_pred_uw[i] % 360
+    print(f'  t={test_t[i]}: pred_uw={test_pred_uw[i]:.4f}, pred_deg={pred_deg:.4f}')
+    
+# Check: slope of model
+print(f'\\nModel slope: {coef[0]:.6f} deg/day')
+print(f'Expected slope: ~0.334 deg/day')
+print(f'At end of training, beta_uw: {beta_unwrapped[-1]:.4f}')
+"
 
 ```
 
@@ -1819,6 +3830,86 @@ At end of training, beta_uw: 1495.5978
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P1 = 1079.91
+P2 = 360.0
+K1 = 18
+K2 = 5
+
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols.append(np.sin(2*np.pi*k*t/P2))
+    cols.append(np.cos(2*np.pi*k*t/P2))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+
+# Check: predictions at t and t+P1 should differ by approximately slope*P1
+# because the Fourier terms with period P1 are the same at t and t+P1
+# But the Fourier terms with period P2 are different (unless P1 is a multiple of P2)
+
+t_test_vals = np.array([100, 100 + P1, 100 + 2*P1])
+for t_val in t_test_vals:
+    n_v = 1
+    cols_v = [np.array([t_val]), np.ones(n_v)]
+    for k in range(1, K1+1):
+        cols_v.append(np.sin(2*np.pi*k*t_val/P1))
+        cols_v.append(np.cos(2*np.pi*k*t_val/P1))
+    for k in range(1, K2+1):
+        cols_v.append(np.sin(2*np.pi*k*t_val/P2))
+        cols_v.append(np.cos(2*np.pi*k*t_val/P2))
+    X_v = np.column_stack(cols_v)
+    pred_v = X_v @ coef
+    print(f't={t_val:.2f}: pred_uw={pred_v[0]:.4f}')
+
+print(f'Expected difference per period: {coef[0]*P1:.4f} degrees')
+print(f'P1/P2 = {P1/P2:.4f}')
+
+# Also: let me check if the model with different periods gives different test predictions
+# Try P1 in a range around 1080
+print()
+print('Sensitivity to P1:')
+for P1_try in [1078, 1079, 1079.5, 1079.91, 1080, 1080.5, 1081, 1082]:
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1_try))
+        cols.append(np.cos(2*np.pi*k*t/P1_try))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef_try = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    
+    # Predict at t=5233 (furthest test point)
+    t_val = 5233
+    n_v = 1
+    cols_v = [np.array([t_val]), np.ones(n_v)]
+    for k in range(1, K1+1):
+        cols_v.append(np.sin(2*np.pi*k*t_val/P1_try))
+        cols_v.append(np.cos(2*np.pi*k*t_val/P2))
+    for k in range(1, K2+1):
+        cols_v.append(np.sin(2*np.pi*k*t_val/P2))
+        cols_v.append(np.cos(2*np.pi*k*t_val/P2))
+    X_v = np.column_stack(cols_v)
+    pred_v = (X_v @ coef_try)[0]
+    
+    # Training residual
+    resid = beta_unwrapped - X @ coef_try
+    print(f'  P1={P1_try}: train_std={np.std(resid):.4f}, pred_t5233_uw={pred_v:.4f}, pred_t5233={pred_v%360:.4f}')
+"
 
 ```
 
@@ -1862,6 +3953,66 @@ Sensitivity to P1:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P2 = 360.0
+K1 = 18
+K2 = 5
+
+# Compute training residual std as a function of P1
+P1_range = np.linspace(1079.5, 1080.5, 1001)
+stds = []
+for P1 in P1_range:
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1))
+        cols.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    stds.append(np.std(resid))
+
+stds = np.array(stds)
+best_idx = np.argmin(stds)
+best_P1 = P1_range[best_idx]
+best_std = stds[best_idx]
+print(f'Best P1: {best_P1:.4f}, best std: {best_std:.4f}')
+
+# Find the range of P1 where std < best_std + delta
+for delta in [0.01, 0.02, 0.05, 0.1]:
+    mask = stds < best_std + delta
+    P1_range_valid = P1_range[mask]
+    if len(P1_range_valid) > 0:
+        print(f'  P1 range for std < {best_std:.4f} + {delta}: [{P1_range_valid[0]:.4f}, {P1_range_valid[-1]:.4f}]')
+    
+# Actually, a more principled approach: use likelihood ratio test
+# The log-likelihood is proportional to -n*log(sigma) - n/2
+# So -2*log(L(P1)/L(P1_best)) = n * log(sigma(P1)^2 / sigma(P1_best)^2) = n * 2 * log(sigma(P1)/sigma(P1_best))
+# For a chi-squared test with 1 df, the 95% critical value is 3.84
+
+n_data = len(t)
+log_lr = n_data * np.log(stds**2 / best_std**2)
+# 95% CI: log_lr < 3.84
+mask_95 = log_lr < 3.84
+P1_range_95 = P1_range[mask_95]
+print(f'95% CI for P1 (likelihood ratio): [{P1_range_95[0]:.4f}, {P1_range_95[-1]:.4f}]')
+
+# 99% CI: log_lr < 6.63
+mask_99 = log_lr < 6.63
+P1_range_99 = P1_range[mask_99]
+print(f'99% CI for P1 (likelihood ratio): [{P1_range_99[0]:.4f}, {P1_range_99[-1]:.4f}]')
+"
 
 ```
 
@@ -1915,6 +4066,74 @@ Best P1: 1079.9940, best std: 0.2988
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P2 = 360.0
+K1 = 18
+K2 = 5
+
+# Even finer grid around 1080
+P1_range = np.linspace(1079.95, 1080.05, 1001)
+stds = []
+for P1 in P1_range:
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1))
+        cols.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    stds.append(np.std(resid))
+
+stds = np.array(stds)
+best_idx = np.argmin(stds)
+best_P1 = P1_range[best_idx]
+best_std = stds[best_idx]
+print(f'Best P1: {best_P1:.6f}, best std: {best_std:.6f}')
+
+# Now check the prediction sensitivity near the best P1
+test_t = np.array([3610, 3790, 3971, 4151, 4331, 4511, 4692, 4872, 5052, 5233])
+
+for P1_try in [best_P1 - 0.01, best_P1, best_P1 + 0.01]:
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1_try))
+        cols.append(np.cos(2*np.pi*k*t/P1_try))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    
+    # Predict
+    n_test = len(test_t)
+    cols_test = [test_t, np.ones(n_test)]
+    for k in range(1, K1+1):
+        cols_test.append(np.sin(2*np.pi*k*test_t/P1_try))
+        cols_test.append(np.cos(2*np.pi*k*test_t/P1_try))
+    for k in range(1, K2+1):
+        cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+        cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+    X_test = np.column_stack(cols_test)
+    pred_uw = X_test @ coef
+    
+    print(f'P1={P1_try:.4f}: std={np.std(resid):.6f}')
+    for i in range(n_test):
+        print(f'  t={test_t[i]}: pred={pred_uw[i]%360:.4f}')
+"
 
 ```
 
@@ -1969,6 +4188,51 @@ P1=1080.0039: std=0.298801
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P2 = 360.0
+K1 = 18
+K2 = 5
+test_t = test.t.values
+
+# Compare predictions for P1=1079.91 vs P1=1080.0
+for P1 in [1079.91, 1080.0]:
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1))
+        cols.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    
+    n_test = len(test_t)
+    cols_test = [test_t, np.ones(n_test)]
+    for k in range(1, K1+1):
+        cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+        cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+    for k in range(1, K2+1):
+        cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+        cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+    X_test = np.column_stack(cols_test)
+    pred_uw = X_test @ coef
+    
+    print(f'P1={P1}: std={np.std(resid):.6f}')
+    for i in range(n_test):
+        print(f'  t={test_t[i]}: pred={pred_uw[i]%360:.4f}')
+    print()
+"
 
 ```
 
@@ -2071,6 +4335,58 @@ P1=1080.0: std=0.310855
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P1 = 1080.0
+P2 = 360.0
+K1 = 18
+K2 = 5
+
+# CV: train on days 0-2499, predict on days 2500-3608
+train_end = 2500
+train_mask = t < train_end
+test_mask = t >= train_end
+t_tr, y_tr = t[train_mask], beta_unwrapped[train_mask]
+t_te, y_te = t[test_mask], beta_unwrapped[test_mask]
+
+n_tr = len(t_tr)
+cols_tr = [t_tr, np.ones(n_tr)]
+for k in range(1, K1+1):
+    cols_tr.append(np.sin(2*np.pi*k*t_tr/P1))
+    cols_tr.append(np.cos(2*np.pi*k*t_tr/P1))
+for k in range(1, K2+1):
+    cols_tr.append(np.sin(2*np.pi*k*t_tr/P2))
+    cols_tr.append(np.cos(2*np.pi*k*t_tr/P2))
+X_tr = np.column_stack(cols_tr)
+coef_cv = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+
+n_te = len(t_te)
+cols_te = [t_te, np.ones(n_te)]
+for k in range(1, K1+1):
+    cols_te.append(np.sin(2*np.pi*k*t_te/P1))
+    cols_te.append(np.cos(2*np.pi*k*t_te/P1))
+for k in range(1, K2+1):
+    cols_te.append(np.sin(2*np.pi*k*t_te/P2))
+    cols_te.append(np.cos(2*np.pi*k*t_te/P2))
+X_te = np.column_stack(cols_te)
+pred_te = X_te @ coef_cv
+
+resid_te = y_te - pred_te
+dist = t_te - train_end
+
+# Bin errors by distance
+for d_min, d_max in [(0, 200), (200, 400), (400, 600), (600, 800), (800, 1000), (1000, 1109)]:
+    mask = (dist >= d_min) & (dist < d_max)
+    if mask.sum() > 0:
+        print(f'  dist [{d_min}, {d_max}): n={mask.sum()}, std={np.std(resid_te[mask]):.4f}, max_abs={np.max(np.abs(resid_te[mask])):.4f}')
+"
 
 ```
 
@@ -2105,6 +4421,168 @@ Now let me build the complete solution with the optimized model and write the pr
 **tool call: bash**
 
 ```
+cat > solve.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
+
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta to continuous angle
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Model: beta_uw = a*t + b + Fourier(P1, K1) + Fourier(P2, K2)
+# P1 ~ 1080 days (beta's fundamental period)
+# P2 ~ 360 days (alpha's period, captures cross-coupling)
+P2 = 360.0
+K1 = 18
+K2 = 5
+
+# Optimize P1 using full training data
+def compute_std(P1):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1))
+        cols.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    return np.std(resid)
+
+# Coarse search
+print("Optimizing P1...")
+P1_range = np.linspace(1079.5, 1080.5, 501)
+stds = [compute_std(P1) for P1 in P1_range]
+best_idx = np.argmin(stds)
+P1_coarse = P1_range[best_idx]
+
+# Fine search
+P1_range2 = np.linspace(P1_coarse - 0.05, P1_coarse + 0.05, 101)
+stds2 = [compute_std(P1) for P1 in P1_range2]
+best_idx2 = np.argmin(stds2)
+P1 = P1_range2[best_idx2]
+print(f"Optimal P1 = {P1:.4f}, residual std = {stds2[best_idx2]:.6f}")
+
+# Fit final model with optimal P1
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols.append(np.sin(2*np.pi*k*t/P2))
+    cols.append(np.cos(2*np.pi*k*t/P2))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+
+# Training residuals
+pred_train = X @ coef
+resid_train = beta_unwrapped - pred_train
+sigma_train = np.std(resid_train)
+print(f"Training residual std: {sigma_train:.4f}")
+
+# Cross-validation to estimate prediction uncertainty
+# Train on first 2500 days, validate on rest
+train_end = 2500
+train_mask = t < train_end
+test_mask = t >= train_end
+t_tr, y_tr = t[train_mask], beta_unwrapped[train_mask]
+t_te, y_te = t[test_mask], beta_unwrapped[test_mask]
+
+n_tr = len(t_tr)
+cols_tr = [t_tr, np.ones(n_tr)]
+for k in range(1, K1+1):
+    cols_tr.append(np.sin(2*np.pi*k*t_tr/P1))
+    cols_tr.append(np.cos(2*np.pi*k*t_tr/P1))
+for k in range(1, K2+1):
+    cols_tr.append(np.sin(2*np.pi*k*t_tr/P2))
+    cols_tr.append(np.cos(2*np.pi*k*t_tr/P2))
+X_tr = np.column_stack(cols_tr)
+coef_cv = np.linalg.lstsq(X_tr, y_tr, rcond=None)[0]
+
+n_te = len(t_te)
+cols_te = [t_te, np.ones(n_te)]
+for k in range(1, K1+1):
+    cols_te.append(np.sin(2*np.pi*k*t_te/P1))
+    cols_te.append(np.cos(2*np.pi*k*t_te/P1))
+for k in range(1, K2+1):
+    cols_te.append(np.sin(2*np.pi*k*t_te/P2))
+    cols_te.append(np.cos(2*np.pi*k*t_te/P2))
+X_te = np.column_stack(cols_te)
+pred_te = X_te @ coef_cv
+resid_cv = y_te - pred_te
+sigma_cv = np.std(resid_cv)
+cv_95pct = np.percentile(np.abs(resid_cv), 95)
+print(f"CV prediction std: {sigma_cv:.4f}")
+print(f"CV 95th percentile of |error|: {cv_95pct:.4f}")
+
+# Prediction interval width
+# Use the CV-based estimate with some margin for extrapolation
+# sigma_pred for a new noisy measurement = sqrt(sigma_model^2 + sigma_noise^2)
+# From CV, sigma_total = sigma_cv ≈ 0.40
+# This already includes both model error and observation noise
+# For 95% prediction interval, use 1.96 * sigma_pred
+# Use a slightly conservative sigma_pred to account for longer extrapolation
+sigma_pred = max(sigma_cv * 1.2, 0.5)  # Add 20% margin, minimum 0.5
+interval_half_width = 1.96 * sigma_pred
+print(f"Prediction sigma: {sigma_pred:.4f}")
+print(f"95% prediction interval half-width: {interval_half_width:.4f}")
+
+# Predict for test data
+test_t = test.t.values
+n_test = len(test_t)
+cols_test = [test_t, np.ones(n_test)]
+for k in range(1, K1+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+for k in range(1, K2+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+X_test = np.column_stack(cols_test)
+test_pred_uw = X_test @ coef
+
+# Wrap predictions to [0, 360)
+test_pred = test_pred_uw % 360
+
+# Compute prediction intervals
+test_lower_uw = test_pred_uw - interval_half_width
+test_upper_uw = test_pred_uw + interval_half_width
+test_lower = test_lower_uw % 360
+test_upper = test_upper_uw % 360
+
+# Handle wrapping: if lower > upper, the interval crosses 0/360
+# For a proper interval, we need to ensure lower <= upper
+# If they wrap, set lower to 0 and upper to 360 (full circle)
+for i in range(n_test):
+    if test_lower[i] > test_upper[i]:
+        # Interval wraps around 0/360
+        # For simplicity, expand to cover the full range
+        test_lower[i] = 0.0
+        test_upper[i] = 360.0
+
+# Create output DataFrame
+output = pd.DataFrame({
+    't': test_t,
+    'y_pred': np.round(test_pred, 4),
+    'y_lower': np.round(test_lower, 4),
+    'y_upper': np.round(test_upper, 4)
+})
+
+output.to_csv('predictions.csv', index=False)
+print()
+print("Predictions written to predictions.csv")
+print(output.to_string(index=False))
+print(f"\nNumber of rows: {len(output)}")
+print(f"Number of test rows: {len(test)}")
+EOF
+python3 solve.py
 
 ```
 
@@ -2186,7 +4664,7 @@ Number of test rows: 10
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [79] tool
@@ -2248,6 +4726,123 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap both
+alpha_unwrapped = np.unwrap(np.deg2rad(train.alpha)) * 180 / np.pi
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Model alpha as function of t with Fourier series
+# Alpha has period ~360 days
+P_alpha = 360.0  # approximate
+K_alpha = 15
+
+n = len(t)
+cols_a = [t, np.ones(n)]
+for k in range(1, K_alpha+1):
+    cols_a.append(np.sin(2*np.pi*k*t/P_alpha))
+    cols_a.append(np.cos(2*np.pi*k*t/P_alpha))
+X_alpha = np.column_stack(cols_a)
+coef_alpha = np.linalg.lstsq(X_alpha, alpha_unwrapped, rcond=None)[0]
+pred_alpha = X_alpha @ coef_alpha
+resid_alpha = alpha_unwrapped - pred_alpha
+print(f'Alpha model residual std: {np.std(resid_alpha):.4f}')
+
+# Now predict alpha for test data
+test_t = test.t.values
+n_test = len(test_t)
+cols_a_test = [test_t, np.ones(n_test)]
+for k in range(1, K_alpha+1):
+    cols_a_test.append(np.sin(2*np.pi*k*test_t/P_alpha))
+    cols_a_test.append(np.cos(2*np.pi*k*test_t/P_alpha))
+X_alpha_test = np.column_stack(cols_a_test)
+alpha_test_pred = X_alpha_test @ coef_alpha
+
+# Now model beta as function of t, alpha, and Fourier terms
+P1 = 1080.0
+K1 = 15
+K2 = 5
+
+# Model with alpha
+cols_b = [t, alpha_unwrapped, np.ones(n)]
+for k in range(1, K1+1):
+    cols_b.append(np.sin(2*np.pi*k*t/P1))
+    cols_b.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols_b.append(np.sin(2*np.pi*k*t/P_alpha))
+    cols_b.append(np.cos(2*np.pi*k*t/P_alpha))
+X_beta = np.column_stack(cols_b)
+coef_beta = np.linalg.lstsq(X_beta, beta_unwrapped, rcond=None)[0]
+pred_beta = X_beta @ coef_beta
+resid_beta = beta_unwrapped - pred_beta
+print(f'Beta model (with alpha) residual std: {np.std(resid_beta):.4f}')
+
+# Model without alpha
+cols_b2 = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols_b2.append(np.sin(2*np.pi*k*t/P1))
+    cols_b2.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols_b2.append(np.sin(2*np.pi*k*t/P_alpha))
+    cols_b2.append(np.cos(2*np.pi*k*t/P_alpha))
+X_beta2 = np.column_stack(cols_b2)
+coef_beta2 = np.linalg.lstsq(X_beta2, beta_unwrapped, rcond=None)[0]
+pred_beta2 = X_beta2 @ coef_beta2
+resid_beta2 = beta_unwrapped - pred_beta2
+print(f'Beta model (without alpha) residual std: {np.std(resid_beta2):.4f}')
+
+# CV comparison
+print()
+print('Cross-validation comparison:')
+
+for use_alpha in [False, True]:
+    for train_end in [2500]:
+        train_mask = t < train_end
+        test_mask = t >= train_end
+        
+        if use_alpha:
+            alpha_tr = alpha_unwrapped[train_mask]
+            alpha_te = alpha_unwrapped[test_mask]
+            # Use actual alpha for CV (not predicted)
+            cols_tr = [t[train_mask], alpha_tr, np.ones(train_mask.sum())]
+        else:
+            cols_tr = [t[train_mask], np.ones(train_mask.sum())]
+        
+        for k in range(1, K1+1):
+            cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P1))
+            cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P1))
+        for k in range(1, K2+1):
+            cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P_alpha))
+            cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P_alpha))
+        
+        X_tr = np.column_stack(cols_tr)
+        coef_cv = np.linalg.lstsq(X_tr, beta_unwrapped[train_mask], rcond=None)[0]
+        
+        if use_alpha:
+            cols_te = [t[test_mask], alpha_te, np.ones(test_mask.sum())]
+        else:
+            cols_te = [t[test_mask], np.ones(test_mask.sum())]
+        
+        for k in range(1, K1+1):
+            cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P1))
+            cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P1))
+        for k in range(1, K2+1):
+            cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P_alpha))
+            cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P_alpha))
+        
+        X_te = np.column_stack(cols_te)
+        pred_te = X_te @ coef_cv
+        resid_te = beta_unwrapped[test_mask] - pred_te
+        
+        label = 'with alpha' if use_alpha else 'without alpha'
+        print(f'  {label}: cv_std={np.std(resid_te):.4f}, cv_max={np.max(np.abs(resid_te)):.4f}')
+"
 
 ```
 
@@ -2277,6 +4872,91 @@ Cross-validation comparison:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Also optimize P2
+K1 = 18
+K2 = 5
+
+# Fix P1 at optimal value
+P1 = 1080.0
+
+# Search P2
+best_std = 1e10
+best_P2 = 360
+for P2_try in np.linspace(355, 365, 101):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1))
+        cols.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2_try))
+        cols.append(np.cos(2*np.pi*k*t/P2_try))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    std = np.std(resid)
+    if std < best_std:
+        best_std = std
+        best_P2 = P2_try
+
+print(f'Best P2: {best_P2:.4f}, std: {best_std:.6f}')
+
+# Refine P1 with the best P2
+P2 = best_P2
+best_std = 1e10
+best_P1 = 1080
+for P1_try in np.linspace(1079.9, 1080.1, 201):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1_try))
+        cols.append(np.cos(2*np.pi*k*t/P1_try))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    std = np.std(resid)
+    if std < best_std:
+        best_std = std
+        best_P1 = P1_try
+
+print(f'Best P1 (with P2={P2:.2f}): {best_P1:.4f}, std: {best_std:.6f}')
+
+# Now jointly optimize
+from scipy.optimize import minimize
+
+def joint_std(params):
+    P1_v, P2_v = params
+    if P1_v < 1079 or P1_v > 1081 or P2_v < 355 or P2_v > 365:
+        return 1e10
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1_v))
+        cols.append(np.cos(2*np.pi*k*t/P1_v))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2_v))
+        cols.append(np.cos(2*np.pi*k*t/P2_v))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    return np.std(resid)
+
+result = minimize(joint_std, [best_P1, best_P2], method='Nelder-Mead', 
+                  options={'xatol': 0.001, 'fatol': 1e-6, 'maxiter': 100})
+print(f'Joint optimization: P1={result.x[0]:.4f}, P2={result.x[1]:.4f}, std={result.fun:.6f}')
+"
 
 ```
 
@@ -2304,6 +4984,52 @@ Joint optimization: P1=1079.9975, P2=355.0001, std=0.298161
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+K1 = 18
+K2 = 5
+P1 = 1080.0
+
+# Cross-validation with different P2 values
+for P2 in [355, 357, 359, 360, 361, 363, 365]:
+    for train_end in [2000, 2500, 3000]:
+        train_mask = t < train_end
+        test_mask = t >= train_end
+        
+        n_tr = train_mask.sum()
+        cols_tr = [t[train_mask], np.ones(n_tr)]
+        for k in range(1, K1+1):
+            cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P1))
+            cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P1))
+        for k in range(1, K2+1):
+            cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P2))
+            cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P2))
+        X_tr = np.column_stack(cols_tr)
+        coef = np.linalg.lstsq(X_tr, beta_unwrapped[train_mask], rcond=None)[0]
+        
+        n_te = test_mask.sum()
+        cols_te = [t[test_mask], np.ones(n_te)]
+        for k in range(1, K1+1):
+            cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P1))
+            cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P1))
+        for k in range(1, K2+1):
+            cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P2))
+            cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P2))
+        X_te = np.column_stack(cols_te)
+        pred_te = X_te @ coef
+        
+        resid_te = beta_unwrapped[test_mask] - pred_te
+        
+        if train_end == 2500:
+            print(f'P2={P2}, train_end={train_end}: cv_std={np.std(resid_te):.4f}, cv_max={np.max(np.abs(resid_te)):.4f}')
+"
 
 ```
 
@@ -2339,6 +5065,169 @@ P2=365, train_end=2500: cv_std=0.3968, cv_max=1.2807
 **tool call: bash**
 
 ```
+cat > solve.py << 'EOF'
+import pandas as pd
+import numpy as np
+
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta to continuous angle
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Model: beta_uw = a*t + b + Fourier(P1, K1) + Fourier(P2, K2)
+K1 = 18
+K2 = 5
+
+def compute_std_for_params(P1, P2):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1))
+        cols.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    return np.std(resid)
+
+# Optimize P1 and P2 jointly using Nelder-Mead
+from scipy.optimize import minimize
+
+def neg_fit(params):
+    P1, P2 = params
+    if P1 < 1079 or P1 > 1081 or P2 < 350 or P2 > 370:
+        return 100.0
+    return compute_std_for_params(P1, P2)
+
+print("Optimizing periods...")
+result = minimize(neg_fit, [1080.0, 355.0], method='Nelder-Mead',
+                  options={'xatol': 0.001, 'fatol': 1e-6, 'maxiter': 200})
+P1 = result.x[0]
+P2 = result.x[1]
+print(f"Optimal P1={P1:.4f}, P2={P2:.4f}, std={result.fun:.6f}")
+
+# Fit final model with optimal periods
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols.append(np.sin(2*np.pi*k*t/P2))
+    cols.append(np.cos(2*np.pi*k*t/P2))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+
+# Training residuals
+pred_train = X @ coef
+resid_train = beta_unwrapped - pred_train
+sigma_train = np.std(resid_train)
+print(f"Training residual std: {sigma_train:.4f}")
+
+# Cross-validation to estimate prediction uncertainty
+cv_stds = []
+for train_end in [2000, 2500, 3000]:
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    
+    n_tr = train_mask.sum()
+    cols_tr = [t[train_mask], np.ones(n_tr)]
+    for k in range(1, K1+1):
+        cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P1))
+        cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P1))
+    for k in range(1, K2+1):
+        cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P2))
+        cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P2))
+    X_tr = np.column_stack(cols_tr)
+    coef_cv = np.linalg.lstsq(X_tr, beta_unwrapped[train_mask], rcond=None)[0]
+    
+    n_te = test_mask.sum()
+    cols_te = [t[test_mask], np.ones(n_te)]
+    for k in range(1, K1+1):
+        cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P1))
+        cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P1))
+    for k in range(1, K2+1):
+        cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P2))
+        cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P2))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef_cv
+    
+    resid_cv = beta_unwrapped[test_mask] - pred_te
+    cv_stds.append(np.std(resid_cv))
+    print(f"  CV train_end={train_end}: std={np.std(resid_cv):.4f}, max={np.max(np.abs(resid_cv)):.4f}")
+
+# Estimate prediction uncertainty
+sigma_cv = np.mean(cv_stds)
+# Use a conservative estimate: add 25% margin for extrapolation
+sigma_pred = sigma_cv * 1.25
+# Also ensure minimum of 0.5 degrees
+sigma_pred = max(sigma_pred, 0.5)
+interval_half_width = 1.96 * sigma_pred
+print(f"Average CV std: {sigma_cv:.4f}")
+print(f"Prediction sigma (with margin): {sigma_pred:.4f}")
+print(f"95% prediction interval half-width: {interval_half_width:.4f}")
+
+# Predict for test data
+test_t = test.t.values
+n_test = len(test_t)
+cols_test = [test_t, np.ones(n_test)]
+for k in range(1, K1+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+for k in range(1, K2+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+X_test = np.column_stack(cols_test)
+test_pred_uw = X_test @ coef
+
+# Wrap predictions to [0, 360)
+test_pred = test_pred_uw % 360
+
+# Compute prediction intervals (in unwrapped space, then wrap)
+test_lower_uw = test_pred_uw - interval_half_width
+test_upper_uw = test_pred_uw + interval_half_width
+test_lower = test_lower_uw % 360
+test_upper = test_upper_uw % 360
+
+# Handle wrapping: if lower > upper after wrapping, expand interval
+for i in range(n_test):
+    if test_lower[i] > test_upper[i]:
+        # Interval wraps around 0/360
+        # Keep it simple: use the unwrapped representation
+        # Set lower to max(0, pred_uw - width) % 360 
+        # and upper to min(360, pred_uw + width) % 360
+        # Actually, just ensure the interval is valid
+        # For a wrapping interval [A, 360) ∪ [0, B], 
+        # we report it as [0, 360] (full circle)
+        test_lower[i] = 0.0
+        test_upper[i] = 360.0
+
+# Ensure predictions are in [0, 360)
+test_pred = np.clip(test_pred, 0, 360)
+test_lower = np.clip(test_lower, 0, 360)
+test_upper = np.clip(test_upper, 0, 360)
+
+# Create output DataFrame
+output = pd.DataFrame({
+    't': test_t,
+    'y_pred': np.round(test_pred, 4),
+    'y_lower': np.round(test_lower, 4),
+    'y_upper': np.round(test_upper, 4)
+})
+
+output.to_csv('predictions.csv', index=False)
+print()
+print("Predictions written to predictions.csv")
+print(output.to_string(index=False))
+print(f"\nNumber of rows: {len(output)}")
+print(f"Number of test rows: {len(test)}")
+EOF
+python3 solve.py
 
 ```
 
@@ -2390,6 +5279,51 @@ Number of test rows: 10
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+K1 = 18
+K2 = 5
+P1 = 1080.0
+
+# CV with different P2 values
+print('CV std for different P2 values:')
+for P2 in [350, 353, 355, 357, 358, 359, 360, 361, 362, 365, 370]:
+    train_end = 2500
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    
+    n_tr = train_mask.sum()
+    cols_tr = [t[train_mask], np.ones(n_tr)]
+    for k in range(1, K1+1):
+        cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P1))
+        cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P1))
+    for k in range(1, K2+1):
+        cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P2))
+        cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P2))
+    X_tr = np.column_stack(cols_tr)
+    coef = np.linalg.lstsq(X_tr, beta_unwrapped[train_mask], rcond=None)[0]
+    
+    n_te = test_mask.sum()
+    cols_te = [t[test_mask], np.ones(n_te)]
+    for k in range(1, K1+1):
+        cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P1))
+        cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P1))
+    for k in range(1, K2+1):
+        cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P2))
+        cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P2))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef
+    
+    resid_te = beta_unwrapped[test_mask] - pred_te
+    print(f'  P2={P2}: cv_std={np.std(resid_te):.4f}, max={np.max(np.abs(resid_te)):.4f}')
+"
 
 ```
 
@@ -2444,6 +5378,51 @@ CV std for different P2 values:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+K1 = 18
+K2 = 5
+P1 = 1080.0
+test_t = test.t.values
+
+# Compare predictions for different P2
+print('Predictions for different P2 values:')
+for P2 in [350, 355, 360, 365]:
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1))
+        cols.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    
+    n_test = len(test_t)
+    cols_test = [test_t, np.ones(n_test)]
+    for k in range(1, K1+1):
+        cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+        cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+    for k in range(1, K2+1):
+        cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+        cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+    X_test = np.column_stack(cols_test)
+    pred_uw = X_test @ coef
+    
+    print(f'P2={P2}:')
+    for i in range(n_test):
+        print(f'  t={test_t[i]}: pred={pred_uw[i]%360:.4f}')
+    print()
+"
 
 ```
 
@@ -2515,6 +5494,107 @@ P2=365:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Single-period model with P1 only
+P1 = 1080.0
+K1 = 18
+
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+resid = beta_unwrapped - X @ coef
+print(f'Single-period model: train_std={np.std(resid):.4f}')
+
+# CV
+train_end = 2500
+train_mask = t < train_end
+test_mask = t >= train_end
+n_tr = train_mask.sum()
+cols_tr = [t[train_mask], np.ones(n_tr)]
+for k in range(1, K1+1):
+    cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P1))
+    cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P1))
+X_tr = np.column_stack(cols_tr)
+coef_cv = np.linalg.lstsq(X_tr, beta_unwrapped[train_mask], rcond=None)[0]
+
+n_te = test_mask.sum()
+cols_te = [t[test_mask], np.ones(n_te)]
+for k in range(1, K1+1):
+    cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P1))
+    cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P1))
+X_te = np.column_stack(cols_te)
+pred_te = X_te @ coef_cv
+resid_cv = beta_unwrapped[test_mask] - pred_te
+print(f'Single-period CV: cv_std={np.std(resid_cv):.4f}, max={np.max(np.abs(resid_cv)):.4f}')
+
+# Predictions
+test_t = test.t.values
+n_test = len(test_t)
+cols_test = [test_t, np.ones(n_test)]
+for k in range(1, K1+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+X_test = np.column_stack(cols_test)
+pred_uw = X_test @ coef
+
+print()
+print('Single-period predictions:')
+for i in range(n_test):
+    print(f'  t={test_t[i]}: pred={pred_uw[i]%360:.4f}')
+
+# Compare with two-period (P2=350)
+P2 = 350
+K2 = 5
+n = len(t)
+cols2 = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols2.append(np.sin(2*np.pi*k*t/P1))
+    cols2.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols2.append(np.sin(2*np.pi*k*t/P2))
+    cols2.append(np.cos(2*np.pi*k*t/P2))
+X2 = np.column_stack(cols2)
+coef2 = np.linalg.lstsq(X2, beta_unwrapped, rcond=None)[0]
+pred2 = X2 @ coef2
+resid2 = beta_unwrapped - pred2
+print(f'\\nTwo-period model (P2=350): train_std={np.std(resid2):.4f}')
+
+# CV for two-period
+cols_tr2 = [t[train_mask], np.ones(n_tr)]
+for k in range(1, K1+1):
+    cols_tr2.append(np.sin(2*np.pi*k*t[train_mask]/P1))
+    cols_tr2.append(np.cos(2*np.pi*k*t[train_mask]/P1))
+for k in range(1, K2+1):
+    cols_tr2.append(np.sin(2*np.pi*k*t[train_mask]/P2))
+    cols_tr2.append(np.cos(2*np.pi*k*t[train_mask]/P2))
+X_tr2 = np.column_stack(cols_tr2)
+coef_cv2 = np.linalg.lstsq(X_tr2, beta_unwrapped[train_mask], rcond=None)[0]
+
+cols_te2 = [t[test_mask], np.ones(n_te)]
+for k in range(1, K1+1):
+    cols_te2.append(np.sin(2*np.pi*k*t[test_mask]/P1))
+    cols_te2.append(np.cos(2*np.pi*k*t[test_mask]/P1))
+for k in range(1, K2+1):
+    cols_te2.append(np.sin(2*np.pi*k*t[test_mask]/P2))
+    cols_te2.append(np.cos(2*np.pi*k*t[test_mask]/P2))
+X_te2 = np.column_stack(cols_te2)
+pred_te2 = X_te2 @ coef_cv2
+resid_cv2 = beta_unwrapped[test_mask] - pred_te2
+print(f'Two-period CV: cv_std={np.std(resid_cv2):.4f}, max={np.max(np.abs(resid_cv2)):.4f}')
+"
 
 ```
 
@@ -2562,6 +5642,64 @@ Two-period CV: cv_std=0.3879, max=1.1898
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+P1 = 1080.0
+P2 = 350.0
+K1 = 18
+
+# Compare K2 values with P2=350
+for K2 in [0, 2, 3, 5, 7, 10]:
+    train_end = 2500
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    
+    n_tr = train_mask.sum()
+    cols_tr = [t[train_mask], np.ones(n_tr)]
+    for k in range(1, K1+1):
+        cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P1))
+        cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P1))
+    for k in range(1, K2+1):
+        cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P2))
+        cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P2))
+    X_tr = np.column_stack(cols_tr)
+    coef = np.linalg.lstsq(X_tr, beta_unwrapped[train_mask], rcond=None)[0]
+    
+    n_te = test_mask.sum()
+    cols_te = [t[test_mask], np.ones(n_te)]
+    for k in range(1, K1+1):
+        cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P1))
+        cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P1))
+    for k in range(1, K2+1):
+        cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P2))
+        cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P2))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef
+    
+    resid_te = beta_unwrapped[test_mask] - pred_te
+    
+    # Also compute training residual on full data
+    n = len(t)
+    cols_full = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols_full.append(np.sin(2*np.pi*k*t/P1))
+        cols_full.append(np.cos(2*np.pi*k*t/P1))
+    for k in range(1, K2+1):
+        cols_full.append(np.sin(2*np.pi*k*t/P2))
+        cols_full.append(np.cos(2*np.pi*k*t/P2))
+    X_full = np.column_stack(cols_full)
+    coef_full = np.linalg.lstsq(X_full, beta_unwrapped, rcond=None)[0]
+    resid_full = beta_unwrapped - X_full @ coef_full
+    
+    print(f'K2={K2}: train_std={np.std(resid_full):.4f}, cv_std={np.std(resid_te):.4f}, cv_max={np.max(np.abs(resid_te)):.4f}')
+"
 
 ```
 
@@ -2594,6 +5732,166 @@ K2=10: train_std=0.2973, cv_std=0.3884, cv_max=1.2075
 **tool call: bash**
 
 ```
+cat > solve.py << 'ENDSCRIPT'
+import pandas as pd
+import numpy as np
+
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Unwrap beta to continuous angle
+beta_unwrapped = np.unwrap(np.deg2rad(train.beta)) * 180 / np.pi
+t = train.t.values
+
+# Model: beta_uw = a*t + b + Fourier(P1, K1) + Fourier(P2, K2)
+# P1 ≈ 1080 days (beta's fundamental period)
+# P2 ≈ 350 days (secondary period, avoids harmonicity with P1)
+P1 = 1080.0
+P2 = 350.0
+K1 = 18
+K2 = 3
+
+# Fine-tune P1 with these fixed P2, K1, K2
+print("Fine-tuning P1...")
+best_P1 = P1
+best_std = 1e10
+for P1_try in np.linspace(1079.9, 1080.1, 201):
+    n = len(t)
+    cols = [t, np.ones(n)]
+    for k in range(1, K1+1):
+        cols.append(np.sin(2*np.pi*k*t/P1_try))
+        cols.append(np.cos(2*np.pi*k*t/P1_try))
+    for k in range(1, K2+1):
+        cols.append(np.sin(2*np.pi*k*t/P2))
+        cols.append(np.cos(2*np.pi*k*t/P2))
+    X = np.column_stack(cols)
+    coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+    resid = beta_unwrapped - X @ coef
+    std = np.std(resid)
+    if std < best_std:
+        best_std = std
+        best_P1 = P1_try
+
+P1 = best_P1
+print(f"Optimal P1 = {P1:.4f}, training std = {best_std:.6f}")
+
+# Fit final model
+n = len(t)
+cols = [t, np.ones(n)]
+for k in range(1, K1+1):
+    cols.append(np.sin(2*np.pi*k*t/P1))
+    cols.append(np.cos(2*np.pi*k*t/P1))
+for k in range(1, K2+1):
+    cols.append(np.sin(2*np.pi*k*t/P2))
+    cols.append(np.cos(2*np.pi*k*t/P2))
+X = np.column_stack(cols)
+coef = np.linalg.lstsq(X, beta_unwrapped, rcond=None)[0]
+
+# Training residuals
+pred_train = X @ coef
+resid_train = beta_unwrapped - pred_train
+sigma_train = np.std(resid_train)
+print(f"Training residual std: {sigma_train:.4f}")
+
+# Cross-validation to estimate prediction uncertainty
+cv_stds = []
+for train_end in [2000, 2500, 3000]:
+    train_mask = t < train_end
+    test_mask = t >= train_end
+    
+    n_tr = train_mask.sum()
+    cols_tr = [t[train_mask], np.ones(n_tr)]
+    for k in range(1, K1+1):
+        cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P1))
+        cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P1))
+    for k in range(1, K2+1):
+        cols_tr.append(np.sin(2*np.pi*k*t[train_mask]/P2))
+        cols_tr.append(np.cos(2*np.pi*k*t[train_mask]/P2))
+    X_tr = np.column_stack(cols_tr)
+    coef_cv = np.linalg.lstsq(X_tr, beta_unwrapped[train_mask], rcond=None)[0]
+    
+    n_te = test_mask.sum()
+    cols_te = [t[test_mask], np.ones(n_te)]
+    for k in range(1, K1+1):
+        cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P1))
+        cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P1))
+    for k in range(1, K2+1):
+        cols_te.append(np.sin(2*np.pi*k*t[test_mask]/P2))
+        cols_te.append(np.cos(2*np.pi*k*t[test_mask]/P2))
+    X_te = np.column_stack(cols_te)
+    pred_te = X_te @ coef_cv
+    
+    resid_cv = beta_unwrapped[test_mask] - pred_te
+    cv_std = np.std(resid_cv)
+    cv_stds.append(cv_std)
+    print(f"  CV train_end={train_end}: std={cv_std:.4f}, max={np.max(np.abs(resid_cv)):.4f}")
+
+# Estimate prediction uncertainty
+# CV std captures both model error and observation noise for a new measurement
+sigma_cv = np.mean(cv_stds)
+
+# For the prediction interval, we need to account for:
+# 1. Observation noise (already in CV estimate)
+# 2. Model prediction error (already in CV estimate)
+# 3. Additional extrapolation uncertainty (not fully captured by CV)
+# Use a conservative estimate with margin
+sigma_pred = max(sigma_cv * 1.25, 0.5)
+interval_half_width = 1.96 * sigma_pred
+print(f"\nAverage CV std: {sigma_cv:.4f}")
+print(f"Prediction sigma (with margin): {sigma_pred:.4f}")
+print(f"95% prediction interval half-width: {interval_half_width:.4f}")
+
+# Predict for test data
+test_t = test.t.values
+n_test = len(test_t)
+cols_test = [test_t, np.ones(n_test)]
+for k in range(1, K1+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P1))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P1))
+for k in range(1, K2+1):
+    cols_test.append(np.sin(2*np.pi*k*test_t/P2))
+    cols_test.append(np.cos(2*np.pi*k*test_t/P2))
+X_test = np.column_stack(cols_test)
+test_pred_uw = X_test @ coef
+
+# Wrap predictions to [0, 360)
+test_pred = test_pred_uw % 360
+
+# Compute prediction intervals (in unwrapped space, then wrap)
+test_lower_uw = test_pred_uw - interval_half_width
+test_upper_uw = test_pred_uw + interval_half_width
+test_lower = test_lower_uw % 360
+test_upper = test_upper_uw % 360
+
+# Handle wrapping: if lower > upper after wrapping
+for i in range(n_test):
+    if test_lower[i] > test_upper[i]:
+        test_lower[i] = 0.0
+        test_upper[i] = 360.0
+
+# Create output DataFrame
+output = pd.DataFrame({
+    't': test_t,
+    'y_pred': np.round(test_pred, 4),
+    'y_lower': np.round(test_lower, 4),
+    'y_upper': np.round(test_upper, 4)
+})
+
+output.to_csv('predictions.csv', index=False)
+print("\nPredictions written to predictions.csv")
+print(output.to_string(index=False))
+print(f"\nNumber of rows: {len(output)}")
+print(f"Number of test rows: {len(test)}")
+
+# Verify: check that all test t values are present
+assert len(output) == len(test), "Row count mismatch"
+assert all(output['t'].values == test['t'].values), "t values mismatch"
+assert all(output['y_lower'] <= output['y_pred']), "Lower > pred"
+assert all(output['y_pred'] <= output['y_upper']), "Pred > upper"
+print("\nAll checks passed!")
+ENDSCRIPT
+python3 solve.py
 
 ```
 
@@ -2662,7 +5960,7 @@ All checks passed!
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [99] tool
@@ -2730,6 +6028,27 @@ The predictions look solid. Let me do a final verification to make sure everythi
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+test = pd.read_csv('data/test.csv')
+pred = pd.read_csv('predictions.csv')
+
+print('Test data:')
+print(test)
+print()
+print('Predictions:')
+print(pred)
+print()
+print('Verification:')
+print(f'  Same t values: {all(test.t.values == pred.t.values)}')
+print(f'  Same number of rows: {len(test) == len(pred)}')
+print(f'  All y_lower <= y_pred: {all(pred.y_lower <= pred.y_pred)}')
+print(f'  All y_pred <= y_upper: {all(pred.y_pred <= pred.y_upper)}')
+print(f'  All angles in [0, 360): {all(pred.y_pred >= 0) and all(pred.y_pred < 360)}')
+print(f'  All lower bounds >= 0: {all(pred.y_lower >= 0)}')
+print(f'  All upper bounds <= 360: {all(pred.y_upper <= 360)}')
+print(f'  Interval widths: {list((pred.y_upper - pred.y_lower).values)}')
+"
 
 ```
 

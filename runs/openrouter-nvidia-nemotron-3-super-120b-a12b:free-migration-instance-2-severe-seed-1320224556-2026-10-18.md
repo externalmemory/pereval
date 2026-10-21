@@ -105,7 +105,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -131,7 +131,7 @@ drwxr-xr-x 1 root root  4096 Oct 18 15:31 ..
 **tool call: bash**
 
 ```
-
+head -20 data/transitions.csv
 ```
 
 ## [5] tool
@@ -169,7 +169,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+tail -5 data/transitions.csv
 ```
 
 ## [7] tool
@@ -194,7 +194,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+head -5 data/macro_history.csv
 ```
 
 ## [9] tool
@@ -217,7 +217,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+tail -5 data/macro_history.csv
 ```
 
 ## [11] tool
@@ -242,7 +242,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+cat data/scenario.csv
 ```
 
 ## [13] tool
@@ -294,7 +294,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+grep ",D," data/transitions.csv | head -5
 ```
 
 ## [15] tool
@@ -756,7 +756,7 @@ Saved matrices.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [23] tool
@@ -793,7 +793,7 @@ quarter,state,share
 **tool call: bash**
 
 ```
-
+head -20 matrices.csv
 ```
 
 ## [25] tool
@@ -1104,7 +1104,7 @@ Name: sum, dtype: float64
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [31] tool

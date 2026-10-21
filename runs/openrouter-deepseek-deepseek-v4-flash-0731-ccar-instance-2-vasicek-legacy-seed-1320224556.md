@@ -56,7 +56,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+cd /workspace 2>/dev/null; ls -la; echo "---"; find . -name "*.csv" 2>/dev/null
 ```
 
 ## [3] tool
@@ -75,7 +75,7 @@ drwxr-xr-x 2 root root 4096 Aug 11 05:15 data
 **tool call: bash**
 
 ```
-
+cd /workspace; head -50 data/train.csv; echo "==="; wc -l data/train.csv data/scenario.csv; echo "==="; cat data/scenario.csv
 ```
 
 ## [5] tool
@@ -162,7 +162,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cd /workspace; tail -32 data/train.csv
 ```
 
 ## [7] tool
@@ -214,7 +214,16 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+print(tr.shape)
+print(tr.isna().sum())
+print(tr[['quarter','default_rate']].tail(3))
+sc = pd.read_csv('data/scenario.csv')
+print(sc.shape)
+print(sc[['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']].describe())
+"
 ```
 
 ## [9] tool
@@ -277,7 +286,17 @@ max    254.924500      9.562200  304.578500  ...  8924.812900  38.769300  283.53
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+print('vix range', tr.vix.min(), tr.vix.max())
+print('sp500 range', tr.sp500.min(), tr.sp500.max())
+print('unemp range', tr.unemployment.min(), tr.unemployment.max())
+print('bbb range', tr.bbb_spread.min(), tr.bbb_spread.max())
+# correlations with default_rate
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    print(c, np.corrcoef(tr[c].fillna(tr[c].median()), tr.default_rate)[0,1])
+"
 ```
 
 ## [11] tool
@@ -318,7 +337,28 @@ cpi 0.0963106993074108
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv').dropna(subset=['vix','bbb_spread','default_rate'])
+# focus complete rows after bbb & vix available (quarter>=15)
+tr2 = tr.dropna()
+print('complete rows', len(tr2))
+import statsmodels.api as sm
+for form in ['raw','log']:
+    X = tr2['vix'].values
+    if form=='log': X=np.log(X)
+    y=tr2['default_rate'].values
+    Xc=sm.add_constant(X)
+    r=sm.OLS(y,Xc).fit()
+    print(form, 'vix R2', r.rsquared, 'coef', r.params)
+for form in ['raw','log']:
+    X = tr2['bbb_spread'].values
+    if form=='log': X=np.log(X)
+    y=tr2['default_rate'].values
+    Xc=sm.add_constant(X)
+    r=sm.OLS(y,Xc).fit()
+    print('bbb',form,'R2',r.rsquared)
+"
 ```
 
 ## [13] tool
@@ -373,7 +413,26 @@ bbb log R2 0.08947207196714624
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv').dropna()
+y=tr['default_rate'].values
+ylog=np.log(y); ylogit=np.log(y/(1-y))
+def report(X,name):
+    Xc=sm.add_constant(X)
+    for yy,yn in [(y,'raw'),(ylog,'log'),(ylogit,'logit')]:
+        r=sm.OLS(yy,Xc).fit()
+        print(name, yn, 'R2 %.3f'%r.rsquared, 'AIC %.2f'%r.aic)
+V=tr[['vix']].values
+B=tr[['bbb_spread']].values
+U=tr[['unemployment']].values
+report(V,'vix')
+report(np.column_stack([V,B]),'vix+bbb')
+report(np.column_stack([V,B,U]),'vix+bbb+unemp')
+report(np.column_stack([np.log(V),B]),'logvix+bbb')
+report(B,'bbb')
+"
 ```
 
 ## [15] tool
@@ -426,7 +485,24 @@ bbb logit R2 0.060 AIC 92.31
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv').dropna()
+y=tr['default_rate'].values
+V=tr['vix'].values
+B=tr['bbb_spread'].values
+# fit on q36-80
+Xc=sm.add_constant(np.column_stack([V,B]))
+r=sm.OLS(y,Xc).fit()
+print(r.summary())
+print()
+sc=pd.read_csv('data/scenario.csv')
+sv=sc['vix'].values; sb=sc['bbb_spread'].values
+Xnew=sm.add_constant(np.column_stack([sv,sb]))
+pred=r.get_prediction(Xnew).summary_frame(alpha=0.05)
+print(pred)
+"
 ```
 
 ## [17] tool
@@ -517,7 +593,39 @@ Notes:
 **tool call: bash**
 
 ```
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv').dropna()
+tr=tr.reset_index(drop=True)
+n=len(tr)
+# walk forward: train on first k, test next segment
+def cv_rmse(fitfn,predfn,trainsize=28,step=1):
+    errs=[]
+    for start in range(trainsize,n-step):
+        trn=tr.iloc[:start]; tst=tr.iloc[start:start+step]
+        model=fitfn(trn); p=predfn(model,tst)
+        errs.append((tst['default_rate'].values-p)**2)
+    return np.sqrt(np.mean(errs))
 
+# candidate models
+def fit_ols_vix(df): 
+    X=sm.add_constant(df[['vix']]); y=df['default_rate']; return sm.OLS(y,X).fit()
+def pred_ols_vix(m,df):
+    X=sm.add_constant(df[['vix']]); return m.predict(X)
+def fit_ols_vb(df):
+    X=sm.add_constant(df[['vix','bbb_spread']]); y=df['default_rate']; return sm.OLS(y,X).fit()
+def pred_ols_vb(m,df):
+    X=sm.add_constant(df[['vix','bbb_spread']]); return m.predict(X)
+def fit_glm_logit(df):
+    import statsmodels.api as sm
+    X=sm.add_constant(df[['vix']]); y=df['default_rate']; return sm.GLM(y,X,family=sm.families.Binomial()).fit() if False else sm.GLM(y,X,family=sm.families.Binomial(link=sm.families.links.logit())).fit()
+def pred_glm_logit(m,df):
+    X=sm.add_constant(df[['vix']]); return m.predict(X)
+
+for name,f,p in [('vix',fit_ols_vix,pred_ols_vix),('vix+bbb',fit_ols_vb,pred_ols_vb)]:
+    print(name, 'CV RMSE', cv_rmse(f,p))
+"
 ```
 
 ## [19] tool
@@ -547,7 +655,29 @@ ValueError: shapes (1,1) and (2,) not aligned: 1 (dim 1) != 2 (dim 0)
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv').dropna().reset_index(drop=True)
+def cv_rmse(fitfn,predfn,trainsize=28,step=1):
+    errs=[]
+    for start in range(trainsize,n-step):
+        trn=tr.iloc[:start]; tst=tr.iloc[start:start+step]
+        model=fitfn(trn); p=predfn(model,tst)
+        errs.append((tst['default_rate'].values-p)**2)
+    return np.sqrt(np.mean(errs))
+n=len(tr)
+def fit_ols_vix(df):
+    X=sm.add_constant(df['vix'].values); return sm.OLS(df['default_rate'].values,X).fit()
+def pred_ols_vix(m,df):
+    X=sm.add_constant(df['vix'].values); return m.predict(X)
+def fit_ols_vb(df):
+    X=sm.add_constant(np.column_stack([df['vix'].values,df['bbb_spread'].values])); return sm.OLS(df['default_rate'].values,X).fit()
+def pred_ols_vb(m,df):
+    X=sm.add_constant(np.column_stack([df['vix'].values,df['bbb_spread'].values])); return m.predict(X)
+for name,f,p in [('vix',fit_ols_vix,pred_ols_vix),('vix+bbb',fit_ols_vb,pred_ols_vb)]:
+    print(name, 'CV RMSE', cv_rmse(f,p))
+"
 ```
 
 ## [21] tool
@@ -579,7 +709,29 @@ ValueError: shapes (1,1) and (2,) not aligned: 1 (dim 1) != 2 (dim 0)
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv').dropna().reset_index(drop=True)
+n=len(tr)
+def cv_rmse(fitfn,predfn,step=1):
+    errs=[]
+    for start in range(28,n-step):
+        trn=tr.iloc[:start]; tst=tr.iloc[start:start+step]
+        model=fitfn(trn); p=predfn(model,tst)
+        errs.append((tst['default_rate'].values-p)**2)
+    return np.sqrt(np.mean(errs))
+def fit_ols_vix(df):
+    X=sm.add_constant(df['vix'].values.reshape(-1,1)); return sm.OLS(df['default_rate'].values,X).fit()
+def pred_ols_vix(m,df):
+    X=sm.add_constant(df['vix'].values.reshape(-1,1)); return m.predict(X)
+def fit_ols_vb(df):
+    X=sm.add_constant(np.column_stack([df['vix'].values,df['bbb_spread'].values])); return sm.OLS(df['default_rate'].values,X).fit()
+def pred_ols_vb(m,df):
+    X=sm.add_constant(np.column_stack([df['vix'].values,df['bbb_spread'].values])); return m.predict(X)
+for name,f,p in [('vix',fit_ols_vix,pred_ols_vix),('vix+bbb',fit_ols_vb,pred_ols_vb)]:
+    print(name, 'CV RMSE', round(cv_rmse(f,p),5))
+"
 ```
 
 ## [23] tool
@@ -619,7 +771,19 @@ ValueError: shapes (1,1) and (2,) not aligned: 1 (dim 1) != 2 (dim 0)
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv').dropna().reset_index(drop=True)
+X=sm.add_constant(tr['vix'].values.reshape(-1,1))
+print(X.shape)
+m=sm.OLS(tr['default_rate'].values,X).fit()
+print(m.params)
+xv=np.array([[20.0]])
+xv2=sm.add_constant(xv)
+print('xv2 shape',xv2.shape)
+print(m.predict(xv2))
+"
 ```
 
 ## [25] tool
@@ -656,7 +820,38 @@ xv2 shape (1, 1)
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv').dropna().reset_index(drop=True)
+n=len(tr)
+def cv_rmse(fitfn,predfn,step=5):
+    errs=[]
+    for start in range(28,n-step):
+        trn=tr.iloc[:start]; tst=tr.iloc[start:start+step]
+        if len(tst)<1: continue
+        model=fitfn(trn); p=predfn(model,tst)
+        errs.append((tst['default_rate'].values-p)**2)
+    return np.sqrt(np.mean(errs))
+def fit_ols_vix(df):
+    X=sm.add_constant(df['vix'].values.reshape(-1,1)); return sm.OLS(df['default_rate'].values,X).fit()
+def pred_ols_vix(m,df):
+    X=sm.add_constant(df['vix'].values.reshape(-1,1)); return m.predict(X)
+def fit_ols_vb(df):
+    X=sm.add_constant(np.column_stack([df['vix'].values,df['bbb_spread'].values])); return sm.OLS(df['default_rate'].values,X).fit()
+def pred_ols_vb(m,df):
+    X=sm.add_constant(np.column_stack([df['vix'].values,df['bbb_spread'].values])); return m.predict(X)
+def fit_ols_logv(df):
+    X=sm.add_constant(np.log(df['vix'].values).reshape(-1,1)); return sm.OLS(df['default_rate'].values,X).fit()
+def pred_ols_logv(m,df):
+    X=sm.add_constant(np.log(df['vix'].values).reshape(-1,1)); return m.predict(X)
+def fit_glm(df):
+    X=sm.add_constant(df['vix'].values.reshape(-1,1)); return sm.GLM(df['default_rate'].values,X,family=sm.families.Binomial(link=sm.families.links.logit())).fit()
+def pred_glm(m,df):
+    X=sm.add_constant(df['vix'].values.reshape(-1,1)); return m.predict(X)
+for name,f,p in [('vix',fit_ols_vix,pred_ols_vix),('vix+bbb',fit_ols_vb,pred_ols_vb),('logvix',fit_ols_logv,pred_ols_logv),('glm_logit_vix',fit_glm,pred_glm)]:
+    print(name, 'CV RMSE', round(cv_rmse(f,p),5))
+"
 ```
 
 ## [27] tool
@@ -697,7 +892,15 @@ glm_logit_vix CV RMSE 0.01111
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+# use all rows with vix
+d=tr.dropna(subset=['vix'])
+d=d.sort_values('vix')
+for _,r in d.iterrows():
+    print('%.2f %.4f'%(r['vix'],r['default_rate']))
+"
 ```
 
 ## [29] tool
@@ -840,7 +1043,28 @@ glm_logit_vix CV RMSE 0.01111
 **tool call: bash**
 
 ```
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
 
+# model A: vix only, all rows with vix
+da=tr.dropna(subset=['vix'])
+X=sm.add_constant(da['vix'].values.reshape(-1,1))
+mA=sm.OLS(da['default_rate'].values,X).fit()
+print('A all-vix', mA.params, 'se', mA.bse)
+predA=mA.get_prediction(sm.add_constant(sc['vix'].values.reshape(-1,1))).summary_frame(alpha=0.05)
+print(predA[['mean','obs_ci_lower','obs_ci_upper']])
+
+# model B: vix+bbb, complete rows
+db=tr.dropna()
+Xb=sm.add_constant(np.column_stack([db['vix'].values,db['bbb_spread'].values]))
+mB=sm.OLS(db['default_rate'].values,Xb).fit()
+print('B', mB.params)
+predB=mB.get_prediction(sm.add_constant(np.column_stack([sc['vix'].values,sc['bbb_spread'].values]))).summary_frame(alpha=0.05)
+print(predB[['mean','obs_ci_lower','obs_ci_upper']])
+"
 ```
 
 ## [31] tool
@@ -944,7 +1168,34 @@ B [-0.02728334  0.00433931 -0.00466596]
 **tool call: bash**
 
 ```
+cd /workspace; cat > make_pred.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
 
+tr = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+
+# Main driver: vix (strongest correlation, clearly significant).
+# Use all rows where vix is available for a stable estimate.
+da = tr.dropna(subset=['vix'])
+X = sm.add_constant(da['vix'].values.reshape(-1,1))
+model = sm.OLS(da['default_rate'].values, X).fit()
+
+Xnew = sm.add_constant(sc['vix'].values.reshape(-1,1))
+pred = model.get_prediction(Xnew).summary_frame(alpha=0.05)
+
+out = pd.DataFrame({
+    'quarter': sc['quarter'].values,
+    'y_pred': pred['mean'].values,
+    'y_lower': pred['obs_ci_lower'].values,
+    'y_upper': pred['obs_ci_upper'].values,
+})
+out.to_csv('predictions.csv', index=False)
+print(out)
+print('---')
+print(model.summary())
+EOF
+python3 make_pred.py
 ```
 
 ## [33] tool
@@ -1028,7 +1279,23 @@ Notes:
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv').dropna()
+y=tr['default_rate'].values
+V=tr['vix'].values
+for name,cols in [('vix+unemp',['vix','unemployment']),('vix+hpi',['vix','hpi']),('vix+gdpchg',None)]:
+    X=tr[['vix']+ (['unemployment','hpi'] if name=='vix+hpi' else ([] if name=='vix+gdpchg' else []))]
+X1=sm.add_constant(np.column_stack([V,tr['unemployment'].values]))
+r=sm.OLS(y,X1).fit(); print('vix+unemp:', np.round(r.params,5), r.pvalues)
+X2=sm.add_constant(np.column_stack([V,tr['hpi'].values]))
+r=sm.OLS(y,X2).fit(); print('vix+hpi:', np.round(r.params,5), r.pvalues)
+X3=sm.add_constant(np.column_stack([V,tr['gdp'].values]))
+r=sm.OLS(y,X3).fit(); print('vix+gdp:', np.round(r.params,5), r.pvalues)
+X4=sm.add_constant(np.column_stack([V,np.log(tr['sp500'].values)]))
+r=sm.OLS(y,X4).fit(); print('vix+logsp500:', np.round(r.params,5), r.pvalues)
+"
 ```
 
 ## [35] tool
@@ -1086,7 +1353,16 @@ vix+logsp500: [-0.09334  0.00429  0.00775] [5.76450011e-03 5.97521649e-16 5.6495
 **tool call: bash**
 
 ```
-
+cd /workspace; cat predictions.csv; echo "rows:"; python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+print(p.shape)
+print(list(p.columns))
+sc=pd.read_csv('data/scenario.csv')
+print('matches scenario quarters:', list(p['quarter'])==list(sc['quarter']))
+print('any lower>upper:', (p.y_lower>p.y_upper).any())
+print('all positive:', (p.y_lower>0).all())
+"
 ```
 
 ## [37] tool
@@ -1150,7 +1426,19 @@ The predictions file is complete with 9 rows matching the scenario quarters. Let
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+tr=pd.read_csv('data/train.csv'); sc=pd.read_csv('data/scenario.csv')
+da=tr.dropna(subset=['vix'])
+# Check scenario vix range vs training
+print('train vix range', da.vix.min(), da.vix.max())
+print('scenario vix range', sc.vix.min(), sc.vix.max())
+# residual std of vix model
+X=sm.add_constant(da['vix'].values.reshape(-1,1))
+m=sm.OLS(da['default_rate'].values,X).fit()
+print('resid std', np.sqrt(np.mean(m.resid**2)))
+"
 ```
 
 ## [39] tool
@@ -1185,7 +1473,17 @@ The model is solid. Let me do a final verification of the output file and then s
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+assert list(p.columns)==['quarter','y_pred','y_lower','y_upper']
+sc=pd.read_csv('data/scenario.csv')
+assert len(p)==len(sc)==9
+assert (p['quarter'].values==sc['quarter'].values).all()
+assert (p['y_lower']<p['y_pred']).all() and (p['y_pred']<p['y_upper']).all()
+print('predictions.csv VALID, 9 rows')
+print(p.to_string(index=False))
+"
 ```
 
 ## [41] tool

@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+head -50 data/train.csv && echo "---" && wc -l data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/test.csv
 ```
 
 ## [3] tool
@@ -135,7 +135,26 @@ t
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print('Shape:', df.shape)
+print('Columns:', df.columns.tolist())
+print('t range:', df['t'].min(), '-', df['t'].max())
+print()
+# Check when beta and gamma are present
+print('beta non-null count:', df['beta'].notna().sum())
+print('gamma non-null count:', df['gamma'].notna().sum())
+print()
+# Show rows where gamma is present
+gamma_present = df[df['gamma'].notna()]
+print('Gamma present rows:')
+print(gamma_present.head(30).to_string())
+print('...')
+print(gamma_present.tail(20).to_string())
+print()
+print('Total gamma rows:', len(gamma_present))
+"
 ```
 
 ## [5] tool
@@ -222,7 +241,37 @@ Total gamma rows: 167
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+gamma = df[df['gamma'].notna()]
+print('Gamma t range:', gamma['t'].min(), '-', gamma['t'].max())
+print('Gamma values range:', gamma['gamma'].min(), '-', gamma['gamma'].max())
+print()
+# Check test days
+test = pd.read_csv('data/test.csv')
+print('Test t range:', test['t'].min(), '-', test['t'].max())
+print('Test days:', test['t'].tolist())
+print()
+# Look at alpha pattern - it seems to wrap around 360
+print('Alpha at t=0:', df.loc[0, 'alpha'])
+print('Alpha at t=24:', df.loc[24, 'alpha'])
+print('Alpha at t=25:', df.loc[25, 'alpha'])  # wraps to ~1.3
+print('Alpha at t=467:', df.loc[467, 'alpha'])
+print()
+# Check if alpha is roughly linear with noise
+alpha_vals = df['alpha'].values
+# Compute differences
+diffs = np.diff(alpha_vals)
+print('Alpha diffs mean:', np.mean(diffs), 'std:', np.std(diffs))
+print()
+# Look at gamma pattern more carefully - is it periodic?
+g_t = gamma['t'].values
+g_v = gamma['gamma'].values
+print('First 10 gamma:', list(zip(g_t[:10], g_v[:10])))
+print('Last 10 gamma:', list(zip(g_t[-10:], g_v[-10:])))
+"
 ```
 
 ## [7] tool
@@ -260,7 +309,18 @@ Last 10 gamma: [(np.int64(458), np.float64(30.894)), (np.int64(459), np.float64(
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+gamma = df[df['gamma'].notna()].copy()
 
+# Check if gamma has a periodic pattern
+# Let's look at gamma vs t
+print('Gamma vs t:')
+for _, row in gamma.iterrows():
+    print(f't={row[\"t\"]:3d}, gamma={row[\"gamma\"]:7.2f}')
+"
 ```
 
 ## [9] tool
@@ -283,7 +343,16 @@ Gamma vs t:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+gamma = df[df['gamma'].notna()].copy()
 
+print('Gamma vs t:')
+for _, row in gamma.iterrows():
+    print('t=%d, gamma=%.2f' % (row['t'], row['gamma']))
+"
 ```
 
 ## [11] tool
@@ -483,7 +552,32 @@ t=467, gamma=32.36
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+gamma = df[df['gamma'].notna()].copy()
 
+# Check alpha at gamma times
+print('Alpha at gamma times (first few):')
+for _, row in gamma.head(10).iterrows():
+    print('t=%d, alpha=%.2f, gamma=%.2f' % (row['t'], row['alpha'], row['gamma']))
+
+# Check if alpha wraps - compute alpha mod 360
+gamma['alpha_mod'] = gamma['alpha'] % 360
+print()
+print('Alpha mod 360 at gamma times (first few):')
+for _, row in gamma.head(10).iterrows():
+    print('t=%d, alpha_mod=%.2f, gamma=%.2f' % (row['t'], row['alpha_mod'], row['gamma']))
+
+# Check the relationship between alpha_mod and gamma
+# If alpha is azimuth and gamma is elevation, they might be related
+# through some geometric relationship
+print()
+print('Alpha mod 360 at gamma times (last few):')
+for _, row in gamma.tail(10).iterrows():
+    print('t=%d, alpha_mod=%.2f, gamma=%.2f' % (row['t'], row['alpha_mod'], row['gamma']))
+"
 ```
 
 ## [13] tool
@@ -562,7 +656,37 @@ t=467, alpha_mod=61.67, gamma=32.36
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+gamma = df[df['gamma'].notna()].copy()
+beta = df[df['beta'].notna()].copy()
 
+print('Beta t range:', beta['t'].min(), '-', beta['t'].max())
+print('Beta count:', len(beta))
+print('Gamma count:', len(gamma))
+print()
+
+# Check if there are gamma values before t=301
+print('All gamma t values:', sorted(gamma['t'].tolist())[:5], '...', sorted(gamma['t'].tolist())[-5:])
+print()
+
+# Check alpha pattern - is it roughly linear?
+# Let's compute alpha unwrapped
+alpha = df['alpha'].values
+# Unwrap alpha - it should increase roughly linearly
+# At t=0, alpha=344.45; at t=25, alpha=1.30 (wrapped from 361.30)
+# So alpha increases by about 1 per day on average
+# Let's unwrap it
+alpha_unwrapped = np.unwrap(np.radians(alpha))
+alpha_unwrapped_deg = np.degrees(alpha_unwrapped)
+print('Alpha unwrapped at t=0:', alpha_unwrapped_deg[0])
+print('Alpha unwrapped at t=25:', alpha_unwrapped_deg[25])
+print('Alpha unwrapped at t=467:', alpha_unwrapped_deg[467])
+print('Alpha unwrapped diff:', alpha_unwrapped_deg[467] - alpha_unwrapped_deg[0])
+print('Expected linear: 467 * (361.30-344.45)/25 =', 467 * (361.30-344.45)/25)
+"
 ```
 
 ## [15] tool
@@ -616,7 +740,53 @@ Expected linear: 467 * (361.30-344.45)/25 = 314.75800000000044
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+df = pd.read_csv('data/train.csv')
+gamma = df[df['gamma'].notna()].copy()
 
+# Try polynomial fit
+t = gamma['t'].values
+g = gamma['gamma'].values
+
+# Quadratic fit
+coeffs = np.polyfit(t, g, 2)
+print('Quadratic coeffs:', coeffs)
+g_pred = np.polyval(coeffs, t)
+print('Quadratic R2:', 1 - np.sum((g - g_pred)**2) / np.sum((g - g.mean())**2))
+
+# Cubic fit
+coeffs3 = np.polyfit(t, g, 3)
+print('Cubic coeffs:', coeffs3)
+g_pred3 = np.polyval(coeffs3, t)
+print('Cubic R2:', 1 - np.sum((g - g_pred3)**2) / np.sum((g - g.mean())**2))
+
+# Try sinusoidal fit: g = A * sin(2*pi*t/T + phi) + offset
+def sin_func(t, A, T, phi, offset):
+    return A * np.sin(2*np.pi*t/T + phi) + offset
+
+try:
+    popt, pcov = curve_fit(sin_func, t, g, p0=[50, 300, 0, -20], maxfev=10000)
+    print('Sinusoidal params:', popt)
+    g_pred_sin = sin_func(t, *popt)
+    print('Sinusoidal R2:', 1 - np.sum((g - g_pred_sin)**2) / np.sum((g - g.mean())**2))
+except Exception as e:
+    print('Sinusoidal fit failed:', e)
+
+# Try sinusoidal with offset and phase
+def sin_func2(t, A, T, phi, offset):
+    return A * np.sin(2*np.pi*(t - phi)/T) + offset
+
+try:
+    popt2, pcov2 = curve_fit(sin_func2, t, g, p0=[50, 300, 372, -20], maxfev=10000)
+    print('Sinusoidal2 params:', popt2)
+    g_pred_sin2 = sin_func2(t, *popt2)
+    print('Sinusoidal2 R2:', 1 - np.sum((g - g_pred_sin2)**2) / np.sum((g - g.mean())**2))
+except Exception as e:
+    print('Sinusoidal2 fit failed:', e)
+"
 ```
 
 ## [17] tool
@@ -677,7 +847,55 @@ Sinusoidal2 R2: 0.9608957231544671
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+df = pd.read_csv('data/train.csv')
+gamma = df[df['gamma'].notna()].copy()
 
+# Unwrap alpha - it should increase linearly
+alpha = gamma['alpha'].values
+# Unwrap: at t=301, alpha=294.17; at t=467, alpha=61.67
+# But alpha wraps at 360, so we need to add 360 to values after the wrap
+# The wrap happens between t=359 (alpha=359.65) and t=360 (alpha=1.93)
+# So for t>=360, add 360 to alpha
+alpha_unwrapped = alpha.copy()
+wrap_idx = gamma['t'].values >= 360
+alpha_unwrapped[wrap_idx] = alpha_unwrapped[wrap_idx] + 360
+
+print('Alpha unwrapped range:', alpha_unwrapped.min(), '-', alpha_unwrapped.max())
+print('Alpha unwrapped at t=301:', alpha_unwrapped[0])
+print('Alpha unwrapped at t=467:', alpha_unwrapped[-1])
+
+# Try fitting gamma vs alpha_unwrapped
+a = alpha_unwrapped
+g = gamma['gamma'].values
+
+# Linear fit
+coeffs_lin = np.polyfit(a, g, 1)
+print('Linear in alpha:', coeffs_lin)
+g_pred_lin = np.polyval(coeffs_lin, a)
+print('Linear R2:', 1 - np.sum((g - g_pred_lin)**2) / np.sum((g - g.mean())**2))
+
+# Quadratic fit
+coeffs_quad = np.polyfit(a, g, 2)
+print('Quadratic in alpha:', coeffs_quad)
+g_pred_quad = np.polyval(coeffs_quad, a)
+print('Quadratic R2:', 1 - np.sum((g - g_pred_quad)**2) / np.sum((g - g.mean())**2))
+
+# Sinusoidal in alpha
+def sin_alpha(a, A, T, phi, offset):
+    return A * np.sin(2*np.pi*(a - phi)/T) + offset
+
+try:
+    popt, pcov = curve_fit(sin_alpha, a, g, p0=[40, 100, 350, -20], maxfev=10000)
+    print('Sinusoidal in alpha params:', popt)
+    g_pred_sin = sin_alpha(a, *popt)
+    print('Sinusoidal in alpha R2:', 1 - np.sum((g - g_pred_sin)**2) / np.sum((g - g.mean())**2))
+except Exception as e:
+    print('Sinusoidal in alpha failed:', e)
+"
 ```
 
 ## [19] tool
@@ -727,7 +945,64 @@ Sinusoidal in alpha R2: 0.3426248522179174
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Model 1: Single sinusoid
+def model1(t, A, T, phi, offset):
+    return A * np.sin(2*np.pi*t/T + phi) + offset
+
+popt1, pcov1 = curve_fit(model1, t, g, p0=[70, 314, 0, -4], maxfev=20000)
+print('Model 1 (single sin) params:', popt1)
+g1 = model1(t, *popt1)
+print('Model 1 R2:', 1 - np.sum((g - g1)**2) / np.sum((g - g.mean())**2))
+
+# Model 2: Sinusoid + linear trend
+def model2(t, A, T, phi, slope, offset):
+    return A * np.sin(2*np.pi*t/T + phi) + slope*t + offset
+
+popt2, pcov2 = curve_fit(model2, t, g, p0=[70, 314, 0, 0.1, -4], maxfev=20000)
+print('Model 2 (sin+linear) params:', popt2)
+g2 = model2(t, *popt2)
+print('Model 2 R2:', 1 - np.sum((g - g2)**2) / np.sum((g - g.mean())**2))
+
+# Model 3: Quadratic
+def model3(t, a, b, c):
+    return a*t*t + b*t + c
+
+popt3, pcov3 = curve_fit(model3, t, g)
+print('Model 3 (quadratic) params:', popt3)
+g3 = model3(t, *popt3)
+print('Model 3 R2:', 1 - np.sum((g - g3)**2) / np.sum((g - g.mean())**2))
+
+# Model 4: Cubic
+def model4(t, a, b, c, d):
+    return a*t*t*t + b*t*t + c*t + d
+
+popt4, pcov4 = curve_fit(model4, t, g)
+print('Model 4 (cubic) params:', popt4)
+g4 = model4(t, *popt4)
+print('Model 4 R2:', 1 - np.sum((g - g4)**2) / np.sum((g - g.mean())**2))
+
+# Print predictions for test days
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+print()
+print('Predictions for test days:')
+for td in test_days:
+    p1 = model1(td, *popt1)
+    p2 = model2(td, *popt2)
+    p3 = model3(td, *popt3)
+    p4 = model4(td, *popt4)
+    print('t=%d: sin=%.2f, sin+lin=%.2f, quad=%.2f, cubic=%.2f' % (td, p1, p2, p3, p4))
+PYEOF
 ```
 
 ## [23] tool
@@ -792,7 +1067,82 @@ t=564: sin=27.96, sin+lin=64.04, quad=357.65, cubic=187.69
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Let's check the sinusoidal + linear model more carefully
+def model_sin_lin(t, A, T, phi, slope, offset):
+    return A * np.sin(2*np.pi*t/T + phi) + slope*t + offset
+
+popt, pcov = curve_fit(model_sin_lin, t, g, p0=[70, 314, 0, 0.1, -4], maxfev=50000)
+print('Sin+Lin params:', popt)
+print('Per param std:', np.sqrt(np.diag(pcov)))
+
+# Compute residuals
+g_pred = model_sin_lin(t, *popt)
+residuals = g - g_pred
+print('Residual std:', np.std(residuals))
+print('Residual mean:', np.mean(residuals))
+print('Residual range:', residuals.min(), '-', residuals.max())
+
+# Check autocorrelation of residuals
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(residuals, nlags=20)
+print('ACF of residuals (first 10):', acf_vals[:11])
+
+# Predictions for test days
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+print()
+print('Sin+Lin predictions:')
+for td in test_days:
+    p = model_sin_lin(td, *popt)
+    print('t=%d: %.2f' % (td, p))
+
+# Also try: what if gamma is a function of alpha (unwrapped)?
+# Unwrap alpha for gamma observations
+alpha = gamma_df['alpha'].values.astype(float)
+alpha_uw = alpha.copy()
+wrap_mask = alpha < 100  # alpha wrapped around 360
+alpha_uw[wrap_mask] = alpha[wrap_mask] + 360
+
+# Fit gamma vs alpha_uw with sinusoidal
+def model_sin_alpha(a, A, T, phi, slope, offset):
+    return A * np.sin(2*np.pi*a/T + phi) + slope*a + offset
+
+popt2, pcov2 = curve_fit(model_sin_alpha, alpha_uw, g, p0=[40, 100, 0, 0, -20], maxfev=50000)
+print('\nSin(alpha)+Lin params:', popt2)
+g_pred2 = model_sin_alpha(alpha_uw, *popt2)
+print('R2:', 1 - np.sum((g - g_pred2)**2) / np.sum((g - g_pred2.mean())**2))
+
+# For test days, we need alpha at those times
+# Alpha increases roughly linearly. Let's estimate alpha at test days.
+# From the data, alpha at t=467 is 61.67 (wrapped). Unwrapped: 61.67 + 360 = 421.67
+# Actually, let me compute the unwrapped alpha properly
+all_alpha = df['alpha'].values
+# Unwrap: find where alpha drops significantly (wrap point)
+alpha_uw_all = np.unwrap(np.radians(all_alpha))
+alpha_uw_all_deg = np.degrees(alpha_uw_all)
+print('\nAlpha unwrapped at t=467:', alpha_uw_all_deg[467])
+print('Alpha unwrapped at t=301:', alpha_uw_all_deg[301])
+
+# Estimate alpha at test days by linear extrapolation
+# alpha increases by about (421.67 - 294.17) / (467 - 301) = 127.5 / 166 = 0.768 per day
+alpha_rate = (alpha_uw_all_deg[467] - alpha_uw_all_deg[301]) / (467 - 301)
+print('Alpha rate:', alpha_rate)
+
+# Predict alpha at test days
+for td in test_days:
+    alpha_pred = alpha_uw_all_deg[467] + alpha_rate * (td - 467)
+    print('t=%d: alpha_unwrapped=%.2f' % (td, alpha_pred))
+PYEOF
 ```
 
 ## [25] tool
@@ -878,7 +1228,87 @@ t=564: alpha_unwrapped=856.18
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Try a model with two sinusoidal components + linear trend
+def model2(t, A1, T1, phi1, A2, T2, phi2, slope, offset):
+    return A1 * np.sin(2*np.pi*t/T1 + phi1) + A2 * np.sin(2*np.pi*t/T2 + phi2) + slope*t + offset
+
+try:
+    popt2, pcov2 = curve_fit(model2, t, g, 
+        p0=[50, 200, 0, 30, 500, 0, 0.1, -20], 
+        maxfev=50000,
+        bounds=([0, 50, -np.pi, 0, 50, -np.pi, -1, -100],
+                [200, 1000, np.pi, 200, 2000, np.pi, 1, 100]))
+    print('Two-sin+lin params:', popt2)
+    g_pred2 = model2(t, *popt2)
+    print('R2:', 1 - np.sum((g - g_pred2)**2) / np.sum((g - g_pred2.mean())**2))
+    residuals2 = g - g_pred2
+    print('Residual std:', np.std(residuals2))
+except Exception as e:
+    print('Two-sin fit failed:', e)
+
+# Try a Fourier series approach with 3 harmonics
+def fourier_model(t, *params):
+    # params: [a0, a1, b1, a2, b2, a3, b3, slope, offset]
+    result = np.zeros_like(t)
+    result += params[0]  # a0
+    for i in range(1, 4):
+        result += params[2*i-1] * np.sin(2*np.pi*i*t/params[-2]) + params[2*i] * np.cos(2*np.pi*i*t/params[-2])
+    result += params[-3] * t + params[-1]
+    return result
+
+# Let me try a simpler approach: fit a polynomial of degree 4-5
+for deg in [4, 5, 6]:
+    coeffs = np.polyfit(t, g, deg)
+    g_pred = np.polyval(coeffs, t)
+    r2 = 1 - np.sum((g - g_pred)**2) / np.sum((g - g.mean())**2)
+    print('Degree %d R2: %.4f' % (deg, r2))
+
+# Let me also try: gamma as a function of alpha (unwrapped) with a sinusoidal model
+alpha_all = df['alpha'].values.astype(float)
+# Unwrap alpha
+alpha_uw_all = np.degrees(np.unwrap(np.radians(alpha_all)))
+
+# Get alpha_uw for gamma observations
+gamma_mask = df['gamma'].notna()
+alpha_uw_gamma = alpha_uw_all[gamma_mask]
+g = df.loc[gamma_mask, 'gamma'].values.astype(float)
+t_gamma = df.loc[gamma_mask, 't'].values.astype(float)
+
+# Fit sinusoidal in alpha_unwrapped
+def sin_alpha(a, A, T, phi, slope, offset):
+    return A * np.sin(2*np.pi*a/T + phi) + slope*a + offset
+
+popt_a, pcov_a = curve_fit(sin_alpha, alpha_uw_gamma, g, p0=[40, 100, 0, 0, -20], maxfev=50000)
+print('\nSin(alpha)+Lin params:', popt_a)
+g_pred_a = sin_alpha(alpha_uw_gamma, *popt_a)
+print('R2:', 1 - np.sum((g - g_pred_a)**2) / np.sum((g - g_pred_a.mean())**2))
+resid_a = g - g_pred_a
+print('Residual std:', np.std(resid_a))
+
+# Predict for test days using alpha_unwrapped
+# Alpha at t=467 is 781.67 (unwrapped)
+# Rate: (781.67 - 654.17) / (467 - 301) = 0.768 per day
+alpha_rate = (alpha_uw_all[467] - alpha_uw_all[301]) / (467 - 301)
+print('Alpha rate:', alpha_rate)
+
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+print('\nPredictions using sin(alpha)+lin:')
+for td in test_days:
+    alpha_pred = alpha_uw_all[467] + alpha_rate * (td - 467)
+    g_pred = sin_alpha(alpha_pred, *popt_a)
+    print('t=%d: alpha_uw=%.2f, gamma=%.2f' % (td, alpha_pred, g_pred))
+PYEOF
 ```
 
 ## [27] tool
@@ -938,7 +1368,81 @@ t=564: alpha_uw=856.18, gamma=72.11
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Try a Fourier series with 3 harmonics + linear trend
+# g = a0 + sum(a_n*cos(2*pi*n*t/T) + b_n*sin(2*pi*n*t/T)) + slope*t
+# We need to estimate the period T
+
+# From the single sinusoid fit, T ~ 314 days
+# Let's try T = 314 and fit a Fourier series
+
+T_est = 314.0
+
+def fourier3(t, a0, a1, b1, a2, b2, a3, b3, slope, offset):
+    result = a0 + offset
+    result += a1 * np.cos(2*np.pi*t/T_est) + b1 * np.sin(2*np.pi*t/T_est)
+    result += a2 * np.cos(4*np.pi*t/T_est) + b2 * np.sin(4*np.pi*t/T_est)
+    result += a3 * np.cos(6*np.pi*t/T_est) + b3 * np.sin(6*np.pi*t/T_est)
+    result += slope * t
+    return result
+
+popt_f3, pcov_f3 = curve_fit(fourier3, t, g, maxfev=50000)
+g_pred_f3 = fourier3(t, *popt_f3)
+r2_f3 = 1 - np.sum((g - g_pred_f3)**2) / np.sum((g - g_pred_f3.mean())**2)
+resid_f3 = g - g_pred_f3
+print('Fourier3 R2:', r2_f3)
+print('Fourier3 residual std:', np.std(resid_f3))
+print('Fourier3 params:', popt_f3)
+
+# Check ACF of residuals
+from statsmodels.tsa.stattools import acf
+acf_f3 = acf(resid_f3, nlags=20)
+print('ACF of Fourier3 residuals (lags 1-5):', acf_f3[1:6])
+
+# Predictions for test days
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+print('\nFourier3 predictions:')
+for td in test_days:
+    p = fourier3(td, *popt_f3)
+    print('t=%d: %.2f' % (td, p))
+
+# Also try: fit period T as a free parameter with Fourier series
+def fourier3_free_T(t, a0, a1, b1, a2, b2, a3, b3, slope, offset, T):
+    result = a0 + offset
+    result += a1 * np.cos(2*np.pi*t/T) + b1 * np.sin(2*np.pi*t/T)
+    result += a2 * np.cos(4*np.pi*t/T) + b2 * np.sin(4*np.pi*t/T)
+    result += a3 * np.cos(6*np.pi*t/T) + b3 * np.sin(6*np.pi*t/T)
+    result += slope * t
+    return result
+
+try:
+    popt_f3f, pcov_f3f = curve_fit(fourier3_free_T, t, g, 
+        p0=list(popt_f3) + [314], maxfev=50000)
+    g_pred_f3f = fourier3_free_T(t, *popt_f3f)
+    r2_f3f = 1 - np.sum((g - g_pred_f3f)**2) / np.sum((g - g_pred_f3f.mean())**2)
+    resid_f3f = g - g_pred_f3f
+    print('\nFourier3 free T R2:', r2_f3f)
+    print('Fourier3 free T residual std:', np.std(resid_f3f))
+    print('Fourier3 free T T:', popt_f3f[-1])
+    print('Fourier3 free T params:', popt_f3f)
+    
+    print('\nFourier3 free T predictions:')
+    for td in test_days:
+        p = fourier3_free_T(td, *popt_f3f)
+        print('t=%d: %.2f' % (td, p))
+except Exception as e:
+    print('Fourier3 free T failed:', e)
+PYEOF
 ```
 
 ## [29] tool
@@ -1016,7 +1520,72 @@ t=564: 34.11
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from statsmodels.tsa.stattools import acf
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Try a model with period ~161 days
+# g = A * sin(2*pi*t/T + phi) + slope*t + offset
+# With T=161
+
+def model_sin_lin(t, A, phi, slope, offset):
+    T = 161.16  # fixed period from free T fit
+    return A * np.sin(2*np.pi*t/T + phi) + slope*t + offset
+
+popt_sl, pcov_sl = curve_fit(model_sin_lin, t, g, p0=[40, 0, 0.5, -20], maxfev=50000)
+g_pred_sl = model_sin_lin(t, *popt_sl)
+r2_sl = 1 - np.sum((g - g_pred_sl)**2) / np.sum((g - g_pred_sl.mean())**2)
+resid_sl = g - g_pred_sl
+print('Sin(161d)+Lin R2:', r2_sl)
+print('Residual std:', np.std(resid_sl))
+print('ACF residuals lag 1:', acf(resid_sl, nlags=1)[1])
+print('Params:', popt_sl)
+
+# Try with T as free parameter but simpler model
+def model_sin_lin_free(t, A, T, phi, slope, offset):
+    return A * np.sin(2*np.pi*t/T + phi) + slope*t + offset
+
+popt_sl2, pcov_sl2 = curve_fit(model_sin_lin_free, t, g, p0=[40, 161, 0, 0.5, -20], maxfev=50000)
+g_pred_sl2 = model_sin_lin_free(t, *popt_sl2)
+r2_sl2 = 1 - np.sum((g - g_pred_sl2)**2) / np.sum((g - g_pred_sl2.mean())**2)
+resid_sl2 = g - g_pred_sl2
+print('\nSin(free T)+Lin R2:', r2_sl2)
+print('Residual std:', np.std(resid_sl2))
+print('ACF residuals lag 1:', acf(resid_sl2, nlags=1)[1])
+print('Params:', popt_sl2)
+
+# Try adding a second harmonic
+def model_sin2_lin(t, A1, T1, phi1, A2, T2, phi2, slope, offset):
+    return (A1 * np.sin(2*np.pi*t/T1 + phi1) + 
+            A2 * np.sin(2*np.pi*t/T2 + phi2) + 
+            slope*t + offset)
+
+# Use T1=161, T2=80 (half period)
+popt_s2, pcov_s2 = curve_fit(model_sin2_lin, t, g, 
+    p0=[40, 161, 0, 20, 80, 0, 0.5, -20], maxfev=50000)
+g_pred_s2 = model_sin2_lin(t, *popt_s2)
+r2_s2 = 1 - np.sum((g - g_pred_s2)**2) / np.sum((g - g_pred_s2.mean())**2)
+resid_s2 = g - g_pred_s2
+print('\nTwo-sin+Lin R2:', r2_s2)
+print('Residual std:', np.std(resid_s2))
+print('ACF residuals lag 1:', acf(resid_s2, nlags=1)[1])
+print('Params:', popt_s2)
+
+# Predictions for test days
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+print('\nTwo-sin+Lin predictions:')
+for td in test_days:
+    p = model_sin2_lin(td, *popt_s2)
+    print('t=%d: %.2f' % (td, p))
+PYEOF
 ```
 
 ## [31] tool
@@ -1085,7 +1654,47 @@ t=564: 60.63
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float).reshape(-1, 1)
+g = gamma_df['gamma'].values.astype(float)
+
+# Try Gaussian Process with RBF kernel
+kernel = ConstantKernel(1.0) * RBF(length_scale=50.0) + WhiteKernel(noise_level=2.0)
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.0)
+gp.fit(t, g)
+
+print('GP kernel:', gp.kernel_)
+print('GP log-marginal-likelihood:', gp.log_marginal_likelihood_value_)
+
+# Predictions for test days
+test_days = np.array([470, 480, 491, 501, 512, 522, 532, 543, 553, 564]).reshape(-1, 1)
+y_pred, y_std = gp.predict(test_days, return_std=True)
+
+print('\nGP predictions:')
+for i, td in enumerate([470, 480, 491, 501, 512, 522, 532, 543, 553, 564]):
+    print('t=%d: y_pred=%.2f, y_std=%.2f, 95%% PI=[%.2f, %.2f]' % (td, y_pred[i], y_std[i], y_pred[i]-1.96*y_std[i], y_pred[i]+1.96*y_std[i]))
+
+# Also try with Matern kernel
+kernel2 = ConstantKernel(1.0) * Matern(length_scale=50.0, nu=2.5) + WhiteKernel(noise_level=2.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=10, alpha=0.0)
+gp2.fit(t, g)
+
+print('\nGP Matern kernel:', gp2.kernel_)
+y_pred2, y_std2 = gp2.predict(test_days, return_std=True)
+
+print('\nGP Matern predictions:')
+for i, td in enumerate([470, 480, 491, 501, 512, 522, 532, 543, 553, 564]):
+    print('t=%d: y_pred=%.2f, y_std=%.2f, 95%% PI=[%.2f, %.2f]' % (td, y_pred2[i], y_std2[i], y_pred2[i]-1.96*y_std2[i], y_pred2[i]+1.96*y_std2[i]))
+PYEOF
 ```
 
 ## [33] tool
@@ -1146,7 +1755,109 @@ t=564: y_pred=14.86, y_std=43.44, 95% PI=[-70.28, 100.01]
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from statsmodels.tsa.stattools import acf
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Two-sinusoid + linear model
+def model(t, A1, T1, phi1, A2, T2, phi2, slope, offset):
+    return (A1 * np.sin(2*np.pi*t/T1 + phi1) + 
+            A2 * np.sin(2*np.pi*t/T2 + phi2) + 
+            slope*t + offset)
+
+popt, pcov = curve_fit(model, t, g, 
+    p0=[5.8, 72.2, -11.3, 28.7, 152.1, 33.0, 0.604, -273.4],
+    maxfev=100000)
+
+g_pred = model(t, *popt)
+residuals = g - g_pred
+resid_std = np.std(residuals)
+print('Two-sin+Lin R2:', 1 - np.sum(residuals**2) / np.sum((g - g.mean())**2))
+print('Residual std:', resid_std)
+print('Params:', popt)
+
+# Check ACF of residuals
+acf_vals = acf(residuals, nlags=30)
+print('ACF lags 1-5:', acf_vals[1:6])
+
+# The ACF is still high, suggesting the model could be improved
+# Let me try adding more harmonics or a different approach
+
+# Try: Fourier series with 5 harmonics + linear trend
+# Use the period T=161 from the free-T fit
+T_base = 161.16
+
+def fourier5(t, *params):
+    # params: [a0, a1, b1, a2, b2, a3, b3, a4, b4, a5, b5, slope, offset]
+    result = np.zeros_like(t)
+    result += params[0]  # a0
+    for i in range(1, 6):
+        result += params[2*i-1] * np.cos(2*np.pi*i*t/T_base)
+        result += params[2*i] * np.sin(2*np.pi*i*t/T_base)
+    result += params[11] * t + params[12]
+    return result
+
+# Initial guess
+p0_f5 = [0]*13
+p0_f5[0] = np.mean(g)  # a0
+p0_f5[11] = 0.6  # slope
+p0_f5[12] = -200  # offset
+
+try:
+    popt_f5, pcov_f5 = curve_fit(fourier5, t, g, p0=p0_f5, maxfev=100000)
+    g_pred_f5 = fourier5(t, *popt_f5)
+    resid_f5 = g - g_pred_f5
+    r2_f5 = 1 - np.sum(resid_f5**2) / np.sum((g - g.mean())**2)
+    print('\nFourier5 R2:', r2_f5)
+    print('Fourier5 residual std:', np.std(resid_f5))
+    acf_f5 = acf(resid_f5, nlags=10)
+    print('ACF lags 1-5:', acf_f5[1:6])
+except Exception as e:
+    print('Fourier5 failed:', e)
+
+# Try: Fourier series with T as free parameter
+def fourier5_free_T(t, *params):
+    T = params[-3]
+    slope = params[-2]
+    offset = params[-1]
+    result = np.zeros_like(t)
+    result += params[0]  # a0
+    for i in range(1, 6):
+        result += params[2*i-1] * np.cos(2*np.pi*i*t/T)
+        result += params[2*i] * np.sin(2*np.pi*i*t/T)
+    result += slope * t + offset
+    return result
+
+p0_f5f = list(popt_f5[:-3]) + [161.0, 0.6, -200] if 'popt_f5' in dir() else [0]*13
+p0_f5f = [0]*13
+p0_f5f[0] = np.mean(g)
+p0_f5f[11] = 0.6
+p0_f5f[12] = -200
+p0_f5f.append(161.0)  # T
+
+try:
+    popt_f5f, pcov_f5f = curve_fit(fourier5_free_T, t, g, p0=p0_f5f, maxfev=100000)
+    g_pred_f5f = fourier5_free_T(t, *popt_f5f)
+    resid_f5f = g - g_pred_f5f
+    r2_f5f = 1 - np.sum(resid_f5f**2) / np.sum((g - g.mean())**2)
+    print('\nFourier5 free T R2:', r2_f5f)
+    print('Fourier5 free T residual std:', np.std(resid_f5f))
+    print('Fourier5 free T T:', popt_f5f[-3])
+    acf_f5f = acf(resid_f5f, nlags=10)
+    print('ACF lags 1-5:', acf_f5f[1:6])
+except Exception as e:
+    print('Fourier5 free T failed:', e)
+PYEOF
 ```
 
 ## [35] tool
@@ -1194,7 +1905,108 @@ ACF lags 1-5: [0.98537678 0.97149533 0.95651826 0.94080299 0.92264687]
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from scipy.stats import t as t_dist
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Fourier5 model with fixed T=161.16
+T_base = 161.16
+
+def fourier5(t, *params):
+    result = np.zeros_like(t, dtype=float)
+    result += params[0]  # a0
+    for i in range(1, 6):
+        result += params[2*i-1] * np.cos(2*np.pi*i*t/T_base)
+        result += params[2*i] * np.sin(2*np.pi*i*t/T_base)
+    result += params[11] * t + params[12]
+    return result
+
+# Fit
+p0 = [0]*13
+p0[0] = np.mean(g)
+p0[11] = 0.6
+p0[12] = -200
+
+popt, pcov = curve_fit(fourier5, t, g, p0=p0, maxfev=100000)
+g_pred = fourier5(t, *popt)
+residuals = g - g_pred
+n = len(t)
+p = len(popt)
+resid_std = np.std(residuals, ddof=p)  # unbiased estimate of sigma
+print('Residual std (unbiased):', resid_std)
+print('R2:', 1 - np.sum(residuals**2) / np.sum((g - g.mean())**2))
+
+# Predictions for test days
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+t_test = np.array(test_days, dtype=float)
+
+# Point predictions
+y_pred = fourier5(t_test, *popt)
+
+# Compute prediction intervals
+# For a new observation: y_new = f(t) + epsilon
+# var(y_new) = var(f(t)) + sigma^2
+# var(f(t)) = J * pcov * J^T where J is the Jacobian
+
+def jacobian(t_val, popt, T_base):
+    """Compute Jacobian of fourier5 model w.r.t. parameters at t_val"""
+    J = np.zeros(len(popt))
+    # a0
+    J[0] = 1.0
+    # harmonics
+    for i in range(1, 6):
+        J[2*i-1] = np.cos(2*np.pi*i*t_val/T_base)
+        J[2*i] = np.sin(2*np.pi*i*t_val/T_base)
+    # slope and offset
+    J[11] = t_val
+    J[12] = 1.0
+    return J
+
+# Prediction intervals
+y_lower = []
+y_upper = []
+
+for i, td in enumerate(test_days):
+    J = jacobian(td, popt, T_base)
+    # Variance of prediction (due to parameter uncertainty)
+    var_pred = J @ pcov @ J
+    # Total variance for a new observation
+    var_total = var_pred + resid_std**2
+    std_total = np.sqrt(var_total)
+    
+    # 95% prediction interval using t-distribution
+    df = n - p
+    t_crit = t_dist.ppf(0.975, df)
+    
+    lower = y_pred[i] - t_crit * std_total
+    upper = y_pred[i] + t_crit * std_total
+    
+    y_lower.append(lower)
+    y_upper.append(upper)
+    
+    print('t=%d: y_pred=%.2f, 95%% PI=[%.2f, %.2f], std=%.2f' % (td, y_pred[i], lower, upper, std_total))
+
+# Save predictions
+result_df = pd.DataFrame({
+    't': test_days,
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+result_df.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+print(result_df.to_string())
+PYEOF
 ```
 
 ## [37] tool
@@ -1243,7 +2055,131 @@ Predictions saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from scipy.stats import t as t_dist
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Fourier5 model with fixed T=161.16
+T_base = 161.16
+
+def fourier5(t, *params):
+    result = np.zeros_like(t, dtype=float)
+    result += params[0]  # a0
+    for i in range(1, 6):
+        result += params[2*i-1] * np.cos(2*np.pi*i*t/T_base)
+        result += params[2*i] * np.sin(2*np.pi*i*t/T_base)
+    result += params[11] * t + params[12]
+    return result
+
+p0 = [0]*13
+p0[0] = np.mean(g)
+p0[11] = 0.6
+p0[12] = -200
+
+popt, pcov = curve_fit(fourier5, t, g, p0=p0, maxfev=100000)
+print('popt:', popt)
+print('pcov diagonal:', np.diag(pcov))
+print('pcov has NaN:', np.any(np.isnan(pcov)))
+print('pcov has Inf:', np.any(np.isinf(pcov)))
+print('pcov condition number:', np.linalg.cond(pcov))
+
+# The issue is that the Fourier basis functions are highly correlated
+# Let me use orthogonal Fourier basis instead
+# Or let me use a simpler model
+
+# Let me try the two-sinusoid + linear model instead
+def model2(t, A1, T1, phi1, A2, T2, phi2, slope, offset):
+    return (A1 * np.sin(2*np.pi*t/T1 + phi1) + 
+            A2 * np.sin(2*np.pi*t/T2 + phi2) + 
+            slope*t + offset)
+
+popt2, pcov2 = curve_fit(model2, t, g, 
+    p0=[5.8, 72.2, -11.3, 28.7, 152.1, 33.0, 0.604, -273.4],
+    maxfev=100000)
+
+print('\nTwo-sin+Lin params:', popt2)
+print('Two-sin+Lin pcov diagonal:', np.diag(pcov2))
+print('Two-sin+Lin pcov has NaN:', np.any(np.isnan(pcov2)))
+print('Two-sin+Lin pcov condition:', np.linalg.cond(pcov2))
+
+# Compute predictions and intervals
+g_pred2 = model2(t, *popt2)
+residuals2 = g - g_pred2
+resid_std2 = np.std(residuals2, ddof=len(popt2))
+print('Residual std:', resid_std2)
+
+n = len(t)
+p = len(popt2)
+df = n - p
+t_crit = t_dist.ppf(0.975, df)
+print('t_crit:', t_crit)
+
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+t_test = np.array(test_days, dtype=float)
+
+y_pred2 = model2(t_test, *popt2)
+
+def jacobian2(t_val, popt):
+    A1, T1, phi1, A2, T2, phi2, slope, offset = popt
+    J = np.zeros(8)
+    J[0] = np.sin(2*np.pi*t_val/T1 + phi1)
+    J[1] = A1 * (2*np.pi*t_val/T1**2) * np.cos(2*np.pi*t_val/T1 + phi1)  # dA1/dT1
+    # Actually, let me compute the Jacobian properly
+    # w.r.t. A1: sin(2*pi*t/T1 + phi1)
+    # w.r.t. T1: A1 * cos(2*pi*t/T1 + phi1) * (-2*pi*t/T1^2)
+    # w.r.t. phi1: A1 * cos(2*pi*t/T1 + phi1)
+    # w.r.t. A2: sin(2*pi*t/T2 + phi2)
+    # w.r.t. T2: A2 * cos(2*pi*t/T2 + phi2) * (-2*pi*t/T2^2)
+    # w.r.t. phi2: A2 * cos(2*pi*t/T2 + phi2)
+    # w.r.t. slope: t
+    # w.r.t. offset: 1
+    J[0] = np.sin(2*np.pi*t_val/T1 + phi1)
+    J[1] = A1 * np.cos(2*np.pi*t_val/T1 + phi1) * (-2*np.pi*t_val/T1**2)
+    J[2] = A1 * np.cos(2*np.pi*t_val/T1 + phi1)
+    J[3] = np.sin(2*np.pi*t_val/T2 + phi2)
+    J[4] = A2 * np.cos(2*np.pi*t_val/T2 + phi2) * (-2*np.pi*t_val/T2**2)
+    J[5] = A2 * np.cos(2*np.pi*t_val/T2 + phi2)
+    J[6] = t_val
+    J[7] = 1.0
+    return J
+
+y_lower2 = []
+y_upper2 = []
+
+for i, td in enumerate(test_days):
+    J = jacobian2(td, popt2)
+    var_pred = J @ pcov2 @ J
+    var_total = var_pred + resid_std2**2
+    std_total = np.sqrt(var_total)
+    
+    lower = y_pred2[i] - t_crit * std_total
+    upper = y_pred2[i] + t_crit * std_total
+    
+    y_lower2.append(lower)
+    y_upper2.append(upper)
+    
+    print('t=%d: y_pred=%.2f, 95%% PI=[%.2f, %.2f], std=%.2f' % (td, y_pred2[i], lower, upper, std_total))
+
+# Save predictions
+result_df = pd.DataFrame({
+    't': test_days,
+    'y_pred': y_pred2,
+    'y_lower': y_lower2,
+    'y_upper': y_upper2
+})
+result_df.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+PYEOF
 ```
 
 ## [39] tool
@@ -1302,7 +2238,24 @@ Predictions saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
 
+# Verify predictions.csv
+pred = pd.read_csv('predictions.csv')
+print('Shape:', pred.shape)
+print('Columns:', pred.columns.tolist())
+print(pred.to_string())
+print()
+
+# Check that t values match test.csv
+test = pd.read_csv('data/test.csv')
+print('Test t values:', test['t'].tolist())
+print('Pred t values:', pred['t'].tolist())
+print('Match:', (test['t'].values == pred['t'].values).all())
+print('Number of rows:', len(pred))
+PYEOF
 ```
 
 ## [41] tool
@@ -1366,7 +2319,7 @@ Number of rows: 10
 **tool call: bash**
 
 ```
-
+cat data/test.csv && echo "---" && wc -l data/test.csv
 ```
 
 ## [43] tool
@@ -1415,7 +2368,80 @@ t
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from scipy.stats import t as t_dist
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Let me try a more comprehensive model: Fourier series with period ~161
+# but using ridge regression for stability
+
+# First, let me estimate the period more carefully
+# From the two-sinusoid model, T1=72.2, T2=152.1
+# The fundamental period could be T1=72.2 or T2=152.1 or something else
+# Let me try T=152 (the longer period)
+
+T_fund = 152.1
+
+# Build Fourier features
+def make_fourier_features(t, T, n_harmonics):
+    features = []
+    features.append(np.ones_like(t))  # intercept
+    for i in range(1, n_harmonics + 1):
+        features.append(np.cos(2 * np.pi * i * t / T))
+        features.append(np.sin(2 * np.pi * i * t / T))
+    features.append(t)  # linear trend
+    return np.column_stack(features)
+
+# Try with 5 harmonics
+X = make_fourier_features(t, T_fund, 5)
+print('Feature matrix shape:', X.shape)
+
+# Ridge regression
+from sklearn.linear_model import Ridge
+ridge = Ridge(alpha=0.1, fit_intercept=False)
+ridge.fit(X, g)
+g_pred_ridge = ridge.predict(X)
+resid_ridge = g - g_pred_ridge
+r2_ridge = 1 - np.sum(resid_ridge**2) / np.sum((g - g.mean())**2)
+print('Ridge R2:', r2_ridge)
+print('Ridge residual std:', np.std(resid_ridge, ddof=X.shape[1]))
+print('Ridge coefficients:', ridge.coef_)
+
+# Check ACF of residuals
+from statsmodels.tsa.stattools import acf
+acf_ridge = acf(resid_ridge, nlags=10)
+print('ACF lags 1-5:', acf_ridge[1:6])
+
+# Now predict for test days
+t_test = np.array([470, 480, 491, 501, 512, 522, 532, 543, 553, 564], dtype=float)
+X_test = make_fourier_features(t_test, T_fund, 5)
+y_pred_ridge = ridge.predict(X_test)
+
+print('\nRidge predictions:')
+for i, td in enumerate([470, 480, 491, 501, 512, 522, 532, 543, 553, 564]):
+    print('t=%d: %.2f' % (td, y_pred_ridge[i]))
+
+# Try different periods
+for T_try in [140, 150, 152, 160, 161, 170, 180]:
+    X_try = make_fourier_features(t, T_try, 5)
+    ridge_try = Ridge(alpha=0.1, fit_intercept=False)
+    ridge_try.fit(X_try, g)
+    g_pred_try = ridge_try.predict(X_try)
+    r2_try = 1 - np.sum((g - g_pred_try)**2) / np.sum((g - g.mean())**2)
+    resid_try = g - g_pred_try
+    acf_try = acf(resid_try, nlags=1)
+    print('T=%.0f: R2=%.4f, resid_std=%.2f, ACF_lag1=%.3f' % (T_try, r2_try, np.std(resid_try, ddof=X_try.shape[1]), acf_try[1]))
+PYEOF
 ```
 
 ## [45] tool
@@ -1468,7 +2494,133 @@ T=180: R2=0.9960, resid_std=2.51, ACF_lag1=0.722
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from scipy.stats import t as t_dist
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Try a model with 3 sinusoids + linear trend
+# Using T1=72.2, T2=152.1, T3=?
+# The third period could be the sum or difference of the first two, or a new fundamental
+
+# Let me try T3 = 72.2/2 = 36.1 (sub-harmonic)
+# Or T3 = 152.1/2 = 76.05 (sub-harmonic of T2)
+# Or T3 = 72.2 + 152.1 = 224.3 (sum)
+# Or T3 = 152.1 - 72.2 = 79.9 (difference)
+
+# Let me try a few combinations
+def model3(t, A1, T1, phi1, A2, T2, phi2, A3, T3, phi3, slope, offset):
+    return (A1 * np.sin(2*np.pi*t/T1 + phi1) + 
+            A2 * np.sin(2*np.pi*t/T2 + phi2) +
+            A3 * np.sin(2*np.pi*t/T3 + phi3) +
+            slope*t + offset)
+
+# Try T3 = 79.9 (difference of T1 and T2)
+p0_3 = [5.8, 72.2, -11.3, 28.7, 152.1, 33.0, 5.0, 79.9, 0.0, 0.6, -273.4]
+try:
+    popt3, pcov3 = curve_fit(model3, t, g, p0=p0_3, maxfev=100000)
+    g_pred3 = model3(t, *popt3)
+    resid3 = g - g_pred3
+    r2_3 = 1 - np.sum(resid3**2) / np.sum((g - g.mean())**2)
+    print('3-sin+Lin R2:', r2_3)
+    print('Residual std:', np.std(resid3, ddof=len(popt3)))
+    print('Params:', popt3)
+    print('T3:', popt3[7])
+except Exception as e:
+    print('3-sin fit failed:', e)
+
+# Try T3 = 36.1 (sub-harmonic of T1)
+p0_3b = [5.8, 72.2, -11.3, 28.7, 152.1, 33.0, 3.0, 36.1, 0.0, 0.6, -273.4]
+try:
+    popt3b, pcov3b = curve_fit(model3, t, g, p0=p0_3b, maxfev=100000)
+    g_pred3b = model3(t, *popt3b)
+    resid3b = g - g_pred3b
+    r2_3b = 1 - np.sum(resid3b**2) / np.sum((g - g.mean())**2)
+    print('\n3-sin+Lin (T3=36.1) R2:', r2_3b)
+    print('Residual std:', np.std(resid3b, ddof=len(popt3b)))
+    print('T3:', popt3b[7])
+except Exception as e:
+    print('3-sin fit (T3=36.1) failed:', e)
+
+# Let me go back to the 2-sin model which worked well
+# and compute proper prediction intervals
+
+def model2(t, A1, T1, phi1, A2, T2, phi2, slope, offset):
+    return (A1 * np.sin(2*np.pi*t/T1 + phi1) + 
+            A2 * np.sin(2*np.pi*t/T2 + phi2) + 
+            slope*t + offset)
+
+popt2, pcov2 = curve_fit(model2, t, g, 
+    p0=[5.8, 72.2, -11.3, 28.7, 152.1, 33.0, 0.604, -273.4],
+    maxfev=100000)
+
+g_pred2 = model2(t, *popt2)
+residuals2 = g - g_pred2
+n = len(t)
+p = len(popt2)
+resid_std2 = np.std(residuals2, ddof=p)
+print('\n\nFinal model: 2-sin+Lin')
+print('R2:', 1 - np.sum(residuals2**2) / np.sum((g - g.mean())**2))
+print('Residual std:', resid_std2)
+print('Params:', popt2)
+
+# Compute prediction intervals
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+t_test = np.array(test_days, dtype=float)
+y_pred2 = model2(t_test, *popt2)
+
+def jacobian2(t_val, popt):
+    A1, T1, phi1, A2, T2, phi2, slope, offset = popt
+    J = np.zeros(8)
+    J[0] = np.sin(2*np.pi*t_val/T1 + phi1)
+    J[1] = A1 * np.cos(2*np.pi*t_val/T1 + phi1) * (-2*np.pi*t_val/T1**2)
+    J[2] = A1 * np.cos(2*np.pi*t_val/T1 + phi1)
+    J[3] = np.sin(2*np.pi*t_val/T2 + phi2)
+    J[4] = A2 * np.cos(2*np.pi*t_val/T2 + phi2) * (-2*np.pi*t_val/T2**2)
+    J[5] = A2 * np.cos(2*np.pi*t_val/T2 + phi2)
+    J[6] = t_val
+    J[7] = 1.0
+    return J
+
+df_resid = n - p
+t_crit = t_dist.ppf(0.975, df_resid)
+
+y_lower2 = []
+y_upper2 = []
+
+for i, td in enumerate(test_days):
+    J = jacobian2(td, popt2)
+    var_pred = J @ pcov2 @ J
+    var_total = var_pred + resid_std2**2
+    std_total = np.sqrt(var_total)
+    
+    lower = y_pred2[i] - t_crit * std_total
+    upper = y_pred2[i] + t_crit * std_total
+    
+    y_lower2.append(lower)
+    y_upper2.append(upper)
+    
+    print('t=%d: y_pred=%.2f, 95%% PI=[%.2f, %.2f], std_total=%.2f' % (td, y_pred2[i], lower, upper, std_total))
+
+# Save predictions
+result_df = pd.DataFrame({
+    't': test_days,
+    'y_pred': y_pred2,
+    'y_lower': y_lower2,
+    'y_upper': y_upper2
+})
+result_df.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+PYEOF
 ```
 
 ## [47] tool
@@ -1530,7 +2682,96 @@ Predictions saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from scipy.stats import t as t_dist
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# 3-sinusoid + linear model
+def model3(t, A1, T1, phi1, A2, T2, phi2, A3, T3, phi3, slope, offset):
+    return (A1 * np.sin(2*np.pi*t/T1 + phi1) + 
+            A2 * np.sin(2*np.pi*t/T2 + phi2) +
+            A3 * np.sin(2*np.pi*t/T3 + phi3) +
+            slope*t + offset)
+
+p0_3 = [2.36, 50.3, -27.6, 30.07, 163.3, 34.07, 6.01, 70.45, -5.63, 0.601, -270.07]
+popt3, pcov3 = curve_fit(model3, t, g, p0=p0_3, maxfev=100000)
+g_pred3 = model3(t, *popt3)
+residuals3 = g - g_pred3
+n = len(t)
+p = len(popt3)
+resid_std3 = np.std(residuals3, ddof=p)
+print('3-sin+Lin R2:', 1 - np.sum(residuals3**2) / np.sum((g - g.mean())**2))
+print('Residual std:', resid_std3)
+print('Params:', popt3)
+print('pcov condition:', np.linalg.cond(pcov3))
+print('pcov has NaN:', np.any(np.isnan(pcov3)))
+
+# Check ACF of residuals
+from statsmodels.tsa.stattools import acf
+acf3 = acf(residuals3, nlags=10)
+print('ACF lags 1-5:', acf3[1:6])
+
+# Compute predictions and intervals
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+t_test = np.array(test_days, dtype=float)
+y_pred3 = model3(t_test, *popt3)
+
+def jacobian3(t_val, popt):
+    A1, T1, phi1, A2, T2, phi2, A3, T3, phi3, slope, offset = popt
+    J = np.zeros(11)
+    J[0] = np.sin(2*np.pi*t_val/T1 + phi1)
+    J[1] = A1 * np.cos(2*np.pi*t_val/T1 + phi1) * (-2*np.pi*t_val/T1**2)
+    J[2] = A1 * np.cos(2*np.pi*t_val/T1 + phi1)
+    J[3] = np.sin(2*np.pi*t_val/T2 + phi2)
+    J[4] = A2 * np.cos(2*np.pi*t_val/T2 + phi2) * (-2*np.pi*t_val/T2**2)
+    J[5] = A2 * np.cos(2*np.pi*t_val/T2 + phi2)
+    J[6] = np.sin(2*np.pi*t_val/T3 + phi3)
+    J[7] = A3 * np.cos(2*np.pi*t_val/T3 + phi3) * (-2*np.pi*t_val/T3**2)
+    J[8] = A3 * np.cos(2*np.pi*t_val/T3 + phi3)
+    J[9] = t_val
+    J[10] = 1.0
+    return J
+
+df_resid = n - p
+t_crit = t_dist.ppf(0.975, df_resid)
+
+y_lower3 = []
+y_upper3 = []
+
+for i, td in enumerate(test_days):
+    J = jacobian3(td, popt3)
+    var_pred = J @ pcov3 @ J
+    var_total = var_pred + resid_std3**2
+    std_total = np.sqrt(var_total)
+    
+    lower = y_pred3[i] - t_crit * std_total
+    upper = y_pred3[i] + t_crit * std_total
+    
+    y_lower3.append(lower)
+    y_upper3.append(upper)
+    
+    print('t=%d: y_pred=%.2f, 95%% PI=[%.2f, %.2f], std_total=%.2f' % (td, y_pred3[i], lower, upper, std_total))
+
+# Save predictions
+result_df = pd.DataFrame({
+    't': test_days,
+    'y_pred': y_pred3,
+    'y_lower': y_lower3,
+    'y_upper': y_upper3
+})
+result_df.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+PYEOF
 ```
 
 ## [49] tool
@@ -1613,7 +2854,87 @@ Predictions saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from scipy.stats import t as t_dist
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+# Unwrap alpha for gamma observations
+alpha = gamma_df['alpha'].values.astype(float)
+alpha_uw = alpha.copy()
+wrap_mask = alpha < 100  # alpha wrapped around 360
+alpha_uw[wrap_mask] = alpha[wrap_mask] + 360
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# Fit gamma as a function of alpha_unwrapped using sinusoidal model
+def model_alpha(a, A1, T1, phi1, A2, T2, phi2, A3, T3, phi3, slope, offset):
+    return (A1 * np.sin(2*np.pi*a/T1 + phi1) + 
+            A2 * np.sin(2*np.pi*a/T2 + phi2) +
+            A3 * np.sin(2*np.pi*a/T3 + phi3) +
+            slope*a + offset)
+
+p0_a = [2.36, 50.3, -27.6, 30.07, 163.3, 34.07, 6.01, 70.45, -5.63, 0.601, -270.07]
+# Adjust initial guess for alpha scale - T values need to be in alpha units
+# Alpha goes from 294 to 422 over the gamma observations (128 degrees)
+# So T in alpha units should be scaled: T_alpha = T_t * (alpha_range / t_range) = T_t * 128/166
+# T1=50.3 -> T1_alpha = 50.3 * 128/166 = 38.7
+# T2=163.3 -> T2_alpha = 163.3 * 128/166 = 125.8
+# T3=70.5 -> T3_alpha = 70.5 * 128/166 = 54.4
+p0_a_scaled = [2.36, 38.7, -27.6, 30.07, 125.8, 34.07, 6.01, 54.4, -5.63, 0.601 * 128/166, -270.07]
+
+try:
+    popt_a, pcov_a = curve_fit(model_alpha, alpha_uw, g, p0=p0_a_scaled, maxfev=100000)
+    g_pred_a = model_alpha(alpha_uw, *popt_a)
+    resid_a = g - g_pred_a
+    r2_a = 1 - np.sum(resid_a**2) / np.sum((g - g.mean())**2)
+    print('Alpha-based 3-sin R2:', r2_a)
+    print('Residual std:', np.std(resid_a, ddof=len(popt_a)))
+    print('Params:', popt_a)
+except Exception as e:
+    print('Alpha-based 3-sin failed:', e)
+
+# Let me also try: use t as predictor but with a more flexible model
+# Try a cubic spline with knots
+from scipy.interpolate import UnivariateSpline
+
+# Fit a smoothing spline
+spl = UnivariateSpline(t, g, s=2.0)  # s controls smoothing
+g_pred_spl = spl(t)
+resid_spl = g - g_pred_spl
+r2_spl = 1 - np.sum(resid_spl**2) / np.sum((g - g.mean())**2)
+print('\nSpline R2:', r2_spl)
+print('Spline residual std:', np.std(resid_spl, ddof=4))
+
+# Predict for test days
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+t_test = np.array(test_days, dtype=float)
+y_pred_spl = spl(t_test)
+
+print('\nSpline predictions:')
+for i, td in enumerate(test_days):
+    print('t=%d: %.2f' % (td, y_pred_spl[i]))
+
+# The spline might not extrapolate well. Let me also try a polynomial
+for deg in [3, 4, 5]:
+    coeffs = np.polyfit(t, g, deg)
+    g_pred_poly = np.polyval(coeffs, t)
+    r2_poly = 1 - np.sum((g - g_pred_poly)**2) / np.sum((g - g.mean())**2)
+    print('Degree %d R2: %.4f' % (deg, r2_poly))
+
+# Polynomial predictions
+print('\nDegree 5 polynomial predictions:')
+for td in test_days:
+    p = np.polyval(coeffs, td)
+    print('t=%d: %.2f' % (td, p))
+PYEOF
 ```
 
 ## [51] tool
@@ -1680,7 +3001,91 @@ t=564: -4079.92
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from scipy.stats import t as t_dist
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+gamma_df = df[df['gamma'].notna()].copy()
+
+t = gamma_df['t'].values.astype(float)
+g = gamma_df['gamma'].values.astype(float)
+
+# 3-sinusoid + linear model (best so far)
+def model3(t, A1, T1, phi1, A2, T2, phi2, A3, T3, phi3, slope, offset):
+    return (A1 * np.sin(2*np.pi*t/T1 + phi1) + 
+            A2 * np.sin(2*np.pi*t/T2 + phi2) +
+            A3 * np.sin(2*np.pi*t/T3 + phi3) +
+            slope*t + offset)
+
+p0_3 = [2.36, 50.3, -27.6, 30.07, 163.3, 34.07, 6.01, 70.45, -5.63, 0.601, -270.07]
+popt3, pcov3 = curve_fit(model3, t, g, p0=p0_3, maxfev=100000)
+g_pred3 = model3(t, *popt3)
+residuals3 = g - g_pred3
+n = len(t)
+p = len(popt3)
+resid_std3 = np.std(residuals3, ddof=p)
+
+print('3-sin+Lin R2:', 1 - np.sum(residuals3**2) / np.sum((g - g.mean())**2))
+print('Residual std:', resid_std3)
+print('Params:', popt3)
+
+# Compute predictions and intervals
+test_days = [470, 480, 491, 501, 512, 522, 532, 543, 553, 564]
+t_test = np.array(test_days, dtype=float)
+y_pred3 = model3(t_test, *popt3)
+
+def jacobian3(t_val, popt):
+    A1, T1, phi1, A2, T2, phi2, A3, T3, phi3, slope, offset = popt
+    J = np.zeros(11)
+    J[0] = np.sin(2*np.pi*t_val/T1 + phi1)
+    J[1] = A1 * np.cos(2*np.pi*t_val/T1 + phi1) * (-2*np.pi*t_val/T1**2)
+    J[2] = A1 * np.cos(2*np.pi*t_val/T1 + phi1)
+    J[3] = np.sin(2*np.pi*t_val/T2 + phi2)
+    J[4] = A2 * np.cos(2*np.pi*t_val/T2 + phi2) * (-2*np.pi*t_val/T2**2)
+    J[5] = A2 * np.cos(2*np.pi*t_val/T2 + phi2)
+    J[6] = np.sin(2*np.pi*t_val/T3 + phi3)
+    J[7] = A3 * np.cos(2*np.pi*t_val/T3 + phi3) * (-2*np.pi*t_val/T3**2)
+    J[8] = A3 * np.cos(2*np.pi*t_val/T3 + phi3)
+    J[9] = t_val
+    J[10] = 1.0
+    return J
+
+df_resid = n - p
+t_crit = t_dist.ppf(0.975, df_resid)
+
+y_lower3 = []
+y_upper3 = []
+
+for i, td in enumerate(test_days):
+    J = jacobian3(td, popt3)
+    var_pred = J @ pcov3 @ J
+    var_total = var_pred + resid_std3**2
+    std_total = np.sqrt(var_total)
+    
+    lower = y_pred3[i] - t_crit * std_total
+    upper = y_pred3[i] + t_crit * std_total
+    
+    y_lower3.append(lower)
+    y_upper3.append(upper)
+    
+    print('t=%d: y_pred=%.2f, 95%% PI=[%.2f, %.2f]' % (td, y_pred3[i], lower, upper))
+
+# Save predictions
+result_df = pd.DataFrame({
+    't': test_days,
+    'y_pred': y_pred3,
+    'y_lower': y_lower3,
+    'y_upper': y_upper3
+})
+result_df.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+print(result_df.to_string())
+PYEOF
 ```
 
 ## [53] tool
@@ -1743,7 +3148,30 @@ Predictions saved to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
 
+# Final verification
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+
+print('predictions.csv shape:', pred.shape)
+print('test.csv shape:', test.shape)
+print('Columns:', pred.columns.tolist())
+print('t match:', (pred['t'].values == test['t'].values).all())
+print('Number of rows:', len(pred))
+print()
+print(pred.to_string())
+print()
+
+# Check that all values are within reasonable bounds
+print('y_pred range:', pred['y_pred'].min(), '-', pred['y_pred'].max())
+print('y_lower range:', pred['y_lower'].min(), '-', pred['y_lower'].max())
+print('y_upper range:', pred['y_upper'].min(), '-', pred['y_upper'].max())
+print('All y_lower < y_pred < y_upper:', 
+      (pred['y_lower'] < pred['y_pred']).all() and (pred['y_pred'] < pred['y_upper']).all())
+PYEOF
 ```
 
 ## [55] tool

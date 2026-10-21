@@ -301,7 +301,19 @@ def _default_rate(dgp, fund_levels, pre_stress, rng):
 
 
 def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None,
-              scenario: str | None) -> dict:
+              scenario: str | None, sibling_ref: str = "full") -> dict:
+    """One instance.
+
+    sibling_ref governs the window the equity siblings are standardised on.
+    "full" is the shipped behaviour and uses the whole path, which lets the
+    stress window's own volatility set the scale and so leaks scenario severity
+    backwards into the historical values of sp500 and djia. "pre_stress" uses
+    the history only, which is the correct choice and the one a task needs if it
+    publishes ONE history alongside several scenario paths. The default is left
+    at "full" because changing it moves two published columns on every archived
+    CCAR instance, and the leak is inert for a task whose instance carries a
+    single scenario.
+    """
     ss = np.random.SeedSequence(seed)
     rng_struct, rng_default, rng_oracle = (np.random.default_rng(s) for s in ss.spawn(3))
 
@@ -368,9 +380,16 @@ def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None,
 
     # equity siblings of NASDAQ (collinear distractors), on observed returns
     nas_ret = np.diff(np.log(_to_level("ret", obs["nasdaq"])), prepend=np.log(100.0))
+    if sibling_ref == "pre_stress":
+        ref = nas_ret[:_WARMUP + n_intime]
+    elif sibling_ref == "full":
+        ref = nas_ret
+    else:
+        raise ValueError("sibling_ref must be 'full' or 'pre_stress'")
+    nas_mean, nas_sd = ref.mean(), ref.std()
     for name, (sm, ssd, corr) in SIBLINGS.items():
         eps_sib = rng_struct.standard_normal(total)
-        r = corr * (nas_ret - nas_ret.mean()) / (nas_ret.std() + 1e-9) * ssd + np.sqrt(1 - corr**2) * ssd * eps_sib + sm
+        r = corr * (nas_ret - nas_mean) / (nas_sd + 1e-9) * ssd + np.sqrt(1 - corr**2) * ssd * eps_sib + sm
         obs[name] = r  # stored as return series; level built below
 
     # default rate from FUNDAMENTAL drivers (crisis does not propagate)
@@ -445,9 +464,10 @@ def _simulate(seed: int, n_intime: int, oracle_n: int, family: str | None,
 
 
 def generate(seed: int, n_intime: int = 80, oracle_n: int = 2000,
-             family: str | None = None, scenario: str | None = None) -> dict:
+             family: str | None = None, scenario: str | None = None,
+             sibling_ref: str = "full") -> dict:
     """One instance. family/scenario default to a draw from the seed."""
-    return _simulate(seed, n_intime, oracle_n, family, scenario)
+    return _simulate(seed, n_intime, oracle_n, family, scenario, sibling_ref)
 
 
 # --- serialization ---------------------------------------------------------

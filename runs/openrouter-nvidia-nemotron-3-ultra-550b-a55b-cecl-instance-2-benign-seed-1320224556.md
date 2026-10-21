@@ -86,7 +86,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -111,7 +111,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 22:21 ..
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [5] tool
@@ -129,7 +129,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 22:21 ..
 **tool call: bash**
 
 ```
-
+cat data/pools.csv
 ```
 
 ## [7] tool
@@ -160,7 +160,7 @@ C4,C,6330337.0,40
 **tool call: bash**
 
 ```
-
+cat data/forecast.csv
 ```
 
 ## [9] tool
@@ -187,7 +187,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+head -50 data/history.csv
 ```
 
 ## [11] tool
@@ -255,7 +255,7 @@ A,49,4.85495731758945,-0.02098315167094538,0.0338,0.5828631700714593,0.0489
 **tool call: bash**
 
 ```
-
+cat data/history.csv | wc -l
 ```
 
 ## [13] tool
@@ -274,7 +274,7 @@ A,49,4.85495731758945,-0.02098315167094538,0.0338,0.5828631700714593,0.0489
 **tool call: bash**
 
 ```
-
+cat data/history.csv | cut -d',' -f1 | sort | uniq -c
 ```
 
 ## [15] tool
@@ -296,7 +296,7 @@ A,49,4.85495731758945,-0.02098315167094538,0.0338,0.5828631700714593,0.0489
 **tool call: bash**
 
 ```
-
+grep "^B," data/history.csv | head -20
 ```
 
 ## [17] tool
@@ -334,7 +334,7 @@ B,20,5.977128025851686,0.01496608071347021,0.0319,0.39611548421958515,0.0405
 **tool call: bash**
 
 ```
-
+grep "^C," data/history.csv | head -20
 ```
 
 ## [19] tool
@@ -401,7 +401,7 @@ C,20,5.977128025851686,0.01496608071347021,0.0123,0.5331524110141562,0.024
 **tool call: bash**
 
 ```
-
+cat data/history.csv | tail -20
 ```
 
 ## [21] tool
@@ -1456,7 +1456,7 @@ Saved to predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [35] tool
@@ -2059,7 +2059,7 @@ The simulation results are very close to the deterministic calculation (differen
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [43] tool

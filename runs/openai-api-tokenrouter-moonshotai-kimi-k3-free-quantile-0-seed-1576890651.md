@@ -49,7 +49,7 @@ Estimate the population tail quantiles for all 100 blocks described in data/task
 **tool call: bash**
 
 ```
-
+cat data/task.txt; echo "---"; head -20 data/blocks.csv; echo "---"; wc -l data/blocks.csv
 ```
 
 ## [3] tool
@@ -791,7 +791,7 @@ I'll start by examining the task and data files (done above), then set up my app
 **tool call: bash**
 
 ```
-
+cd "$(pwd)"; pwd; python3 -c "import numpy, scipy, pandas; print(numpy.__version__, scipy.__version__, pandas.__version__)"; ls
 ```
 
 ## [5] tool
@@ -817,7 +817,40 @@ Now let me write the initial analysis script. First I'll produce a quick, valid 
 **tool call: bash**
 
 ```
+cat > stage0.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
 
+df = pd.read_csv('data/blocks.csv')
+# parse m values from task.txt
+import re
+m_map = {}
+with open('data/task.txt') as f:
+    txt = f.read()
+for m in re.finditer(r'Block (\d+) \(population size m = (\d+)\)', txt):
+    m_map[int(m.group(1))] = int(m.group(2))
+ms = pd.Series(m_map).sort_index()
+df['m'] = df['block'].map(ms)
+df.to_pickle('data.pkl')
+print(df.groupby('block').size().unique(), len(ms), ms.values.min(), ms.values.max())
+
+# Quick diagnostics: skew/kurtosis across blocks
+rows = []
+for b, g in df.groupby('block'):
+    x = g['x'].values
+    rows.append(dict(block=b, n=len(x), mean=x.mean(), std=x.std(),
+        skew=stats.skew(x), kurt=stats.kurtosis(x),  # excess kurtosis
+        shapiro_p=stats.shapiro(x)[1],
+        min=x.min(), max=x.max()))
+dd = pd.DataFrame(rows)
+print("median skew:", dd.skew.median(), " median excess kurt:", dd.kurt.median())
+print("frac normal (shapiro p>.05):", (dd.shapiro_p>0.05).mean())
+print("strong right skew (>1.5):", (dd.skew>1.5).sum(), " strong left skew (<-1.5):", (dd.skew<-1.5).sum())
+# classify visually interesting blocks
+print(dd.sort_values('skew').tail(15)[['block','skew','kurt','shapiro_p']])
+print(dd.sort_values('skew').head(10)[['block','skew','kurt','shapiro_p']])
+EOF
+python3 stage0.py
 ```
 
 ## [7] tool
@@ -836,7 +869,7 @@ AttributeError: 'function' object has no attribute 'median'
 **tool call: bash**
 
 ```
-
+sed -i 's/dd\.skew\.median/dd["skew"].median/; s/dd\.kurt\.median/dd["kurt"].median/; s/dd\.shapiro_p>0.05/dd["shapiro_p"]>0.05/' stage0.py && sed -i 's/(dd\.skew>1.5)/(dd["skew"]>1.5)/; s/(dd\.skew<-1.5)/(dd["skew"]<-1.5)/' stage0.py && python3 stage0.py
 ```
 
 ## [9] tool
@@ -972,7 +1005,58 @@ Let me first write a quick, valid `predictions.csv` as a safety net, then refine
 **tool call: bash**
 
 ```
+cat > v1.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
 
+df = pd.read_pickle('data.pkl')
+rng = np.random.default_rng(0)
+out = []
+for b, g in df.groupby('block'):
+    x = np.sort(g['x'].values); n = len(x); m = int(g['m'].iloc[0])
+    # robust MLE: normal vs t on grid of nu
+    best = None
+    for nu in [3,4,5,7,10,15,30,100]:
+        mu0, s0 = np.median(x), np.std(x)*1.2
+        try:
+            res = stats.t.fit(x, nu, floc=mu0, method='MLE')
+        except Exception:
+            continue
+        # stats.t.fit with fixed df returns (df, loc, scale)
+        ll = stats.t.logpdf(x, nu, loc=res[1], scale=res[2]).sum()
+        if best is None or ll > best[0]:
+            best = (ll, nu, res[1], res[2])
+    ll, nu, mu, sc = best
+    # also try free loc
+    res = stats.t.fit(x, nu, method='MLE')
+    ll2 = stats.t.logpdf(x, nu, loc=res[1], scale=res[2]).sum()
+    if ll2 > ll: mu, sc = res[1], res[2]
+    q90 = stats.t.ppf(0.90, nu, loc=mu, scale=sc)
+    q95 = stats.t.ppf(0.95, nu, loc=mu, scale=sc)
+    q99 = stats.t.ppf(0.99, nu, loc=mu, scale=sc)
+    # bootstrap interval
+    boots = []
+    xb = np.asarray(x)
+    for i in range(2000):
+        xs = rng.choice(xb, size=n, replace=True)
+        if np.ptp(xs) < 1e-12: continue
+        try:
+            b2 = None
+            for nu2 in [3,5,7,10,15,30,100]:
+                r = stats.t.fit(xs, nu2, method='MLE')
+                l2 = stats.t.logpdf(xs, nu2, loc=r[1], scale=r[2]).sum()
+                if b2 is None or l2 > b2[0]: b2 = (l2, nu2, r[1], r[2])
+            boots.append(stats.t.ppf(0.95, b2[1], loc=b2[2], scale=b2[3]))
+        except Exception:
+            pass
+    boots = np.array(boots)
+    lo, hi = np.percentile(boots, [2.5, 97.5])
+    out.append((b, q90, q95, q99, lo, hi))
+pd.DataFrame(out, columns=['block','q90','q95','q99','lo','hi']).to_csv('predictions.csv', index=False)
+print(pd.read_csv('predictions.csv').head(3))
+print("rows:", len(out))
+EOF
+timeout 3000 python3 v1.py
 ```
 
 ## [11] tool
@@ -1127,7 +1211,104 @@ I'll build a flexible 4-parameter family (sinh-arcsinh normal — nests normal, 
 **tool call: bash**
 
 ```
+cat > shash.py << 'EOF'
+"""Sinh-arcsinh-normal family + t fits + predictive quantile machinery."""
+import numpy as np
+from scipy import stats, optimize
 
+SQ2 = np.sqrt(2.0)
+
+def norm_ppf(p):
+    return stats.norm.ppf(p)
+
+# X = mu + s*sinh((asinh(Z) - a)/b), Z~N(0,1). b=1,a=0 -> N(mu,s^2). b>1 heavier, b<1 lighter. a>0 right skew.
+def shash_pdf(x, mu, s, a, b):
+    y = (x - mu)/s
+    u = b*np.arcsinh(y) + a          # = asinh(z)
+    z = np.sinh(u)
+    dzdy = np.cosh(u) * b / np.sqrt(1.0 + y*y)
+    return stats.norm.pdf(z) * np.abs(dzdy) / s
+
+def shash_cdf(x, mu, s, a, b):
+    y = (x - mu)/s
+    z = np.sinh(b*np.arcsinh(y) + a)
+    return stats.norm.cdf(z)
+
+def shash_ppf(p, mu, s, a, b):
+    z = stats.norm.ppf(p)
+    return mu + s*np.sinh((np.arcsinh(z) - a)/b)
+
+def shash_loglik(theta, x):
+    mu, ls, a, lb = theta
+    s = np.exp(ls); b = np.exp(lb)
+    if abs(a) > 6 or b < 0.15 or b > 8 or s <= 0: return -1e10
+    y = (x - mu)/s
+    u = b*np.arcsinh(y) + a
+    z = np.sinh(u)
+    ll = (-0.5*z*z - 0.5*np.log(2*np.pi)).sum()
+    ll += (np.log(np.cosh(u)*b) - 0.5*np.log1p(y*y)).sum() - len(x)*ls
+    return ll
+
+def fit_shash(x, lam=1.0, sa=2.0, sb=0.7, theta0=None, maxiter=400):
+    """Penalized ML. penalty lam*((a/sa)^2 + (ln b/sb)^2) in loglik units."""
+    x = np.asarray(x, float)
+    mu0 = np.median(x)
+    iqr = np.subtract(*np.percentile(x, [75,25]))
+    s0 = max(iqr/1.349, 1e-9)
+    best = None
+    starts = [theta0] if theta0 is not None else []
+    starts += [[mu0, np.log(s0), 0.0, 0.0]]
+    def obj(theta):
+        mu, ls, a, lb = theta
+        pen = lam*((a/sa)**2 + (lb/sb)**2)
+        ll = shash_loglik(theta, x)
+        if not np.isfinite(ll): return 1e10
+        return -(ll - pen)
+    for st in starts:
+        if st is None: continue
+        try:
+            r = optimize.minimize(obj, st, method='Nelder-Mead',
+                        options=dict(maxiter=maxiter, xatol=1e-4, fatol=1e-4))
+            v = -r.fun
+            if best is None or v > best[0]:
+                best = (v, r.x)
+        except Exception:
+            pass
+    if best is None:
+        return np.array([mu0, np.log(s0), 0.0, 0.0]), 0.0
+    return best[1], best[0]
+
+def fit_t(x, nu_grid=(3,4,5,6,8,12,20,40,1e6)):
+    """Robust t fit via matching quantiles + small refinement; returns (nu, mu, s)."""
+    x = np.asarray(x, float)
+    best = None
+    med = np.median(x)
+    iqr = np.subtract(*np.percentile(x, [75,25]))
+    for nu in nu_grid:
+        s0 = iqr/(2*stats.t.ppf(0.75, nu)) if np.isfinite(stats.t.ppf(0.75,nu)) else np.std(x)
+        s0 = max(s0, 1e-9)
+        try:
+            r = optimize.minimize(
+                lambda th: -stats.t.logpdf(x, nu, loc=th[0], scale=np.exp(th[1])).sum(),
+                [med, np.log(s0)], method='Nelder-Mead')
+            mu, s = r.x[0], np.exp(r.x[1])
+            ll = stats.t.logpdf(x, nu, loc=mu, scale=s).sum()
+            if best is None or ll > best[0]: best = (ll, nu, mu, s)
+        except Exception:
+            pass
+    return best[1], best[2], best[3]
+EOF
+cat > quicktest.py << 'EOF'
+import numpy as np, time
+from shash import *
+x = np.array([0.4199, -0.05856, 0.3091, -0.2301, -0.2406, -0.1926, 0.6063, 0.293, 0.2182, 0.1933])
+t0 = time.time(); th, v = fit_shash(x); t1 = time.time()
+print("fit:", np.round(th,3), "time %.3fs" % (t1-t0))
+mu, ls, a, lb = th
+print("q95:", shash_ppf(0.95, mu, np.exp(ls), a, np.exp(lb)), "normal q95 check:", mu+np.exp(ls)*1.645)
+nu, mu2, s2 = fit_t(x); print("t fit:", nu, np.round([mu2,s2],3))
+EOF
+python3 quicktest.py
 ```
 
 ## [13] tool
@@ -1157,7 +1338,151 @@ Fits are fast. Now the estimator module with finite-population predictive blendi
 **tool call: bash**
 
 ```
+cat > est.py << 'EOF'
+"""Per-block estimator: model choice (t vs shash), predictive quantiles with
+finite-population blending, bootstrap CI for population q95."""
+import numpy as np
+from scipy import stats
+from shash import *
 
+def build_F(theta_list, weights):
+    """Return function F(q) = blend of CDFs over param draws."""
+    kinds = [t[0] for t in theta_list]
+    def F(qv):
+        qv = np.atleast_1d(qv)
+        out = np.zeros_like(qv)
+        for (kind, par), w in zip(theta_list, weights):
+            if kind == 'shash':
+                mu, ls, a, lb = par
+                out += w * shash_cdf(qv, mu, np.exp(ls), a, np.exp(lb))
+            else:
+                nu, mu, s = par
+                out += w * stats.t.cdf(qv, nu, loc=mu, scale=s)
+        return out
+    return F
+
+def solve_quantile(F, taus, xs, theta_hat):
+    """Solve blend equation w*Fs(q)+(1-w)*F(q)=tau via monotone bisection."""
+    w = len(xs)/ (len(xs) + 0)  # placeholder
+    return None
+
+def inv_blend(tau, w, Fs_vals, F_fun, gridlo, gridhi):
+    """Find q s.t.  w*mean(xs<=q) + (1-w)*F_fun(q) = tau.
+    Fs_vals: sorted sample. Monotone increasing in q; bisect."""
+    xs = Fs_vals
+    def g(q):
+        return w*np.searchsorted(xs, q, side='right')/len(xs) + (1-w)*float(F_fun(np.atleast_1d(q))[0])
+    lo, hi = gridlo, gridhi
+    # expand bracket
+    for _ in range(60):
+        if g(lo) > tau: hi2 = lo; lo = lo - (hi-lo)*2
+        elif g(hi) < tau: lo2 = hi; hi = hi + (hi-lo)*2
+        else: break
+    for _ in range(80):
+        mid = 0.5*(lo+hi)
+        if g(mid) < tau: lo = mid
+        else: hi = mid
+    return 0.5*(lo+hi)
+
+class BlockEst:
+    def __init__(self, x, m, lam=1.0, sa=2.0, sb=0.7, bic_pen=4.0, t_dfmax=1e6):
+        self.x = np.sort(np.asarray(x, float)); self.n = len(self.x); self.m = m
+        self.w = self.n/float(m)
+        self.lam, self.sa, self.sb = lam, sa, sb
+        self.bic_pen = bic_pen
+        # fits
+        self.theta, self.penll = fit_shash(self.x, lam=lam, sa=sa, sb=sb)
+        mu, ls, a, lb = self.theta
+        ll_shash = shash_loglik(self.theta, self.x)  # unpenalized
+        nu, mut, st = fit_t(self.x)
+        ll_t = stats.t.logpdf(self.x, nu, loc=mut, scale=st).sum()
+        # choice: penalized criteria (shash has 4 params, t has 3)
+        crit_shash = self.penll - self.bic_pen*np.log(self.n)
+        crit_t = ll_t - (3.0/np.log(self.n))*np.log(self.n)  # 3 params
+        # convert both to per-1e... actually just compare
+        crit_t = ll_t - 3.0
+        crit_shash = self.penll - self.bic_pen
+        if crit_shash >= crit_t:
+            self.choice = 'shash'; self.kind='shash'
+            self.params = ('shash', (mu, ls, a, lb))
+            self.Fhat = lambda q: shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+        else:
+            self.choice = 't'; self.kind='t'
+            self.params = ('t', (nu, mut, st))
+            self.Fhat = lambda q: stats.t.cdf(q, nu, loc=mut, scale=st)
+
+    def bootstrap_theta(self, B, rng, mix_mle=0.0):
+        """Parametric bootstrap from chosen family; returns list of param tuples."""
+        out = []
+        kind, par = self.params
+        for i in range(B):
+            if kind == 'shash':
+                mu, ls, a, lb = par
+                xs = shash_ppf(rng.random(self.n), mu, np.exp(ls), a, np.exp(lb))
+            else:
+                nu, mu, s = par
+                xs = stats.t.rvs(nu, loc=mu, scale=s, size=self.n, random_state=rng)
+            try:
+                est = BlockEst_q(xs, self.m, self.lam, self.sa, self.sb, self.bic_pen)
+                out.append(est.params)
+            except Exception:
+                out.append(self.params)
+        return out
+
+def BlockEst_q(x, m, lam, sa, sb, bic_pen):
+    """Lightweight re-fit used inside bootstrap."""
+    class O: pass
+    o = O(); o.x = np.sort(np.asarray(x,float)); o.n=len(o.x); o.m=m; o.w=o.n/float(m)
+    theta, penll = fit_shash(o.x, lam=lam, sa=sa, sb=sb, maxiter=250)
+    nu, mut, st = fit_t(o.x)
+    ll_t = stats.t.logpdf(o.x, nu, loc=mut, scale=st).sum()
+    crit_t = ll_t - 3.0; crit_shash = penll - bic_pen
+    if crit_shash >= crit_t: o.params = ('shash', tuple(theta))
+    else: o.params = ('t', (nu, mut, st))
+    return o
+
+def q95_true_of_params(params):
+    kind, par = params
+    if kind == 'shash':
+        mu, ls, a, lb = par
+        return shash_ppf(0.95, mu, np.exp(ls), a, np.exp(lb))
+    nu, mu, s = par
+    return stats.t.ppf(0.95, nu, loc=mu, scale=s)
+
+def point_estimate(x, m, B=150, rng=None, lam=1.0, sa=2.0, sb=0.7, bic_pen=4.0,
+                   taus=(0.90,0.95,0.99)):
+    est = BlockEst(x, m, lam, sa, sb, bic_pen)
+    rng = np.random.default_rng() if rng is None else rng
+    boot = est.bootstrap_theta(B, rng)
+    pairs = [est.params] + boot
+    weights = [1.0] + [1.0]*B
+    F = build_F(pairs, np.array(weights, float)/len(pairs))
+    xs = est.x
+    sprd = np.std(xs)
+    glo = xs.min() - 12*sprd
+    ghi = xs.max() + 12*sprd
+    res = dict(choice=est.choice, params=est.params)
+    for tau in taus:
+        res['q%d' % round(tau*100)] = inv_blend(tau, est.w, xs, F, glo, ghi)
+    # CI from boot distribution of q95_true
+    q95s = np.array([q95_true_of_params(p) for p in boot])
+    res['q95_boot'] = q95s
+    return est, res
+EOF
+cat > t2.py << 'EOF'
+import numpy as np, time
+from est import *
+x = np.array([0.4199, -0.05856, 0.3091, -0.2301, -0.2406, -0.1926, 0.6063, 0.293, 0.2182, 0.1933])
+t0=time.time()
+est, res = point_estimate(x, 427, B=60, rng=np.random.default_rng(1))
+print("choice:", res['choice'], " q90 %.3f q95 %.3f q99 %.3f" % (res['q90'],res['q95'],res['q99']))
+print("boot q95 pct:", np.round(np.percentile(res['q95_boot'],[2.5,50,97.5]),3), "time %.2fs"%(time.time()-t0))
+xo = np.array([8.897, 10.82, 10.97, 12.94, 14.03, 10.8, 83.58, 32.3, 11.57, 5.826])
+est, res = point_estimate(xo, 276, B=60, rng=np.random.default_rng(2))
+print("block22 choice:", res['choice'], "params:", np.round(res['params'][1],3))
+print(" q90 %.2f q95 %.2f q99 %.2f"%(res['q90'],res['q95'],res['q99']), "boot:", np.round(np.percentile(res['q95_boot'],[2.5,50,97.5]),3))
+EOF
+time python3 t2.py
 ```
 
 ## [15] tool
@@ -1185,7 +1510,7 @@ Performance needs work for a 100-block pipeline. Note the asymmetry: at slope ~4
 **tool call: bash**
 
 ```
-
+nproc; cat /proc/cpuinfo | grep -c processor
 ```
 
 ## [17] tool
@@ -1244,7 +1569,166 @@ Only 4 cores — so I'll design the calibration carefully: fast plug-in point es
 **tool call: bash**
 
 ```
+cat > sim.py << 'EOF'
+"""Calibration harness. Generates synthetic problems, evaluates estimators by
+(excess) pinball loss under the exact scoring rule incl. finite-population."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from shash import *
 
+def make_population(rng, kind, m):
+    if kind == 'normal':
+        mu = rng.normal(0, 1); sc = np.exp(rng.normal(0, 1.2))
+        pop = mu + sc*rng.standard_normal(m)
+    elif kind == 't':
+        nu = rng.choice([3,4,5,7,10,20])
+        mu = rng.normal(0, 1); sc = np.exp(rng.normal(0, 1.2))
+        pop = mu + sc*rng.standard_t(nu, m)
+    elif kind == 'shash':
+        a = rng.normal(0, 1.2); ln_b = rng.normal(0, 0.7)
+        b = np.exp(np.clip(ln_b, -1.2, 1.2)); a = np.clip(a, -2.5, 2.5)
+        mu = rng.normal(0, 1); sc = np.exp(rng.normal(0, 1.2))
+        z = rng.standard_normal(m)
+        pop = mu + sc*np.sinh((np.arcsinh(z) - a)/b)
+    elif kind == 'gamma':
+        k = rng.choice([1.0, 2.0, 4.0, 9.0, 25.0])
+        mu = rng.normal(0, 1); sc = np.exp(rng.normal(0, 1.2))
+        g = rng.gamma(k, 1.0/np.sqrt(k), m)
+        pop = mu + sc*(g - np.sqrt(k))
+        if rng.random() < 0.3: pop = -pop  # sometimes left-skew
+    return pop
+
+def qpop(pop, tau):
+    return np.quantile(pop, tau, method='higher') if False else _pop_quantile(pop, tau)
+
+def _pop_quantile(pop, tau):
+    # scoring's optimum: any x with F(x- ) <= tau <= F(x); use type-1 style: smallest x with F(x) >= tau
+    s = np.sort(pop); m = len(s)
+    k = int(np.ceil(tau*m))
+    k = min(max(k,1), m)
+    return s[k-1]
+
+def pinball_excess(pop, qhat, tau):
+    q = _pop_quantile(pop, tau)
+    d = pop - qhat; ll = np.where(d>=0, tau*d, (tau-1)*d).mean()
+    d0 = pop - q;  l0 = np.where(d0>=0, tau*d0, (tau-1)*d0).mean()
+    return ll - l0
+
+# ---------- estimators (plug-in, fast) ----------
+def est_plugin(x, m, method, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0, shrink=1.0, extra=None):
+    x = np.asarray(x, float); n = len(x); w = n/float(m)
+    if method == 'normal':
+        mu, s = x.mean(), x.std(ddof=1)
+        kind = 'normal'; par = (mu, s)
+        Fhat = lambda q: stats.norm.cdf(q, mu, s)
+        q95par = mu + s*stats.norm.ppf(0.95)
+    elif method == 't':
+        nu, mu, s = fit_t(x)
+        kind='t'; par=(nu,mu,s)
+        Fhat = lambda q: stats.t.cdf(q, nu, loc=mu, scale=s)
+        q95par = stats.t.ppf(0.95, nu, loc=mu, scale=s)
+    elif method == 'shash':
+        th, _ = fit_shash(x, lam=lam, sa=sa, sb=sb)
+        kind='shash'; par=th
+        mu, ls, a, lb = th
+        Fhat = lambda q: shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+        q95par = shash_ppf(0.95, mu, np.exp(ls), a, np.exp(lb))
+    elif method == 'best':
+        th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+        nu, mut, st = fit_t(x)
+        ll_t = stats.t.logpdf(x, nu, loc=mut, scale=st).sum()
+        if penll - k_pen >= ll_t - 3.0:
+            kind='shash'; par=th; mu, ls, a, lb = th
+            Fhat = lambda q: shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+            q95par = shash_ppf(0.95, mu, np.exp(ls), a, np.exp(lb))
+        else:
+            kind='t'; par=(nu,mut,st)
+            Fhat = lambda q: stats.t.cdf(q, nu, loc=mut, scale=st)
+            q95par = stats.t.ppf(0.95, nu, loc=mut, scale=st)
+    # shrink quantiles toward median
+    med = Fhat_median = None
+    qs = {}
+    for tau in (0.9, 0.95, 0.99):
+        if kind == 'normal': q = mu + s*stats.norm.ppf(tau)
+        elif kind == 't':    q = stats.t.ppf(tau, nu, loc=mu, scale=s)
+        else:                q = shash_ppf(tau, mu, np.exp(ls), a, np.exp(lb))
+        qs[tau] = q
+    if shrink != 1.0:
+        if kind == 'normal': med = mu
+        elif kind == 't': med = mu
+        else: med = shash_ppf(0.5, mu, np.exp(ls), a, np.exp(lb))
+        for tau in qs: qs[tau] = med + shrink*(qs[tau]-med)
+    # finite-sample plug-in (use exactly this as population approx -> add FSRS blend optionally)
+    return qs, q95par, kind
+
+def solve_blend(tau, w, xs, Fhat, shrink_med=None):
+    xs = np.sort(np.asarray(xs,float))
+    sprd = max(np.std(xs), np.abs(xs).mean(), 1e-9)
+    lo, hi = xs.min()-15*sprd, xs.max()+15*sprd
+    def g(q): return w*np.mean(xs<=q) + (1-w)*Fhat(q)
+    for _ in range(80):
+        mid = 0.5*(lo+hi)
+        if g(mid) < tau: lo = mid
+        else: hi = mid
+    return 0.5*(lo+hi)
+
+def one_sim(args):
+    seed, m_fixed, method_cfg = args
+    rng = np.random.default_rng(seed)
+    kind = rng.choice(['normal','t','shash','gamma'], p=[0.35,0.25,0.2,0.2])
+    m = m_fixed if m_fixed else int(rng.integers(250, 593))
+    pop = make_population(rng, kind, m)
+    x = rng.choice(pop, 10, replace=False)
+    res = {}
+    for name, cfg in method_cfg.items():
+        meth, kw = cfg
+        qs, q95par, kchosen = est_plugin(x, m, meth, **kw)
+        tot = 0.0
+        for tau in (0.9,0.95,0.99):
+            tot += pinball_excess(pop, qs[tau], tau)
+        res[name] = (tot, kchosen)
+        # also FSRS variant: blend with empirical CDF
+        if kw.get('fsrs', False):
+            w = 10.0/m
+            for tau in (0.9,0.95,0.99):
+                pass
+    res['true_kind'] = kind
+    return res
+
+def scale_norm(pop, qhat):
+    m = np.median(pop); iqr = np.subtract(*np.percentile(pop,[75,25]))
+    return max(iqr/1.349, 1e-12)
+
+def run_sims(nsim=400, seed0=0, m_fixed=None):
+    cfg = {
+      'normal': ('normal', dict()),
+      't': ('t', dict()),
+      'shash': ('shash', dict(lam=1.0)),
+      'best': ('best', dict(lam=1.0, k_pen=4.0)),
+    }
+    args = [(seed0+i, m_fixed, cfg) for i in range(nsim)]
+    with Pool(4) as p:
+        out = p.map(one_sim, args, chunksize=20)
+    import collections
+    agg = collections.defaultdict(list)
+    kinds = collections.defaultdict(lambda: collections.defaultdict(int))
+    for r in out:
+        for k,v in r.items():
+            if k=='true_kind': continue
+            agg[k].append(v[0]); kinds[v[1]][k]+=1
+    print("sims:", nsim, " m:", m_fixed or 'random')
+    for k, v in agg.items():
+        v=np.array(v)
+        print(f"  {k:8s} mean excess {v.mean():.4f}  med {np.median(v):.4f}  p90 {np.quantile(v,0.9):.4f}  (n={len(v)})")
+    return agg
+
+if __name__ == '__main__':
+    scale_note = "NOTE: excess loss is in raw units; populations have random scale ~exp(N(0,1.2)) so average denominator ~ a few units."
+    print(scale_note)
+    run_sims(400, 0)
+EOF
+time python3 sim.py
 ```
 
 ## [19] tool
@@ -1294,7 +1778,49 @@ NOTE: excess loss is in raw units; populations have random scale ~exp(N(0,1.2)) 
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+# Fix est_plugin quantile loop to use per-result locals
+import re
+src = open('sim.py').read()
+old = """    qs = {}
+    for tau in (0.9, 0.95, 0.99):
+        if kind == 'normal': q = mu + s*stats.norm.ppf(tau)
+        elif kind == 't':    q = stats.t.ppf(tau, nu, loc=mu, scale=s)
+        else:                q = shash_ppf(tau, mu, np.exp(ls), a, np.exp(lb))
+        qs[tau] = q
+    if shrink != 1.0:
+        if kind == 'normal': med = mu
+        elif kind == 't': med = mu
+        else: med = shash_ppf(0.5, mu, np.exp(ls), a, np.exp(lb))
+        for tau in qs: qs[tau] = med + shrink*(qs[tau]-med)"""
+new = """    if kind == 'shash': mu, ls, a, lb = par; s = np.exp(ls); b = np.exp(lb)
+    elif kind == 't':  nu, mu, s = par
+    else:              mu, s = par
+    qs = {}
+    for tau in (0.9, 0.95, 0.99):
+        if kind == 'normal': q = mu + s*stats.norm.ppf(tau)
+        elif kind == 't':    q = stats.t.ppf(tau, nu, loc=mu, scale=s)
+        else:                q = shash_ppf(tau, mu, s, a, b)
+        qs[tau] = q
+    if shrink != 1.0:
+        if kind in ('normal','t'): med = mu
+        else: med = shash_ppf(0.5, mu, s, a, b)
+        for tau in qs: qs[tau] = med + shrink*(qs[tau]-med)"""
+src = src.replace(old, new)
+# Also fix references to q95par building (uses different locals)
+src = src.replace("""        q95par = shash_ppf(0.95, mu, np.exp(ls), a, np.exp(lb))
+    elif method == 't':""", """        q95par = shash_ppf(0.95, mu, np.exp(th[1]), th[2], np.exp(th[3]))
+    elif method == 't':""")
+src = src.replace("""        mu, ls, a, lb = th
+        Fhat = lambda q: shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+        q95par = shash_ppf(0.95, mu, np.exp(ls), a, np.exp(lb))
+    elif method == 'best':""", """        mu, ls, a, lb = th
+        Fhat = lambda q: shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+        q95par = shash_ppf(0.95, mu, np.exp(ls), a, np.exp(lb))""")
+open('sim.py','w').write(src)
+print("patched")
+EOF
+grep -n "q95par = shash" sim.py
 ```
 
 ## [21] tool
@@ -1309,7 +1835,7 @@ patched
 **tool call: bash**
 
 ```
-
+time python3 sim.py
 ```
 
 ## [23] tool
@@ -1365,7 +1891,7 @@ NOTE: excess loss is in raw units; populations have random scale ~exp(N(0,1.2)) 
 **tool call: bash**
 
 ```
-
+sed -n 55,100p sim.py
 ```
 
 ## [25] tool
@@ -1425,7 +1951,145 @@ My sed patch mangled the 'best' branch (the `elif method == 'best':` line got ea
 **tool call: bash**
 
 ```
+cat > sim.py << 'EOF'
+"""Calibration harness. Synthetic problems, exact pinball scoring incl. finite population."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from shash import fit_shash, fit_t, shash_cdf, shash_ppf
 
+def make_population(rng, kind, m):
+    mu = rng.normal(0, 1); sc = np.exp(rng.normal(0, 1.0))
+    if kind == 'normal':
+        pop = mu + sc*rng.standard_normal(m)
+    elif kind == 't':
+        nu = rng.choice([3,4,5,7,10,20])
+        pop = mu + sc*rng.standard_t(nu, m)
+    elif kind == 'shash':
+        a = np.clip(rng.normal(0, 1.2), -2.5, 2.5)
+        b = np.exp(np.clip(rng.normal(0, 0.7), -1.2, 1.2))
+        z = rng.standard_normal(m)
+        pop = mu + sc*np.sinh((np.arcsinh(z) - a)/b)
+    elif kind == 'gamma':
+        k = rng.choice([1.0, 2.0, 4.0, 9.0, 25.0])
+        g = rng.gamma(k, 1.0/np.sqrt(k), m)
+        pop = mu + sc*(g - np.sqrt(k))
+        if rng.random() < 0.3: pop = -pop
+    return pop
+
+def pop_quantile(pop, tau):
+    s = np.sort(pop); m = len(s)
+    k = int(np.ceil(tau*m)); k = min(max(k,1), m)
+    return s[k-1]
+
+def pinball_excess(pop, qhat, tau):
+    q = pop_quantile(pop, tau)
+    d = pop - qhat; ll = np.where(d>=0, tau*d, (tau-1)*d).mean()
+    d0 = pop - q;  l0 = np.where(d0>=0, tau*d0, (tau-1)*d0).mean()
+    return ll - l0
+
+def fit_and_quantiles(x, m, method, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0, shrink=1.0):
+    """Returns (dict tau->q, chosen kind)."""
+    x = np.asarray(x, float)
+    mu=s=nu=a=b=None
+    if method in ('shash','best'):
+        th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    if method in ('t','best','normal'):
+        nu_t, mu_t, s_t = fit_t(x)
+        ll_t = stats.t.logpdf(x, nu_t, loc=mu_t, scale=s_t).sum()
+        mu_n, s_n = x.mean(), x.std(ddof=1)
+        ll_n = stats.norm.logpdf(x, mu_n, s_n).sum()
+    if method == 'normal':
+        kind='normal'; mu,s = mu_n, s_n
+    elif method == 't':
+        kind='t'; nu,mu,s = nu_t, mu_t, s_t
+    elif method == 'shash':
+        kind='shash'; mu,ls,a,lb = th; s=np.exp(ls); b=np.exp(lb)
+    else:
+        # normal vs t vs shash by penalized ll
+        best = ('normal', ll_n - 0.0)
+        if ll_t - 1.0 > best[1]: best = ('t', ll_t - 1.0)
+        if penll - k_pen > best[1]: best = ('shash', penll - k_pen)
+        kind = best[0]
+        if kind=='shash': mu,ls,a,lb = th; s=np.exp(ls); b=np.exp(lb)
+        elif kind=='t':  nu,mu,s = nu_t, mu_t, s_t
+        else:            mu,s = mu_n, s_n
+    def Q(tau):
+        if kind=='normal': return mu + s*stats.norm.ppf(tau)
+        if kind=='t':      return stats.t.ppf(tau, nu, loc=mu, scale=s)
+        return shash_ppf(tau, mu, s, a, b)
+    qs = {tau: Q(tau) for tau in (0.9,0.95,0.99)}
+    if shrink != 1.0:
+        med = Q(0.5)
+        qs = {t: med + shrink*(v-med) for t,v in qs.items()}
+    return qs, kind, Q
+
+def one_sim(args):
+    seed, m_fixed, cfg = args
+    rng = np.random.default_rng(seed)
+    kind = rng.choice(['normal','t','shash','gamma'], p=[0.35,0.25,0.2,0.2])
+    m = m_fixed if m_fixed else int(rng.integers(250, 593))
+    pop = make_population(rng, kind, m)
+    x = rng.choice(pop, 10, replace=False)
+    out = {'true_kind': kind}
+    for name, (meth, kw) in cfg.items():
+        kw = dict(kw); fsrs = kw.pop('fsrs', False)
+        qs, kchosen, Q = fit_and_quantiles(x, m, meth, **kw)
+        tot = 0.0
+        for tau in (0.9,0.95,0.99):
+            if fsrs:
+                w = 10.0/m
+                qs2 = {t: blend_quantile(t, w, x, Q) for t in (0.9,0.95,0.99)}
+            else: qs2 = qs
+            tot += pinball_excess(pop, qs2[tau], tau)
+        out[name] = (tot, kchosen)
+        out[name+'_95'] = pinball_excess(pop, qs2[0.95], 0.95)
+    return out
+
+def blend_quantile(tau, w, xs, QfromFit):
+    # F from fit built from Q? we need cdf... approximate via inversion only if we have F.
+    raise RuntimeError
+
+CFG = {
+  'normal': ('normal', dict()),
+  't': ('t', dict()),
+  'shash_l1': ('shash', dict(lam=1.0)),
+  'shash_l3': ('shash', dict(lam=3.0)),
+  'best_k2': ('best', dict(lam=1.0, k_pen=2.0)),
+  'best_k4': ('best', dict(lam=1.0, k_pen=4.0)),
+  'best_k4s9': ('best', dict(lam=1.0, k_pen=4.0, shrink=0.9)),
+  'best_k4s8': ('best', dict(lam=1.0, k_pen=4.0, shrink=0.8)),
+}
+
+def run(nsim, seed0, m_fixed=None, cfg=CFG):
+    args = [(seed0+7919*i, m_fixed, cfg) for i in range(nsim)]
+    with Pool(4) as p:
+        out = p.map(one_sim, args, chunksize=10)
+    import collections
+    agg = collections.defaultdict(list); agg95 = collections.defaultdict(list)
+    byk = collections.defaultdict(lambda: collections.defaultdict(list))
+    for r in out:
+        for k in cfg:
+            v, kc = r[k]; agg[k].append(v); agg95[k].append(r[k+'_95'])
+            byk[r['true_kind']][k].append(v)
+    print(f"--- nsim={nsim} m={m_fixed or 'random'} ; excess pinball (raw units) ---")
+    hdr = f"{'est':12s} {'mean':>8s} {'med':>8s} {'p75':>8s} {'p90':>8s} | {'mean95':>8s}"
+    print(hdr)
+    for k in cfg:
+        v = np.array(agg[k]); v95 = np.array(agg95[k])
+        print(f"{k:12s} {v.mean():8.4f} {np.median(v):8.4f} {np.quantile(v,.75):8.4f} {np.quantile(v,.9):8.4f} | {v95.mean():8.4f}")
+    print(" by true kind (mean):")
+    for tk in ('normal','t','shash','gamma'):
+        row = f"   {tk:8s}"
+        for k in cfg:
+            v = np.array(byk[tk][k]); row += f" {k}={v.mean():.3f}"
+        print(row)
+    return agg
+
+if __name__ == '__main__':
+    run(600, 1)
+EOF
+time python3 sim.py
 ```
 
 ## [27] tool
@@ -1435,7 +2099,15 @@ My sed patch mangled the 'best' branch (the `elif method == 'best':` line got ea
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time, numpy as np
+from shash import fit_shash, fit_t
+rng = np.random.default_rng(0)
+for i in range(30):
+    x = rng.standard_normal(10)*np.exp(rng.normal(0,1))
+    t0=time.time(); fit_shash(x); t1=time.time(); fit_t(x); t2=time.time()
+    if i%10==0: print(f"shash {t1-t0:.3f}s t {t2-t1:.3f}s")
+EOF
 ```
 
 ## [29] tool
@@ -1452,7 +2124,130 @@ The fits are fast; the bottleneck is `m=600` population arrays being created/sor
 **tool call: bash**
 
 ```
+cat > sim.py << 'EOF'
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from shash import fit_shash, fit_t, shash_cdf, shash_ppf
 
+def make_population(rng, kind, m):
+    mu = rng.normal(0, 1); sc = np.exp(rng.normal(0, 1.0))
+    if kind == 'normal':
+        pop = mu + sc*rng.standard_normal(m)
+    elif kind == 't':
+        nu = rng.choice([3,4,5,7,10,20])
+        pop = mu + sc*rng.standard_t(nu, m)
+    elif kind == 'shash':
+        a = np.clip(rng.normal(0, 1.2), -2.5, 2.5)
+        b = np.exp(np.clip(rng.normal(0, 0.7), -1.2, 1.2))
+        pop = mu + sc*np.sinh((np.arcsinh(rng.standard_normal(m)) - a)/b)
+    elif kind == 'gamma':
+        k = rng.choice([1.0, 2.0, 4.0, 9.0, 25.0])
+        g = rng.gamma(k, 1.0/np.sqrt(k), m)
+        pop = mu + sc*(g - np.sqrt(k))
+        if rng.random() < 0.3: pop = -pop
+    return pop
+
+def pop_quantile(pop, tau):
+    s = np.sort(pop); m = len(s)
+    k = min(max(int(np.ceil(tau*m)),1), m)
+    return s[k-1]
+
+class PopLoss:
+    """Precompute pinball-loss-related sums once; evaluate excess loss fast."""
+    def __init__(self, pop):
+        self.pop = pop; self.m = len(pop)
+        self.spop = np.sort(pop)
+        self.qs = {t: pop_quantile(pop, t) for t in (0.9,0.95,0.99)}
+        self.base = {}
+        for t, q in self.qs.items():
+            d = pop - q; self.base[t] = np.where(d>=0, t*d, (t-1)*d).mean()
+    def excess(self, qhat, tau):
+        d = self.pop - qhat
+        return np.where(d>=0, tau*d, (tau-1)*d).mean() - self.base[tau]
+
+def fit_and_quantiles(x, method, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0, shrink=1.0):
+    x = np.asarray(x, float); mu=s=nu=a=b=None
+    if method in ('shash','best'): th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    if method in ('t','best','normal'):
+        nu_t, mu_t, s_t = fit_t(x)
+        ll_t = stats.t.logpdf(x, nu_t, loc=mu_t, scale=s_t).sum()
+        mu_n, s_n = x.mean(), x.std(ddof=1)
+        ll_n = stats.norm.logpdf(x, mu_n, s_n).sum()
+    if method == 'normal': kind='normal'; mu,s = mu_n, s_n
+    elif method == 't':    kind='t'; nu,mu,s = nu_t, mu_t, s_t
+    elif method == 'shash':kind='shash'; mu,ls,a,lb = th; s=np.exp(ls); b=np.exp(lb)
+    else:
+        best = ('normal', ll_n)
+        if ll_t - 1.0 > best[1]: best = ('t', ll_t - 1.0)
+        if penll - k_pen > best[1]: best = ('shash', penll - k_pen)
+        kind = best[0]
+        if kind=='shash': mu,ls,a,lb = th; s=np.exp(ls); b=np.exp(lb)
+        elif kind=='t':  nu,mu,s = nu_t, mu_t, s_t
+        else:            mu,s = mu_n, s_n
+    def Q(tau):
+        if kind=='normal': return mu + s*stats.norm.ppf(tau)
+        if kind=='t':      return stats.t.ppf(tau, nu, loc=mu, scale=s)
+        return shash_ppf(tau, mu, s, a, b)
+    qs = {t: Q(t) for t in (0.9,0.95,0.99)}
+    if shrink != 1.0:
+        med = Q(0.5); qs = {t: med + shrink*(v-med) for t,v in qs.items()}
+    return qs, kind
+
+def one_sim(args):
+    seed, m_fixed, cfg = args
+    rng = np.random.default_rng(seed)
+    kind = rng.choice(['normal','t','shash','gamma'], p=[0.35,0.25,0.2,0.2])
+    m = m_fixed if m_fixed else int(rng.integers(250, 593))
+    pop = make_population(rng, kind, m)
+    x = rng.choice(pop, 10, replace=False)
+    PL = PopLoss(pop)
+    out = {'true_kind': kind}
+    for name, (meth, kw) in cfg.items():
+        kw = dict(kw)
+        qs, kchosen = fit_and_quantiles(x, meth, **kw)
+        tot = sum(PL.excess(qs[t], t) for t in (0.9,0.95,0.99))
+        out[name] = (tot, kchosen, PL.excess(qs[0.95],0.95), PL.excess(qs[0.99],0.99))
+    return out
+
+CFG = {
+  'normal': ('normal', dict()),
+  't': ('t', dict()),
+  'shash_l1': ('shash', dict(lam=1.0)),
+  'shash_l3': ('shash', dict(lam=3.0)),
+  'best_k2': ('best', dict(lam=1.0, k_pen=2.0)),
+  'best_k4': ('best', dict(lam=1.0, k_pen=4.0)),
+  'best_k4s9': ('best', dict(lam=1.0, k_pen=4.0, shrink=0.9)),
+  'best_k4s8': ('best', dict(lam=1.0, k_pen=4.0, shrink=0.8)),
+}
+
+def run(nsim, seed0, m_fixed=None, cfg=CFG, verb=True):
+    args = [(seed0+7919*i, m_fixed, cfg) for i in range(nsim)]
+    with Pool(4) as p:
+        out = p.map(one_sim, args, chunksize=5)
+    import collections
+    agg = collections.defaultdict(list); a95 = collections.defaultdict(list); a99 = collections.defaultdict(list)
+    byk = collections.defaultdict(lambda: collections.defaultdict(list))
+    for r in out:
+        for k in cfg:
+            tot, kc, e95, e99 = r[k]
+            agg[k].append(tot); a95[k].append(e95); a99[k].append(e99); byk[r['true_kind']][k].append(tot)
+    if verb:
+        print(f"--- nsim={nsim} m={m_fixed or '250-592'} excess pinball raw units ---")
+        for k in cfg:
+            v = np.array(agg[k]); v95 = np.array(a95[k]); v99=np.array(a99[k])
+            print(f"{k:12s} mean={v.mean():7.4f} med={np.median(v):7.4f} p90={np.quantile(v,.9):7.4f} | E95={v95.mean():.4f} E99={v99.mean():.4f}")
+        print(" by true kind (mean total):")
+        for tk in ('normal','t','shash','gamma'):
+            print(f"   {tk:7s} " + " ".join(f"{k}={np.mean(byk[tk][k]):.3f}" for k in cfg))
+    return agg
+
+if __name__ == '__main__':
+    import sys
+    nsim = int(sys.argv[1]) if len(sys.argv)>1 else 600
+    run(nsim, 1)
+EOF
+time python3 sim.py 600
 ```
 
 ## [31] tool
@@ -1462,7 +2257,19 @@ The fits are fast; the bottleneck is `m=600` population arrays being created/sor
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time, numpy as np
+from sim import make_population, PopLoss, fit_and_quantiles, one_sim
+rng = np.random.default_rng(3)
+for i in range(10):
+    t0=time.time()
+    pop = make_population(rng, 'shash', 400)
+    PL = PopLoss(pop)
+    x = rng.choice(pop, 10, replace=False)
+    r = fit_and_quantiles(x, 'best')
+    t1=time.time()
+    print("one full sim-method: %.3fs, chose %s" % (t1-t0, r[1]))
+EOF
 ```
 
 ## [33] tool
@@ -1486,7 +2293,35 @@ Each sim-method is ~0.1s; with 8 methods × 600 sims = 480s per worker — that 
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+# Patch shash.py: faster fit_t (few grid), fit_shash keep but cap iterations
+src = open('shash.py').read()
+src = src.replace("def fit_t(x, nu_grid=(3,4,5,6,8,12,20,40,1e6)):",
+                  "def fit_t(x, nu_grid=(3,5,8,15,40,1e6)):")
+src = src.replace("def fit_shash(x, lam=1.0, sa=2.0, sb=0.7, theta0=None, maxiter=400):",
+                  "def fit_shash(x, lam=1.0, sa=2.0, sb=0.7, theta0=None, maxiter=250):")
+open('shash.py','w').write(src)
+EOF
+python3 - << 'EOF'
+import time, numpy as np
+from shash import fit_shash, fit_t
+from scipy import stats
+rng = np.random.default_rng(3)
+# re-check quality of reduced fit_t vs old on random t data
+for nu in (3,5,10,1e6):
+    errs=[]
+    for i in range(50):
+        x = stats.t.rvs(min(nu,50), size=10, random_state=rng)
+        nu_, mu_, s_ = fit_t(x)
+        errs.append(stats.t.ppf(0.95, nu_, loc=mu_, scale=s_))
+    print(f"nu={nu}: ok, sample q95 {errs[0]:.2f}")
+t0=time.time()
+for i in range(200):
+    x = rng.standard_normal(10)*np.exp(rng.normal(0,1))
+    fit_t(x); fit_shash(x)
+t1=time.time()
+print("both fits per sample: %.3fs"%((t1-t0)/200))
+EOF
 ```
 
 ## [35] tool
@@ -1503,7 +2338,14 @@ both fits per sample: 0.074s
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+# Split: two runs of 6 methods x 400 sims; also check how often best=best agrees with each family separately
+from sim import run, CFG
+c1 = {k: CFG[k] for k in ['normal','t','shash_l1','shash_l3','best_k2','best_k4']}
+agg1 = run(400, 1, cfg=c1)
+import numpy as np
+np.savez('agg1.npz', **{k: np.array(v) for k,v in agg1.items()})
+EOF
 ```
 
 ## [37] tool
@@ -1529,7 +2371,45 @@ The shash-heavy sims dominate the mean and are noisy (random scales up to ~e^3 m
 **tool call: bash**
 
 ```
+cat > shrink_probe.py << 'EOF'
+"""iid normal N(0,IQR=1 via sd), n=10: optimal additive offset d_tau and
+shrinkage alpha minimizing E[rho_tau(q_hat - Q)]."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
 
+def trial(seed):
+    rng = np.random.default_rng(seed)
+    x = rng.standard_normal(10) # sd=1: quantiles Q_tau = z_tau
+    mu = x.mean(); s = x.std(ddof=1)
+    return mu, s
+
+def run(ns=60000):
+    with Pool(4) as p:
+        r = p.map(trial, range(ns), chunksize=2000)
+    mu = np.array([t[0] for t in r]); s = np.array([t[1] for t in r])
+    for tau in (0.9,0.95,0.99):
+        z = stats.norm.ppf(tau)
+        qh = mu + s*z
+        grid = np.linspace(-0.6, 0.6, 121)
+        losses = []
+        for d in grid:
+            dd = qh + d - z
+            losses.append(np.where(dd>=0, tau*dd, (tau-1)*dd).mean())
+        d_opt = grid[int(np.argmin(losses))]
+        # shrink
+        al = np.linspace(0.5, 1.3, 81)
+        l2 = []
+        for a in al:
+            dd = mu + a*s*z - z
+            l2.append(np.where(dd>=0, tau*dd, (tau-1)*dd).mean())
+        a_opt = al[int(np.argmin(l2))]
+        print(f"tau={tau}: optimal offset d={d_opt:.3f}, optimal alpha={a_opt:.3f}, "
+              f"loss@0={np.where(qh-z>=0, tau*(qh-z),(tau-1)*(qh-z)).mean():.4f}, "
+              f"loss@d_opt={min(losses):.4f}, loss@a_opt={min(l2):.4f}")
+run()
+EOF
+time python3 shrink_probe.py
 ```
 
 ## [39] tool
@@ -1551,7 +2431,165 @@ Interesting direction. The plug-in estimator is far from loss-optimal for n=10 �
 **tool call: bash**
 
 ```
+cat > sim2.py << 'EOF'
+"""Efficient calibration: fit models once per sample, evaluate many estimators
+(predictive averages of blending/shrink/offset) on standardized excess loss."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from shash import fit_shash, fit_t, shash_cdf, shash_ppf
 
+def make_population(rng, kind, m):
+    mu = rng.normal(0, 1); sc = np.exp(rng.normal(0, 1.0))
+    if kind == 'normal':
+        pop = mu + sc*rng.standard_normal(m)
+    elif kind == 't':
+        nu = rng.choice([3,4,5,7,10,20])
+        pop = mu + sc*rng.standard_t(nu, m)
+    elif kind == 'shash':
+        a = np.clip(rng.normal(0, 1.2), -2.5, 2.5)
+        b = np.exp(np.clip(rng.normal(0, 0.7), -1.2, 1.2))
+        pop = mu + sc*np.sinh((np.arcsinh(rng.standard_normal(m)) - a)/b)
+    elif kind == 'gamma':
+        k = rng.choice([1.0, 2.0, 4.0, 9.0, 25.0])
+        g = rng.gamma(k, 1.0/np.sqrt(k), m)
+        pop = mu + sc*(g - np.sqrt(k))
+        if rng.random() < 0.3: pop = -pop
+    return pop
+
+def pop_quantile(pop, tau):
+    s = np.sort(pop); m = len(s)
+    k = min(max(int(np.ceil(tau*m)),1), m)
+    return s[k-1]
+
+class PopLoss:
+    def __init__(self, pop):
+        self.pop = np.sort(pop); self.m = len(pop)
+        self.base = {}
+        self.true = {}
+        for t in (0.9,0.95,0.99):
+            q = pop_quantile(pop, t); self.true[t] = q
+            d = self.pop - q; self.base[t] = np.where(d>=0, t*d, (t-1)*d).mean()
+    def excess(self, qhat, tau):
+        d = self.pop - qhat
+        return np.where(d>=0, tau*d, (tau-1)*d).mean() - self.base[tau]
+
+class SampleFits:
+    """All fitted families for a sample, with CDF calls."""
+    def __init__(self, x, lam=1.0, sa=2.0, sb=0.7):
+        self.x = np.sort(np.asarray(x,float)); self.n=len(self.x)
+        th, penll = fit_shash(self.x, lam=lam, sa=sa, sb=sb)
+        nu_t, mu_t, s_t = fit_t(self.x)
+        self.ll_t = stats.t.logpdf(self.x, nu_t, loc=mu_t, scale=s_t).sum()
+        mu_n, s_n = self.x.mean(), self.x.std(ddof=1)
+        self.ll_n = stats.norm.logpdf(self.x, mu_n, s_n).sum()
+        self.penll_shash = penll
+        self.shash = th; self.tpar = (nu_t, mu_t, s_t); self.npar = (mu_n, s_n)
+    def cdf(self, kind, q):
+        q = np.asarray(q, float)
+        if kind=='normal': mu,s = self.npar; return stats.norm.cdf(q, mu, s)
+        if kind=='t':
+            nu,mu,s = self.tpar; return stats.t.cdf(q, nu, loc=mu, scale=s)
+        mu,ls,a,lb = self.shash; return shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+    def Q(self, kind, tau):
+        if kind=='normal': mu,s = self.npar; return mu + s*stats.norm.ppf(tau)
+        if kind=='t':
+            nu,mu,s = self.tpar; return stats.t.ppf(tau, nu, loc=mu, scale=s)
+        mu,ls,a,lb = self.shash; return shash_ppf(tau, mu, np.exp(ls), a, np.exp(lb))
+
+def choose_kind(f, k_pen):
+    best = ('normal', f.ll_n)
+    if f.ll_t - 1.0 > best[1]: best = ('t', f.ll_t - 1.0)
+    if f.penll_shash - k_pen > best[1]: best = ('shash', f.penll_shash - k_pen)
+    return best[0]
+
+def blend_quantile(tau, w, xs, Fcdf, qlo, qhi):
+    """Solve w*mean(xs<=q) + (1-w)*F(q) = tau by bisection."""
+    xs = np.sort(xs)
+    lo, hi = qlo, qhi
+    def g(q): return w*np.searchsorted(xs,q,'right')/len(xs) + (1-w)*float(Fcdf(q))
+    for _ in range(80):
+        # expand
+        if g(lo) > tau: lo, hi = lo-(hi-lo)*2, lo
+        elif g(hi) < tau: lo, hi = hi, hi+(hi-lo)*2
+        else: break
+    for _ in range(70):
+        mid = 0.5*(lo+hi)
+        if g(mid) < tau: lo = mid
+        else: hi = mid
+    return 0.5*(lo+hi)
+
+TAUS = (0.9, 0.95, 0.99)
+def all_estimates(f, m, k_pen=4.0):
+    """Return dict name -> {tau: q}."""
+    n = f.n; w = n/float(m)
+    kind = choose_kind(f, k_pen)
+    out = {}
+    base = {t: f.Q(kind, t) for t in TAUS}
+    medc = f.Q(kind, 0.5); muc = base[0.95]  # placeholders
+    out['plugin'] = base
+    sprd = max(f.x.std(), 1e-9)
+    qlo, qhi = f.x.min()-10*sprd, f.x.max()+10*sprd
+    for lam_ in [0.0, 0.6, 1.0]:
+        out[f'blend{lam_}'] = {t: (1-lam_*w)*base[t] + lam_*w*ys
+            for t, ys in ((t, blend_quantile(t, w, f.x, lambda q: f.cdf(kind,q), qlo, qhi)) for t in TAUS)}
+    for alpha in (0.7, 0.85, 1.0, 1.15):
+        out[f'shr_med_{alpha}'] = {t: medc + alpha*(base[t]-medc) for t in TAUS}
+        out[f'shr_mu_{alpha}'] = {t: base[0.95]*0 + (f.Q(kind,0.5) if False else 0) for t in TAUS}  # placeholder replaced below
+    # shrink toward x-bar
+    xbar = f.x.mean()
+    for alpha in (0.7, 0.85, 1.15):
+        out[f'shr_xbar_{alpha}'] = {t: xbar + alpha*(base[t]-xbar) for t in TAUS}
+    out['combo_b1_a085'] = {t: (1-w)*base[t]*0 + ((1-w)*base[t] + w*blend_quantile(t, w, f.x, lambda q: f.cdf(kind,q), qlo, qhi)) for t in TAUS}
+    return out, kind
+
+def one_sim(args):
+    seed, m_fixed, k_pen = args
+    rng = np.random.default_rng(seed)
+    kind = rng.choice(['normal','t','shash','gamma'], p=[0.35,0.25,0.2,0.2])
+    m = m_fixed if m_fixed else int(rng.integers(250, 593))
+    pop = make_population(rng, kind, m)
+    x = rng.choice(pop, 10, replace=False)
+    PL = PopLoss(pop)
+    f = SampleFits(x)
+    ests, kchosen = all_estimates(f, m, k_pen)
+    out = {'true_kind': kind, 'kchosen': kchosen}
+    for name, qs in ests.items():
+        out[name] = {t: PL.excess(qs[t], t) for t in TAUS}
+    return out
+
+def summarize(outlist, names):
+    print(f"nsim={len(outlist)}; standardized/avg over 3 taus of excess pinball (raw units, scale exp(N(0,1)))")
+    print(f"{'est':16s} {'tot_mean':>9s} {'tot_med':>8s} | {'E90':>7s} {'E95':>7s} {'E99':>7s}")
+    for nm in names:
+        t90 = np.array([r[nm][0.9] for r in outlist]); t95 = np.array([r[nm][0.95] for r in outlist]); t99 = np.array([r[nm][0.99] for r in outlist])
+        tot = t90+t95+t99
+        print(f"{nm:16s} {tot.mean():9.4f} {np.median(tot):8.4f} | {t90.mean():7.4f} {t95.mean():7.4f} {t99.mean():7.4f}")
+    import collections
+    cc = collections.Counter(r['kchosen'] for r in outlist)
+    print("chosen kinds:", dict(cc))
+    for tk in ('normal','t','shash','gamma'):
+        sub = [r for r in outlist if r['true_kind']==tk]
+        msg = f"  true={tk:7s} n={len(sub)} " 
+        for nm in ['plugin','blend1.0','shr_med_0.85']:
+            tot = np.array([sum(r[nm][t] for t in TAUS) for r in sub])
+            msg += f"{nm}={tot.mean():.3f}  "
+        print(msg)
+
+def run(nsim, seed0, m_fixed=None, k_pen=4.0):
+    names = None
+    args = [(seed0+7919*i, m_fixed, k_pen) for i in range(nsim)]
+    with Pool(4) as p:
+        out = p.map(one_sim, args, chunksize=5)
+    names = [k for k in out[0] if k not in ('true_kind','kchosen')]
+    summarize(out, names)
+    return out
+
+if __name__ == '__main__':
+    import sys
+    run(int(sys.argv[1]) if len(sys.argv)>1 else 300, 1)
+EOF
+time python3 sim2.py 300
 ```
 
 ## [41] tool
@@ -1593,7 +2631,198 @@ The single-fit shrink test is fatally confounded (shrinkage changes the center l
 **tool call: bash**
 
 ```
+cat > boot_predictive.py << 'EOF'
+"""Bootstrap-predictive point estimator + CI. Model selection between
+{normal-fit-based, t-fit-based, shash-fit-based} predictive distributions BY SIM:
+pre-generate bootstrap idces ONCE, evaluate all candidates on same grids, pick by
+standard predictive pinball loss. Fast due to vectorization."""
+import numpy as np
+from scipy import stats
+from shash import fit_shash, fit_t, shash_cdf, shash_ppf
+from scipy.stats import norm
 
+TAUS = (0.9, 0.95, 0.99)
+
+def _fit_normal(x):
+    return (float(x.mean()), float(x.std(ddof=1))) if len(x)>1 else (float(x[0]), 1e-9)
+
+def cdf_of(kind, par, q):
+    q = np.asarray(q, float)
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return stats.t.cdf(q, nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(p)
+    if kind=='t':
+        nu,mu,s = par; return stats.t.ppf(p, nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+class Pred:
+    def __init__(self, x, m, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0):
+        self.x = np.sort(np.asarray(x, float)); self.n=len(self.x); self.m=m
+        self.w = self.n/float(m)
+        self.lam, self.sa, self.sb, self.k_pen = lam, sa, sb, k_pen
+        self.sf = self._fit_all(self.x)
+        self.chosen = None
+        self.Ghat = {}      # per-tau blended CDF value at own point
+    def _fit_all(self, x):
+        th, penll = fit_shash(x, lam=self.lam, sa=self.sa, sb=self.sb)
+        nu,mu,s = fit_t(x)
+        ll_t = stats.t.logpdf(x, nu, loc=mu, scale=s).sum()
+        mu_n, s_n = x.mean(), (x.std(ddof=1) if len(x)>1 else 1e-9)
+        ll_n = norm.logpdf(x, mu_n, s_n).sum()
+        return dict(normal=(('normal',(mu_n,s_n)), ll_n, ll_n),
+                    t=(('t',(nu,mu,s)), ll_t, ll_t),
+                    shash=(('shash',tuple(th)), penll, shash_loglik_from(th, x)))
+    def candidate_score(self, fam):
+        """Return predictive pinball score for family fam using shared boot idces."""
+        pass
+
+def shash_loglik_from(theta, x):
+    from shash import shash_loglik
+    return shash_loglik(np.asarray(theta, float), x)
+EOF
+echo "design placeholder written; now build the dense-grid engine in the real module"
+# Actually implement fully:
+cat > pred.py << 'EOF'
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from shash import fit_shash, fit_t, shash_cdf, shash_ppf, shash_loglik
+
+TAUS = (0.9, 0.95, 0.99)
+
+def cdf_of(kind, par, q):
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return stats.t.cdf(np.asarray(q,float), nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_cdf(np.asarray(q,float), mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(p)
+    if kind=='t':
+        nu,mu,s = par; return stats.t.ppf(p, nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+def fits_for(x, lam=1.0, sa=2.0, sb=0.7):
+    """Return dict fam -> (par, crit) where crit is the model-selection criterion
+    (higher is better; includes penalties)."""
+    x = np.asarray(x, float)
+    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    nu,mu,s = fit_t(x)
+    ll_t = stats.t.logpdf(x, nu, loc=mu, scale=s).sum()
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1))
+    ll_n = float(norm.logpdf(x, mu_n, s_n).sum())
+    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n),
+      't':    (('t',(nu,float(mu),float(s))), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), penll - 4.0),
+    }
+
+def choose(fits):
+    return max(fits.items(), key=lambda kv: kv[1][1])[0]
+
+class Predictor:
+    def __init__(self, x, m, lam=1.0, sa=2.0, sb=0.7, B=200, seed=0):
+        self.x = np.sort(np.asarray(x,float)); self.n=len(self.x); self.m=m
+        self.w = self.n/float(m)
+        self.lam, self.sa, self.sb = lam, sa, sb
+        self.B = B
+        self.rng = np.random.default_rng(seed)
+        self.f_hat = fits_for(self.x, lam, sa, sb)
+        self.choice = choose(self.f_hat)
+        # per-family structures
+        self.fams = {}
+        for fam,(par,crit) in self.f_hat.items():
+            kind, p = par
+            self.fams[fam] = dict(par=par, crit=crit, boot_pars=None, boot_ll_w=None)
+
+    def simulate_selection(self, fams=('normal','t','shash')):
+        """Shared U bootstrap; compute each family's mean pinball score."""
+        n, B = self.n, self.B
+        U = self.rng.random((B, n))
+        U.sort(axis=1)
+        pstar = U.mean(axis=0)
+        fs = 1.0 - self.w
+        out = {}
+        for fam in fams:
+            kind, par = self.fits_for_par(fam)
+            boot = [fits_for(ppf_of(kind, par, U[i]), self.lam, self.sa, self.sb)[fam][0] for i in range(B)]
+            # anchor quantiles per tau
+            scores = [0.0]*3
+            for ti, tau in enumerate(TAUS):
+                anchors = np.array([ppf_of(bk, bp, tau) for bk,bp in boot])
+                sc = 0.0
+                for i in range(B):
+                    Fv = cdf_of(boot[i][0], boot[i][1], anchors)
+                    Gv = pstar + fs*(Fv - U[i])
+                    r = Gv - tau
+                    sc += np.where(r>=0, tau*r, (tau-1)*r).sum()
+                scores[ti] = sc/ (B*B)
+            out[fam] = sum(scores)
+            self.fams[fam]['boot'] = boot
+        return out
+
+    def fits_for_par(self, fam):
+        return self.fams[fam]['par']
+
+    def finalize(self, fam):
+        """Compute point estimates & CI for chosen family using stored boot."""
+        n, m = self.n, self.m; w = self.w
+        kind, par = self.fams[fam]['par']
+        boot = self.fams[fam]['boot']
+        B = len(boot)
+        ones = np.ones(B+1)
+        pts = {}
+        q95b = []
+        for tau in TAUS:
+            anchors = np.array([ppf_of(bk,bp,tau) for bk,bp in boot] + [ppf_of(kind,par,tau)])
+            def G(q, _a=anchors):
+                Fv = np.array([cdf_of(bk,bp,q) for bk,bp in boot] + [cdf_of(kind,par,q)])
+                phat = np.searchsorted(self.x, q)/n
+                Fbar = Fv.mean()
+                return w*phat + (1-w)*Fbar
+            # scan around anchors
+            lo = min(anchors.min(), self.x.min()) - 4*self.x.std()
+            hi = max(anchors.max(), self.x.max()) + 4*self.x.std()
+            g = np.linspace(lo, hi, 4000)
+            #vectorized G on grid
+            call = np.stack([cdf_of(bk,bp,g) for bk,bp in boot] + [cdf_of(kind,par,g)])
+            Fbar_g = call.mean(axis=0)
+            phat_g = np.searchsorted(self.x, g)/n
+            G_g = w*phat_g + (1-w)*Fbar_g
+            j = int(np.searchsorted(G_g, tau))
+            j = min(max(j,1), len(g)-1)
+            # linear interp
+            q = g[j-1] + (g[j]-g[j-1])*(tau-G_g[j-1])/max(G_g[j]-G_g[j-1],1e-12)
+            pts[tau] = float(q)
+        q95b = np.array([ppf_of(bk,bp,0.95) for bk,bp in boot])
+        lo, hi = np.percentile(q95b, [2.5, 97.5])
+        return pts, (float(lo), float(hi)), np.median(q95b)
+
+def run_block(x, m, B=200, seed=0, lam=1.0):
+    P = Predictor(x, m, lam=lam, B=B, seed=seed)
+    sc = P.simulate_selection()
+    # constrained choice among shash/t
+    fam = 'shash' if sc['shash'] <= sc['t'] else 't'
+    pts, ci, medq = P.finalize(fam)
+    return pts, ci, sc, fam, medq
+
+if __name__ == '__main__':
+    import time, sys
+    x = np.array([8.897,10.82,10.97,12.94,14.03,10.8,83.58,32.3,11.57,5.826])
+    t0=time.time()
+    pts, ci, sc, fam, medq = run_block(x, 276, B=80, seed=1)
+    print("fam:",fam,"scores:",{k:round(v,4) for k,v in sc.items()})
+    print("pts:",{t:round(v,3) for t,v in pts.items()}," ci:",[round(c,3) for c in ci], " med:",round(medq,3),"  %.1fs"%(time.time()-t0))
+EOF
+time python3 pred.py
 ```
 
 ## [43] tool
@@ -1624,7 +2853,93 @@ I made a broadcasting error — need the order-statistic quantile correspondence
 **tool call: bash**
 
 ```
+cat > pred.py << 'EOF'
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from shash import fit_shash, fit_t, shash_cdf, shash_ppf, shash_loglik
 
+TAUS = (0.9, 0.95, 0.99)
+
+def cdf_of(kind, par, q):
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return stats.t.cdf(np.asarray(q,float), nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_cdf(np.asarray(q,float), mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(np.asarray(p,float))
+    if kind=='t':
+        nu,mu,s = par; return stats.t.ppf(p, nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+def fits_for(x, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0):
+    x = np.asarray(x, float)
+    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    nu,mu,s = fit_t(x)
+    ll_t = float(stats.t.logpdf(x, nu, loc=mu, scale=s).sum())
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1))
+    ll_n = float(norm.logpdf(x, mu_n, s_n).sum())
+    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n),
+      't':    (('t',(float(nu),float(mu),float(s))), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), penll - k_pen),
+    }
+
+def choose(fits):
+    return max(fits.items(), key=lambda kv: kv[1][1])[0]
+
+def _quant_of_sorted(sortedv, p):
+    """np.quantile linear interpolation on sorted array."""
+    p = np.asarray(p, float)
+    n = len(sortedv)
+    h = p*(n-1)
+    lo = np.floor(h).astype(int); hi = np.ceil(h).astype(int)
+    frac = h - lo
+    return sortedv[lo] + frac*(sortedv[hi]-sortedv[lo])
+
+class Predictor:
+    def __init__(self, x, m, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0, B=120, seed=0):
+        self.x = np.sort(np.asarray(x,float)); self.n=len(self.x); self.m=m
+        self.w = self.n/float(m)
+        self.lam, self.sa, self.sb, self.k_pen = lam, sa, sb, k_pen
+        self.B = B
+        self.rng = np.random.default_rng(seed)
+        self.f_hat = fits_for(self.x, lam, sa, sb, k_pen)
+        self.choice = choose(self.f_hat)
+        self.fams = {fam: dict(par=par, crit=crit) for fam,(par,crit) in self.f_hat.items()}
+
+    def selection_by_sim(self, fams=('normal','t','shash')):
+        n, B = self.n, self.B; fs = 1.0 - self.w
+        U = self.rng.random((B, n)); U.sort(axis=1)
+        scores = {}
+        for fam in fams:
+            kind, par = self.fams[fam]['par']
+            Y = np.sort(ppf_of(kind, par, U), axis=1)          # (B,n)
+            boot = [fits_for(Y[i], self.lam, self.sa, self.sb, self.k_pen)[fam][0] for i in range(B)]
+            anchors = np.array([ppf_of(bk,bp,TAUS) for bk,bp in boot])  # (B,3)
+            Fv = np.stack([cdf_of(bk,bp,anchors.ravel()).reshape(B,3) for bk,bp in boot])  # (B,B,3)
+            # empirical: for anchor group i (Ys from i-th resample), Fs(anchor_j) = op_j ordering...
+            # Fs for group i is Y[i]; anchor j quantile wrt that ecdf:
+            op = np.array([np.searchsorted(Y[0], anchors[i], side='right')/n for i in range(B)])  # placeholder init
+            # do all pairs: (B,B,3) via loop over i groups is fine (B=120 -> 120 searchsorted on (B,3))
+            Ecmp = np.stack([np.searchsorted(Y[i], anchors, side='right')/n for i in range(B)])  # wait shape
+            # anchors: (B,3); searchsorted(Y[i], anchors) -> (B,3). Stack over i -> (B,B,3)
+            pstar = U.mean(axis=0)
+            # per (j,tau): expected over i of pinball of E[Gj|i] - tau
+            Gp = Ecmp + fs*(Fv - U[i].mean()*0)  # placeholder fix below
+            out = 0.0
+            for j in range(B):
+                Gj = Ecmp[:,j,:] + fs*(Fv[:,j,:] - pstar[None,:]*0)
+                # Ecmp[:,j,:] wrong: empirical of group i at anchor j. pstar per-k says Fs_k(anchor)=pstar_k.
+                # Correct: Fs_? -- empirical term should be Fs_j? No: Fs for the FUTURE sample whose quantile we estimate = same bootstrap index j.
+                pass
+            scores[fam] = None
+        return scores
+EOF
+echo "placeholder - rewriting with careful index logic"
 ```
 
 ## [45] tool
@@ -1639,7 +2954,144 @@ Let me carefully simplify. I'll do a clean S×B bootstrap comparison of candidat
 **tool call: bash**
 
 ```
+cat > calib.py << 'EOF'
+"""S x B calibration: procedures compared on expected pinball loss against the
+generating distribution's quantiles (finite-pop blended within the expectation)."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from multiprocessing import Pool
+from shash import fit_shash, fit_t, shash_cdf, shash_ppf, shash_loglik
 
+TAUS = (0.9, 0.95, 0.99)
+
+def cdf_of(kind, par, q):
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return stats.t.cdf(np.asarray(q,float), nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_cdf(np.asarray(q,float), mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(np.asarray(p,float))
+    if kind=='t':
+        nu,mu,s = par; return stats.t.ppf(p, nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+def fits_for(x, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0):
+    x = np.asarray(x, float)
+    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    nu,mu,s = fit_t(x)
+    ll_t = float(stats.t.logpdf(x, nu, loc=mu, scale=s).sum())
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1))
+    ll_n = float(norm.logpdf(x, mu_n, s_n).sum())
+    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n),
+      't':    (('t',(float(nu),float(mu),float(s))), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), penll - k_pen),
+    }
+def choose(fits):
+    return max(fits.items(), key=lambda kv: kv[1][1])[0]
+
+def gen_theta(rng):
+    r = rng.random()
+    if r < 0.4:
+        return 'shash', (float(rng.normal(0,1)), float(rng.normal(0,1.0)),
+                float(np.clip(rng.normal(0,1.2),-2.5,2.5)),
+                float(np.clip(rng.normal(0,0.7),-1.4,1.4)))
+    elif r < 0.75:
+        nu = float(rng.choice([3.,4.,5.,7.,10.,20.,40.]))
+        return 't', (nu, float(rng.normal(0,1)), float(np.exp(rng.normal(0,1.0))))
+    return 'normal', (float(rng.normal(0,1)), float(np.exp(rng.normal(0,1.0))))
+
+def pinball(a, tau):
+    return np.where(a>=0, tau*a, (tau-1)*a)
+
+def plugin_q(x, tau):
+    ch = choose(fits_for(x))
+    kind, par = fits_for(x)[ch][0]
+    return ppf_of(kind, par, tau), kind
+
+def qtrue(theta, tau):
+    kind, par = theta
+    return ppf_of(kind, par, tau)
+
+def one_case(args):
+    seed, n, B, lam = args
+    rng = np.random.default_rng(seed)
+    # generative theta same as data model
+    theta = gen_theta(rng); kind, par = theta
+    # observed sample
+    x = np.sort(rng.standard_normal(n)) # placeholder replaced below
+    z = rng.random(n)
+    x = np.sort(ppf_of(kind, par, z))
+    w = n/ float(rng.integers(250,593)); fs = 1-w
+    # bootstrap from plugin-chosen family
+    ch = choose(fits_for(x, lam=lam))
+    bk, bp = fits_for(x, lam=lam)[ch][0]
+    U = rng.random((B, n)); U.sort(axis=1)
+    yseed = rng.integers(0, 2**31)
+    # B sets of future samples, all from TRUE theta
+    Vr = np.random.default_rng(yseed)
+    V = Vr.random((B, n)); V.sort(axis=1)
+    Ytrue = np.sort(ppf_of(kind, par, V), axis=1)   # (B, n) future empirical dist
+    # candidate 1: plugin
+    qplug, _ = plugin_q(x, TAUS)
+    qplug = np.array(qplug)
+    # candidate 2: boot-predictive on chosen family
+    Fhat_anchor = np.stack([cdf_of(bk,bp, _a) for _a in qplug])  # (3,) each scalar... need arrays
+    # quantile grid for blend inversions
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-12*sprd, x.max()+12*sprd, 2500)
+    # ecdf of x on g
+    phat = np.searchsorted(x, g)/n
+    # bootstrap fit cdf matrix
+    fbb = []
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        fi = fits_for(xi, lam=lam)
+        ckind, cpar = fi[choose(fi)][0]
+        fbb.append(cdf_of(ckind, cpar, g))
+    fbb = np.array(fbb)          # (B, len(g))
+    Fbar = np.vstack([cdf_of(bk,bp,g), fbb]).mean(axis=0)
+    G = w*phat + fs*Fbar
+    qpred = np.array([g[int(np.searchsorted(G, t))] for t in TAUS])
+    # evaluate: loss against true quantile + average future-sample pinball
+    out = []
+    for nm, qv in (('plugin', qplug), ('predict', qpred)):
+        L_sim = 0.0
+        for ti, tau in enumerate(TAUS):
+            # future empirical pinball
+            diff = Ytrue - qv[ti]
+            L_sim += pinball(diff, tau).mean()
+        L_true = sum(pinball(qtrue(theta,t) - qv[ti], t) for ti,t in enumerate(TAUS))
+        out.append((nm, L_sim, L_true))
+    return kind if False else dict(theta_kind=kind, chosen=ch, res=out)
+
+def run(S=40, B=100, n=10, lam=1.0):
+    args = [(1000+s, n, B, lam) for s in range(S)]
+    with Pool(4) as p:
+        out = p.map(one_case, args)
+    import collections
+    agg_sim = collections.defaultdict(list); agg_true = collections.defaultdict(list)
+    for r in out:
+        for nm, Ls, Lt in r['res']:
+            agg_sim[nm].append(Ls); agg_true[nm].append(Lt)
+    for nm in agg_sim:
+        print(f"{nm:9s} sim-future-loss mean={np.mean(agg_sim[nm]):.4f} (med {np.median(agg_sim[nm]):.4f}) | true-parameter-loss mean={np.mean(agg_true[nm]):.4f} (med {np.median(agg_true[nm]):.4f})")
+    # paired differences
+    dsim = np.array(agg_sim['plugin']) - np.array(agg_sim['predict'])
+    print("sim-future paired (plugin - predict): mean %.4f  se %.4f" % (dsim.mean(), dsim.std()/np.sqrt(len(dsim))))
+    dt = np.array(agg_true['plugin']) - np.array(agg_true['predict'])
+    print("true-par paired (plugin - predict): mean %.4f  se %.4f" % (dt.mean(), dt.std()/np.sqrt(len(dt))))
+    return agg_sim, agg_true
+
+if __name__ == '__main__':
+    import sys
+    run(S=int(sys.argv[1]) if len(sys.argv)>1 else 30)
+EOF
+time python3 calib.py 30
 ```
 
 ## [47] tool
@@ -1662,7 +3114,125 @@ The unbounded scale range destroyed the signal. Fix: generate only standardized-
 **tool call: bash**
 
 ```
+cat > calib2.py << 'EOF'
+"""Standardized theta (mu=0, sigma=1), fixed m=350. S outer x B inner."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from multiprocessing import Pool
+from shash import fit_shash, fit_t, shash_cdf, shash_ppf, shash_loglik
 
+TAUS = (0.9, 0.95, 0.99)
+
+def cdf_of(kind, par, q):
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return stats.t.cdf(np.asarray(q,float), nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_cdf(np.asarray(q,float), mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(np.asarray(p,float))
+    if kind=='t':
+        nu,mu,s = par; return stats.t.ppf(p, nu, loc=mu, scale=s)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+def fits_for(x, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0):
+    x = np.asarray(x, float)
+    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    nu,mu,s = fit_t(x)
+    ll_t = float(stats.t.logpdf(x, nu, loc=mu, scale=s).sum())
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1))
+    ll_n = float(norm.logpdf(x, mu_n, s_n).sum())
+    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n),
+      't':    (('t',(float(nu),float(mu),float(s))), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), penll - k_pen),
+    }
+def choose(fits):
+    return max(fits.items(), key=lambda kv: kv[1][1])[0]
+
+def gen_theta(rng):
+    r = rng.random()
+    if r < 0.3:
+        return 'shash', (0.0, 0.0,
+                float(np.clip(rng.normal(0,1.2),-2.5,2.5)),
+                float(np.clip(rng.normal(0,0.7),-1.4,1.4)))
+    elif r < 0.7:
+        nu = float(rng.choice([3.,4.,5.,7.,10.,20.,40.]))
+        return 't', (nu, 0.0, 1.0)
+    return 'normal', (0.0, 1.0)
+
+def pinball(a, tau):
+    return np.where(a>=0, tau*a, (tau-1)*a)
+
+def q_elft(blendw, x, cdfs_stack, g):
+    """blendw=w: solve w*ecdf(x)+(1-w)*mean(cdfs)=tau on grid g."""
+    n = len(x)
+    phat = np.searchsorted(x, g)/n
+    Fbar = cdfs_stack.mean(axis=0)
+    G = blendw*phat + (1-blendw)*Fbar
+    return np.array([g[int(np.searchsorted(G,t))] for t in TAUS])
+
+def one_case(args):
+    seed, n, B, lam, m = args
+    rng = np.random.default_rng(seed)
+    theta = gen_theta(rng); kind, par = theta
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    w = n/float(m); fs = 1-w
+    f0 = fits_for(x, lam=lam); ch = choose(f0); bk, bp = f0[ch][0]
+    U = rng.random((B, n)); U.sort(axis=1)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-12*sprd, x.max()+12*sprd, 2500)
+    fbb = np.empty((B, len(g)))
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        fi = fits_for(xi, lam=lam); ck, cp = fi[choose(fi)][0]
+        fbb[i] = cdf_of(ck, cp, g)
+    stack = np.vstack([cdf_of(bk,bp,g)[None,:], fbb])
+    # candidates: blend weights w, 0.5w, 0 (predictive with theta), also pure plugin
+    q_w   = q_elft(w, x, stack, g)
+    q_hw  = q_elft(0.5*w, x, stack, g)
+    q_0   = q_elft(0.0, x, stack, g)
+    q_plug= np.array([ppf_of(bk,bp,t) for t in TAUS])
+    # evaluation: future samples from true theta
+    V = np.random.default_rng(rng.integers(2**31)).random((B2, n))
+    def L_of(qv):
+        Vl = np.sort(ppf_of(kind, par, V), axis=1)
+        tot = 0.0
+        for ti,t in enumerate(TAUS):
+            tot += pinball(Vl - qv[ti], t).mean()
+        return tot
+    out = {}
+    for nm, qv in (('blend_w',q_w),('blend_half',q_hw),('pred',q_0),('plugin',q_plug)):
+        out[nm] = L_of(qv)
+    out['chosen'] = ch; out['true'] = kind
+    return out
+
+B2 = 24   # future samples per case
+def run(S=60, B=80, n=10, m=350, lam=1.0):
+    args = [(3000+s, n, B, lam, m) for s in range(S)]
+    with Pool(4) as p:
+        out = p.map(one_case, args, chunksize=2)
+    import collections
+    agg = collections.defaultdict(list)
+    for r in out:
+        for k in ('blend_w','blend_half','pred','plugin'):
+            agg[k].append(r[k])
+    names = list(agg)
+    base = np.array(agg['blend_w'])
+    print(f"S={S}, standardized theta, m={m}")
+    for nm in names:
+        v = np.array(agg[nm]); d = v - base
+        print(f"{nm:10s} mean={v.mean():.4f} med={np.median(v):.4f} | paired vs blend_w: mean={d.mean():+.4f} se={d.std()/len(d)**.5:.4f}")
+    return agg
+
+if __name__ == '__main__':
+    import sys
+    run(S=int(sys.argv[1]) if len(sys.argv)>1 else 60)
+EOF
+time python3 calib2.py 60
 ```
 
 ## [49] tool
@@ -1674,7 +3244,26 @@ Let me time single pieces to find the bottleneck before rewriting:
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time, numpy as np
+from calib2 import *
+rng = np.random.default_rng(0)
+t0=time.time()
+for _ in range(50):
+    theta = gen_theta(rng); kind,par = theta
+    x = np.sort(ppf_of(kind, par, rng.random(10)))
+    f = fits_for(x); choose(f)
+t1=time.time()
+print("10 fits+choose: %.4fs each"%((t1-t0)/50))
+# how big is B inner loop: B fits of 10
+U = rng.random((100,10)); U.sort(axis=1)
+t0=time.time()
+for i in range(100):
+    xi = np.sort(ppf_of(kind, par, U[i]))
+    fi = fits_for(xi); ck,cp = fi[choose(fi)][0]
+t1=time.time()
+print("100 inner fits: %.4fs each, x100 = %.1fs"%((t1-t0)/100, t1-t0))
+EOF
 ```
 
 ## [51] tool
@@ -1690,7 +3279,200 @@ The full triple-fit is the bottleneck. Key decision: restrict bootstrap fits to 
 **tool call: bash**
 
 ```
+cat > calib3.py << 'EOF'
+"""Fast calibration: candidates compared in S outer loops; bootstrap inner fits are
+t-vs-shash only. Vectorized t via fine ppf/cdf tables; shash already vectorized."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from scipy.interpolate import interp1d
+from multiprocessing import Pool
+from shash import fit_shash, shash_cdf, shash_ppf
 
+TAUS = (0.9, 0.95, 0.99)
+NUS = np.array([3,5,8,15,40])           # for bootstrap t fits
+NUS_EXT = np.array([3,5,8,15,40,1e9])   # generative includes normal
+
+# --- t ppf/cdf via fine grids ---
+_z = np.linspace(-40, 40, 160001)
+_cdf_tab = {}
+_ppf_tab = {}
+for nu in np.append(NUS, 1e9):
+    if nu > 1e8:
+        c = norm.cdf(_z); p = _z.copy()
+    else:
+        c = stats.t.cdf(_z, nu); p = stats.t.ppf(c, nu)
+    _cdf_tab[nu] = (c)
+    _ppf_tab[nu] = interp1d(c, _z, assume_sorted=True, fill_value=(-40,40), bounds_error=False)
+def t_ppf(p, nu):
+    nu = 1e9 if nu>1e8 else nu
+    return np.asarray(_ppf_tab[nu](p))
+def t_cdf(x, nu):
+    nu = 1e9 if nu>1e8 else nu
+    c = _cdf_tab[nu]
+    return np.interp(np.asarray(x), _z, c)
+
+def fit_t_fast(x):
+    x = np.asarray(x, float)
+    n = len(x)
+    ll = np.empty(len(NUS)); mus = np.empty(len(NUS)); sigs = np.empty(len(NUS))
+    q25, med, q75 = np.percentile(x, [25,50,75])
+    iqr = max(q75-q25, 1e-12)
+    for i,nu in enumerate(NUS):
+        z25, z75 = t_ppf([0.25,0.75], nu)
+        zs = (z75+z25)/2
+        s0 = iqr/float(z75-z25); mu0 = med if np.isfinite(med) else x.mean()
+        # few Newton steps on profile scale
+        mu = mu0; s = s0
+        for _ in range(8):
+            z = (x-mu)/s
+            w_ = (nu+1)/(nu+z*z)
+            mu_new = np.sum(w_*x)/np.sum(w_)
+            z = (x-mu_new)/s
+            s_new = np.sqrt(max(np.sum(w_*z*z)*s*s/n, 1e-18))
+            if abs(mu_new-mu) < 1e-8 and abs(s_new-s) < 1e-8:
+                mu, s = mu_new, s_new; break
+            mu, s = mu_new, s_new
+        z = (x-mu)/s
+        ll[i] = (-0.5*(nu+1)*np.log1p(z*z/nu)).sum() - n*np.log(s)
+        mus[i], sigs[i] = mu, s
+    i = int(np.argmax(ll))
+    return float(NUS[i]), float(mus[i]), float(sigs[i]), float(ll[i])
+
+def cdf_of(kind, par, q):
+    q = np.asarray(q, float)
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return t_cdf((q-mu)/s, nu)
+    mu,ls,a,lb = par; return shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(np.asarray(p,float))
+    if kind=='t':
+        nu,mu,s = par; return mu + s*t_ppf(p, nu)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+def gen_theta(rng):
+    r = rng.random()
+    if r < 0.3:
+        return 'shash', (0.0, 0.0, float(np.clip(rng.normal(0,1.2),-2.5,2.5)),
+                float(np.clip(rng.normal(0,0.7),-1.4,1.4)))
+    elif r < 0.55:
+        return 't3', ('t',(3.0,0.0,1.0))[1] if False else ('t',(3.0,0.0,1.0))
+    elif r < 0.65:
+        return 't8', ('t',(8.0,0.0,1.0))
+    else:
+        return 'normal', (0.0, 1.0)
+# normalize: gen_theta returns (kindname, par) where par by family:
+def gen_theta2(rng):
+    r = rng.random()
+    if r < 0.35:
+        return ('shash', (0.0, 0.0, float(np.clip(rng.normal(0,1.2),-2.5,2.5)),
+                float(np.clip(rng.normal(0,0.7),-1.4,1.4))))
+    elif r < 0.55:
+        return ('t', (3.0, 0.0, 1.0))
+    elif r < 0.75:
+        return ('t', (8.0, 0.0, 1.0))
+    else:
+        return ('normal', (0.0, 1.0))
+
+def pinball(a, tau):
+    return np.where(a>=0, tau*a, (tau-1)*a)
+
+def fit_boot(x, lam, sa, sb, k_pen):
+    """returns chosen kind, par for t-or-shash."""
+    nu, mu, s, ll_t = fit_t_fast(x)
+    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    crit_t = ll_t - 1.0
+    crit_s = penll - k_pen
+    if crit_s >= crit_t:
+        return 'shash', tuple(float(v) for v in th)
+    return 't', (nu, mu, s)
+
+def one_case(args):
+    seed, n, B, lam, sa, sb, k_pen, m = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta2(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    w = n/float(m); fs = 1-w
+    bk, bp = fit_boot(x, lam, sa, sb, k_pen)
+    U = rng.random((B, n)); U.sort(axis=1)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-12*sprd, x.max()+12*sprd, 3000)
+    mats = [cdf_of(bk,bp,g)[None,:]]
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        ck, cp = fit_boot(xi, lam, sa, sb, k_pen)
+        mats.append(cdf_of(ck,cp,g)[None,:])
+    stack = np.vstack(mats)
+    phat = np.searchsorted(x, g)/n
+    Fbar = stack.mean(axis=0)
+    out = {}
+    # variants
+    def solve(blendw):
+        G = blendw*phat + (1-blendw)*Fbar
+        return np.array([g[int(np.searchsorted(G,t))] for t in TAUS])
+    # iso-shrink: q(tau) from Fbar; shift: med + a*(q-med)
+    Fb_inv = np.array([g[int(np.searchsorted(Fbar,t))] for t in (0.5,)+TAUS])
+    med = Fb_inv[0]; qq = Fb_inv[1:]
+    for a_ in (0.8, 0.9, 1.0, 1.1):
+        out[f'shr{a_}'] = med + a_*(qq-med)
+        # also shrunk-then-blend
+        # approximate: adjust Fbar quantiles by mapping; instead solve with modified Fbar:
+        Fb2 = Fbar  # cheap approx: skip
+    out['blend_w'] = solve(w); out['blend_halfw'] = solve(0.5*w); out['pred'] = solve(0.0)
+    out['plugin'] = np.array([ppf_of(bk,bp,t) for t in TAUS])
+    # evaluation on future samples from true
+    V = np.random.default_rng(int(rng.integers(2**31))).random((30, n))
+    fut = np.sort(ppf_of(kind, par, V), axis=1)
+    losses = {}
+    for nm, qv in out.items():
+        tot = 0.0
+        for ti,t in enumerate(TAUS):
+            tot += pinball(fut - qv[ti], t).mean()
+        losses[nm] = tot
+    losses['chosen']=bk; losses['true']=kind
+    # theta param family id
+    losses['fam'] = kind if kind!='t' else ('t%d' % par[0])
+    return losses
+
+def run(S=48, B=80, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0, m=350, seed0=0):
+    args = [(seed0+s, 10, B, lam, sa, sb, k_pen, m) for s in range(S)]
+    with Pool(4) as p:
+        out = p.map(one_case, args)
+    import collections
+    agg = collections.defaultdict(list)
+    for r in out:
+        for k,v in r.items():
+            if k in ('chosen','true','fam'): continue
+            agg[k].append(v)
+    names = [n for n in list(agg) if n not in ()]
+    base = np.array(agg['plugin'])
+    print(f"S={S} m={m}; mean future pinball (std shape); paired diff vs plugin")
+    for nm in names:
+        v = np.array(agg[nm]); d = v - base
+        print(f"{nm:12s} mean={v.mean():.4f} med={np.median(v):.4f} paired={d.mean():+.4f} (se {d.std()/len(d)**.5:.4f})")
+    # by family
+    fams = collections.defaultdict(lambda: collections.defaultdict(list))
+    for r in out:
+        for k in names:
+            fams[r['fam']][k].append(r[k])
+    for fam in fams:
+        msg = f"  true={fam:7s} n={len(fams[fam]['plugin'])}:"
+        for nm in ['plugin','pred','blend_w','shr0.9']:
+            v = np.array(fams[fam][nm]); msg += f" {nm}={v.mean():.4f}"
+        print(msg)
+    return agg
+
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    run(S=int(sys.argv[1]) if len(sys.argv)>1 else 48)
+    print("%.1fs total"%(time.time()-t0))
+EOF
+time python3 calib3.py 48
 ```
 
 ## [53] tool
@@ -1723,7 +3505,27 @@ I'm over-engineering the inner loop and getting noise. Let me make a decision-or
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time, numpy as np
+from calib3 import fit_t_fast, ppf_of, cdf_of
+from shash import fit_shash
+rng = np.random.default_rng(0)
+x = rng.standard_normal(10)
+t0=time.time()
+for _ in range(200): fit_t_fast(x)
+t1=time.time(); print("fit_t_fast: %.4fs"%((t1-t0)/200))
+t0=time.time()
+for _ in range(200): fit_shash(x)
+t1=time.time(); print("fit_shash: %.4fs"%((t1-t0)/200))
+U = rng.random((140,10)); U.sort(axis=1)
+t0=time.time()
+for i in range(140): ppf_of('normal',(0,1),U[i])
+t1=time.time(); print("140 ppf: %.4fs"%(t1-t0))
+g = np.linspace(-5,5,1201)
+t0=time.time()
+for i in range(140): cdf_of('shash',(0.,0.,0.3,0.2),g)
+t1=time.time(); print("140 cdf evals: %.4fs"%(t1-t0))
+EOF
 ```
 
 ## [55] tool
@@ -1739,7 +3541,146 @@ fit_shash: 0.0115s
 **tool call: bash**
 
 ```
+cat > calib4.py << 'EOF'
+"""Final calibration. Train seeds -> tune, test seeds -> frozen compare.
+Candidates: plugin, pred(Fbar quantile), blend(beta), shrink(alpha, optionally tau-dep)."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from multiprocessing import Pool
+from shash import fit_shash, shash_cdf, shash_ppf
+from calib3 import t_ppf, t_cdf, fit_t_fast
 
+TAUS = (0.9, 0.95, 0.99)
+
+def cdf_of(kind, par, q):
+    q = np.asarray(q, float)
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return t_cdf((q-mu)/s, nu)
+    mu,ls,a,lb = par; return shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(np.asarray(p,float))
+    if kind=='t':
+        nu,mu,s = par; return mu + s*t_ppf(p, nu)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+def gen_theta(rng, heavy_shash=True):
+    r = rng.random()
+    if r < (0.35 if heavy_shash else 0.15):
+        return ('shash', (0.0, 0.0, float(np.clip(rng.normal(0,1.2),-2.5,2.5)),
+                float(np.clip(rng.normal(0,0.7),-1.4,1.4))))
+    elif r < 0.55:
+        return ('t', (3.0, 0.0, 1.0))
+    elif r < 0.6:
+        return ('t', (5.0, 0.0, 1.0))
+    elif r < 0.75:
+        return ('t', (8.0, 0.0, 1.0))
+    elif r < 0.8:
+        return ('t', (15.0, 0.0, 1.0))
+    else:
+        return ('normal', (0.0, 1.0))
+
+def pinball(a, tau):
+    return np.where(a>=0, tau*a, (tau-1)*a)
+
+def fit_all(x, lam, sa, sb):
+    """triple fit, return (choices par-dicts)"""
+    x = np.asarray(x, float)
+    nu, mu, s, ll_t = fit_t_fast(x)
+    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1))
+    ll_n = float(norm.logpdf(x, mu_n, s_n).sum())
+    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n - 0.0),
+      't':    (('t',(nu,mu,s)), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), penll - 4.0),
+    }
+def choose(fits): return max(fits.items(), key=lambda kv: kv[1][1])[0]
+
+def one_case(args):
+    seed, n, B, lam, sa, sb, m, Bf = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    w = n/float(m)
+    f0 = fit_all(x, lam, sa, sb); ch = choose(f0); bk, bp = f0[ch][0]
+    U = rng.random((B, n)); U.sort(axis=1)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-12*sprd, x.max()+12*sprd, 1201)
+    mats = [cdf_of(bk,bp,g)[None,:]]
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        fi = fit_all(xi, lam, sa, sb); ck, cp = fi[choose(fi)][0]
+        mats.append(cdf_of(ck,cp,g)[None,:])
+    stack = np.vstack(mats)
+    phat = np.searchsorted(x, g)/n
+    Fbar = stack.mean(axis=0)
+    out = {}
+    def invG(blendw, targ=TAUS):
+        G = blendw*phat + (1-blendw)*Fbar
+        return np.array([np.interp(t, G, g) for t in targ])
+    Fbar_inv_med = np.interp(0.5, Fbar, g)
+    Fbar_inv = {t: np.interp(t, Fbar, g) for t in (0.5,)+TAUS}
+    med = Fbar_inv[0.5]
+    # per-tau anchors for shrink: quantile of Fbar (the model-implied predictive quantiles)
+    q_pred = np.array([np.interp(t, Fbar, g) for t in TAUS])
+    q_plug = np.array([ppf_of(bk,bp,t) for t in TAUS])
+    for beta in (0.0, 0.35, 0.7, 1.0):
+        out[f'b{beta}'] = None  # fill below with combined shrink grid
+    # candidates: (alpha, beta) grid
+    cands = {}
+    for alpha in (0.8, 0.9, 1.0, 1.1):
+        for beta in (0.0, 0.35, 0.7, 1.0):
+            Gbeta = beta*w*phat + (1-beta*w)*Fbar
+            qb = np.array([np.interp(t, Gbeta, g) for t in TAUS])
+            cands[(alpha,beta)] = med + alpha*(qb - med)
+    # evaluate on Bf future samples
+    V = np.random.default_rng(int(rng.integers(2**31))).random((Bf, n))
+    fut = np.sort(ppf_of(kind, par, V), axis=1)
+    losses = {}
+    for key, qv in cands.items():
+        tot = 0.0
+        for ti,t in enumerate(TAUS):
+            tot += pinball(fut - qv[ti], t).mean()
+        losses[key] = tot
+    losses['plugin'] = sum(pinball(fut - q_plug[ti], t).mean() for ti,t in enumerate(TAUS))
+    losses['pred'] = sum(pinball(fut - q_pred[ti], t).mean() for ti,t in enumerate(TAUS))
+    losses['chosen'] = ch; losses['true'] = kind
+    return losses
+
+def run(seed_list, B=120, lam=1.0, sa=2.0, sb=0.7, m=350, Bf=30, label=''):
+    args = [(sd, 10, B, lam, sa, sb, m, Bf) for sd in seed_list]
+    with Pool(4) as p:
+        out = p.map(args, args) if False else p.map(one_case, args)
+    import collections
+    agg = collections.defaultdict(list)
+    keys = [k for k in out[0] if k not in ('chosen','true')]
+    for r in out:
+        for k in keys: agg[k].append(r[k])
+    # paired vs plugin (separable by-sim mean over future)
+    print(f"--- {label}: S={len(seed_list)} B={B} Bf={Bf} m={m} lam={lam} ---")
+    base = np.array(agg['plugin'])
+    lines = []
+    for k in keys:
+        v = np.array(agg[k])
+        d = v - base
+        lines.append((v.mean(), k, v.mean(), np.median(v), d.mean(), d.std()/len(d)**.5))
+    for _,k,mn,md,dn,se in sorted(lines)[:14]:
+        print(f"  {str(k):18s} mean={mn:.4f} med={md:.4f} paired={dn:+.4f} (se {se:.4f})")
+    return agg, out
+
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    S = int(sys.argv[1]) if len(sys.argv)>1 else 100
+    run([5000+s for s in range(S)], B=120, label='train')
+    print("%.0fs"%(time.time()-t0))
+EOF
+timeout 1200 python3 calib4.py 100
 ```
 
 ## [57] tool
@@ -1760,7 +3701,9 @@ TypeError: '<' not supported between instances of 'str' and 'tuple'
 **tool call: bash**
 
 ```
-
+sed -i 's/for _,k,mn,md,dn,se in sorted(lines)\[:14\]:/for _,k,mn,md,dn,se in sorted(lines, key=lambda z: z[0])[:16]:/' calib4.py
+sed -i "s/print(f\"  {str(k):18s} mean={mn:.4f} med={md:.4f} paired={dn:+.4f} (se {se:.4f})\")/print(f'  {str(k):18s} mean={mn:.4f} med={md:.4f} paired={dn:+.4f} (se {se:.4f})')/" calib4.py
+timeout 1500 python3 calib4.py 100
 ```
 
 ## [59] tool
@@ -1792,7 +3735,46 @@ The shash degenerates (|a|≈2.5, extreme b) create rare catastrophic samples th
 **tool call: bash**
 
 ```
+cat >> calib4.py << 'EOF'
 
+def gn_estimate(x, taus=(0.9,0.95,0.99), cv=True):
+    """Gaussian-kernel smoothed quantiles, h ~ n^-1/5 * min(s, IQR/1.34)."""
+    x = np.asarray(x, float); n = len(x)
+    s = min(x.std(ddof=1), np.subtract(*np.percentile(x,[75,25]))/1.349)
+    s = max(s, 1e-9)
+    h = 1.06*s*n**(-0.2)
+    # bandwidth can vary: use fixed
+    qs = {}
+    for tau in taus:
+        # solve mean(Phi((q-x)/h)) = tau
+        lo, hi = x.min()-6*s, x.max()+6*s
+        for _ in range(70):
+            mid = 0.5*(lo+hi)
+            if norm.cdf((mid-x)/h).mean() < tau: lo = mid
+            else: hi = mid
+        qs[tau] = 0.5*(lo+hi)
+    return qs
+EOF
+python3 - << 'EOF'
+# extend one_case to include kernel method? quick separate sim for kernel benchmark:
+import numpy as np
+from scipy.stats import norm
+from multiprocessing import Pool
+from calib4 import gen_theta, ppf_of, pinball, gn_estimate, TAUS
+def one(args):
+    seed, Bf = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(10)))
+    qs = gn_estimate(x)
+    V = np.random.default_rng(int(rng.integers(2**31))).random((Bf, 10))
+    fut = np.sort(ppf_of(kind, par, V), axis=1)
+    return sum(pinball(fut - qs[t], t).mean() for t in TAUS)
+with Pool(4) as p:
+    r = p.map(one, [(8000+s, 30) for s in range(60)])
+r = np.array(r)
+print("kernel estimator: mean future pinball = %.4f (med %.4f), n=%d" % (r.mean(), np.median(r), len(r)))
+EOF
 ```
 
 ## [61] tool
@@ -1807,7 +3789,85 @@ Critical interpretation checkpoint — I need to separate "real estimator differ
 **tool call: bash**
 
 ```
+cat > et.py << 'EOF'
+"""Exponential-tail fit + diagnostic."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
 
+def fit_exptail(x_right):
+    """x_right: the k largest order stats (sorted asc). Fit P(X>x) = c exp(-lam (x-u)).
+    c = k/n. lam = 1/mean(x - min_used_anchor) where anchor splits.
+    We use: u = mean(x_right)? MLE exponential on excesses over firstof the tail set.
+    Simpler: tail index: lam_hat = 1 / mean(x - x_right[0]) for x > x_right[0]-eps,
+    c = (k+... )/n. Return (c, lam, u)."""
+    x = np.sort(x_right)
+    u = x[0] - 1e-12
+    exc = x[x > u] - u
+    lam = len(exc)/exc.sum() if exc.sum() > 0 else 1e9
+    c = len(x)/NA if False else None
+    return lam
+
+def exptail_quantiles(x, taus=(0.9,0.95,0.99), k=4):
+    """Fit exponential on top-k sample order stats; compute quantiles.
+    P(X > q) = (k_i/n)*exp(-lam*(q-x_{(n-k+1)})); solve for q.
+    Continuity anchored at x_(n-k+1)."""
+    xs = np.sort(np.asarray(x, float)); n = len(xs)
+    k = min(k, n-1)
+    u = xs[n-k-0]  # e.g., with k=4: x_(7) when n=10 (0-idx n-k-1=5? careful)
+    # use top k: values xs[n-k:] ; anchor at xs[n-k-1]?? standard: u = kth largest threshold
+    top = xs[n-k:]
+    u = xs[n-k-1]
+    exc = top - u
+    exc = exc[exc>=0]
+    if exc.sum() <= 0: return {t: xs[-1] for t in taus}
+    lam = len(exc)/exc.sum()
+    cfrac = k/n  # P(X > u)
+    out = {}
+    for tau in taus:
+        p_high = 1-tau
+        if p_high <= 0:
+            out[tau] = u
+        elif p_high < cfrac:
+            out[tau] = u - np.log(p_high/cfrac)/lam
+        else:
+            # below tail: use empirical quantile
+            out[tau] = np.quantile(xs, tau/cfrac*0 + tau)  # fallback linear
+    return out
+
+def exptail_tailprob(x, q, k=4):
+    """P(X > q) from exponential tail fit."""
+    xs = np.sort(np.asarray(x, float)); n = len(xs)
+    k = min(k, n-1); u = xs[n-k-1]; top = xs[n-k:]
+    exc = top - u; exc = exc[exc>=0]
+    lam = len(exc)/exc.sum() if exc.sum()>0 else 1e9
+    cfrac = k/n
+    if q <= u:
+        return 1 - np.mean(xs <= q)
+    return cfrac*np.exp(-lam*(q-u))
+
+def hill_diagnostic(x, k=3):
+    """Hill-type gamma (tail index xi = 1/alpha_hat). xi>0 -> heavy tail (power)."""
+    xs = np.sort(np.asarray(x, float)); n = len(xs)
+    top = np.sort(xs[-(k+1):])[::-1]  # largest first
+    ref = top[k]  # (k+1)th largest
+    logs = np.log(top[:k] / ref)
+    gamma = logs.mean()  # hill estimator of xi
+    return gamma
+EOF
+python3 - << 'EOF'
+import numpy as np, pandas as pd
+from et import hill_diagnostic, exptail_quantiles
+df = pd.read_pickle('data.pkl')
+print("block  hill_k3  exptail q90 q95 q99   | max/sd  skew")
+from scipy import stats
+for b, g in df.groupby('block'):
+    x = g['x'].values
+    hg = hill_diagnostic(x, 3)
+    if hg > 0.3 or stats.skew(x) > 0.8:
+        qs = exptail_quantiles(x, k=4)
+        print(f"{b:4d} {hg:8.2f}   {qs[0.9]:9.3f} {qs[0.95]:9.3f} {qs[0.99]:10.3f} | {x.max()/x.std():6.1f} {stats.skew(x):5.2f}")
+EOF
 ```
 
 ## [63] tool
@@ -1899,7 +3959,120 @@ The Hill "diagnostic" flags almost everything — it's meaningless at n=10 (it's
 **tool call: bash**
 
 ```
+cat > final_engine.py << 'EOF'
+"""Two-stage per-block estimation:
+ stage 1: unified bootstrap B fits of t OR shash (chosen per bootstrap by crit).
+ stage 2: predictive CDF, FSRS blend, quantiles, CI for population q95.
+Optional per-block tail-extension flag via AICc comparison on the observed sample.
+"""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from multiprocessing import Pool
+from shash import fit_shash, shash_cdf, shash_ppf
+from calib3 import t_ppf, t_cdf, fit_t_fast
 
+TAUS = (0.9, 0.95, 0.99)
+
+def cdf_of(kind, par, q):
+    q = np.asarray(q, float)
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return t_cdf((q-mu)/s, nu)
+    mu,ls,a,lb = par; return shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(np.asarray(p,float))
+    if kind=='t':
+        nu,mu,s = par; return mu + s*t_ppf(p, nu)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+def fit_all(x, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0):
+    x = np.asarray(x, float)
+    nu, mu, s, ll_t = fit_t_fast(x)
+    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1))
+    ll_n = float(norm.logpdf(x, mu_n, s_n).sum())
+    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n - 0.0),
+      't':    (('t',(nu,mu,s)), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), penll - k_pen),
+    }
+def choose(fits): return max(fits.items(), key=lambda kv: kv[1][1])[0]
+
+def gen_theta(rng):
+    r = rng.random()
+    if r < 0.25:
+        return ('shash', (0.0, 0.0, float(np.clip(rng.normal(0,1.2),-2.5,2.5)),
+                float(np.clip(rng.normal(0,0.7),-1.4,1.4))))
+    elif r < 0.45: return ('t', (3.0, 0.0, 1.0))
+    elif r < 0.525:return ('t', (5.0, 0.0, 1.0))
+    elif r < 0.70: return ('t', (8.0, 0.0, 1.0))
+    elif r < 0.775:return ('t', (15.0, 0.0, 1.0))
+    elif r < 0.80: return ('t', (40.0, 0.0, 1.0))
+    else: return ('normal', (0.0, 1.0))
+
+def pinball(a, tau):
+    return np.where(a>=0, tau*a, (tau-1)*a)
+
+def fit_boot(x, lam, sa, sb, k_pen):
+    fi = fit_all(x, lam, sa, sb, k_pen)
+    ch = choose(fi)
+    return ch, fi[ch][0]
+
+def itos(i): return ['90','95','99'][i]
+
+class BlockResult:
+    pass
+
+def run_one_block(x, m, B=120, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0, seed=0,
+                  alpha=None, beta_frac=1.0, ci_method='plugin', boot_for_ci=120):
+    """Full estimation for one block. Returns dict."""
+    x = np.sort(np.asarray(x, float)); n = len(x); w = n/float(m)
+    rng = np.random.default_rng(seed)
+    ch0, par0 = fit_boot(x, lam, sa, sb, k_pen)
+    bk, bp = par0
+    U = rng.random((B, n)); U.sort(axis=1)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1501)
+    mats = [cdf_of(bk,bp,g)[None,:]]
+    bootpars = []
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        ck, cp = fit_boot(xi, lam, sa, sb, k_pen)
+        mats.append(cdf_of(ck,cp,g)[None,:]); bootpars.append((ck,cp))
+    stack = np.vstack(mats)
+    Fbar = stack.mean(axis=0)
+    phat = np.searchsorted(x, g)/n
+    res = dict(chosen=bk, par0=par0)
+    G = beta_frac*w*phat + (1-beta_frac*w)*Fbar
+    qb = np.array([np.interp(t, G, g) for t in TAUS])
+    med = np.interp(0.5, G, g)
+    if alpha is not None:
+        qb = med + alpha*(qb - med)
+    for i,t in enumerate(TAUS): res['q'+itos(i)] = float(qb[i])
+    # CI for population q95
+    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in bootpars])
+    if ci_method == 'plugin':
+        lo, hi = np.percentile(q95b, [2.5,97.5])
+    res['ci'] = (float(lo), float(hi))
+    res['q95_boot_med'] = float(np.median(q95b))
+    res['q95_hat'] = float(ppf_of(bk,bp,0.95))
+    res['_x'] = x; res['_g'] = g; res['_Fbar'] = Fbar; res['_phat'] = phat
+    res['_bootq95'] = q95b
+    return res
+
+if __name__ == '__main__':
+    import pandas as pd, time
+    df = pd.read_pickle('data.pkl')
+    b3 = df[df.block==3]['x'].values
+    t0=time.time()
+    r = run_one_block(b3, 357, B=120, seed=1)
+    print("block3: chosen", r['chosen'], "q90/95/99:", round(r['q90'],2), round(r['q95'],2), round(r['q99'],2), "CI", [round(c,2) for c in r['ci']], "  %.1fs"%(time.time()-t0))
+EOF
+timeout 300 python3 final_engine.py
 ```
 
 ## [65] tool
@@ -1923,7 +4096,21 @@ ValueError: not enough values to unpack (expected 3, got 2)
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+# fit_boot returns (kind, (real_kind, par)) from fit_all structure. Fix run_one_block unpacking.
+src = open('final_engine.py').read()
+src = src.replace("""def fit_boot(x, lam, sa, sb, k_pen):
+    fi = fit_all(x, lam, sa, sb, k_pen)
+    ch = choose(fi)
+    return ch, fi[ch][0]""",
+"""def fit_boot(x, lam, sa, sb, k_pen):
+    fi = fit_all(x, lam, sa, sb, k_pen)
+    ch = choose(fi)
+    kind, par = fi[ch][0]
+    return kind, par""")
+open('final_engine.py','w').write(src)
+EOF
+timeout 300 python3 final_engine.py
 ```
 
 ## [67] tool
@@ -1944,7 +4131,16 @@ ValueError: too many values to unpack (expected 2)
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('final_engine.py').read()
+src = src.replace("""    ch0, par0 = fit_boot(x, lam, sa, sb, k_pen)
+    bk, bp = par0""", """    bk, bp = fit_boot(x, lam, sa, sb, k_pen)
+    par0 = (bk, bp)""")
+src = src.replace("        ck, cp = fit_boot(xi, lam, sa, sb, k_pen)",
+                  "        ck, cp = fit_boot(xi, lam, sa, sb, k_pen)")
+open('final_engine.py','w').write(src)
+EOF
+timeout 300 python3 final_engine.py
 ```
 
 ## [69] tool
@@ -1959,7 +4155,99 @@ Now the calibration harness on this exact engine, comparing point-estimate varia
 **tool call: bash**
 
 ```
+cat > calib_final.py << 'EOF'
+"""S-case calibration of final_engine.run_one_block variants.
+Evaluates future-sample pinball (finite-pop proxy) + q95 CI hit rate."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from final_engine import *
 
+VARIANTS = {}
+for a_ in [None, 0.9, 1.0, 1.1]:
+    VARIANTS[f'a{a_}_b1.0'] = dict(alpha=a_, beta_frac=1.0)
+VARIANTS['aNone_b0.5'] = dict(alpha=None, beta_frac=0.5)
+VARIANTS['aNone_b0.0'] = dict(alpha=None, beta_frac=0.0)
+
+def one_case(args):
+    seed, n, m, B, Bf, lam, sa, sb = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    # one bootstrap cloud; evaluate variants from it
+    # (run_one_block computes one config; we call the shared core manually for speed)
+    w = n/float(m)
+    ch0 = fit_boot(x, lam, sa, sb, 4.0)
+    bk, bp = ch0
+    U = rng.random((B, n)); U.sort(axis=1)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1501)
+    mats = [cdf_of(bk,bp,g)[None,:]]
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        ck, cp = fit_boot(xi, lam, sa, sb, 4.0)
+        mats.append(cdf_of(ck,cp,g)[None,:])
+    Fbar = np.vstack(mats).mean(axis=0)
+    phat_ = np.searchsorted(x, g)/n
+    # variants
+    outloss = {}
+    med = np.interp(0.5, Fbar, g)
+    Gq = {}
+    for nm, cfg in VARIANTS.items():
+        bf = cfg['beta_frac']; a_ = cfg['alpha']
+        G = bf*w*phat_ + (1-bf*w)*Fbar
+        qb = np.array([np.interp(t, G, g) for t in TAUS])
+        if a_ is not None:
+            qb = med + a_*(qb - med)
+        Gq[nm] = qb
+    plugin = np.array([ppf_of(bk,bp,t) for t in TAUS])
+    Gq['plugin'] = plugin
+    # q95 CI from plugin bootstrap
+    # recompute bootstrap q95 quickly: reuse fits? we stored only CDFs. approximate via ppf on Fbar grid? do proper:
+    q95b = []
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        ck, cp = fit_boot(xi, lam, sa, sb, 4.0)
+        q95b.append(ppf_of(ck,cp,0.95))
+    q95b = np.array(q95b)
+    lo, hi = np.percentile(q95b,[2.5,97.5])
+    # future samples
+    V = np.random.default_rng(int(rng.integers(2**31))).random((Bf, n))
+    fut = np.sort(ppf_of(kind, par, V), axis=1)
+    losses = {}
+    for nm, qb in Gq.items():
+        losses[nm] = sum(pinball(fut - qb[ti], t).mean() for ti,t in enumerate(TAUS))
+    q95_true = ppf_of(kind, par, 0.95)
+    return dict(losses=losses, ci=(lo,hi), q95_true=q95_true, true_fam=kind,
+                q95hat=float(ppf_of(bk,bp,0.95)), q95pred=float(np.interp(0.95,Fbar,g)))
+
+def run(seed_list, B=130, Bf=30, m=350, lam=1.0, sa=2.0, sb=0.7, label=''):
+    args = [(sd, 10, m, B, Bf, lam, sa, sb) for sd in seed_list]
+    with Pool(4) as p:
+        out = p.map(one_case, args, chunksize=2)
+    import collections
+    names = [k for k in out[0]['losses']]
+    agg = {nm: np.array([r['losses'][nm] for r in out]) for nm in names}
+    base = agg['plugin']
+    print(f"--- {label} S={len(seed_list)} B={B} paired-vs-plugin ---")
+    rows = []
+    for nm in names:
+        d = agg[nm] - base
+        rows.append((d.mean(), nm, agg[nm].mean(), np.median(agg[nm]), d.mean(), d.std()/len(d)**.5))
+    for dn, nm, mn, md, dm, se in sorted(rows, key=lambda z: z[0]):
+        print(f"  {nm:12s} mean={mn:.4f} med={md:.4f} paired={dm:+.4f} (se {se:.4f})")
+    hits = np.array([r['ci'][0] <= r['q95_true'] <= r['ci'][1] for r in out])
+    print(f"  q95 CI coverage: {hits.mean():.3f} (target .95)  mean width/std: {np.mean([r['ci'][1]-r['ci'][0] for r in out]):.3f}")
+    return agg, out
+
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    S = int(sys.argv[1]) if len(sys.argv)>1 else 80
+    run([9000+s for s in range(S)], label='calib')
+    print("%.0fs"%(time.time()-t0))
+EOF
+timeout 2100 python3 calib_final.py 80
 ```
 
 ## [71] tool
@@ -1971,7 +4259,45 @@ I re-fit the bootstrap twice — wasteful. Fix `calib_final.py` to store bootstr
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('calib_final.py').read()
+old = """    mats = [cdf_of(bk,bp,g)[None,:]]
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        ck, cp = fit_boot(xi, lam, sa, sb, 4.0)
+        mats.append(cdf_of(ck,cp,g)[None,:])
+    Fbar = np.vstack(mats).mean(axis=0)"""
+new = """    # TWO independent bootstrap clouds: cloud A (B) for Fbar/points, cloud B (B) for CI
+    def cloud(seedoff):
+        Uc = np.random.default_rng(int(rng.integers(2**31))+seedoff).random((B, n)); Uc.sort(axis=1)
+        pars = []
+        for i in range(B):
+            xi = np.sort(ppf_of(bk,bp, Uc[i]))
+            pars.append(fit_boot(xi, lam, sa, sb, 4.0))
+        return pars
+    import time
+    parsA = cloud(1)
+    mats = [cdf_of(bk,bp,g)[None,:]] + [cdf_of(ck,cp,g)[None,:] for ck,cp in parsA]
+    Fbar = np.vstack(mats).mean(axis=0)"""
+assert old in src
+src = src.replace(old, new)
+old2 = """    # q95 CI from plugin bootstrap
+    # recompute bootstrap q95 quickly: reuse fits? we stored only CDFs. approximate via ppf on Fbar grid? do proper:
+    q95b = []
+    for i in range(B):
+        xi = np.sort(ppf_of(bk,bp, U[i]))
+        ck, cp = fit_boot(xi, lam, sa, sb, 4.0)
+        q95b.append(ppf_of(ck,cp,0.95))
+    q95b = np.array(q95b)
+    lo, hi = np.percentile(q95b,[2.5,97.5])"""
+new2 = """    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloud(2)])
+    lo, hi = np.percentile(q95b,[2.5,97.5])"""
+assert old2 in src
+src = src.replace(old2, new2)
+open('calib_final.py','w').write(src)
+print("patched")
+EOF
+timeout 2400 python3 calib_final.py 80
 ```
 
 ## [73] tool
@@ -1986,7 +4312,27 @@ Two clouds reintroduced 2B fits. Time to profile properly and, importantly, keep
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time, numpy as np
+from final_engine import *
+rng = np.random.default_rng(9000)
+kind, par = gen_theta(rng)
+x = np.sort(ppf_of(kind, par, rng.random(10)))
+B=130
+t0=time.time()
+ch0 = fit_boot(x, 1.0, 2.0, 0.7, 4.0); bk,bp = ch0
+U = rng.random((B,10)); U.sort(axis=1)
+t1=time.time()
+pA=[]
+for i in range(B):
+    xi = np.sort(ppf_of(bk,bp, U[i]))
+    pA.append(fit_boot(xi, 1.0, 2.0, 0.7, 4.0))
+t2=time.time()
+g = np.linspace(x.min()-14, x.max()+14, 1501)
+for ck,cp in pA: cdf_of(ck,cp,g)
+t3=time.time()
+print("setup: %.2fs, %d fits: %.2fs (%.0f/s), cdfs: %.2fs"%(t1-t0, B, t2-t1, B/(t2-t1), t3-t2))
+EOF
 ```
 
 ## [75] tool
@@ -2001,7 +4347,43 @@ setup: 0.02s, 130 fits: 1.87s (69/s), cdfs: 0.01s
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('calib_final.py').read()
+src = src.replace("def one_case(args):\n    seed, n, m, B, Bf, lam, sa, sb = args",
+                  "def one_case(args):\n    seed, n, m, B, BCi, Bf, lam, sa, sb = args")
+src = src.replace("""    def cloud(seedoff):
+        Uc = np.random.default_rng(int(rng.integers(2**31))+seedoff).random((B, n)); Uc.sort(axis=1)
+        pars = []
+        for i in range(B):
+            xi = np.sort(ppf_of(bk,bp, Uc[i]))
+            pars.append(fit_boot(xi, lam, sa, sb, 4.0))
+        return pars""",
+"""    def cloud(seedoff, Bc):
+        Uc = np.random.default_rng(int(rng.integers(2**31))+seedoff).random((Bc, n)); Uc.sort(axis=1)
+        pars = []
+        for i in range(Bc):
+            xi = np.sort(ppf_of(bk,bp, Uc[i]))
+            pars.append(fit_boot(xi, lam, sa, sb, 4.0))
+        return pars""")
+src = src.replace("    parsA = cloud(1)", "    parsA = cloud(1, B)")
+src = src.replace("    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloud(2)])",
+                  "    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloud(2, BCi)])")
+src = src.replace("g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1501)",
+                  "g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1001)")
+src = src.replace("def run(seed_list, B=130, Bf=30, m=350, lam=1.0, sa=2.0, sb=0.7, label=''):\n    args = [(sd, 10, m, B, Bf, lam, sa, sb) for sd in seed_list]",
+                  "def run(seed_list, B=110, BCi=70, Bf=30, m=350, lam=1.0, sa=2.0, sb=0.7, label=''):\n    args = [(sd, 10, m, B, BCi, Bf, lam, sa, sb) for sd in seed_list]")
+src = src.replace('print(f"--- {label} S={len(seed_list)} B={B} paired-vs-plugin ---")',
+                  'print(f"--- {label} S={len(seed_list)} B={B} BCi={BCi} paired-vs-plugin ---")')
+open('calib_final.py','w').write(src)
+print("patched")
+EOF
+python3 - << 'EOF'
+import time
+from calib_final import one_case
+t0=time.time(); r = one_case((9000,10,350,110,70,30,1.0,2.0,0.7)); t1=time.time()
+print("one case: %.2fs; ci: %s; true q95 %.2f" % (t1-t0, tuple(round(c,3) for c in r['ci']), r['q95_true']))
+print("losses sample:", {k: round(v,3) for k,v in list(r['losses'].items())[:4]})
+EOF
 ```
 
 ## [77] tool
@@ -2016,7 +4398,7 @@ losses sample: {'aNone_b1.0': np.float64(0.374), 'a0.9_b1.0': np.float64(0.385),
 **tool call: bash**
 
 ```
-
+timeout 3000 python3 calib_final.py 96 2>&1 | tail -25
 ```
 
 ## [79] tool
@@ -2026,7 +4408,12 @@ losses sample: {'aNone_b1.0': np.float64(0.374), 'a0.9_b1.0': np.float64(0.385),
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time, numpy as np
+from calib_final import one_case
+for sd in (9001, 9002, 9003, 9004):
+    t0=time.time(); one_case((sd,10,350,110,70,30,1.0,2.0,0.7)); print(f"seed {sd}: {time.time()-t0:.1f}s")
+EOF
 ```
 
 ## [81] tool
@@ -2044,7 +4431,65 @@ Found the killer: shash fits randomly take 10–25s (Nelder-Mead struggles on he
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('shash.py').read()
+src = src.replace("""    best = None
+    starts = [theta0] if theta0 is not None else []
+    starts += [[mu0, np.log(s0), 0.0, 0.0]]
+""",
+"""    best = None
+    starts = []
+    if theta0 is not None:
+        starts.append(list(theta0))
+    # multi-start: anchored at median/IQR plus mean/sd
+    starts += [
+        [mu0, np.log(s0), 0.0, 0.0],
+    ]
+    if theta0 is None:
+        starts += [[float(x.mean()), np.log(max(float(x.std(ddof=1)),1e-9)), 0.0, 0.0]]
+""")
+src = src.replace("""        try:
+            r = optimize.minimize(obj, st, method='Nelder-Mead',
+                        options=dict(maxiter=maxiter, xatol=1e-4, fatol=1e-4))
+            v = -r.fun
+            if best is None or v > best[0]:
+                best = (v, r.x)
+        except Exception:
+            pass""",
+"""        try:
+            r = optimize.minimize(obj, st, method='Nelder-Mead',
+                        options=dict(maxiter=maxiter, xatol=5e-4, fatol=5e-4, maxfev=maxiter))
+            v = -r.fun
+            if best is None or v > best[0]:
+                best = (v, r.x)
+        except Exception:
+            pass""")
+open('shash.py','w').write(src)
+src = open('final_engine.py').read()
+# pass maxiter through fit_all -> but fit_all calls fit_shash without maxiter. Add param.
+src = src.replace("def fit_all(x, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0):",
+                  "def fit_all(x, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0, maxiter=250):")
+src = src.replace("    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)",
+                  "    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb, maxiter=maxiter)")
+src = src.replace("def fit_boot(x, lam, sa, sb, k_pen):",
+                  "def fit_boot(x, lam, sa, sb, k_pen, maxiter=200):")
+src = src.replace("    fi = fit_all(x, lam, sa, sb, k_pen)",
+                  "    fi = fit_all(x, lam, sa, sb, k_pen, maxiter=maxiter)")
+open('final_engine.py','w').write(src)
+src = open('calib_final.py').read()
+src = src.replace("    ch0 = fit_boot(x, lam, sa, sb, 4.0)\n    bk, bp = ch0",
+                  "    ch0 = fit_boot(x, lam, sa, sb, 4.0, maxiter=200)\n    bk, bp = ch0")
+src = src.replace("            pars.append(fit_boot(xi, lam, sa, sb, 4.0))",
+                  "            pars.append(fit_boot(xi, lam, sa, sb, 4.0, maxiter=180))")
+open('calib_final.py','w').write(src)
+print("patched")
+EOF
+python3 - << 'EOF'
+import time
+from calib_final import one_case
+for sd in (9001, 9002, 9005, 9007, 9011):
+    t0=time.time(); one_case((sd,10,350,110,70,30,1.0,2.0,0.7)); print(f"seed {sd}: {time.time()-t0:.1f}s")
+EOF
 ```
 
 ## [83] tool
@@ -2064,7 +4509,8 @@ All cases now ~2.4s. Launching the definitive training calibration:
 **tool call: bash**
 
 ```
-
+nohup timeout 5000 python3 calib_final.py 200 > train.log 2>&1 &
+echo started; sleep 60; tail -5 train.log
 ```
 
 ## [85] tool
@@ -2079,7 +4525,45 @@ While calibration runs, let me build the production predictions script end-to-en
 **tool call: bash**
 
 ```
+cat > produce.py << 'EOF'
+"""Produce predictions.csv with the current-best configuration."""
+import numpy as np, pandas as pd, time
+from multiprocessing import Pool
+from final_engine import *
 
+def work(args):
+    b, x, m, seed = args
+    r = run_one_block(x, m, B=150, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0, seed=seed,
+                      alpha=None, beta_frac=1.0, ci_method='plugin')
+    return (b, r['q90'], r['q95'], r['q99'], r['ci'][0], r['ci'][1], r['chosen'])
+
+def main(out='predictions.csv', B=150):
+    df = pd.read_pickle('data.pkl')
+    args = []
+    for i, (b, g) in enumerate(df.groupby('block')):
+        args.append((b, g['x'].values, int(g['m'].iloc[0]), 1234+b*97))
+    t0 = time.time()
+    with Pool(4) as p:
+        rows = p.map(work, args)
+    rows.sort()
+    out_df = pd.DataFrame(rows, columns=['block','q90','q95','q99','lo','hi','chosen'])
+    check = out_df[['block','q90','q95','q99','lo','hi']]
+    check.to_csv(out, index=False)
+    print("wrote", out, check.shape, "in %.0fs" % (time.time()-t0))
+    print(out_df['chosen'].value_counts().to_dict())
+    return out_df
+
+if __name__ == '__main__':
+    main()
+EOF
+timeout 600 python3 - << 'EOF'
+from produce import main
+main('predictions.csv')
+import pandas as pd
+p = pd.read_csv('predictions.csv')
+print(p.shape, p.columns.tolist())
+print(p.head(3).to_string())
+EOF
 ```
 
 ## [87] tool
@@ -2100,7 +4584,24 @@ wrote predictions.csv (100, 6) in 298s
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('final_engine.py').read()
+src = src.replace("""    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n - 0.0),
+      't':    (('t',(nu,mu,s)), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), penll - k_pen),
+    }""",
+"""    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n),
+      't':    (('t',(nu,mu,s)), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), penll + k_pen),
+    }
+# NOTE: shash_penalized_loglik (penll) already has penalty SUBTRACTED inside
+# fit_shash's objective; add back k_pen? No: keep symmetrical: selection uses
+# maximized (penalized) loglik WITHOUT extra k_pen unless requested.""")
+open('final_engine.py','w').write(src)
+EOF
+grep -n "penll" final_engine.py | head; grep -n "k_pen" final_engine.py | head
 ```
 
 ## [89] tool
@@ -2124,7 +4625,26 @@ wrote predictions.csv (100, 6) in 298s
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np
+from shash import fit_shash
+from scipy.stats import norm
+from calib3 import fit_t_fast, t_cdf
+for name, x in [('block22', np.array([8.897,10.82,10.97,12.94,14.03,10.8,83.58,32.3,11.57,5.826])),
+                ('block3', np.array([8.749,15.12,91.98,1.913,9.718,-11.66,118.5,0.8005,8.97,3.398])),
+                ('block1', np.array([0.4199,-0.05856,0.3091,-0.2301,-0.2406,-0.1926,0.6063,0.293,0.2182,0.1933]))]:
+    th, penll = fit_shash(x)
+    print(name, "theta:", np.round(th,3), "penll(objective ret val): %.3f" % penll)
+    # recompute raw ll at theta:
+    from shash import shash_loglik
+    raw = shash_loglik(np.asarray(th), x)
+    mu, ls, a, lb = th
+    lam, sa, sb = 1.0, 2.0, 0.7
+    pen = lam*((a/sa)**2 + (lb/sb)**2)
+    print("    raw loglik %.3f  penalty %.3f  raw-pen %.3f  (check penll should equal raw-pen)" % (raw, pen, raw-pen))
+    nu, mu_t, s_t, ll_t = fit_t_fast(x)
+    print("    t ll %.3f (nu=%.0f)  normal ll %.3f" % (ll_t, nu, norm.logpdf(x, x.mean(), x.std(ddof=1)).sum()))
+EOF
 ```
 
 ## [91] tool
@@ -2147,7 +4667,7 @@ t legitimately wins those skewed blocks (high max values fit t3 well). My earlie
 **tool call: bash**
 
 ```
-
+sleep 180; tail -25 train.log
 ```
 
 ## [93] tool
@@ -2171,7 +4691,58 @@ Good signal now: α=1.1 (slight extrapolation) wins consistently; plug-in CI cov
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+# Write per-sim results from the last train run? Not stored. Re-run train with
+# per-tau breakdown + CI variants saved to npz. Patch run() to keep raw rows.
+src = open('calib_final.py').read()
+src = src.replace("def one_case(args):\n    seed, n, m, B, BCi, Bf, lam, sa, sb = args",
+"""PERLOSS = {}
+def one_case(args):
+    seed, n, m, B, BCi, Bf, lam, sa, sb = args""")
+# per-tau loss capture inside one_case: losses currently summed. Add per-tau dict.
+src = src.replace("""    losses = {}
+    for nm, qb in Gq.items():
+        losses[nm] = sum(pinball(fut - qb[ti], t).mean() for ti,t in enumerate(TAUS))""",
+"""    losses = {}
+    for nm, qb in Gq.items():
+        per_t = [pinball(fut - qb[ti], t).mean() for ti,t in enumerate(TAUS)]
+        losses[nm] = sum(per_t); losses[nm+'_PERTAU'] = per_t""")
+# CI variants: widened base
+src = src.replace("""    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloud(2, BCi)])
+    lo, hi = np.percentile(q95b,[2.5,97.5])""",
+"""    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloud(2, BCi)])
+    lo, hi = np.percentile(q95b,[2.5,97.5])
+    q95hat = float(ppf_of(bk,bp,0.95))
+    sigj = 1.15*q95b.std()
+    ci_wide = (np.percentile(q95b,1.0), np.percentile(q95b,99.0))  # widened
+    ci_cent = (q95hat - 1.15*(np.percentile(q95b,97.5)-q95hat),
+               q95hat + 1.15*(q95hat-np.percentile(q95b,2.5)))""")
+src = src.replace("    return dict(losses=losses, ci=(lo,hi), q95_true=q95_true, true_fam=kind,\n                q95hat=float(ppf_of(bk,bp,0.95)), q95pred=float(np.interp(0.95,Fbar,g)))",
+"""    return dict(losses=losses, ci=(lo,hi), ci_wide=ci_wide, ci_cent=ci_cent,
+                q95_true=q95_true, true_fam=kind,
+                q95hat=float(ppf_of(bk,bp,0.95)), q95pred=float(np.interp(0.95,Fbar,g)))""")
+# coverage check extras
+src = src.replace("""    hits = np.array([r['ci'][0] <= r['q95_true'] <= r['ci'][1] for r in out])
+    print(f"  q95 CI coverage: {hits.mean():.3f} (target .95)  mean width/std: {np.mean([r['ci'][1]-r['ci'][0] for r in out]):.3f}")""",
+"""    for cname in ('ci','ci_wide','ci_cent'):
+        hits = np.array([r[cname][0] <= r['q95_true'] <= r[cname][1] for r in out])
+        wid = np.mean([r[cname][1]-r[cname][0] for r in out])
+        print(f"  {cname:8s} q95-true coverage: {hits.mean():.3f}  mean width: {wid:.3f}")""")
+# per-tau breakdown after paired rows
+src = src.replace("""    for dn, nm, mn, md, dm, se in sorted(rows, key=lambda z: z[0]):
+        print(f"  {nm:12s} mean={mn:.4f} med={md:.4f} paired={dm:+.4f} (se {se:.4f})")""",
+"""    for dn, nm, mn, md, dm, se in sorted(rows, key=lambda z: z[0]):
+        print(f"  {nm:12s} mean={mn:.4f} med={md:.4f} paired={dm:+.4f} (se {se:.4f})")
+    for nm in ('aNone_b1.0','a1.1_b1.0','plugin'):
+        per = np.array([out[i]['losses'][nm+'_PERTAU'] for i in range(len(out))])
+        basep = np.array([out[i]['losses']['plugin_PERTAU'] for i in range(len(out))])
+        d = per - basep
+        print(f"    {nm:12s} d90={d[:,0].mean():+.4f} d95={d[:,1].mean():+.4f} d99={d[:,2].mean():+.4f}")""")
+open('calib_final.py','w').write(src)
+print("patched")
+EOF
+nohup timeout 2500 python3 calib_final.py 130 > test1.log 2>&1 &
+echo started test1
 ```
 
 ## [95] tool
@@ -2187,7 +4758,7 @@ While that runs, let me fix the FSRS anchor bug (linear-interp over the step) an
 **tool call: bash**
 
 ```
-
+grep -q "coverage" train.log && echo done || tail -2 train.log
 ```
 
 ## [97] tool
@@ -2200,7 +4771,7 @@ done
 **tool call: bash**
 
 ```
-
+sleep 500; tail -30 test1.log
 ```
 
 ## [99] tool
@@ -2210,7 +4781,7 @@ done
 **tool call: bash**
 
 ```
-
+sleep 200; tail -30 test1.log
 ```
 
 ## [101] tool
@@ -2232,7 +4803,14 @@ Aggregation bug (`_PERTAU` entries are arrays). Quick fix:
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('calib_final.py').read()
+src = src.replace("    names = [k for k in out[0]['losses']]",
+                  "    names = [k for k in out[0]['losses'] if not k.endswith('_PERTAU')]")
+open('calib_final.py','w').write(src)
+EOF
+nohup timeout 2400 python3 calib_final.py 130 > test1.log 2>&1 &
+echo relaunched
 ```
 
 ## [103] tool
@@ -2247,7 +4825,33 @@ While that runs, let me deeply investigate the t vs shash selection discrepancy 
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np
+from shash import fit_shash, shash_loglik
+from calib3 import fit_t_fast, t_ppf
+from calib3 import t_cdf
+from scipy import stats
+import pandas as pd
+df = pd.read_pickle('data.pkl')
+# compare t fits on skewed blocks: fast profile vs scipy exact
+for b in (3, 22, 32, 88, 16, 17, 21):
+    x = df[df.block==b]['x'].values
+    nu, mu, s, ll_fast = fit_t_fast(x)
+    # exact MLE via scipy (fixed-df profile)
+    best = None
+    for nu2 in [3,5,8,15,40]:
+        mu2 = np.median(x); s2 = np.std(x)
+        from scipy.optimize import minimize
+        r = minimize(lambda th: -stats.t.logpdf(x, nu2, loc=th[0], scale=np.exp(th[1])).sum(), [mu2, np.log(s2)], method='Nelder-Mead')
+        ll = stats.t.logpdf(x, nu2, loc=r.x[0], scale=np.exp(r.x[1])).sum()
+        if best is None or ll > best[0]: best = (ll, nu2, r.x[0], np.exp(r.x[1]))
+    ll_ex, nu_ex, mu_ex, s_ex = best
+    # shash
+    th, penll = fit_shash(x, lam=1.0, sa=2.0, sb=0.7)
+    raw_ll = shash_loglik(th, np.asarray(x))
+    print(f"block {b}: fast_t(nu={nu}) ll={ll_fast:.2f} | exact_t(nu={nu_ex}) ll={ll_ex:.2f} | "
+          f"crit(t)= {ll_ex-1:.2f} vs shash penll-4={penll-4:.2f} (raw_ll={raw_ll:.2f})")
+EOF
 ```
 
 ## [105] tool
@@ -2268,7 +4872,30 @@ Small bug in `t_cdf` when passed a pandas nu array ("t40") — not critical. The
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np
+from scipy import stats
+from shash import fit_shash, shash_loglik
+x = np.sort(np.array([8.897,10.82,10.97,12.94,14.03,10.8,83.58,32.3,11.57,5.826]))
+from calib3 import fit_t_fast, t_ppf
+nu, mu, s, ll = fit_t_fast(x)
+print(f"t fit: nu={nu}, mu={mu:.2f}, s={s:.2f}: q95={mu+s*float(t_ppf(0.95,nu)):.1f} q99={mu+s*float(t_ppf(0.99,nu)):.1f}; left tail q05={mu+s*float(t_ppf(0.05,nu)):.1f}")
+th, penll = fit_shash(x, lam=0.0, sa=2.0, sb=0.7)
+mu2,ls,a,lb = th
+from shash import shash_ppf
+print(f"shash free: a={a:.2f} b={np.exp(lb):.2f}: q95={shash_ppf(0.95,mu2,np.exp(ls),a,np.exp(lb)):.1f} q99={shash_ppf(0.99,mu2,np.exp(ls),a,np.exp(lb)):.1f}; q05={shash_ppf(0.05,mu2,np.exp(ls),a,np.exp(lb)):.1f}, raw_ll={shash_loglik(th,x):.2f}")
+print("observed min..max:", x[0], x[-1], "ks test t vs shash:")
+# simulate from fitted t: how often sample max >= 83 & min > -20?
+rng = np.random.default_rng(0)
+def simt():
+    xs = mu + s*rng.standard_t(nu, 10)
+    return xs.max() >= 83 and xs.min() > -20
+from shash import shash_ppf as pp
+def sims():
+    xs = shash_ppf(rng.random(10), mu2, np.exp(ls), a, np.exp(lb))
+    return xs.max() >= 83 and xs.min() > -20
+print("t:", np.mean([simt() for _ in range(20000)]), "shash:", np.mean([sims() for _ in range(20000)]))
+EOF
 ```
 
 ## [107] tool
@@ -2286,7 +4913,61 @@ The evidence is stark: t(ν=3) implies left-tail mass near −35 that simply isn
 **tool call: bash**
 
 ```
+python3 - << 'EOF'
+src = open('calib_final.py').read()
+# unify: fit_full with full-Nu t and correct shash ll + penalty; single chooser
+new = '''
+from scipy import stats as _st
+NUFULL = (3,4,5,7,10,15,25,60)
+def fit_t_ll(x):
+    x = np.asarray(x,float)
+    best=None
+    med = np.median(x); iqr = max(np.subtract(*np.percentile(x,[75,25])),1e-12)
+    for nu in NUFULL:
+        z75 = float(t_ppf(0.75, nu))
+        s0 = iqr/(2*z75); mu0 = med
+        mu, s = mu0, s0
+        for _ in range(12):
+            z = (x-mu)/s; w=(nu+1)/(nu+z*z)
+            mu2 = (w*x).sum()/w.sum(); s2 = s*np.sqrt(max((w*(x-mu2)**2/s**2).sum()/len(x),1e-18))
+            mu2 = float(mu2); s2=float(s2)
+            if abs(mu2-mu)<1e-9 and abs(s2-s)<1e-9: mu,s=mu2,s2; break
+            mu,s=mu2,s2
+        ll = float(_st.t.logpdf(x, nu, loc=mu, scale=s).sum())
+        if best is None or ll>best[0]: best=(ll, float(nu), float(mu), float(s))
+    return best  # (ll, nu, mu, s)
 
+def fit_all(x, lam=1.0, sa=2.0, sb=0.7, k_pen=4.0):
+    x = np.asarray(x, float)
+    ll_t, nu, mu, s = fit_t_ll(x)
+    th, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    raw_sh = shash_loglik(th, x)
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1))
+    ll_n = float(norm.logpdf(x, mu_n, s_n).sum())
+    return {
+      'normal': (('normal',(mu_n,s_n)), ll_n),
+      't':    (('t',(nu,mu,s)), ll_t - 1.0),
+      'shash':(('shash',tuple(float(v) for v in th)), raw_sh + (lam-1.0)*((th[2]/sa)**2 + (th[3]/sb)**2) - 1.0),
+    }
+'''
+import re
+# replace existing fit_all block
+start = src.index("def fit_all(x")
+end = src.index("def choose(fits):")
+src = src[:start] + new.strip() + "\n\n" + src[end:]
+src = src.replace("from shash import fit_shash, shash_cdf, shash_ppf",
+                  "from shash import fit_shash, shash_cdf, shash_ppf, shash_loglik")
+open('calib_final.py','w').write(src)
+print("rewritten fit_all")
+EOF
+python3 - << 'EOF'
+import numpy as np
+from calib_final import fit_all, choose
+for b, xs in [(22,[8.897,10.82,10.97,12.94,14.03,10.8,83.58,32.3,11.57,5.826]),
+              (1,[0.4199,-0.05856,0.3091,-0.2301,-0.2406,-0.1926,0.6063,0.293,0.2182,0.1933]),
+              (61,[0.1751,1.784,-0.4165,-0.02762,-0.7439,-0.01955,-3.535,-0.5266,6.02,0.233])]:
+    f = fit_all(np.array(xs)); print("block", b, "->", choose(f), {k: round(v[1],2) for k,v in f.items()})
+EOF
 ```
 
 ## [109] tool
@@ -2307,7 +4988,14 @@ The shash findings change the whole picture. Before recalibrating I need code hy
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('calib_final.py').read()
+# check that run_one_block's inner fit closure calls the NEW fit_all signature
+import re
+i = src.index("def fit_all")
+j = src.index("def choose(fits):")
+print(src[i:j][:1500])
+EOF
 ```
 
 ## [111] tool
@@ -2323,7 +5011,7 @@ ValueError: substring not found
 **tool call: bash**
 
 ```
-
+grep -n "def fit_all\|def choose\|def fit_boot\|def fit_t_ll" calib_final.py; sed -n '/^def fit_all/,/^def choose/p' calib_final.py | head -45
 ```
 
 ## [113] tool
@@ -2335,7 +5023,187 @@ The patch clobbered `calib_final.py`. No matter — with the design settled, let
 **tool call: bash**
 
 ```
+cat > core.py << 'EOF'
+"""Unified estimation core. Families: normal / t / shash. Penalized-ML selection.
+Predictive (parametric-bootstrap-averaged) CDF + finite-population blend."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from shash import fit_shash, shash_cdf, shash_ppf, shash_loglik
+from scipy.interpolate import interp1d
 
+TAUS = (0.9, 0.95, 0.99)
+NUFULL = (3,4,5,7,10,15,25,60)
+# t tables (fine)
+_z = np.linspace(-40, 40, 160001)
+_cdf_tab = {}; _ppf_tab = {}
+for nu in NUFULL:
+    c = stats.t.cdf(_z, nu)
+    _cdf_tab[nu] = c
+    _ppf_tab[nu] = interp1d(c, _z, assume_sorted=True, fill_value=(-40,40), bounds_error=False)
+_cn = norm.cdf(_z)
+_cdf_tab[np.inf] = _cn
+_ppf_tab[np.inf] = interp1d(_cn, _z, assume_sorted=True, fill_value=(-40,40), bounds_error=False)
+def t_ppf(p, nu):
+    nu = np.inf if nu > 1e8 else float(nu)
+    return np.asarray(_ppf_tab[nu](p))
+def t_cdf(x, nu):
+    nu = np.inf if nu > 1e8 else float(nu)
+    return np.interp(np.asarray(x), _z, _cdf_tab[nu])
+
+def cdf_of(kind, par, q):
+    q = np.asarray(q, float)
+    if kind=='normal':
+        mu,s = par; return norm.cdf(q, mu, s)
+    if kind=='t':
+        nu,mu,s = par; return t_cdf((q-mu)/s, nu)
+    mu,ls,a,lb = par; return shash_cdf(q, mu, np.exp(ls), a, np.exp(lb))
+
+def ppf_of(kind, par, p):
+    if kind=='normal':
+        mu,s = par; return mu + s*norm.ppf(np.asarray(p,float))
+    if kind=='t':
+        nu,mu,s = par; return mu + s*t_ppf(p, nu)
+    mu,ls,a,lb = par; return shash_ppf(p, mu, np.exp(ls), a, np.exp(lb))
+
+def _t_ll(x, nu, mu, s):
+    z = (x-mu)/s
+    return float((-0.5*(nu+1)*np.log1p(z*z/nu)).sum() - len(x)*np.log(s))
+
+def fit_t_ll(x, nus=NUFULL):
+    """Profile-IRLS per nu; return (ll, nu, mu, s)."""
+    x = np.asarray(x, float)
+    med = np.median(x); iqr = max(np.subtract(*np.percentile(x,[75,25])),1e-12)
+    best = None
+    for nu in nus:
+        z75 = float(t_ppf(0.75, nu))
+        mu, s = med, iqr/(2*z75)
+        for _ in range(14):
+            z = (x-mu)/s; w=(nu+1)/(nu+z*z)
+            mu2 = float((w*x).sum()/w.sum())
+            z = (x-mu2)/s
+            s2 = float(s*np.sqrt(max((w*z*z).sum()/len(x), 1e-18)))
+            if abs(mu2-mu) < 1e-10 and abs(s2-s) < 1e-10:
+                mu, s = mu2, s2; break
+            mu, s = mu2, s2
+        ll = _t_ll(x, nu, mu, s)
+        if best is None or ll > best[0]: best = (ll, float(nu), float(mu), float(s))
+    return best
+
+def fit_shash_raw(x, lam, sa, sb):
+    """Return (theta4, penalized_ll, raw_ll)."""
+    theta, penll = fit_shash(x, lam=lam, sa=sa, sb=sb)
+    raw = shash_loglik(np.asarray(theta, float), x)
+    return tuple(theta), penll, raw
+
+def choose_model(x,
+
+ lam=1.0, sa=2.0, sb=0.7, c_norm=0.0, c_t=1.0, c_shash=1.0):
+    """Return (kind, par, crit, all_crits). crit = ll - c (higher better).
+    For shash lam>0: crit uses raw ll minus the *same-shaped* penalty (a/sa)^2+(lnb/sb)^2 with weight lam... we use penll from fit which already subtracts lam*penalty. To use a DIFFERENT effective selection penalty, pass lam_select: we recompose raw - 1.0*penalty(shape) - c_shash.
+    Here: selection crit for shash = raw_ll - ((a/sa)^2+(lnb/sb)^2)*1.0 - c_shash (BIC-ish).
+    """
+    x = np.asarray(x, float)
+    ll_t, nu, mu, s = fit_t_ll(x)
+    theta, penll, raw = fit_shash_raw(x, lam, sa, sb)
+    a, lb = theta[2], theta[3]
+    penalty = (a/sa)**2 + (lb/sb)**2
+    crit_shash = raw - 1.0*penalty - c_shash
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1))
+    ll_n = float(norm.logpdf(x, mu_n, s_n).sum())
+    crits = {'normal': ll_n - c_norm, 't': ll_t - c_t, 'shash': crit_shash}
+    pars = {'normal': ('normal',(mu_n,s_n)), 't': ('t',(nu,mu,s)), 'shash': ('shash', theta)}
+    ch = max(crits, key=crits.get)
+    return ch, pars[ch][1], crits[ch], crits
+
+def gen_theta(rng):
+    r = rng.random()
+    if r < 0.25:
+        return ('shash', (0.0, 0.0, float(np.clip(rng.normal(0,1.2),-2.5,2.5)),
+                float(np.clip(rng.normal(0,0.7),-1.4,1.4))))
+    elif r < 0.45: return ('t', (3.0, 0.0, 1.0))
+    elif r < 0.525:return ('t', (5.0, 0.0, 1.0))
+    elif r < 0.70: return ('t', (8.0, 0.0, 1.0))
+    elif r < 0.775:return ('t', (15.0, 0.0, 1.0))
+    elif r < 0.80: return ('t', (40.0, 0.0, 1.0))
+    else: return ('normal', (0.0, 1.0))
+
+def pinball(a, tau):
+    return np.where(a>=0, tau*a, (tau-1)*a)
+
+def gen_sample_array(thetas, rngU):
+    """thetas iterator; sample n x B columns via ppf on sorted-uniform rows."""
+    pass
+
+def bootstrap_cloud(bk, bp, n, B, rng, lam, sa, sb, c_t, c_shash):
+    """Draw B bootstrap resamples from (bk,bp); refit each; return list of (kind, par)."""
+    U = rng.random((B, n)); U.sort(axis=1)
+    pars = []
+    for i in range(B):
+        xi = np.sort(ppf_of(bk, bp, U[i]))
+        ck, cp, _, _ = choose_model(xi, lam=lam, sa=sa, sb=sb, c_t=c_t, c_shash=c_shash)
+        pars.append((ck, cp))
+    return pars
+
+def estimate_block(x, m, B=160, seed=0, lam=1.0, sa=2.0, sb=0.7,
+                   c_t=1.0, c_shash=1.0, beta_frac=1.0, alpha=1.1,
+                   ci_W=0.30, ci_kind='wide'):
+    """Main entry for production. Returns dict of q90/95/99, lo, hi."""
+    x = np.sort(np.asarray(x, float)); n = len(x); w = n/float(m)
+    rng = np.random.default_rng(seed)
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb, c_t=c_t, c_shash=c_shash)
+    bk, bp = ch, tuple(par0)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    pars = [(bk,bp)] + bootstrap_cloud(bk, bp, n, B, rng, lam, sa, sb, c_t, c_shash)
+    mats = np.stack([cdf_of(ck, cp, g) for ck, cp in pars])
+    Fbar = mats.mean(axis=0)
+    # ecdf step-corrected (linear with half-steps) on grid: approximate phat with step fn then fix below
+    phat = np.searchsorted(x, g)/n
+    G = beta_frac*w*phat + (1-beta_frac*w)*Fbar
+    def invG(tau):
+        q = float(np.interp(tau, G, g))
+        # FSRS step fix: within step of phat, solve w*(k/n) + (1-w)Fbar(q) ≈ tau by local linear Fbar
+        k = int(np.searchsorted(x, q))
+        # refine by bisection using analytic model Fbar via interp
+        def H(qq):
+            return beta_frac*w*(k/n) + (1-beta_frac*w)*float(np.interp(qq, g, Fbar))
+        lo, hi = q-2*sprd/50, q+2*sprd/50
+        lo, hi = min(lo,q-0.5*sprd), max(hi,q+0.5*sprd)
+        if H(lo) > tau: return lo
+        if H(hi) < tau: return hi
+        for _ in range(50):
+            mid = 0.5*(lo+hi)
+            if H(mid) < tau: lo = mid
+            else: hi = mid
+        return 0.5*(lo+hi)
+    med = invG(0.5)
+    qs = {}
+    for t in TAUS:
+        q = invG(t)
+        qs[t] = med + alpha*(q - med) if alpha is not None else q
+    # CI from bootstrap (independent cloud for honesty not needed for point est; reuse pars[1:])
+    q95b = np.array([ppf_of(ck, cp, 0.95) for ck, cp in pars[1:]])
+    if ci_kind == 'wide':
+        lo = float(np.percentile(q95b, 2.5 - ci_W)); hi = float(np.percentile(q95b, 97.5 + ci_W))
+    else:
+        qhat = float(ppf_of(bk, bp, 0.95))
+        sdev = float(q95b.std())
+        lo, hi = qhat - 2.4*sdev, qhat + 2.4*sdev
+    return dict(q90=qs[0.9], q95=qs[0.95], q99=qs[0.99], lo=lo, hi=hi,
+                chosen=ch, par0=(bk,bp), q95_boot=q95b, g=g, Fbar=Fbar, med=med)
+EOF
+python3 - << 'EOF'
+import numpy as np, time
+from core import estimate_block, choose_model
+x22 = np.array([8.897,10.82,10.97,12.94,14.03,10.8,83.58,32.3,11.57,5.826])
+ch, par, crit, crits = choose_model(x22)
+print("block22 choose:", ch, crits)
+t0=time.time()
+r = estimate_block(x22, 276, B=160, seed=7)
+print("est: q90 %.1f q95 %.1f q99 %.1f CI (%.1f, %.1f) chosen=%s  %.1fs"%(
+    r['q90'], r['q95'], r['q99'], r['lo'], r['hi'], r['chosen'], time.time()-t0))
+EOF
 ```
 
 ## [115] tool
@@ -2351,7 +5219,103 @@ Even the corrected likelihood comparison picks t for block 22 (because t3 with s
 **tool call: bash**
 
 ```
+cat > cal5.py << 'EOF'
+"""Calibration on core.py. Tracks paired loss of point-estimate configs + q95 CI hit rate."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
 
+def one_case(args):
+    seed, n, m, B, BCi, Bf, sel_cfg = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb = sel_cfg['lam'], sel_cfg['sa'], sel_cfg['sb']
+    c_t, c_shash = sel_cfg['c_t'], sel_cfg['c_shash']
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb, c_t=c_t, c_shash=c_shash)
+    bk, bp = ch, tuple(par0)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    # point-estimate cloud
+    cloudA = bootstrap_cloud(bk, bp, n, B, rng, lam, sa, sb, c_t, c_shash)
+    parsA = [(bk,bp)] + cloudA
+    Fbar = np.stack([cdf_of(ck,cp,g) for ck,cp in parsA]).mean(axis=0)
+    phat = np.searchsorted(x, g)/n
+    # CI cloud
+    cloudB = bootstrap_cloud(bk, bp, n, BCi, rng, lam, sa, sb, c_t, c_shash)
+    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloudB])
+    # candidate point estimates
+    cands = {}
+    med = float(np.interp(0.5, Fbar, g))
+    base_q = {t: float(np.interp(molten := t, Fbar, g)) for t in TAUS}  # pred (beta=0)
+    for a_ in (0.9, 1.0, 1.1, 1.2):
+        cands[f'pred_a{a_}'] = {t: med + a_*(base_q[t]-med) for t in TAUS}
+    for a_ in (1.0, 1.1):
+        G = w:= None
+        wgt = 10.0/m
+        G = wgt*phat + (1-wgt)*Fbar
+        q = {t: float(np.interp(t, G, g)) for t in TAUS}
+        cands[f'blend_a{a_}'] = {t: med + a_*(q[t]-med) for t in TAUS}
+    cands['plugin'] = {t: float(ppf_of(bk,bp,t)) for t in TAUS}
+    # future pinball eval & true-param excess eval
+    V = np.random.default_rng(int(rng.integers(2**31))).random((Bf, n))
+    fut = np.sort(ppf_of(kind, par, V), axis=1)
+    losses = {}
+    for nm, qs in cands.items():
+        losses[nm] = sum(pinball(fut - qs[t], t).mean() for t in TAUS)
+    # true-set excess (m large): among B_sim unseen; approximate population = fresh big sample
+    big = np.sort(ppf_of(kind, par, np.random.default_rng(int(rng.integers(2**31))).random(800)))
+    # population excess via big sample with blend approximated: use pure-F big
+    excess = {}
+    for nm, qs in cands.items():
+        tot = 0.0
+        for t in TAUS:
+            qtrue_t = float(ppf_of(kind,par,t))
+            tot += (pinball(big - qs[t], t).mean() - pinball(big - qtrue_t, t).mean())
+        excess[nm] = tot
+    q95_true = float(ppf_of(kind, par, 0.95))
+    cis = {
+      'plugin': (float(np.percentile(q95b,2.5)), float(np.percentile(q95b,97.5))),
+      'wide':   (float(np.percentile(q95b,2.2)),  float(np.percentile(q95b,97.8))),
+      'wider':  (float(np.percentile(q95b,1.8)),  float(np.percentile(q95b,98.2))),
+    }
+    return dict(losses=losses, excess=excess, cis=cis, q95_true=q95_true,
+                true_fam=kind, chosen=ch)
+
+def run(seed_list, B=130, BCi=80, Bf=30, m=350,
+        sel_cfg=dict(lam=1.0, sa=2.0, sb=0.7, c_t=1.0, c_shash=1.0), label=''):
+    args = [(sd, 10, m, B, BCi, Bf, sel_cfg) for sd in seed_list]
+    with Pool(4) as p:
+        out = p.map(one_case, args, chunksize=2)
+    names = [k for k in out[0]['losses']]
+    print(f"--- {label} S={len(seed_list)}; future-paired vs blend_a1.0; excess(paired) ---")
+    base = 'blend_a1.0'
+    bf = np.array([r['losses'][base] for r in out]); be = np.array([r['excess'][base] for r in out])
+    rows=[]
+    for nm in names:
+        lf = np.array([r['losses'][nm] for r in out]); dF = lf - bf
+        le = np.array([r['excess'][nm] for r in out]); dE = le - be
+        rows.append((dF.mean(), nm, lf.mean(), dF.mean(), dF.std()/len(dF)**.5, le.mean(), dE.mean(), dE.std()/len(dE)**.5))
+    for _,nm,lfm,dFm,seF,lem,dEm,seE in sorted(rows, key=lambda z:z[3]):
+        print(f"  {nm:12s} fut={lfm:.4f} dF={dFm:+.4f}({seF:.4f}) | exc={lem:.4f} dE={dEm:+.4f}({seE:.4f})")
+    for cn in out[0]['cis']:
+        hits = np.array([r['cis'][cn][0] <= r['q95_true'] <= r['cis'][cn][1] for r in out])
+        widths = np.array([r['cis'][cn][1]-r['cis'][cn][0] for r in out])
+        print(f"  CI {cn:8s} coverage={hits.mean():.3f} medwidth={np.median(widths):.3f}")
+    import collections
+    print("  chosen:", dict(collections.Counter(r['chosen'] for r in out)),
+          " true:", dict(collections.Counter(r['true_fam'] for r in out)))
+    return out
+
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    S = int(sys.argv[1]) if len(sys.argv)>1 else 100
+    run([9000+s for s in range(S)], label='core-train')
+    print("%.0fs"%(time.time()-t0))
+EOF
+timeout 1200 python3 cal5.py 110
 ```
 
 ## [117] tool
@@ -2368,7 +5332,27 @@ SyntaxError: invalid syntax
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('cal5.py').read()
+src = src.replace("""    for a_ in (1.0, 1.1):
+        G = w:= None
+        wgt = 10.0/m
+        G = wgt*phat + (1-wgt)*Fbar""", """    for a_ in (1.0, 1.1):
+        wgt = 10.0/m
+        G = wgt*phat + (1-wgt)*Fbar""")
+src = src.replace("        q = {t: float(np.interp(t, G, g)) for t in TAUS}\n        cands[f'blend_a{a_}'] = {t: med + a_*(q[t]-med) for t in TAUS}",
+"""        q = {t: float(np.interp(t, G, g)) for t in TAUS}
+        medb = float(np.interp(0.5, G, g))
+        cands[f'blend_a{a_}'] = {t: medb + a_*(q[t]-medb) for t in TAUS}""")
+src = src.replace("        base_q = {t: float(np.interp(molten := t, Fbar, g)) for t in TAUS}  # pred (beta=0)",
+                  "        base_q = {t: float(np.interp(t, Fbar, g)) for t in TAUS}  # pred (beta=0)")
+# base_q line had stray indent; fix indentation & med for pred
+src = src.replace("    med = float(np.interp(0.5, Fbar, g))\n        base_q",
+                  "    med = float(np.interp(0.5, Fbar, g))\n    base_q")
+open('cal5.py','w').write(src)
+print('ok')
+EOF
+grep -n "base_q\|med =\|molten" cal5.py | head
 ```
 
 ## [119] tool
@@ -2384,7 +5368,7 @@ ok
 **tool call: bash**
 
 ```
-
+sed -i 's/float(np.interp(molten := t, Fbar, g))/float(np.interp(t, Fbar, g))/' cal5.py && python3 -c "import ast; ast.parse(open('cal5.py').read()); print('syntax ok')" && timeout 1500 python3 cal5.py 110
 ```
 
 ## [121] tool
@@ -2397,7 +5381,13 @@ syntax ok
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time
+from cal5 import one_case
+cfg = dict(lam=1.0, sa=2.0, sb=0.7, c_t=1.0, c_shash=1.0)
+t0=time.time(); r = one_case((9000,10,350,130,80,30,cfg)); print("one case %.1fs"%(time.time()-t0))
+print({k: round(v,3) for k,v in list(r['losses'].items())[:3]}, r['chosen'])
+EOF
 ```
 
 ## [123] tool
@@ -2411,7 +5401,18 @@ one case 3.6s
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time, numpy as np
+from core import *
+rng = np.random.default_rng(0)
+kind, par = gen_theta(rng)
+x = np.sort(ppf_of(kind, par, rng.random(10)))
+t0=time.time()
+cloudA = bootstrap_cloud('t', (8.,0,1), 10, 130, rng, 1.0, 2.0, 0.7, 1.0, 1.0)
+t1=time.time()
+print("130 bootstrap fits: %.2fs"%(t1-t0))
+for ck, cp in cloudA[:3]: print(ck, np.round(cp,3))
+EOF
 ```
 
 ## [125] tool
@@ -2433,7 +5434,43 @@ KeyError: 8.0
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('core.py').read()
+src = src.replace("""def t_ppf(p, nu):
+    nu = np.inf if nu > 1e8 else float(nu)
+    return np.asarray(_ppf_tab[nu](p))""",
+"""def t_ppf(p, nu):
+    nu = np.inf if nu > 1e8 else float(nu)
+    if nu not in _ppf_tab:
+        c = stats.t.cdf(_z, nu)
+        _cdf_tab[nu] = c
+        _ppf_tab[nu] = interp1d(c, _z, assume_sorted=True, fill_value=(-40,40), bounds_error=False)
+    return np.asarray(_ppf_tab[nu](p))""")
+src = src.replace("""def t_cdf(x, nu):
+    nu = np.inf if nu > 1e8 else float(nu)
+    return np.interp(np.asarray(x), _z, _cdf_tab[nu])""",
+"""def t_cdf(x, nu):
+    nu = np.inf if nu > 1e8 else float(nu)
+    if nu not in _cdf_tab:
+        c = stats.t.cdf(_z, nu)
+        _cdf_tab[nu] = c
+        _ppf_tab[nu] = interp1d(c, _z, assume_sorted=True, fill_value=(-40,40), bounds_error=False)
+    return np.interp(np.asarray(x), _z, _cdf_tab[nu])""")
+# gen_theta uses nu in NUFULL only (3,5,8,15,40 not in NUFULL! 40 missing) - add 40 & 60
+src = src.replace("NUFULL = (3,4,5,7,10,15,25,60)", "NUFULL = (3,4,5,7,10,15,25,40,60)")
+open('core.py','w').write(src)
+EOF
+python3 - << 'EOF'
+import time, numpy as np
+from core import *
+rng = np.random.default_rng(0)
+kind, par = gen_theta(rng)
+x = np.sort(ppf_of(kind, par, rng.random(10)))
+t0=time.time()
+cloudA = bootstrap_cloud(kind if kind!='t' else 't', par, 10, 130, rng, 1.0, 2.0, 0.7, 1.0, 1.0)
+print("130 bootstrap fits: %.2fs"%(time.time()-t0))
+import collections; print(collections.Counter(c[0] for c in cloudA))
+EOF
 ```
 
 ## [127] tool
@@ -2447,7 +5484,8 @@ Counter({'t': 130})
 **tool call: bash**
 
 ```
-
+nohup timeout 2400 python3 cal5.py 330 > train2.log 2>&1 &
+echo started
 ```
 
 ## [129] tool
@@ -2460,7 +5498,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 480; tail -30 train2.log
 ```
 
 ## [131] tool
@@ -2470,7 +5508,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 600; tail -30 train2.log
 ```
 
 ## [133] tool
@@ -2480,7 +5518,7 @@ started
 **tool call: bash**
 
 ```
-
+ps aux | grep -c "python3 cal5" ; ls -la train2.log; date
 ```
 
 ## [135] tool
@@ -2499,7 +5537,7 @@ Empty log after 18 min — likely startup/import problem in nohup context. Check
 **tool call: bash**
 
 ```
-
+jobs; timeout 60 python3 cal5.py 2 2>&1 | head -20
 ```
 
 ## [137] tool
@@ -2526,7 +5564,8 @@ I see a red flag in the S=2 run: `plugin` beat the predictive here, contradictin
 **tool call: bash**
 
 ```
-
+nohup timeout 2900 python3 cal5.py 840 > train2.log 2>&1 &
+echo "launched, sleep 60"; sleep 60; wc -c train2.log
 ```
 
 ## [139] tool
@@ -2540,7 +5579,7 @@ launched, sleep 60
 **tool call: bash**
 
 ```
-
+sleep 420; wc -c train2.log; tail -c 300 train2.log
 ```
 
 ## [141] tool
@@ -2550,7 +5589,10 @@ launched, sleep 60
 **tool call: bash**
 
 ```
-
+wc -c train2.log; tail -c 300 train2.log
+python3 -c "
+import subprocess
+"
 ```
 
 ## [143] tool
@@ -2563,7 +5605,25 @@ launched, sleep 60
 **tool call: bash**
 
 ```
-
+sed -i 's/run(\[9000+s for s in range(S)\], label=.core-train.)/run([9000+s for s in range(S)], label="core-train", B=130, BCi=80)\n    import sys as _s; _s.stdout.flush()/' cal5.py
+grep -n "flush" cal5.py; grep -n "print(" cal5.py | head
+# ensure the run() prints happen per-chunk? No, at end. Add progress prints inside run loop is complex with Pool;
+# simplest: use imap_unordered and print progress.
+python3 - << 'EOF'
+src = open('cal5.py').read()
+src = src.replace("""    with Pool(4) as p:
+        out = p.map(one_case, args, chunksize=2)""",
+"""    with Pool(4) as p:
+        out = []
+        for i, r in enumerate(p.imap_unordered(one_case, args, chunksize=2)):
+            out.append(r)
+            if (i+1) % 40 == 0:
+                print("    [done %d/%d]" % (i+1, len(args)), flush=True)""")
+open('cal5.py','w').write(src)
+EOF
+pkill -f "cal5.py" 2>/dev/null; sleep 2
+nohup stdbuf -oL timeout 2900 python3 cal5.py 200 > train2.log 2>&1 &
+echo relaunched
 ```
 
 ## [145] tool
@@ -2582,7 +5642,7 @@ relaunched
 **tool call: bash**
 
 ```
-
+sleep 300; tail -6 train2.log
 ```
 
 ## [147] tool
@@ -2592,7 +5652,7 @@ relaunched
 **tool call: bash**
 
 ```
-
+cat train2.log
 ```
 
 ## [149] tool
@@ -2604,7 +5664,18 @@ No heartbeat appeared — multiprocessing might be deadlocking under nohup. Diag
 **tool call: bash**
 
 ```
-
+ls -la /proc/*/exe 2>/dev/null | grep python | head; echo ---
+cat /proc/loadavg
+echo ---
+timeout 20 python3 -c "
+import time
+t0=time.time()
+from multiprocessing import Pool
+def f(i): return i*i
+with Pool(4) as p:
+    print(sorted(p.map(f, range(12))))
+print('pool ok %.1fs' % (time.time()-t0))
+"
 ```
 
 ## [151] tool
@@ -2633,7 +5704,8 @@ The pool IS working (loadavg 4.32) — stdout just isn't reaching the log. Let m
 **tool call: bash**
 
 ```
-
+for p in 1266 1318 1319 1320 1321; do echo "== $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null) [cwd: $(ls -la /proc/$p/cwd 2>/dev/null | sed 's/.*-> //')]"; done
+cat /proc/1266/status 2>/dev/null | grep -E "State|PPid"
 ```
 
 ## [153] tool
@@ -2652,7 +5724,7 @@ bash: line 1: /proc/1266/cmdline: No such file or directory
 **tool call: bash**
 
 ```
-
+ls -la /proc/1318/fd/1 2>/dev/null; cat /proc/1318/status | grep State; tail -3 train2.log; wc -c train2.log
 ```
 
 ## [155] tool
@@ -2672,7 +5744,35 @@ The run finished. Critical finding: **"chosen: {'t': 200}"** — t is *always* s
 **tool call: bash**
 
 ```
+python3 - << 'EOF'
+import time, numpy as np
+from core import *
+import cProfile, pstats, io
 
+def one_fast(seed):
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(10)))
+    ch, par0, _, crits = choose_model(x)
+    return kind, ch, crits
+t0=time.time()
+# timing single choose_model
+for s in range(6):
+    r = one_fast(s)
+print("6 choose_model: %.2fs each" % ((time.time()-t0)/6))
+# accuracy on shash-truth
+import collections
+cnt = collections.Counter()
+tot = collections.Counter()
+for s in range(300):
+    kind, ch, crits = one_fast(s)
+    cnt[(kind, ch)] += 1; tot[kind] += 1
+    if s < 8 and kind=='shash':
+        pass
+print(" %.1fs total"%(time.time()-t0))
+for tk in tot:
+    print(f"true={tk}: " + " ".join(f"{ch}={cnt[(tk,ch)]}" for ch in ('normal','t','shash')))
+EOF
 ```
 
 ## [157] tool
@@ -2691,7 +5791,26 @@ This is the pivotal diagnostic: `choose_model` is shockingly slow (5.5s for 300 
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np
+from core import *
+# pure symmetric shash and heavily skewed shash: does selection recover?
+for name, kind, par in [
+    ('sym-mild', 'shash', (0.,0.,0.0,-0.5)),
+    ('skew', 'shash', (0.,0.,0.8,-0.35)),
+    ('strong-skew', 'shash', (0.,0.,1.6,0.15)),
+]:
+    picks = {'t':0,'shash':0,'normal':0}
+    dets = []
+    for s in range(100):
+        rng = np.random.default_rng(s)
+        x = np.sort(ppf_of(kind, par, rng.random(10)))
+        ch, par0, _, crits = choose_model(x)
+        picks[ch]+=1
+        dets.append(crits['shash']-crits['t'])
+    d = np.array(dets)
+    print(f"{name}: picks {picks}, shash-t crit gap: mean {d.mean():.2f} median {np.median(d):.2f} >0 frac {(d>0).mean():.2f}")
+EOF
 ```
 
 ## [159] tool
@@ -2708,7 +5827,14 @@ strong-skew: picks {'t': 100, 'shash': 0, 'normal': 0}, shash-t crit gap: mean -
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np
+from shash import shash_pdf, fit_shash, shash_loglik
+from scipy.integrate import quad
+for (a, b, s) in [(0.,1.,1.), (0.8,0.7,1.), (1.6,1.15,2.), (-0.5,0.49,1.)]:
+    val, err = quad(lambda q: shash_pdf(q, 0.0, s, a, b), -30, 30, limit=200)
+    print(f"a={a} b={b} s={s}: integral={val:.6f} (should be 1)")
+EOF
 ```
 
 ## [161] tool
@@ -2726,7 +5852,35 @@ The density is correct. So the failures are "t with ν=3 and small σ spiking th
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np
+from scipy import stats
+from shash import fit_shash, shash_ppf
+from core import fit_t_ll, t_ppf, choose_model
+rng = np.random.default_rng(0)
+# true = exp-mixture like macro heavy-tail: use standardized gamma k=4 (moderate) and k=1.5 (heavy), plus shash a=1.2
+def true_q95(kind):
+    if kind=='g4': return (stats.gamma.ppf(0.95, 4) - 4)/2   # mean 4, sd 2
+    if kind=='g15': return (stats.gamma.ppf(0.95, 1.5) - 1.5)/np.sqrt(1.5)
+tg = {'g4': (4.,2.), 'g15': (1.5, np.sqrt(1.5))}
+gg = {'g4': 4., 'g15': 1.5}
+print("true q95: g4=%.3f g1.5=%.3f" % (true_q95('g4'), true_q95('g15')))
+for kind, k in (('g4',4.),('g15',1.5)):
+    errs_t = []; errs_sh = []; picks={'t':0,'shash':0,'normal':0}
+    for s in range(150):
+        r = np.random.default_rng(s+1000)
+        x = (r.gamma(k, 1/np.sqrt(k), 10) - np.sqrt(k))
+        # t fit
+        ll_t, nu, mu, sg = fit_t_ll(x)
+        qt = mu + sg*float(t_ppf(0.95, nu))
+        th, penll = fit_shash(x)
+        qs = shash_ppf(0.95, th[0], np.exp(th[1]), th[2], np.exp(th[3]))
+        ch, _, _, _ = choose_model(x)
+        picks[ch]+=1
+        errs_t.append(abs(qt - true_q95(kind))  * (0.95*2 if true_q95(kind)>qt else 0.05*2))
+        errs_sh.append(abs(qs - true_q95(kind)) * (0.95*2 if true_q95(kind)>qs else 0.05*2))
+    print(f"true={kind}: q95 pinball-ish abserr t={np.mean(errs_t):.3f} shash={np.mean(errs_sh):.3f} picks={picks}")
+EOF
 ```
 
 ## [163] tool
@@ -2743,7 +5897,32 @@ Key insight: shash **estimates the right tail better** even when t has higher li
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np
+from scipy import stats
+from shash import fit_shash, shash_ppf
+from core import fit_t_ll, t_ppf
+for kind, k in (('g4',4.),('g15',1.5),('sh_a+1.2',None)):
+    if k:
+        fc = lambda u: (stats.gamma.ppf(u, k) - k)/np.sqrt(k)
+        qt = [ (stats.gamma.ppf(t, k)-k)/np.sqrt(k) for t in (0.9,0.95,0.99)]
+    else:
+        a, b = 1.2, 1.0
+        from scipy.stats import norm
+        fc = lambda u: np.sinh((np.arcsinh(norm.ppf(u)) - a)/b)
+        qt = [np.sinh((np.arcsinh(norm.ppf(t)) - a)/b) for t in (0.9,0.95,0.99)]
+    print(f"true={kind}: true 90/95/99 = {np.round(qt,3)}")
+    qs_t = np.zeros(3); qs_s = np.zeros(3)
+    for s in range(80):
+        r = np.random.default_rng(s)
+        x = np.sort(fc(r.random(10)))
+        ll, nu, mu, sg = fit_t_ll(x)
+        qs_t += [mu+sg*float(t_ppf(t_, nu)) for t_ in (0.9,0.95,0.99)]
+        th, _ = fit_shash(x)
+        qs_s += [shash_ppf(t_, th[0],np.exp(th[1]),th[2],np.exp(th[3])) for t_ in (0.9,0.95,0.99)]
+    print(f"   t-avg    90/95/99 = {np.round(qs_t/80,3)}")
+    print(f"   shash-avg         = {np.round(qs_s/80,3)}")
+EOF
 ```
 
 ## [165] tool
@@ -2766,7 +5945,120 @@ Definitive: with a fixed-skew truth, the "t" selection was a red herring caused 
 **tool call: bash**
 
 ```
+cat > cal6.py << 'EOF'
+"""Predictive model selection: score each family by bootstrapped expected pinball
+on the (single) factored U-cloud; choose min; then estimate quantiles."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
 
+def pinballv(a, tau): return np.where(a>=0, tau*a, (tau-1)*a)
+
+def score_and_pick(x, m, lam, sa, sb, rng, B=90):
+    """For each family f: generate Y from f-hat-bootstrap sharing U; refit-hat w/ f;
+    build predictive Gbar; evaluate avg pinball vs the SAME bootstrap draws' quantiles;
+    also return the predictive quantiles (Fbar) per family."""
+    n = len(x); w = n/float(m)
+    U = rng.random((B, n)); U.sort(axis=1)
+    pstar = U.mean(axis=0)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    out = {}
+    for fam in ('t','shash'):
+        # hat fit with this family's own objective
+        if fam=='t':
+            ll, nu, mu, s = fit_t_ll(x); par0=('t',(nu,mu,s))
+        else:
+            theta, penll, raw = fit_shash_raw(x, lam, sa, sb); par0=('shash', theta)
+        bk, bp = par0
+        mats=[]
+        for i in range(B):
+            xi = np.sort(ppf_of(bk,bp, U[i]))
+            if fam=='t':
+                ll2, nu2, mu2, s2 = fit_t_ll(xi); par=('t',(nu2,mu2,s2))
+            else:
+                th2,_,_ = fit_shash_raw(xi, lam, sa, sb); par=('shash', th2)
+            mats.append(cdf_of(par[0], par[1], g)[None,:])
+        stack = np.vstack([cdf_of(bk,bp,g)[None,:]] + mats)
+        Fbar = stack.mean(axis=0)
+        # predictive quantile anchors (per-boot): vector too costly; use fixed quantiles of Fbar
+        G_anchor = {t: float(np.interp(t, Fbar, g)) for t in TAUS}
+        med = float(np.interp(0.5, Fbar, g))
+        # score: expected pinball of predictive anchor against bootstrap draws' true quantiles
+        sc = 0.0
+        uvec = np.linspace(0,1,400)
+        for t in TAUS:
+            # E_Y rho(q*(t) - Y) with Y from bootstrap mixture = integrate over u of rho over predicted CDF:
+            # E_Y[rho_tau(q - Y)] = ∫ rho_tau(q - Fbar^{-1}(u)) du  (predictive pop) -- but selection should
+            # compare against *resampled* values: Empirical sample quantile of bootstrap cloud distribution.
+            qs_ = np.interp(uvec, Fbar, g)
+            r = G_anchor[t] - qs_
+            sc += pinballv(r, t).mean()
+        out[fam] = dict(score=sc, Fbar=Fbar, g=g, med=med, par0=par0, anchors=G_anchor)
+    return out
+
+def one_case(args):
+    seed, n, m, Bf, lam, sa, sb, selpen = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    res = score_and_pick(x, m, lam, sa, sb, rng, B=90)
+    # bias score by selection penalty: shash gets +selpen added to score
+    s_t = res['t']['score']; s_s = res['shash']['score'] + selpen
+    pick = 't' if s_t <= s_s else 'shash'
+    R = res[pick]
+    Fbar, g, med = R['Fbar'], R['g'], R['med']
+    w = 10.0/m
+    phat = np.searchsorted(x, g)/n
+    # candidates
+    cands = {}
+    for a_ in (1.0, 1.1, 1.2):
+        cands[f'plupred_a{a_}'] = {t: med + a_*(float(np.interp(t, Fbar, g))-med) for t in TAUS}
+        G = w*phat + (1-w)*Fbar
+        q = {t: float(np.interp(t, G, g)) for t in TAUS}
+        mb = float(np.interp(0.5, G, g))
+        cands[f'plublend_a{a_}'] = {t: mb + a_*(q[t]-mb) for t in TAUS}
+    bk, bp = R['par0']
+    cands['plugin'] = {t: float(ppf_of(bk,bp,t)) for t in TAUS}
+    # eval
+    fut = np.sort(ppf_of(kind, par, np.random.default_rng(int(rng.integers(2**31))).random((Bf, n))), axis=1)
+    losses = {nm: sum(pinballv(fut - qs[t], t).mean() for t in TAUS) for nm, qs in cands.items()}
+    return dict(losses=losses, pick=pick, true=kind)
+
+def run(seed_list, m=350, Bf=30, lam=1.0, sa=2.0, sb=0.7, selpen=0.0, label=''):
+    args = [(sd, 10, m, Bf, lam, sa, sb, selpen) for sd in seed_list]
+    with Pool(4) as p:
+        out = []
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=2)):
+            out.append(r)
+            if (i+1)%50==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    names = list(out[0]['losses'])
+    base = 'plublend_a1.1'
+    bf = np.array([r['losses'][base] for r in out])
+    print(f"--- {label} (selpen={selpen}) S={len(out)}; paired vs {base} ---")
+    rows=[]
+    for nm in names:
+        v = np.array([r['losses'][nm] for r in out]); d = v-bf
+        rows.append((d.mean(), nm, v.mean(), d.mean(), d.std()/len(d)**.5))
+    for dm, nm, mn, se_, sev in sorted(rows, key=lambda z:z[3]):
+        print(f"  {nm:16s} fut={mn:.4f} paired={dm:+.4f}({sev:.4f})")
+    import collections
+    print("  picks:", dict(collections.Counter(r['pick'] for r in out)),
+          "true:", dict(collections.Counter(r['true'] for r in out)))
+    return out
+
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    S = int(sys.argv[1]) if len(sys.argv)>1 else 120
+    selpen = float(sys.argv[2]) if len(sys.argv)>2 else 0.0
+    run([9000+s for s in range(S)], selpen=selpen, label=f'cal6-sp{selpen}')
+    print("%.0fs"%(time.time()-t0))
+EOF
+nohup timeout 2000 python3 cal6.py 200 0.0 > cal6_sp0.log 2>&1 &
+nohup timeout 2000 python3 cal6.py 200 0.02 > cal6_sp02.log 2>&1 &
+echo launched; sleep 5; head -3 cal6_sp0.log
 ```
 
 ## [167] tool
@@ -2785,7 +6077,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 540; tail -5 cal6_sp0.log; echo ===; tail -5 cal6_sp02.log
 ```
 
 ## [169] tool
@@ -2795,7 +6087,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 400; echo "== sp0:"; tail -12 cal6_sp0.log; echo "== sp02:"; tail -12 cal6_sp02.log
 ```
 
 ## [171] tool
@@ -2805,7 +6097,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -12 cal6_sp0.log; echo "== sp02:"; tail -12 cal6_sp02.log
 ```
 
 ## [173] tool
@@ -2844,7 +6136,41 @@ Predictive selection picks shash 88% of the time — the opposite of likelihood 
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import time, numpy as np
+from scipy import optimize
+from shash import fit_shash, shash_loglik, shash_ppf
+# Compare NM-based current fit to "true MLE" via strong multi-start BFGS using numeric objective
+def fit_shash_strong(x, lam=0.0, sa=2.0, sb=0.7):
+    x = np.asarray(x, float)
+    mu0 = np.median(x); iqr = max(np.subtract(*np.percentile(x,[75,25])),1e-9)
+    s0 = iqr/1.349
+    def obj(theta):
+        mu, ls, a, lb = theta
+        pen = lam*((a/sa)**2 + (lb/sb)**2)
+        ll = shash_loglik(theta, x)
+        return -(ll - pen) if np.isfinite(ll) else 1e10
+    best = None
+    starts = [[mu0, np.log(s0), 0., 0.],
+              [mu0, np.log(s0), 0.5, -0.3],[mu0, np.log(s0), -0.5, -0.3],
+              [mu0, np.log(s0), 0.8, 0.2],[mu0, np.log(s0), -0.8, 0.2],
+              [float(x.mean()), np.log(max(float(x.std()),1e-9)), 0., -0.5]]
+    for st in starts:
+        r = optimize.minimize(obj, st, method='Nelder-Mead',
+                              options=dict(maxiter=6000, maxfev=6000, xatol=1e-6, fatol=1e-6))
+        v = -r.fun
+        if best is None or v > best[0]: best = (v, r.x)
+    return best
+x22 = np.array([8.897,10.82,10.97,12.94,14.03,10.8,83.58,32.3,11.57,5.826])
+t0=time.time(); v, th = fit_shash_strong(x22, lam=0.0); t1=time.time()
+print("strong shash lam=0: ll=%.3f theta=%s  (%.1fs)" % (v, np.round(th,3), t1-t0))
+th0, penll = fit_shash(x22, lam=0.0)
+print("current NM lam=0:       ll=%.3f theta=%s" % (shash_loglik(th0, x22), np.round(th0,3)))
+from scipy import stats
+from core import fit_t_ll, t_ppf
+ll, nu, mu, s = fit_t_ll(x22)
+print("t: nu=%.0f mu=%.2f s=%.2f ll=%.2f"%(nu,mu,s,ll))
+EOF
 ```
 
 ## [175] tool
@@ -2861,7 +6187,17 @@ The strong multi-start fit is degenerate (s→0) — shash has spurious spikes; 
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np
+from shash import fit_shash, shash_loglik, shash_ppf
+x22 = np.sort(np.array([8.897,10.82,10.97,12.94,14.03,10.8,83.58,32.3,11.57,5.826]))
+for lam in (0.5, 1.0, 2.0):
+    for sa, sb in ((2.0,0.5),(1.5,0.35)):
+        th, pll = fit_shash(x22, lam=lam, sa=sa, sb=sb)
+        raw = shash_loglik(th, x22)
+        a, lb = th[2], th[3]
+        print(f"lam={lam} sa={sa} sb={sb}: a={a:.2f} b={np.exp(lb):.2f} raw_ll={raw:.2f} penll={pll:.2f}")
+EOF
 ```
 
 ## [177] tool
@@ -2881,7 +6217,143 @@ The "likelihood-gap-9" mystery is partially an optimizer failure on skewed data 
 **tool call: bash**
 
 ```
+python3 - << 'EOF'
+# patch core.py: choose_model gains method='likel'|'pred'; estimator gains opts; irls polish for shash
+src = open('core.py').read()
+src = src.replace("def choose_model(x,\n\n lam=1.0, sa=2.0, sb=0.7, c_norm=0.0, c_t=1.0, c_shash=1.0):",
+                  "def choose_model(x, lam=1.0, sa=2.0, sb=0.7, c_norm=0.0, c_t=1.0, c_shash=1.0):")
+# add polish import use: fit_shash signature unchanged
+open('core.py','w').write(src)
+EOF
+cat > cal7.py << 'EOF'
+"""Final calibration on core.py w/ tuned priors. Compares selection rules, alpha, beta, CI width."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import (TAUS, cdf_of, ppf_of, fit_t_ll, fit_shash_raw, gen_theta,
+                  choose_model, bootstrap_cloud, pinball, t_ppf)
 
+def fit_block_selection(x, lam, sa, sb, c_t=1.0, c_shash=1.0):
+    """likelihood-based selection (generic)."""
+    return choose_model(x, lam=lam, sa=sa, sb=sb, c_t=c_t, c_shash=c_shash)
+
+def fit_family(x, fam, lam, sa, sb):
+    if fam=='t':
+        ll, nu, mu, s = fit_t_ll(x); return ('t', (nu,mu,s))
+    if fam=='shash':
+        th, pll, raw = fit_shash_raw(x, lam, sa, sb); return ('shash', th)
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1)); return ('normal', (mu_n,s_n))
+
+def pinballv(a, tau): return np.where(a>=0, tau*a, (tau-1)*a)
+
+def pred_select(x, m, lam, sa, sb, selpen, rng, B=90):
+    """predictive-selection: build Fbar per family (refit same family on own bootstrap),
+    score by pinball of anchors vs predictive draws; return pick + details."""
+    n = len(x); w = n/float(m)
+    U = rng.random((B, n)); U.sort(axis=1)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    out = {}
+    for fam in ('t','shash'):
+        bk, bp = fit_family(x, fam, lam, sa, sb)
+        mats=[cdf_of(bk,bp,g)[None,:]]
+        for i in range(B):
+            xi = np.sort(ppf_of(bk,bp, U[i]))
+            ck, cp = fit_family(xi, fam, lam, sa, sb)
+            mats.append(cdf_of(ck,cp,g)[None,:])
+        Fbar = np.vstack(mats).mean(axis=0)
+        med = float(np.interp(0.5, Fbar, g))
+        anchors = {t: float(np.interp(t, Fbar, g)) for t in TAUS}
+        uvec = np.linspace(0.0, 1.0, 300)
+        qs_ = np.interp(uvec, Fbar, g)
+        sc = 0.0
+        for t in TAUS:
+            sc += pinballv(anchors[t]-qs_, t).mean()
+        out[fam] = dict(score=sc, Fbar=Fbar, med=med, par0=(bk,bp), g=g)
+    pick = 't' if out['t']['score'] <= out['shash']['score'] + selpen else 'shash'
+    return pick, out[pick], out
+
+def one_case(args):
+    seed, n, m, Bf, cfg = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb, selpen = cfg['lam'], cfg['sa'], cfg['sb'], cfg['selpen']
+    w = n/float(m)
+    res = {}
+    # method L: likelihood selection; use bootstrap cloud for quantiles+CI
+    ch, par0, _, crits = choose_model(x, lam=lam, sa=sa, sb=sb)
+    # method P: predictive selection
+    pickP, detailP, allP = pred_select(x, m, lam, sa, sb, selpen, rng, B=90)
+    # unify: for each chosen family, use detailP (Fbar etc.) if available else build cloud via bootstrap on likel-chosen
+    sprd = max(x.std(), 1e-9)
+    g = detailP['g'] if detailP else np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    # build Fbar for likel-chosen via bootstrap cloud
+    cloud = bootstrap_cloud(ch, tuple(par0), n, 120, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    FbarL = np.stack([cdf_of(ck,cp,g) for ck,cp in [(ch, tuple(par0))]+cloud]).mean(axis=0)
+    medL = float(np.interp(0.5, FbarL, g))
+    phat = np.searchsorted(x, g)/n
+    # q95 boot CI cloud B
+    cloudB = bootstrap_cloud(ch, tuple(par0), n, 90, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloudB])
+    cands = {}
+    for tag, Fbar_, med_ in (('L', FbarL, medL), ('P', detailP['Fbar'], detailP['med'])):
+        for a_ in (1.0, 1.1, 1.2):
+            cands[f'{tag}_pred_a{a_}'] = {t: med_ + a_*(float(np.interp(t, Fbar_, g))-med_) for t in TAUS}
+        for a_ in (1.0, 1.1, 1.2):
+            G = w*phat + (1-w)*Fbar_
+            mb = float(np.interp(0.5, G, g)); q = {t: float(np.interp(t, G, g)) for t in TAUS}
+            cands[f'{tag}_blend_a{a_}'] = {t: mb + a_*(q[t]-mb) for t in TAUS}
+        # plugin
+        bk_ = ch if tag=='L' else detailP['par0'][0]
+        bp_ = tuple(par0) if tag=='L' else detailP['par0'][1]
+        cands[f'{tag}_plugin'] = {t: float(ppf_of(bk_,bp_,t)) for t in TAUS}
+    # eval
+    fut = np.sort(ppf_of(kind, par, np.random.default_rng(int(rng.integers(2**31))).random((Bf, n))), axis=1)
+    losses = {nm: sum(pinballv(fut - qs[t], t).mean() for t in TAUS) for nm, qs in cands.items()}
+    q95_true = float(ppf_of(kind, par, 0.95))
+    # CI variants
+    cis = {f'wlo{w_}/whi{w_}': (float(np.percentile(q95b, 2.5-w_)), float(np.percentile(q95b, 97.5+w_))) for w_ in (0.0, 0.3, 0.6)}
+    return dict(losses=losses, cis=cis, q95_true=q95_true, chL=ch, chP=pickP, true=kind)
+
+def run(seed_list, m=350, Bf=30, cfg=None, label=''):
+    cfg = cfg or dict(lam=1.5, sa=1.8, sb=0.45, selpen=0.0)
+    args = [(sd, 10, m, Bf, cfg) for sd in seed_list]
+    with Pool(4) as p:
+        out = []
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=2)):
+            out.append(r)
+            if (i+1)%50==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    names = list(out[0]['losses'])
+    base = 'L_blend_a1.1'
+    bf = np.array([r['losses'][base] for r in out])
+    print(f"--- {label} cfg={cfg} S={len(out)} paired-vs-{base} ---")
+    rows=[]
+    for nm in names:
+        v = np.array([r['losses'][nm] for r in out]); d=v-bf
+        rows.append((d.mean(), nm, v.mean(), d.mean(), d.std()/len(d)**.5))
+    for dm, nm, mn, dm2, sev in sorted(rows, key=lambda z:z[3]):
+        print(f"  {nm:16s} fut={mn:.4f} paired={dm2:+.4f}({sev:.4f})")
+    for cn in out[0]['cis']:
+        hits = np.array([r['cis'][cn][0] <= r['q95_true'] <= r['cis'][cn][1] for r in out])
+        wid = np.array([r['cis'][cn][1]-r['cis'][cn][0] for r in out])
+        print(f"  CI {cn:22s} cov={hits.mean():.3f} medw={np.median(wid):.3f}")
+    import collections
+    print("  L picks:", dict(collections.Counter(r['chL'] for r in out)),
+          " P picks:", dict(collections.Counter(r['chP'] for r in out)),
+          " true:", dict(collections.Counter(r['true'] for r in out)))
+    return out
+
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    S = int(sys.argv[1]) if len(sys.argv)>1 else 120
+    lam = float(sys.argv[2]) if len(sys.argv)>2 else 1.5
+    run([9000+s for s in range(S)], cfg=dict(lam=lam, sa=1.8, sb=0.45, selpen=0.0), label=f'cal7-lam{lam}')
+    print("%.0fs"%(time.time()-t0))
+EOF
+nohup timeout 2400 python3 cal7.py 200 1.5 > cal7_l15.log 2>&1 &
+echo launched; sleep 60; tail -3 cal7_l15.log
 ```
 
 ## [179] tool
@@ -2894,7 +6366,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 560; tail -6 cal7_l15.log
 ```
 
 ## [181] tool
@@ -2904,7 +6376,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -8 cal7_l15.log
 ```
 
 ## [183] tool
@@ -2914,7 +6386,13 @@ launched
 **tool call: bash**
 
 ```
-
+timeout 30 python3 -c "
+from cal7 import one_case
+import time
+t0=time.time()
+r = one_case((9000,10,350,30,dict(lam=1.5,sa=1.8,sb=0.45,selpen=0.0)))
+print('one case %.1fs' % (time.time()-t0), r['chL'], r['chP'])
+"; tail -5 cal7_l15.log
 ```
 
 ## [185] tool
@@ -2928,7 +6406,15 @@ launched
 **tool call: bash**
 
 ```
-
+timeout 60 python3 -c "
+from cal7 import one_case
+import time
+t0=time.time()
+r = one_case((9000,10,350,30,dict(lam=1.5,sa=1.8,sb=0.45,selpen=0.0)))
+print('one case %.1fs' % (time.time()-t0))
+print('keys:', {k:(round(v,4) if hasattr(v,'__float__') else v) for k,v in list(r['losses'].items())[:4]})
+print('cis:', {k:(round(v[0],3),round(v[1],3)) for k,v in r['cis'].items()}, 'true95', round(r['q95_true'],3), 'hits', {k: v[0]<=r['q95_true']<=v[1] for k,v in r['cis'].items()})
+"
 ```
 
 ## [187] tool
@@ -2943,7 +6429,16 @@ cis: {'wlo0.0/whi0.0': (0.781, 2.38), 'wlo0.3/whi0.3': (0.779, 2.4), 'wlo0.6/whi
 **tool call: bash**
 
 ```
-
+nohup python3 -c "
+from cal7 import one_case
+import time
+t0=time.time()
+r = one_case((9000,10,350,30,dict(lam=1.5,sa=1.8,sb=0.45,selpen=0.0)))
+print('one case %.1fs' % (time.time()-t0))
+print({k:round(v,4) for k,v in list(r['losses'].items())[:4]})
+print('cis hits:', {k: v[0]<=r['q95_true']<=v[1] for k,v in r['cis'].items()})
+" > singlecase.log 2>&1 &
+sleep 90; cat singlecase.log; tail -3 cal7_l15.log
 ```
 
 ## [189] tool
@@ -2965,7 +6460,7 @@ One case takes 54s sequentially (heavy: L-cloud 120 + P-cloud 90 + CI 90 = ~300 
 **tool call: bash**
 
 ```
-
+sleep 420; tail -25 cal7_l15.log
 ```
 
 ## [191] tool
@@ -2975,7 +6470,7 @@ One case takes 54s sequentially (heavy: L-cloud 120 + P-cloud 90 + CI 90 = ~300 
 **tool call: bash**
 
 ```
-
+cat cal7_l15.log
 ```
 
 ## [193] tool
@@ -3019,7 +6514,95 @@ Let me dig into the CI misses by family, and run the α∈{1.1,1.2} + w∈{0,0.5
 **tool call: bash**
 
 ```
+cat > cal8.py << 'EOF'
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
 
+def fit_family(x, fam, lam, sa, sb):
+    if fam=='t':
+        ll, nu, mu, s = fit_t_ll(x); return ('t', (nu,mu,s))
+    if fam=='shash':
+        th, pll, raw = fit_shash_raw(x, lam, sa, sb); return ('shash', th)
+    mu_n, s_n = float(x.mean()), float(x.std(ddof=1)); return ('normal', (mu_n,s_n))
+def pinballv(a, tau): return np.where(a>=0, tau*a, (tau-1)*a)
+
+def one_case(args):
+    seed, n, m, Bf, cfg = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb = cfg['lam'], cfg['sa'], cfg['sb']
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    n_real = n; w = n/float(m)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    cloud = bootstrap_cloud(bk, bp, n, 130, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    parsA = [(bk,bp)]+cloud
+    Fbar = np.stack([cdf_of(ck,cp,g) for ck,cp in parsA]).mean(axis=0)
+    phat = np.searchsorted(x, g)/n
+    fut = np.sort(ppf_of(kind, par, np.random.default_rng(int(rng.integers(2**31))).random((Bf, n))), axis=1)
+    cands = {}
+    for a_ in (1.1, 1.2):
+        med = float(np.interp(0.5, Fbar, g))
+        for bf_ in (0.0, 0.5, 1.0):
+            G = bf_*w*phat + (1-bf_*w)*Fbar
+            mb = float(np.interp(0.5, G, g)); q = {t: float(np.interp(t, G, g)) for t in TAUS}
+            cands[f'a{a_}_b{bf_}'] = sum(pinballv(fut - (mb + a_*(q[t]-mb)), t).mean() for t in TAUS)
+    cands['plugin'] = sum(pinballv(fut - ppf_of(bk,bp,t), t).mean() for t in TAUS)
+    # CI:-independent cloud; record per-family hit/miss
+    cloudB = bootstrap_cloud(bk, bp, n, 90, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloudB])
+    q95_true = float(ppf_of(kind, par, 0.95))
+    cis = {w_: (float(np.percentile(q95b, 2.5-w_)), float(np.percentile(q95b, 97.5+w_))) for w_ in (0.0, 0.5, 1.0, 1.5)}
+    hit = {w_: int(cis[w_][0] <= q95_true <= cis[w_][1]) for w_ in cis}
+    wid = {w_: cis[w_][1]-cis[w_][0] for w_ in cis}
+    # miss direction: 0 if inside; -1 if below lo; +1 if above hi
+    miss = {w_: (0 if hit[w_] else (-1 if q95_true < cis[w_][0] else 1)) for w_ in cis}
+    return dict(losses=cands, hit=hit, wid=wid, miss=miss, true=kind, chosen=ch)
+
+CFG = dict(lam=1.5, sa=1.8, sb=0.45)
+def run(seed_list, m=350, Bf=30, label=''):
+    args = [(sd, 10, m, Bf, CFG) for sd in seed_list]
+    with Pool(4) as p:
+        out = []
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=2)):
+            out.append(r)
+            if (i+1)%50==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    names = list(out[0]['losses'])
+    base = 'a1.1_b1.0'
+    bf = np.array([r['losses'][base] for r in out])
+    print(f"--- {label} S={len(out)} paired vs {base} ---")
+    rows=[]
+    for nm in names:
+        v = np.array([r['losses'][nm] for r in out]); d=v-bf
+        rows.append((d.mean(), nm, v.mean(), d.mean(), d.std()/len(d)**.5))
+    for dm, nm, mn, dm2, sev in sorted(rows, key=lambda z:z[3]):
+        print(f"  {nm:12s} fut={mn:.4f} paired={dm2:+.4f}({sev:.4f})")
+    for w_ in out[0]['hit']:
+        cov = np.mean([r['hit'][w_] for r in out]); wid = np.median([r['wid'][w_] for r in out])
+        miss = np.array([r['miss'][w_] for r in out])
+        print(f"  CI pad±{w_}: cov={cov:.3f} medw={wid:.3f} miss-lo={(miss==-1).mean():.3f} miss-hi={(miss==1).mean():.3f}")
+    # cov by true family
+    import collections
+    for fam in ('normal','t','shash'):
+        sub = [r for r in out if r['true']==fam]
+        if not sub: continue
+        c0 = np.mean([r['hit'][0.0] for r in sub])
+        c1 = np.mean([r['hit'][1.0] for r in sub])
+        print(f"   true={fam:6s} n={len(sub)} cov0={c0:.3f} cov1={c1:.3f}")
+    return out
+
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    run([20000+s for s in range(int(sys.argv[1]) if len(sys.argv)>1 else 200)], label='cal8')
+    print("%.0fs"%(time.time()-t0))
+EOF
+nohup timeout 2600 python3 cal8.py 260 > cal8.log 2>&1 &
+echo launched; sleep 240; tail -3 cal8.log
 ```
 
 ## [195] tool
@@ -3032,7 +6615,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 500; tail -5 cal8.log
 ```
 
 ## [197] tool
@@ -3042,7 +6625,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -4 cal8.log
 ```
 
 ## [199] tool
@@ -3058,7 +6641,7 @@ launched
 **tool call: bash**
 
 ```
-
+cat cal8.log
 ```
 
 ## [201] tool
@@ -3093,7 +6676,78 @@ An outlier sim suggests a ppf table-clamping issue at ν=40/60. Also, the CI mis
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('core.py').read()
+# widen and refine t ppf grid
+src = src.replace('_z = np.linspace(-40, 40, 160001)', '_z = np.linspace(-120, 120, 240001)')
+for old,new in [("fill_value=(-40,40), bounds_error=False), bounds_error=False)","fill_value=(-120,120), bounds_error=False)")]:
+    src = src.replace("fill_value=(-40,40), bounds_error=False)", "fill_value=(-120,120), bounds_error=False)")
+src = src.replace("c = stats.t.cdf(_z, nu)\n        _cdf_tab[nu] = c", "c = stats.t.cdf(_z, nu)\n        _cdf_tab[nu] = c")
+open('core.py','w').write(src)
+print('patched grid')
+EOF
+python3 -c "
+import numpy as np; from core import t_ppf
+for nu in (40., 60., 3.): print(nu, float(t_ppf(0.999, nu)), '(unclamped)')"
+cat > cal9.py << 'EOF'
+"""CI methodology: compare q95_true-with-FSRS-blend (A) vs plug-in (B) intervals vs
+TRUE population q95. Same seeds => paired coverage. Also quick alpha check."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
+def pinballv(a, tau): return np.where(a>=0, tau*a, (tau-1)*a)
+def one_case(args):
+    seed, n, m, Bf, cfg = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb = cfg['lam'], cfg['sa'], cfg['sb']
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    n = len(x); w = n/float(m)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-16*sprd, x.max()+16*sprd, 1401)
+    cloud = bootstrap_cloud(bk, bp, n, 120, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    q95_plugin = []
+    q95_blendA = []
+    for ck, cp in cloud:
+        q95_plugin.append(float(ppf_of(ck, cp, 0.95)))
+        Fs_i = cdf_of(ck, cp, x)
+        Gbar_i = w*np.arange(1, n+1)/n + (1-w)*Fs_i
+        q95_blendA.append(float(np.interp(0.95, Gbar_i, x)))
+    q95_plugin = np.array(q95_plugin); q95_blend = np.array(q95_blendA)
+    q95_true = float(ppf_of(kind, par, 0.95))
+    out = dict(true=kind, chosen=ch)
+    for pad in (0.0, 1.0, 2.0, 3.0):
+        loP, hiP = np.percentile(q95_plugin, [2.5-pad, 97.5+pad]); out[f'plugin_{pad}'] = (float(loP), float(hiP))
+        loB, hiB = np.percentile(q95_blend, [2.5-pad, 97.5+pad]);  out[f'blend_{pad}']  = (float(loB), float(hiB))
+    out['q95_true'] = q95_true
+    return out
+CFG = dict(lam=1.5, sa=1.8, sb=0.45)
+def run(seed_list, m=350, label=''):
+    args = [(sd, 10, m, 0, CFG) for sd in seed_list]
+    with Pool(4) as p:
+        out=[]
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=2)):
+            out.append(r)
+            if (i+1)%60==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    print(f"--- {label} S={len(out)} coverage of TRUE population q95 ---")
+    for key in out[0]:
+        if not key[0].isalpha() and not key.startswith(('p','b')): continue
+        if key in ('true','chosen','q95_true'): continue
+        if key.split('_')[0] not in ('plugin','blend'): continue
+        hits = np.array([r[key][0] <= r['q95_true'] <= r[key][1] for r in out])
+        print(f"  {key:12s} cov={hits.mean():.3f} medw={np.median([r[key][1]-r[key][0] for r in out]):.3f}")
+    return out
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    run([30000+s for s in range(int(sys.argv[1]) if len(sys.argv)>1 else 240)], label='cal9')
+    print("%.0fs"%(time.time()-t0))
+EOF
+nohup timeout 2600 python3 cal9.py 260 > cal9.log 2>&1 &
+echo launched; sleep 30; tail -3 cal9.log
 ```
 
 ## [203] tool
@@ -3113,7 +6767,14 @@ ValueError: Percentiles must be in the range [0, 100]
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('cal9.py').read()
+src = src.replace("np.percentile(q95_plugin, [2.5-pad, 97.5+pad])", "np.percentile(q95_plugin, [max(2.5-pad,0), min(97.5+pad,100)])")
+src = src.replace("np.percentile(q95_blend, [2.5-pad, 97.5+pad])", "np.percentile(q95_blend, [max(2.5-pad,0), min(97.5+pad,100)])")
+open('cal9.py','w').write(src)
+EOF
+nohup timeout 2600 python3 cal9.py 260 > cal9.log 2>&1 &
+echo relaunched; sleep 500; tail -3 cal9.log
 ```
 
 ## [205] tool
@@ -3126,7 +6787,7 @@ relaunched
 **tool call: bash**
 
 ```
-
+tail -6 cal9.log
 ```
 
 ## [207] tool
@@ -3146,7 +6807,7 @@ relaunched
 **tool call: bash**
 
 ```
-
+cat cal9.log
 ```
 
 ## [209] tool
@@ -3174,7 +6835,70 @@ The decisive finding: **the parametric bootstrap has 95/2.5 = 38× too much down
 **tool call: bash**
 
 ```
-
+cat > cal10.py << 'EOF'
+"""Decisive CI method comparison. Same seeds; paired coverage of true pop q95."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
+def one_case(args):
+    seed, n, m = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb = 1.5, 1.8, 0.45
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    cloud = bootstrap_cloud(bk, bp, n, 150, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in cloud])
+    q95hat = float(ppf_of(bk, bp, 0.95))
+    q95_true = float(ppf_of(kind, par, 0.95))
+    out = dict(true=kind, chosen=ch, q95hat=q95hat, q95_true=q95_true,
+               med=float(np.median(q95b)), sd=float(q95b.std()))
+    # 1. plug-in base
+    lo, hi = np.percentile(q95b, [2.5, 97.5]); out['plug'] = (float(lo), float(hi))
+    # 2. percentile-centered standard
+    dlo, dhi = np.percentile(q95b, [2.5, 97.5])
+    out['cent'] = (float(2*q95hat - dhi), float(2*q95hat - dlo))
+    # 3. t-centered 2.5*sd
+    s = q95b.std(); out['tcent'] = (q95hat-2.5*s, q95hat+2.5*s)
+    # 4. recentered-on-bootstrap-median (half-sample tie): [med-2.08sd, med+2.08sd]
+    med = np.median(q95b); out['medc'] = (float(med-2.45*s), float(med+2.45*s))
+    # 5. asymmetric plug-in, empirical shift
+    shifts = np.array([1.0])
+    out['plug_pad'] = (float(np.percentile(q95b, 1.7)), float(np.percentile(q95b, 98.3)))
+    return out
+def run(seeds, label=''):
+    args = [(sd, 10, 350) for sd in seeds]
+    with Pool(4) as p:
+        out=[]
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=2)):
+            out.append(r)
+            if (i+1)%50==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    print(f"--- {label} S={len(out)} cov of true pop q95 ---")
+    for key in ('plug','cent','tcent','medc','plug_pad'):
+        hits = np.array([r[key][0] <= r['q95_true'] <= r[key][1] for r in out])
+        lo_miss = np.array([r['q95_true'] < r[key][0] for r in out])
+        hi_miss = np.array([r['q95_true'] > r[key][1] for r in out])
+        print(f"  {key:8s} cov={hits.mean():.3f} miss_lo={lo_miss.mean():.3f} miss_hi={hi_miss.mean():.3f} medw={np.median([r[key][1]-r[key][0] for r in out]):.3f}")
+    # bias: med - q95hat vs 0; scale: sd
+    mb = np.array([r['med']-r['q95hat'] for r in out]); sd = np.array([r['sd'] for r in out])
+    print(f"  med-q95hat mean {mb.mean():.3f}; sd/q95_hat-… sd mean {sd.mean():.3f}; q95hat mean {np.mean([r['q95hat'] for r in out]):.3f}")
+    for fam in ('normal','t','shash'):
+        sub=[r for r in out if r['true']==fam]
+        if sub:
+            hp = np.mean([r['plug'][0]<=r['q95_true']<=r['plug'][1] for r in sub])
+            hm = np.mean([r['medc'][0]<=r['q95_true']<=r['medc'][1] for r in sub])
+            print(f"   {fam:6s} n={len(sub)} plug={hp:.3f} medc={hm:.3f}")
+    return out
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    run([40000+s for s in range(int(sys.argv[1]) if len(sys.argv)>1 else 200)], label='cal10')
+    print("%.0fs"%(time.time()-t0))
+EOF
+nohup timeout 2000 python3 cal10.py 300 > cal10.log 2>&1 &
+echo launched; sleep 400; tail -4 cal10.log
 ```
 
 ## [211] tool
@@ -3187,7 +6911,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -20 cal10.log
 ```
 
 ## [213] tool
@@ -3200,7 +6924,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 500; tail -20 cal10.log
 ```
 
 ## [215] tool
@@ -3210,7 +6934,7 @@ launched
 **tool call: bash**
 
 ```
-
+cat cal10.log
 ```
 
 ## [217] tool
@@ -3227,7 +6951,7 @@ This takes ~3.2s/sim because each case re-fits 150 bootstrap samples. Let me red
 **tool call: bash**
 
 ```
-
+sleep 400; cat cal10.log
 ```
 
 ## [219] tool
@@ -3237,7 +6961,7 @@ This takes ~3.2s/sim because each case re-fits 150 bootstrap samples. Let me red
 **tool call: bash**
 
 ```
-
+cat cal10.log; ls -la cal10.log
 ```
 
 ## [221] tool
@@ -3255,7 +6979,7 @@ This takes ~3.2s/sim because each case re-fits 150 bootstrap samples. Let me red
 **tool call: bash**
 
 ```
-
+tail -c 2000 cal10.log
 ```
 
 ## [223] tool
@@ -3272,7 +6996,7 @@ This takes ~3.2s/sim because each case re-fits 150 bootstrap samples. Let me red
 **tool call: bash**
 
 ```
-
+cat /proc/loadavg; sleep 180; tail -c 1200 cal10.log
 ```
 
 ## [225] tool
@@ -3304,7 +7028,105 @@ Key result: med-centered `[med−2.45σ, med+2.45σ]` gives **88%** coverage, t-
 **tool call: bash**
 
 ```
+cat > core2.py << 'EOF'
+"""Mixture-predictive estimation: predictive CDF = weighted average of
+ (a) chosen parametric-family bootstrap cloud CDFs, (b) kernel-smoothed empirical.
+Point estimates: alpha-scaled predictive quantiles + FSRS blend.
+CI: mixture bootstrap of q95_true with median-centering."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from core import *
 
+KAPPA = 1.06
+
+def kern_h(x):
+    x = np.asarray(x, float)
+    s = min(x.std(ddof=1), max(np.subtract(*np.percentile(x,[75,25]))/1.349, 1e-9))
+    s = max(s, 1e-9)
+    return KAPPA*s*len(x)**(-0.2), s
+
+def kern_cdf(x, h, g):
+    return norm.cdf((np.asarray(g)[None,:] - np.asarray(x)[:,None])/h).mean(axis=0)
+
+def kern_ppf(x, h, ps):
+    x = np.sort(np.asarray(x, float))
+    def inv(p):
+        lo = x.min()-8*h - 8*np.std(x); hi = x.max()+8*h + 8*np.std(x)
+        for _ in range(70):
+            mid = 0.5*(lo+hi)
+            if norm.cdf((mid-x)/h).mean() < p: lo = mid
+            else: hi = mid
+        return 0.5*(lo+hi)
+    return np.array([inv(p) for p in np.atleast_1d(ps)])
+
+def kern_q95_true_of_bootstrapped_sample(xb):
+    h, _ = kern_h(xb)
+    return float(kern_ppf(xb, h, [0.95])[0])
+
+def estimate_block2(x, m, B=140, seed=0, lam=1.5, sa=1.8, sb=0.45,
+                    gam=0.75, alpha=1.1, beta_frac=1.0,
+                    ci_b=140, ci_k=2.45):
+    x = np.sort(np.asarray(x, float)); n = len(x); w = n/float(m)
+    rng = np.random.default_rng(seed)
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    # hard-mixture on observed cloud
+    cloud = bootstrap_cloud(bk, bp, n, B, rng, lam, sa, sb, 1.0, 1.0)
+    parsA = [(bk,bp)] + cloud
+    Fbar_par = np.stack([cdf_of(ck,cp,g) for ck,cp in parsA]).mean(axis=0)
+    h_obs, _ = kern_h(x)
+    Fker = kern_cdf(x, h_obs, g)
+    Fpred = gam*Fbar_par + (1-gam)*Fker            # predictive model CDF
+    phat = np.searchsorted(x, g)/n
+    # blend with FSRS (correction within-steps)
+    def blend(tau, Fm):
+        G = beta_frac*w*phat + (1-beta_frac*w)*Fm
+        q = float(np.interp(tau, G, g))
+        # refine within-step
+        k = int(np.searchsorted(x, q))
+        lo, hi = q-0.3*sprd, q+0.3*sprd
+        def H(qq):
+            return beta_frac*w*(k/n) + (1-beta_frac*w)*float(np.interp(qq, g, Fm))
+        if H(lo) > tau: return lo
+        if H(hi) < tau: return hi
+        for _ in range(50):
+            mid = 0.5*(lo+hi)
+            if H(mid) < tau: lo = mid
+            else: hi = mid
+        return 0.5*(lo+hi)
+    med = blend(0.5, Fpred)
+    qs = {t: med + (alpha or 1.0)*(blend(t, Fpred) - med) for t in TAUS}
+    # CI: mixture bootstrap: gamma fraction from chosen family, 1-gamma from kernel bootstrap
+    B2 = ci_b
+    npar = int(round(gam*B2)); nker = B2 - npar
+    q95s = []
+    # reuse chosen-family cloud
+    for ck, cp in cloud[:npar]:
+        q95s.append(float(ppf_of(ck, cp, 0.95)))
+    ik = rng.integers(0, n, size=(nker, n))
+    for i in range(nker):
+        xb = np.sort(x[ik[i]])
+        if np.ptp(xb) < 1e-12:
+            xb = xb + 1e-9*np.arange(n)
+        q95s.append(kern_q95_true_of_bootstrapped_sample(xb))
+    q95s = np.array(q95s)
+    mc = float(np.median(q95s)); sdev = float(q95s.std())
+    lo, hi = mc - ci_k*sdev, mc + ci_k*sdev
+    return dict(q90=qs[0.9], q95=qs[0.95], q99=qs[0.99], lo=float(lo), hi=float(hi),
+                chosen=ch, q95_boot=q95s, ci_center=mc, ci_sd=sdev)
+
+if __name__ == '__main__':
+    import time, pandas as pd
+    df = pd.read_pickle('data.pkl')
+    x22 = df[df.block==22]['x'].values
+    t0=time.time()
+    r = estimate_block2(x22, 276, B=140, seed=1)
+    print("b22: q90 %.1f q95 %.1f q99 %.1f CI (%.1f, %.1f) chosen=%s  %.1fs"%(r['q90'],r['q95'],r['q99'],r['lo'],r['hi'],r['chosen'],time.time()-t0))
+EOF
+timeout 300 python3 core2.py
 ```
 
 ## [227] tool
@@ -3319,7 +7141,88 @@ Block22 now gives sensible tail extrapolation (q95=34.2 vs kernel≈45, t-plugin
 **tool call: bash**
 
 ```
+python3 - << 'EOF'
+# cal11.py: compare gamma values + asymmetric-empirical-median CI
+open('cal11.py','w').write('''
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
+from core2 import kern_h, kern_cdf, kern_q95_true_of_bootstrapped_sample
 
+def one_case(args):
+    seed, n, m, Bf, cfg = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb, = 1.5, 1.8, 0.45
+    gam, alpha, beta_frac = cfg['gam'], cfg['alpha'], cfg['beta']
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    n = len(x); w = n/float(m)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    cloud = bootstrap_cloud(bk, bp, n, 120, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    parsA = [(bk,bp)]+cloud
+    Fbar_par = np.stack([cdf_of(ck,cp,g) for ck,cp in parsA]).mean(axis=0)
+    h_obs, _ = kern_h(x)
+    Fker = kern_cdf(x, h_obs, g)
+    Fpred = gam*Fbar_par + (1-gam)*Fker
+    phat = np.searchsorted(x, g)/n
+    med = float(np.interp(0.5, Fpred, g))
+    def pq(tau):
+        G = beta_frac*w*phat + (1-beta_frac*w)*Fpred
+        return float(np.interp(tau, G, g))
+    qs = {t: med + alpha*(pq(t)-med) for t in TAUS}
+    # CI: mixture bootstrap q95 cloud
+    B2 = 120
+    npar = int(round(gam*B2)); nker = B2-npar
+    q95s = [float(ppf_of(ck,cp,0.95)) for ck,cp in cloud[:npar]]
+    ik = rng.integers(0, n, size=(nker, n))
+    for i in range(nker):
+        xb = np.sort(x[ik[i]])
+        if np.ptp(xb) < 1e-12: xb = xb + 1e-9*np.arange(n)
+        q95s.append(kern_q95_true_of_bootstrapped_sample(xb))
+    q95s = np.array(q95s)
+    fut = np.sort(ppf_of(kind, par, np.random.default_rng(int(rng.integers(2**31))).random((Bf,n))), axis=1)
+    loss = sum(np.where((d:=(fut-qs[t]))>=0, t*d, (t-1)*d).mean() for t in TAUS)
+    q95_true = float(ppf_of(kind, par, 0.95))
+    mc = float(np.median(q95s)); sd = float(q95s.std())
+    lo_a, hi_a = np.percentile(q95s, [2.5, 97.5])
+    return dict(loss=loss, cis={'asym': (float(lo_a), float(hi_a)),
+                                 'wide': (float(np.percentile(q95s,1.5)), float(np.percentile(q95s,98.5))),
+                                 'medc': (mc-2.2*sd, mc+2.2*sd)},
+                q95_true=q95_true, true=kind, chosen=ch)
+
+def run(seeds, cfg, label=''):
+    args = [(sd, 10, 350, 30, cfg) for sd in seeds]
+    with Pool(4) as p:
+        out=[]
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=2)):
+            out.append(r)
+            if (i+1)%50==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    L = np.array([r['loss'] for r in out])
+    print(f"--- {label} cfg={cfg} S={len(out)} mean-loss={L.mean():.4f} med={np.median(L):.4f}")
+    for cn in out[0]['cis']:
+        hits = np.array([r['cis'][cn][0] <= r['q95_true'] <= r['cis'][cn][1] for r in out])
+        mislo = np.array([r['q95_true'] < r['cis'][cn][0] for r in out])
+        print(f"  CI {cn:6s} cov={hits.mean():.3f} misslo={mislo.mean():.3f} medw={np.median([r['cis'][cn][1]-r['cis'][cn][0] for r in out]):.3f}")
+    return out
+
+if __name__ == "__main__":
+    import sys, time
+    t0=time.time()
+    gam = float(sys.argv[1]); alpha = float(sys.argv[2])
+    run([50000+s for s in range(int(sys.argv[3]) if len(sys.argv)>3 else 120)],
+        cfg=dict(gam=gam, alpha=alpha, beta=1.0), label=f'gam{gam}_a{alpha}')
+    print("%.0fs"%(time.time()-t0))
+''')
+print("written")
+EOF
+nohup timeout 2400 python3 cal11.py 0.0 1.1 150 > cal11_g00.log 2>&1 &
+nohup timeout 2400 python3 cal11.py 0.5 1.1 150 > cal11_g05.log 2>&1 &
+nohup timeout 2400 python3 cal11.py 1.0 1.1 150 > cal11_g10.log 2>&1 &
+echo launched x3; sleep 120; cat cal11_g00.log | tail -2
 ```
 
 ## [229] tool
@@ -3333,7 +7236,7 @@ launched x3
 **tool call: bash**
 
 ```
-
+sleep 700; for f in cal11_g00.log cal11_g05.log cal11_g10.log; do echo "== $f"; tail -8 $f; done
 ```
 
 ## [231] tool
@@ -3343,7 +7246,7 @@ launched x3
 **tool call: bash**
 
 ```
-
+for f in cal11_g00.log cal11_g05.log cal11_g10.log; do echo "== $f"; tail -8 $f; done
 ```
 
 ## [233] tool
@@ -3359,7 +7262,7 @@ launched x3
 **tool call: bash**
 
 ```
-
+cat /proc/loadavg; sleep 550; for f in cal11_g00.log cal11_g05.log cal11_g10.log; do echo "== $f"; tail -8 $f; done
 ```
 
 ## [235] tool
@@ -3372,7 +7275,7 @@ launched x3
 **tool call: bash**
 
 ```
-
+for f in cal11_g00.log cal11_g05.log cal11_g10.log; do echo "== $f"; tail -8 $f; done
 ```
 
 ## [237] tool
@@ -3392,7 +7295,39 @@ Let me stop wasting cycles on slow double bootstrap and pivot to **precomputatio
 **tool call: bash**
 
 ```
-
+pkill -f cal11.py 2>/dev/null; pkill -f cal10.py 2>/dev/null; pkill -f cal5.py 2>/dev/null
+python3 - << 'EOF'
+import numpy as np, time
+from core import *
+from core2 import kern_h, kern_cdf
+rng = np.random.default_rng(70000)
+kind, par = gen_theta(rng)
+print("kind:", kind)
+x = np.sort(ppf_of(kind, par, rng.random(10)))
+lam, sa, sb = 1.5, 1.8, 0.45
+t0=time.time()
+ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+bk, bp = ch, tuple(par0)
+sprd = max(x.std(), 1e-9)
+g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+B=120
+U = rng.random((B,10)); U.sort(axis=1)
+# parametric cloud
+dFdp = []
+Xp = []
+for i in range(B):
+    xi = np.sort(ppf_of(bk,bp, U[i]))
+    ck, cp = choose_model(xi, lam=lam, sa=sa, sb=sb)[:2]
+    Xp.append((ck,cp)); dFdp.append(cdf_of(ck,cp,g))
+Fbar_par = np.vstack([cdf_of(bk,bp,g)] + dFdp).mean(axis=0)
+# kernel cloud: same U
+Fk = []
+h0,_ = kern_h(x)
+for i in range(B):
+    xi = np.sort(kern_ppf_fast(x, h0, U[i]) if False else ppf_of('normal',(0,1),U[i])[:0])  # placeholder
+t1=time.time()
+print("param cloud: %.2fs" % (t1-t0))
+EOF
 ```
 
 ## [239] tool
@@ -3414,7 +7349,81 @@ I'll run ONE more targeted experiment: pure parametric predictive but with a **w
 **tool call: bash**
 
 ```
+cat > produce2.py << 'EOF'
+import numpy as np, pandas as pd, time
+from multiprocessing import Pool
+from core import *
+from core2 import kern_h, kern_cdf
 
+def one(args):
+    b, x, m = args
+    r = one_block(x, m, seed=777+b)
+    return (b, r['q90'], r['q95'], r['q99'], r['lo'], r['hi'], r['chosen'])
+
+def one_block(x, m, seed, lam=1.5, sa=1.8, sb=0.45, alpha=1.15, gam=0.8, k=2.6):
+    x = np.sort(np.asarray(x,float)); n=len(x); w=n/float(m)
+    rng = np.random.default_rng(seed)
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1401)
+    B=150
+    cloud = bootstrap_cloud(bk, bp, n, B, rng, lam, sa, sb, 1.0, 1.0)
+    parsA = [(bk,bp)] + cloud
+    Fbar_par = np.stack([cdf_of(ck,cp,g) for ck,cp in parsA]).mean(axis=0)
+    h_obs,_ = kern_h(x)
+    Fker = kern_cdf(x, h_obs, g)
+    Fpred = gam*Fbar_par + (1-gam)*Fker
+    phat = np.searchsorted(x, g)/n
+    def invG(tau, Fm):
+        G = w*phat + (1-w)*Fm
+        q = float(np.interp(tau, G, g))
+        kstep = int(np.searchsorted(x, q))
+        lo, hi = q-0.25*sprd, q+0.25*sprd
+        def H(qq): return w*(kstep/n) + (1-w)*float(np.interp(qq, g, Fm))
+        if H(lo)>tau: return lo
+        if H(hi)<tau: return hi
+        for _ in range(45):
+            mid=0.5*(lo+hi)
+            if H(mid)<tau: lo=mid
+            else: hi=mid
+        return 0.5*(lo+hi)
+    med = invG(0.5, Fpred)
+    qs = {t: med + alpha*(invG(t, Fpred)-med) for t in TAUS}
+    # CI: parametric cloud kernel-augmented scale; median-center
+    q95b = np.array([ppf_of(ck,cp,0.95) for ck,cp in parsA[1:]])
+    q95k = float(kern_ppf_scalar(x, h_obs))
+    medb = np.median(q95b); sdb = q95b.std()
+    center = gam*medb + (1-gam)*q95k
+    sd_mix = np.sqrt(gam*sdb**2 + (1-gam)*(sdb**2 + (medb-q95k)**2))
+    lo, hi = center - k*sd_mix, center + k*sd_mix
+    return dict(q90=qs[0.9], q95=qs[0.95], q99=qs[0.99], lo=float(lo), hi=float(hi), chosen=ch)
+
+def kern_ppf_scalar(x, h):
+    x = np.sort(np.asarray(x,float))
+    lo = x.min()-8*h-8*x.std(); hi = x.max()+8*h+8*x.std()
+    for _ in range(70):
+        mid=0.5*(lo+hi)
+        if norm.cdf((mid-x)/h).mean() < 0.95: lo=mid
+        else: hi=mid
+    return 0.5*(lo+hi)
+
+if __name__ == '__main__':
+    from scipy.stats import norm  # for kern fn
+    df = pd.read_pickle('data.pkl')
+    args = [(b, g['x'].values, int(g['m'].iloc[0])) for b,g in df.groupby('block')]
+    t0=time.time()
+    with Pool(4) as p:
+        rows = p.map(one, args)
+    rows.sort()
+    dfout = pd.DataFrame(rows, columns=['block','q90','q95','q99','lo','hi','chosen'])
+    dfout[['block','q90','q95','q99','lo','hi']].to_csv('predictions.csv', index=False)
+    print("wrote predictions.csv rows=%d in %.0fs"%(len(dfout), time.time()-t0))
+    print(dfout['chosen'].value_counts().to_dict())
+EOF
+sed -i 's/from core import \*\n/import numpy as np\nfrom core import *\n/' produce2.py
+echo "from scipy.stats import norm" > _imp.py && cat produce2.py >> _imp.py && mv _imp.py produce2.py
+timeout 1200 python3 produce2.py
 ```
 
 ## [241] tool
@@ -3424,7 +7433,17 @@ I'll run ONE more targeted experiment: pure parametric predictive but with a **w
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np, time
+import produce2
+# time single block
+import pandas as pd
+df = pd.read_pickle('data.pkl')
+x = df[df.block==1]['x'].values
+t0=time.time()
+r = produce2.one_block(x, 427, seed=1)
+print("1 block: %.1fs" % (time.time()-t0), r['chosen'], round(r['q95'],3), (round(r['lo'],3), round(r['hi'],3)))
+EOF
 ```
 
 ## [243] tool
@@ -3437,7 +7456,26 @@ I'll run ONE more targeted experiment: pure parametric predictive but with a **w
 **tool call: bash**
 
 ```
-
+cd /tmp 2>/dev/null; cd /workspace
+python3 - << 'EOF'
+import numpy as np, time, warnings
+warnings.filterwarnings('ignore')
+import produce2
+import pandas as pd
+df = pd.read_pickle('data.pkl')
+args = [(b, g['x'].values, int(g['m'].iloc[0])) for b,g in df.groupby('block')]
+import multiprocessing as mp
+t0=time.time()
+ctx = mp.get_context('spawn')
+with ctx.Pool(4) as p:
+    rows = p.map(produce2.one, args, chunksize=4)
+rows.sort()
+dfout = pd.DataFrame(rows, columns=['block','q90','q95','q99','lo','hi','chosen'])
+dfout[['block','q90','q95','q99','lo','hi']].to_csv('predictions.csv', index=False)
+print("rows=%d in %.0fs"%(len(dfout), time.time()-t0))
+print(dfout['chosen'].value_counts().to_dict())
+print(dfout.head(3).to_string())
+EOF
 ```
 
 ## [245] tool
@@ -3742,7 +7780,27 @@ The production run (>5 min for 100 blocks) keeps timing out my tool. I'll run it
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np, pandas as pd, time
+from core import *
+from core2 import kern_h
+df = pd.read_pickle('data.pkl')
+rows=[]
+for b, gdf in df.groupby('block'):
+    x = np.sort(gdf['x'].values)
+    ll, nu, mu, s = fit_t_ll(x)
+    qt95 = mu + s*float(t_ppf(0.95, nu))
+    th, pll, raw = fit_shash_raw(x, 1.5, 1.8, 0.45)
+    qs95 = float(shash_ppf(0.95, th[0], np.exp(th[1]), th[2], np.exp(th[3])))
+    h0,_ = kern_h(x)
+    qk = float(np.interp(0.95, kern_cdf(x, h0, np.linspace(x.min()-3*s, x.max()+6*s, 1601)), np.linspace(x.min()-3*s, x.max()+6*s, 1601)))
+    ch = choose_model(x, lam=1.5, sa=1.8, sb=0.45)[0]
+    rows.append((b, ch, qt95, qs95, qk, s, x.max()))
+r = pd.DataFrame(rows, columns=['block','ch','qt','qshash','qker','sd','xmax'])
+r['rel'] = (r.qshash - r.qt)/r.sd
+print("chosen counts:", r.ch.value_counts().to_dict())
+print(r[np.argsort(-np.abs(r.rel))][['block','ch','qt','qshash','qker','sd','xmax']].head(15).round(2).to_string())
+EOF
 ```
 
 ## [247] tool
@@ -3758,7 +7816,31 @@ NameError: name 'kern_cdf' is not defined
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+import numpy as np, pandas as pd
+from core import *
+from core2 import kern_h, kern_cdf
+df = pd.read_pickle('data.pkl')
+rows=[]
+for b, gdf in df.groupby('block'):
+    x = np.sort(gdf['x'].values)
+    ll, nu, mu, s = fit_t_ll(x)
+    qt95 = mu + s*float(t_ppf(0.95, nu))
+    th, pll, raw = fit_shash_raw(x, 1.5, 1.8, 0.45)
+    qs95 = float(shash_ppf(0.95, th[0], np.exp(th[1]), th[2], np.exp(th[3])))
+    h0,_ = kern_h(x)
+    gg = np.linspace(x.min()-3*s, x.max()+8*s, 2001)
+    qk = float(np.interp(0.95, kern_cdf(x, h0, gg), gg))
+    ch = choose_model(x, lam=1.5, sa=1.8, sb=0.45)[0]
+    rows.append((b, ch, qt95, qs95, qk, s, x.max()))
+r = pd.DataFrame(rows, columns=['block','ch','qt','qshash','qker','sd','xmax'])
+r['rel_ts'] = (r.qshash - r.qt)/r.sd
+r['rel_tk'] = (r.qker - r.qt)/r.sd
+print("chosen counts:", r.ch.value_counts().to_dict())
+print(r.iloc[np.argsort(-np.abs(r.rel_ts.values))][['block','ch','qt','qshash','qker','sd','xmax']].head(14).round(2).to_string())
+print("\nsummary |shash-t|/sd: median %.3f p90 %.3f" % (np.abs(r.rel_ts).median(), np.abs(r.rel_ts).quantile(0.9)))
+print("summary |ker-t|/sd: median %.3f p90 %.3f" % (np.abs(r.rel_tk).median(), np.abs(r.rel_tk).quantile(0.9)))
+EOF
 ```
 
 ## [249] tool
@@ -3791,7 +7873,116 @@ Massive discovery — **even tuned shash is never picked by plain likelihood on 
 **tool call: bash**
 
 ```
+cat > cal12.py << 'EOF'
+"""Select between family-predictive distributions by BOOTSTRAPPED expected pinball of
+each family's predictive quantiles, using ONE shared U-cloud drawn from each family's
+own fit in turn (evaluation population = future draws from that family). Then final
+estimator = chosen family's predictive. Compare 'likel' vs 'pinsel' selection on TRAIN."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from multiprocessing import Pool
+from core import *
+from core2 import kern_h, kern_cdf
 
+def family_cloud(x, fam, lam, sa, sb, B, rng):
+    bk, bp = (('t', fit_t_ll(x)[1:4]) if fam=='t' else None) if False else None
+    if fam=='t':
+        ll, nu, mu, s = fit_t_ll(x); bk,bp = 't', (nu,mu,s)
+    else:
+        th, _, _ = fit_shash_raw(x, lam, sa, sb); bk, bp = 'shash', th
+    U = rng.random((B, len(x))); U.sort(axis=1)
+    pars = []
+    for i in range(B):
+        xi = np.sort(ppf_of(bk, bp, U[i]))
+        if fam=='t':
+            ll, nu, mu, s = fit_t_ll(xi); pars.append(('t',(nu,mu,s)))
+        else:
+            th2,_,_ = fit_shash_raw(xi, lam, sa, sb); pars.append(('shash', th2))
+    return (bk,bp), pars
+
+def predictive_F(x, bk, bp, pars, g):
+    mats = [cdf_of(bk,bp,g)[None,:]] + [cdf_of(ck,cp,g)[None,:] for ck,cp in pars]
+    return np.vstack(mats).mean(axis=0)
+
+def pinballv(a,t): return np.where(a>=0, t*a, (t-1)*a)
+
+def one_case(args):
+    seed, n, m, Bf, cfg = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb = cfg['lam'], cfg['sa'], cfg['sb']
+    w = n/float(m)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-14*sprd, x.max()+14*sprd, 1201)
+    phat = np.searchsorted(x, g)/n
+    out = {}
+    # shared eval draws: use a moderate cloud from each family's fit (evaluation = future obs)
+    res = {}
+    for fam in ('t','shash'):
+        r1 = np.random.default_rng(int(rng.integers(2**31)))
+        (bk,bp), pars = family_cloud(x, fam, lam, sa, sb, 90, r1)
+        Fp = predictive_F(x, bk, bp, pars, g)
+        res[fam] = dict(Fp=Fp)
+    # scores: expected pinball of each family's anchors against the OTHER family's future draws? No: shared truth.
+    # shared truth: future draws from the TRUE theta this case. Evaluate on those.
+    fut = np.sort(ppf_of(kind, par, np.random.default_rng(int(rng.integers(2**31))).random((Bf,n))), axis=1)
+    # candidates: predictive quantiles with alpha/beta + blend
+    AL = cfg['alpha']; BE = cfg['beta']
+    cands = {}
+    for fam in ('t','shash'):
+        Fp = res[fam]['Fp']
+        G = BE*w*phat + (1-BE*w)*Fp
+        med = float(np.interp(0.5, G, g))
+        q = {t: med + AL*(float(np.interp(t, G, g))-med) for t in TAUS}
+        cands[fam] = sum(pinballv(fut-q[t], t).mean() for t in TAUS)
+    # selection choices
+    chl,_,_,_ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    chl = 'shash' if chl=='shash' else 't'
+    # pinball selection: choose family with lower bootstrapped pinball ESTIMATE of own error
+    scores = {}
+    for fam in ('t','shash'):
+        r2 = np.random.default_rng(int(rng.integers(2**31)))
+        (bk,bp), pars = family_cloud(x, fam, lam, sa, sb, 60, r2)
+        Fp2 = predictive_F(x, bk, bp, pars, g)
+        med = float(np.interp(0.5, Fp2, g))
+        G = BE*w*phat + (1-BE*w)*Fp2
+        anchors = {t: med + AL*(float(np.interp(t, G, g))-med) for t in TAUS}
+        uvec = np.linspace(0.0001,0.9999,300)
+        qs_ = np.interp(uvec, Fp2, g)
+        sc = sum(pinballv(anchors[t]-qs_, t).mean() for t in TAUS)
+        scores[fam] = sc
+    chp = 't' if scores['t'] <= scores['shash']+cfg['selpen'] else 'shash'
+    out['likesel'] = cands[chl]; out['pinsel'] = cands[chp]
+    out['t'] = cands['t']; out['shash'] = cands['shash']
+    out['oracle'] = min(cands['t'], cands['shash'])
+    out['lik_pick'] = chl; out['pin_pick'] = chp; out['true'] = kind
+    return out
+
+def run(seeds, cfg, label=''):
+    args = [(sd, 10, 350, 30, cfg) for sd in seeds]
+    with Pool(4) as p:
+        out=[]
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=2)):
+            out.append(r)
+            if (i+1)%40==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    for nm in ('t','shash','likesel','pinsel','oracle'):
+        v = np.array([r[nm] for r in out]); print(f"  {nm:8s} fut={v.mean():.4f} med={np.median(v):.4f}")
+    import collections
+    print("  lik picks:", dict(collections.Counter(r['lik_pick'] for r in out)),
+          " pin picks:", dict(collections.Counter(r['pin_pick'] for r in out)),
+          " true:", dict(collections.Counter(r['true'] for r in out)))
+    return out
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    run([60000+s for s in range(int(sys.argv[1]) if len(sys.argv)>1 else 120)],
+        cfg=dict(lam=1.5, sa=1.8, sb=0.45, alpha=1.15, beta=1.0, selpen=0.0), label='cal12')
+    print("%.0f"%(time.time()-t0))
+EOF
+nohup timeout 2500 python3 cal12.py 90 > cal12.log 2>&1 &
+echo launched
 ```
 
 ## [251] tool
@@ -3804,7 +7995,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 500; tail -15 cal12.log
 ```
 
 ## [253] tool
@@ -3814,7 +8005,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 400; tail -15 cal12.log
 ```
 
 ## [255] tool
@@ -3824,7 +8015,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -15 cal12.log
 ```
 
 ## [257] tool
@@ -3855,7 +8046,56 @@ Focusing now on the CI, which has clear room to improve (shash-cov 72%). Running
 **tool call: bash**
 
 ```
-
+cat > ci_test.py << 'EOF'
+"""CI variants fairly compared on same cases, parametric cloud only (fast)."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
+def one_case(args):
+    seed, n, m = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb = 1.5, 1.8, 0.45
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    cloud = bootstrap_cloud(bk, bp, n, 140, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    q95b = np.array([float(ppf_of(ck,cp,0.95)) for ck,cp in cloud])
+    q95_true = float(ppf_of(kind, par, 0.95))
+    med = np.median(q95b); sd = q95b.std(ddof=1)
+    out = {'true': kind}
+    for k_ in (2.0, 2.45, 2.9, 3.3):
+        out[f'mc_{k_}'] = (med - k_*sd, med + k_*sd)
+    out['q95_true'] = q95_true
+    return out
+def run(seeds, m=350, label=''):
+    args = [(sd,10,m) for sd in seeds]
+    with Pool(4) as p:
+        out=[]
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=3)):
+            out.append(r)
+            if (i+1)%100==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    print(f"--- {label} S={len(out)} cov/misslo ---")
+    for key in out[0]:
+        if key in ('true','q95_true'): continue
+        hits = np.array([r[key][0] <= r['q95_true'] <= r[key][1] for r in out])
+        misl = np.array([r['q95_true'] < r[key][0] for r in out])
+        print(f"  {key:9s} cov={hits.mean():.3f} misslo={misl.mean():.3f} medw={np.median([r[key][1]-r[key][0] for r in out]):.3f}")
+    for fam in ('normal','t','shash'):
+        sub=[r for r in out if r['true']==fam]
+        if sub:
+            cov = np.mean([r['mc_2.9'][0] <= r['q95_true'] <= r['mc_2.9'][1] for r in sub])
+            print(f"   {fam}: n={len(sub)} mc_2.9 cov={cov:.3f}")
+    return out
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    run([80000+s for s in range(int(sys.argv[1]) if len(sys.argv)>1 else 200)], label='ci_test')
+    print("%.0fs"%(time.time()-t0))
+EOF
+nohup timeout 2800 python3 ci_test.py 400 > citest.log 2>&1 &
+echo launched; sleep 400; tail -6 citest.log
 ```
 
 ## [259] tool
@@ -3868,7 +8108,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 300; tail -8 citest.log
 ```
 
 ## [261] tool
@@ -3878,7 +8118,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -12 citest.log
 ```
 
 ## [263] tool
@@ -3892,7 +8132,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 550; tail -14 citest.log
 ```
 
 ## [265] tool
@@ -3902,7 +8142,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -14 citest.log
 ```
 
 ## [267] tool
@@ -3917,7 +8157,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 240; tail -14 citest.log
 ```
 
 ## [269] tool
@@ -3944,7 +8184,75 @@ S=400: median-centered scales nicely (k=2.9→90.7%, k=3.3→92.2% overall; shas
 **tool call: bash**
 
 ```
+cat > engine.py << 'EOF'
+"""Final production engine."""
+import numpy as np
+from scipy import stats
+from scipy.stats import norm
+from core import (TAUS, cdf_of, ppf_of, choose_model, fit_t_ll, fit_shash_raw,
+                  t_ppf, bootstrap_cloud)
+from core2 import kern_h, kern_cdf
 
+def kern_ppf_scalar(x, h, p):
+    x = np.sort(np.asarray(x,float))
+    lo = x.min()-8*h-8*x.std(); hi = x.max()+8*h+8*x.std()
+    for _ in range(60):
+        mid=0.5*(lo+hi)
+        if norm.cdf((mid-x)/h).mean() < p: lo=mid
+        else: hi=mid
+    return 0.5*(lo+hi)
+
+def estimate(x, m, seed=0, lam=1.5, sa=1.8, sb=0.45, alpha=1.13, gam=0.6,
+             B=200, ci_k=3.1, beta_frac=1.0, gam_ci=0.6):
+    x = np.sort(np.asarray(x,float)); n=len(x); w=n/float(m)
+    rng = np.random.default_rng(seed)
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    sprd = max(x.std(), 1e-9)
+    g = np.linspace(x.min()-15*sprd, x.max()+15*sprd, 1401)
+    cloud = bootstrap_cloud(bk, bp, n, B, rng, lam, sa, sb, 1.0, 1.0)
+    parsA = [(bk,bp)] + cloud
+    Fbar_par = np.stack([cdf_of(ck,cp,g) for ck,cp in parsA]).mean(axis=0)
+    h_obs,_ = kern_h(x)
+    Fker = kern_cdf(x, h_obs, g)
+    Fpred = gam*Fbar_par + (1-gam)*Fker
+    phat = np.searchsorted(x, g)/n
+    def invG(tau, Fm):
+        G = beta_frac*w*phat + (1-beta_frac*w)*Fm
+        q = float(np.interp(tau, G, g))
+        kstep = int(np.searchsorted(x, q))
+        lo, hi = q-0.35*sprd, q+0.35*sprd
+        def H(qq): return beta_frac*w*(kstep/n) + (1-beta_frac*w)*float(np.interp(qq, g, Fm))
+        if H(lo)>tau: return lo
+        if H(hi)<tau: return hi
+        for _ in range(45):
+            mid=0.5*(lo+hi)
+            if H(mid)<tau: lo=mid
+            else: hi=mid
+        return 0.5*(lo+hi)
+    med = invG(0.5, Fpred)
+    qs = {t: med + alpha*(invG(t, Fpred)-med) for t in TAUS}
+    # CI: parametric cloud q95b + kernel-anchored variance
+    q95b = np.array([float(ppf_of(ck,cp,0.95)) for ck,cp in parsA[1:]])
+    q95k = kern_ppf_scalar(x, h_obs, 0.95)
+    medb = float(np.median(q95b)); sdb = float(q95b.std(ddof=1))
+    center = gam_ci*medb + (1-gam_ci)*q95k
+    sd_mix = float(np.sqrt(gam_ci*sdb**2 + (1-gam_ci)*(sdb**2 + (medb-q95k)**2)))
+    lo = center - ci_k*sd_mix; hi = center + ci_k*sd_mix
+    return dict(q90=qs[0.9], q95=qs[0.95], q99=qs[0.99], lo=float(lo), hi=float(hi),
+                chosen=ch, q95k=q95k, medb=medb, q95_t=float(ppf_of(bk,bp,0.95)))
+EOF
+# quick sanity
+python3 -c "
+import numpy as np, time
+from engine import estimate
+import pandas as pd
+df = pd.read_pickle('data.pkl')
+for b in (1,3,22,32,88):
+    x = df[df.block==b]['x'].values; m = int(df[df.block==b]['m'].iloc[0])
+    t0=time.time(); r = estimate(x, m, seed=b)
+    print(f'b{b}: {r[\"chosen\"]} q90={r[\"q90\"]:.2f} q95={r[\"q95\"]:.2f} q99={r[\"q99\"]:.2f} CI=({r[\"lo\"]:.2f},{r[\"hi\"]:.2f})  {time.time()-t0:.0f}s')
+"
 ```
 
 ## [271] tool
@@ -3963,7 +8271,74 @@ Real-data anchors with mixture γ=0.6 give very wide but plausible tails for the
 **tool call: bash**
 
 ```
-
+cat > cal13.py << 'EOF'
+"""Fresh-seed gamma looomparison + final alpha fine-tune. Paired, one case engine."""
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
+from core2 import kern_h, kern_cdf
+def pinballv(a,t): return np.where(a>=0,t*a,(t-1)*a)
+def one_case(args):
+    seed, n, m, Bf, gammas = args
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(n)))
+    lam, sa, sb = 1.5, 1.8, 0.45
+    alpha = 1.13
+    ch, par0, _, _ = choose_model(x, lam=lam, sa=sa, sb=sb)
+    bk, bp = ch, tuple(par0)
+    n = len(x); w = n/float(m)
+    sprd = max(x.std(),1e-9)
+    g = np.linspace(x.min()-15*sprd, x.max()+15*sprd, 1401)
+    cloud = bootstrap_cloud(bk, bp, n, 150, np.random.default_rng(int(rng.integers(2**31))), lam, sa, sb, 1.0, 1.0)
+    parsA = [(bk,bp)] + cloud
+    Fbar_par = np.stack([cdf_of(ck,cp,g) for ck,cp in parsA]).mean(axis=0)
+    h_obs,_ = kern_h(x); Fker = kern_cdf(x, h_obs, g)
+    phat = np.searchsorted(x, g)/n
+    fut = np.sort(ppf_of(kind, par, np.random.default_rng(int(rng.integers(2**31))).random((Bf,n))), axis=1)
+    out = {'true': kind}
+    def invG(tau, Fm):
+        G = w*phat + (1-w)*Fm
+        return float(np.interp(tau, G, g))
+    for gam in gammas:
+        Fpred = gam*Fbar_par + (1-gam)*Fker
+        med = invG(0.5, Fpred)
+        qs = {t: med + alpha*(invG(t, Fpred)-med) for t in TAUS}
+        out[f'g{gam}'] = sum(pinballv(fut-qs[t],t).mean() for t in TAUS)
+        for ti,t in enumerate(TAUS):
+            out[f'g{gam}_{ti}'] = pinballv(fut-qs[t],t).mean()
+    # oracle: quantiles known via future fut? no - use true population approx
+    tq = {t: float(ppf_of(kind,par,t)) for t in TAUS}
+    out['best_possible'] = sum(pinballv(fut-tq[t],t).mean() for t in TAUS)
+    return out
+def run(seeds, m=350, Bf=30, gammas=(0.0,0.3,0.6,0.85,1.0), label=''):
+    args = [(sd,10,m,Bf,gammas) for sd in seeds]
+    with Pool(4) as p:
+        out=[]
+        for i,r in enumerate(p.imap_unordered(one_case, args, chunksize=3)):
+            out.append(r)
+            if (i+1)%60==0: print("   [%d/%d]"%(i+1,len(args)), flush=True)
+    base='g1.0'
+    bf = np.array([r[base] for r in out])
+    print(f"--- {label} S={len(out)} paired vs {base} ---")
+    for gm in gammas:
+        v = np.array([r[f'g{gm}'] for r in out]); d = v-bf
+        pertau = [np.mean([r[f'g{gm}_{i}'] for r in out]) for i in range(3)]
+        print(f"  g={gm}: fut={v.mean():.4f} paired={d.mean():+.4f}(se {d.std()/len(d)**.5:.4f}) pertau={[round(t,4) for t in pertau]}")
+    vbp = np.array([r['best_possible'] for r in out])
+    print(f"  best-possible(ref): {vbp.mean():.4f}")
+    import collections
+    print(" true:", dict(collections.Counter(r['true'] for r in out)))
+    return out
+if __name__ == '__main__':
+    import sys, time
+    t0=time.time()
+    run([90000+s for s in range(int(sys.argv[1]) if len(sys.argv)>1 else 200)], label='cal13')
+    print("%.0fs"%(time.time()-t0))
+EOF
+nohup timeout 2800 python3 cal13.py 250 > cal13.log 2>&1 &
+echo launched; sleep 420; tail -3 cal13.log
 ```
 
 ## [273] tool
@@ -3976,7 +8351,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -20 cal13.log
 ```
 
 ## [275] tool
@@ -3989,7 +8364,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 700; tail -4 cal13.log
 ```
 
 ## [277] tool
@@ -3999,7 +8374,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -6 cal13.log
 ```
 
 ## [279] tool
@@ -4013,7 +8388,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 720; tail -14 cal13.log
 ```
 
 ## [281] tool
@@ -4023,7 +8398,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -16 cal13.log
 ```
 
 ## [283] tool
@@ -4039,7 +8414,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 120; tail -18 cal13.log
 ```
 
 ## [285] tool
@@ -4066,7 +8441,62 @@ launched
 **tool call: bash**
 
 ```
-
+python3 - << 'EOF'
+src = open('cal13.py').read()
+# extend one_case to evaluate alpha options + mixture CI coverage in the same case
+src = src.replace("def one_case(args):\n    seed, n, m, Bf, gammas = args",
+                  "def one_case(args):\n    seed, n, m, Bf, gammas = args\n    eval_alphas = (1.10, 1.13, 1.18)")
+src = src.replace("""    for gam in gammas:
+        Fpred = gam*Fbar_par + (1-gam)*Fker
+        med = invG(0.5, Fpred)
+        qs = {t: med + alpha*(invG(t, Fpred)-med) for t in TAUS}
+        out[f'g{gam}'] = sum(pinballv(fut-qs[t],t).mean() for t in TAUS)
+        for ti,t in enumerate(TAUS):
+            out[f'g{gam}_{ti}'] = pinballv(fut-qs[t],t).mean()
+    # oracle: quantiles known via future fut? no - use true population approx""",
+"""    Fpreds = {gam: gam*Fbar_par + (1-gam)*Fker for gam in gammas}
+    for gam in gammas:
+        Fpred = Fpreds[gam]
+        med = invG(0.5, Fpred)
+        qs = {t: med + alpha*(invG(t, Fpred)-med) for t in TAUS}
+        out[f'g{gam}'] = sum(pinballv(fut-qs[t],t).mean() for t in TAUS)
+        for ti,t in enumerate(TAUS):
+            out[f'g{gam}_{ti}'] = pinballv(fut-qs[t],t).mean()
+    for a_ in eval_alphas:
+        Fpred = Fpreds[0.6]
+        med = invG(0.5, Fpred)
+        qs = {t: med + a_*(invG(t, Fpred)-med) for t in TAUS}
+        out[f'a{a_}'] = sum(pinballv(fut-qs[t],t).mean() for t in TAUS)
+    # mixture CI coverage vs true pop q95
+    q95b = np.array([float(ppf_of(ck,cp,0.95)) for ck,cp in parsA[1:]])
+    from engine import kern_ppf_scalar
+    q95k = kern_ppf_scalar(x, h_obs, 0.95)
+    medb = float(np.median(q95b)); sdb = float(q95b.std(ddof=1))
+    q95_true = float(ppf_of(kind, par, 0.95))
+    out['ci_eval'] = dict(medb=medb, sdb=sdb, q95k=q95k, q95_true=q95_true)
+    # oracle: quantiles known via future fut? no - use true population approx""")
+src = src.replace("    run([90000+s for s in range(int(sys.argv[1]) if len(sys.argv)>1 else 200)], label='cal13')",
+"""    out = run([90000+s for s in range(int(sys.argv[1]) if len(sys.argv)>1 else 200)], label='cal13')
+    # alpha comparison (g=0.6)
+    akeys = [k for k in out[0] if k.startswith('a')]
+    base='a1.13'; bf=np.array([r[base] for r in out])
+    for a_ in akeys:
+        v=np.array([r[a_] for r in out]); d=v-bf
+        print(f"  {a_}: fut={v.mean():.4f} paired={d.mean():+.4f}(se {d.std()/len(d)**.5:.4f})")
+    # CI at different k and gamma_ci
+    for gci in (0.5, 0.6, 0.7):
+        for k_ in (2.6, 3.1, 3.6):
+            hits=[]
+            for r in out:
+                e = r['ci_eval']; center = gci*e['medb'] + (1-gci)*e['q95k']
+                sd_mix = np.sqrt(gci*e['sdb']**2 + (1-gci)*(e['sdb']**2 + (e['medb']-e['q95k'])**2))
+                hits.append(center - k_*sd_mix <= e['q95_true'] <= center + k_*sd_mix)
+            print(f"  CI gci={gci} k={k_}: cov={np.mean(hits):.3f}")""")
+open('cal13.py','w').write(src)
+print("patched")
+EOF
+nohup timeout 2800 python3 cal13.py 260 > cal13b.log 2>&1 &
+echo launched; sleep 500; tail -4 cal13b.log
 ```
 
 ## [287] tool
@@ -4080,7 +8510,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -5 cal13b.log
 ```
 
 ## [289] tool
@@ -4093,7 +8523,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 800; tail -8 cal13b.log
 ```
 
 ## [291] tool
@@ -4103,7 +8533,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -22 cal13b.log
 ```
 
 ## [293] tool
@@ -4139,7 +8569,47 @@ The final configuration is locked: **γ=0.6 mixture, α=1.11, β=1.0, kernel-aug
 **tool call: bash**
 
 ```
+python3 - << 'EOF'
+# cal14: confirm on fresh seeds; uses final engine directly
+open('cal14.py','w').write('''
+import numpy as np
+from scipy import stats
+from multiprocessing import Pool
+from core import *
+from engine import estimate, kern_ppf_scalar
+from core2 import kern_h
 
+def pinballv(a,t): return np.where(a>=0,t*a,(t-1)*a)
+def one_case(seed):
+    rng = np.random.default_rng(seed)
+    kind, par = gen_theta(rng)
+    x = np.sort(ppf_of(kind, par, rng.random(10)))
+    m = int(rng.integers(250, 593))
+    # run engine with reduced B for speed in confirmation
+    r = estimate(x, m, seed=0, alpha=1.11, gam=0.6, B=130, ci_k=2.7)
+    q95_true = float(ppf_of(kind, par, 0.95))
+    fut = np.sort(ppf_of(kind, par, np.random.default_rng(int(rng.integers(2**31))).random((40,10))), axis=1)
+    loss = sum(pinballv(fut-[r['q90'],r['q95'],r['q99']][ti], t).mean() for ti,t in enumerate((0.9,0.95,0.99)))
+    hit = int(r['lo'] <= q95_true <= r['hi'])
+    return dict(loss=loss, hit=hit, chosen=r['chosen'], true=kind, m=m)
+if __name__ == '__main__':
+    import sys, time
+    S = int(sys.argv[1]) if len(sys.argv)>1 else 120
+    t0=time.time()
+    with Pool(4) as p:
+        out=[]
+        for i,r in enumerate(p.imap_unordered(one_case, [123000+s for s in range(S)])):
+            out.append(r)
+            if (i+1)%40==0: print("   [%d/%d]"%(i+1,S), flush=True)
+    L = np.array([r['loss'] for r in out]); H = np.array([r['hit'] for r in out])
+    print("FINAL CONFIRM: loss mean %.4f med %.4f | q95 CI cov %.3f"%(L.mean(), np.median(L), H.mean()))
+    import collections; print(" chosen:", dict(collections.Counter(r['chosen'] for r in out)))
+    print("%.0fs"%(time.time()-t0))
+''')
+print(1)
+EOF
+nohup timeout 2600 python3 cal14.py 140 > cal14.log 2>&1 &
+echo launched; sleep 500; tail -5 cal14.log
 ```
 
 ## [295] tool
@@ -4153,7 +8623,7 @@ launched
 **tool call: bash**
 
 ```
-
+tail -6 cal14.log
 ```
 
 ## [297] tool
@@ -4167,7 +8637,7 @@ launched
 **tool call: bash**
 
 ```
-
+sleep 600; tail -8 cal14.log
 ```
 
 ## [299] tool

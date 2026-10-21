@@ -67,7 +67,7 @@ Let me start by examining the data structure and then build a model.
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv data/test.csv && echo "---" && head -5 data/test.csv
 ```
 
 ## [3] tool
@@ -115,7 +115,25 @@ FNE4K9,650.0
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+print('Train shape:', train.shape)
+print('Test shape:', test.shape)
+print()
+print('Categories in train:', train['category'].unique())
+print('Categories in test:', test['category'].unique())
+print()
+print('Category counts in train:')
+print(train.groupby('category').size())
+print()
+print('Test x ranges per category:')
+print(test.groupby('category')['x'].agg(['min','max','count']))
+print()
+print('Train x ranges per category:')
+print(train.groupby('category')['x'].agg(['min','max']))
+"
 ```
 
 ## [5] tool
@@ -169,7 +187,16 @@ Let me explore the data patterns more closely.
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+for cat in train['category'].unique():
+    subset = train[train['category']==cat].sort_values('x')
+    print(f'=== {cat} ===')
+    print(subset.to_string())
+    print()
+"
 ```
 
 ## [7] tool
@@ -502,7 +529,41 @@ Now let me look at the relationship patterns more carefully and build a model.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
 
+# Quick look at log/exp patterns - check if y relates to x polynomially
+for cat in sorted(train['category'].unique()):
+    sub = train[train['category']==cat].sort_values('x')
+    x = sub['x'].values
+    y = sub['y'].values
+    # Try linear fit
+    coeffs = np.polyfit(x, y, 1)
+    yhat = np.polyval(coeffs, x)
+    resid = y - yhat
+    rmse = np.sqrt(np.mean(resid**2))
+    r2 = 1 - np.var(resid)/np.var(y)
+    print(f'{cat}: linear RMSE={rmse:.4f}, R2={r2:.4f}, coeffs={coeffs}')
+    
+    # Try quadratic
+    coeffs2 = np.polyfit(x, y, 2)
+    yhat2 = np.polyval(coeffs2, x)
+    resid2 = y - yhat2
+    rmse2 = np.sqrt(np.mean(resid2**2))
+    r2_2 = 1 - np.var(resid2)/np.var(y)
+    print(f'{cat}: quadratic RMSE={rmse2:.4f}, R2={r2_2:.4f}, coeffs={coeffs2}')
+    
+    # Try cubic
+    coeffs3 = np.polyfit(x, y, 3)
+    yhat3 = np.polyval(coeffs3, x)
+    resid3 = y - yhat3
+    rmse3 = np.sqrt(np.mean(resid3**2))
+    r2_3 = 1 - np.var(resid3)/np.var(y)
+    print(f'{cat}: cubic RMSE={rmse3:.4f}, R2={r2_3:.4f}, coeffs={coeffs3}')
+    print()
+"
 ```
 
 ## [9] tool
@@ -548,7 +609,96 @@ Now I have a good understanding of the data. Let me build the full solution
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
 
+# Read data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in test['category'].unique():
+    train_cat = train[train['category'] == cat]
+    test_cat = test[test['category'] == cat]
+    
+    x_train = train_cat['x'].values
+    y_train = train_cat['y'].values
+    x_test = test_cat['x'].values
+    
+    # Try polynomial degrees 1-4 and pick best by BIC
+    best_bic = np.inf
+    best_degree = 1
+    best_coeffs = None
+    n = len(x_train)
+    
+    for deg in range(1, 5):
+        if n <= deg + 1:
+            continue
+        coeffs = np.polyfit(x_train, y_train, deg)
+        yhat = np.polyval(coeffs, x_train)
+        resid = y_train - yhat
+        sigma2 = np.sum(resid**2) / (n - deg - 1)  # unbiased estimate
+        if sigma2 <= 0:
+            continue
+        # BIC = n*log(RSS/n) + k*log(n)
+        k = deg + 1
+        bic = n * np.log(np.sum(resid**2) / n) + k * np.log(n)
+        if bic < best_bic:
+            best_bic = bic
+            best_degree = deg
+            best_coeffs = coeffs
+    
+    # Fit with best degree
+    coeffs = np.polyfit(x_train, y_train, best_degree)
+    yhat_train = np.polyval(coeffs, x_train)
+    resid_train = y_train - yhat_train
+    sigma = np.sqrt(np.sum(resid_train**2) / (n - best_degree - 1))
+    
+    # Compute prediction intervals
+    # For polynomial regression, we need the design matrix
+    X_train = np.column_stack([x_train**d for d in range(best_degree, -1, -1)])
+    X_test = np.column_stack([x_test**d for d in range(best_degree, -1, -1)])
+    
+    # Hat matrix diagonal for prediction intervals
+    # (X^T X)^{-1}
+    XtX_inv = np.linalg.inv(X_train.T @ X_train)
+    
+    # For each test point, compute the leverage
+    for i, x_new in enumerate(x_test):
+        x_row = X_test[i]
+        # Variance of prediction (for mean)
+        var_mean = sigma**2 * (x_row @ XtX_inv @ x_row)
+        # Variance of prediction (for new observation)
+        var_pred = sigma**2 * (1 + x_row @ XtX_inv @ x_row)
+        se_pred = np.sqrt(var_pred)
+        
+        # t-critical value for 95% prediction interval
+        df = n - best_degree - 1
+        t_crit = stats.t.ppf(0.975, df)
+        
+        y_pred = np.polyval(coeffs, x_new)
+        y_lower = y_pred - t_crit * se_pred
+        y_upper = y_pred + t_crit * se_pred
+        
+        results.append({
+            'category': cat,
+            'x': x_test[i],
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+pred_df = pd.DataFrame(results)
+# Sort by original test order
+pred_df = pred_df.sort_index()
+pred_df.to_csv('predictions.csv', index=False)
+print(f"Wrote {len(pred_df)} predictions to predictions.csv")
+print(pred_df.head(10))
+PYEOF
+python3 solution.py
 ```
 
 ## [11] tool
@@ -643,7 +793,102 @@ The cubic is extrapolating wildly for FNE4K9. Let me fix this with more stable m
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
 
+# Read data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    train_cat = train[train['category'] == cat]
+    test_cat = test[test['category'] == cat]
+    
+    x_train = train_cat['x'].values
+    y_train = train_cat['y'].values
+    x_test = test_cat['x'].values
+    
+    n = len(x_train)
+    
+    # Try degrees 1 and 2, pick best by BIC
+    best_bic = np.inf
+    best_degree = 1
+    best_coeffs = None
+    best_sigma = None
+    
+    for deg in [1, 2]:
+        coeffs = np.polyfit(x_train, y_train, deg)
+        yhat = np.polyval(coeffs, x_train)
+        resid = y_train - yhat
+        sigma2 = np.sum(resid**2) / (n - deg - 1)
+        if sigma2 <= 0:
+            continue
+        k = deg + 1
+        bic = n * np.log(np.sum(resid**2) / n) + k * np.log(n)
+        if bic < best_bic:
+            best_bic = bic
+            best_degree = deg
+            best_coeffs = coeffs
+            best_sigma = np.sqrt(sigma2)
+    
+    # Also try degree 3 if we have enough data
+    if n > 10:
+        coeffs3 = np.polyfit(x_train, y_train, 3)
+        yhat3 = np.polyval(coeffs3, x_train)
+        resid3 = y_train - yhat3
+        sigma2_3 = np.sum(resid3**2) / (n - 4)
+        if sigma2_3 > 0:
+            k = 4
+            bic3 = n * np.log(np.sum(resid3**2) / n) + k * np.log(n)
+            if bic3 < best_bic:
+                # Check extrapolation stability: does cubic stay reasonable at test x?
+                y_test_cubic = np.polyval(coeffs3, x_test)
+                y_test_linear = np.polyval(best_coeffs, x_test)
+                # If cubic predictions are wildly different from linear, prefer linear/quadratic
+                ratio = np.max(np.abs(y_test_cubic - y_test_linear)) / (np.max(np.abs(y_test_linear)) + 1e-10)
+                if ratio < 2.0:  # cubic doesn't diverge too much
+                    best_degree = 3
+                    best_coeffs = coeffs3
+                    best_sigma = np.sqrt(sigma2_3)
+    
+    print(f"{cat}: degree={best_degree}, sigma={best_sigma:.4f}")
+    
+    # Build design matrix for prediction intervals
+    X_train = np.column_stack([x_train**d for d in range(best_degree, -1, -1)])
+    X_test = np.column_stack([x_test**d for d in range(best_degree, -1, -1)])
+    
+    XtX_inv = np.linalg.inv(X_train.T @ X_train)
+    
+    df = n - best_degree - 1
+    t_crit = stats.t.ppf(0.975, df)
+    
+    for i, x_new in enumerate(x_test):
+        x_row = X_test[i]
+        var_pred = best_sigma**2 * (1 + x_row @ XtX_inv @ x_row)
+        se_pred = np.sqrt(var_pred)
+        
+        y_pred = np.polyval(best_coeffs, x_new)
+        y_lower = y_pred - t_crit * se_pred
+        y_upper = y_pred + t_crit * se_pred
+        
+        results.append({
+            'category': cat,
+            'x': x_new,
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+pred_df = pd.DataFrame(results)
+pred_df.to_csv('predictions.csv', index=False)
+print(f"\nWrote {len(pred_df)} predictions to predictions.csv")
+print(pred_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [13] tool
@@ -707,7 +952,22 @@ Let me verify the output file is correct.
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+print('predictions shape:', pred.shape)
+print('test shape:', test.shape)
+print('Columns:', pred.columns.tolist())
+print('Expected columns: category, x, y_pred, y_lower, y_upper')
+print()
+print('All test rows accounted for:', len(pred) == len(test))
+print()
+print('Check y_lower < y_pred < y_upper:')
+print((pred['y_lower'] < pred['y_pred']).all() and (pred['y_pred'] < pred['y_upper']).all())
+print()
+print(pred.to_string())
+"
 ```
 
 ## [15] tool

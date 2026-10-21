@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls data/
 ```
 
 ## [3] tool
@@ -71,19 +71,19 @@ train.csv
 **tool call: bash**
 
 ```
-
+head -50 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -20 data/test.csv
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/test.csv
 ```
 
 ## [5] tool
@@ -173,7 +173,7 @@ t
 **tool call: bash**
 
 ```
-
+cat data/train.csv | awk -F',' 'NR>1{print NR-1,$1,$2,$3,$4}' | head -200
 ```
 
 ## [9] tool
@@ -391,7 +391,7 @@ t
 **tool call: bash**
 
 ```
-
+cat data/train.csv | awk -F',' 'NR>1{print NR-1,$1,$2,$3,$4}' | tail -200
 ```
 
 ## [11] tool

@@ -52,7 +52,7 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -111,7 +111,7 @@ t
 **tool call: bash**
 
 ```
-
+cat data/test.csv && echo "---" && tail -20 data/train.csv
 ```
 
 **tool call: python**
@@ -1160,7 +1160,96 @@ Coverage is right on target (94.5–96.7% for nominal 95%). Now let me write the
 **tool call: bash**
 
 ```
+cat > /workspace/predict.py << 'EOF'
+"""
+Predict wrapped angle alpha(t) for test days beyond the training range.
 
+Model (fitted on the unwrapped angle u(t) = unwrap(alpha)):
+    u(t) = c0 + c1*t + sum_{k=1..6} A_k sin(2*pi*k*f*t + phi_k)
+plus i.i.d. observation noise.
+
+95% prediction intervals for a NEW noisy measurement:
+    sigma(t)^2 = sigma_noise^2 + J(t) Cov J(t)^T   (delta method for mean-function uncertainty)
+    interval = pred +/- t_{0.975, dof} * sigma(t)
+Point estimate and interval bounds are wrapped into [0, 360).
+"""
+import numpy as np
+import pandas as pd
+from scipy.optimize import least_squares
+from scipy import stats
+
+K = 6  # number of harmonics (validated: all amplitudes significant, residuals white)
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train['t'].to_numpy(float)
+alpha = train['alpha'].to_numpy(float)
+u = np.rad2deg(np.unwrap(np.deg2rad(alpha)))  # unwrapped angle in degrees
+
+
+def model(p, tt):
+    tt = np.asarray(tt, dtype=float)
+    y = p[0] + p[1] * tt
+    f = p[2]
+    for k in range(1, K + 1):
+        y = y + p[2 + 2 * k - 1] * np.sin(2 * np.pi * k * f * tt + p[2 + 2 * k])
+    return y
+
+
+# --- Fit ------------------------------------------------------------------
+p0 = [151.8, 1.0, 1 / 360.0]
+for k in range(1, K + 1):
+    p0 += [40.0 / (k + 1), 0.0]
+r = least_squares(lambda p: model(p, t) - u, p0, method='lm', max_nfev=400000)
+assert r.success, "fit did not converge"
+p_hat = r.x
+
+resid = u - model(p_hat, t)
+dof = len(t) - len(p_hat)
+s2 = resid @ resid / dof                      # noise variance
+cov = np.linalg.inv(r.jac.T @ r.jac) * s2     # parameter covariance (Gauss-Newton)
+
+# --- Predict ---------------------------------------------------------------
+t_te = test['t'].to_numpy(float)
+pred_unwrapped = model(p_hat, t_te)
+
+# numeric Jacobian of the model at test points (delta method)
+eps = 1e-6
+G = np.empty((len(t_te), len(p_hat)))
+for j in range(len(p_hat)):
+    dp = np.zeros(len(p_hat)); dp[j] = eps
+    G[:, j] = (model(p_hat + dp, t_te) - model(p_hat - dp, t_te)) / (2 * eps)
+var_mean = np.einsum('ij,jk,ik->i', G, cov, G)
+sigma_pred = np.sqrt(s2 + var_mean)           # includes observation noise
+
+z = stats.t.ppf(0.975, dof)
+
+# wrap point estimate into [0, 360)
+pred = pred_unwrapped % 360.0
+halfwidth = z * sigma_pred
+lower = pred - halfwidth
+upper = pred + halfwidth
+
+# If an interval would cross the 0/360 boundary, keep it inside [0,360)
+# by wrapping the out-of-range bound (interval is narrow, <= ~1.2 deg).
+lower = np.where(lower < 0.0, lower + 360.0, lower)
+upper = np.where(upper >= 360.0, upper - 360.0, upper)
+
+out = pd.DataFrame({
+    't': test['t'],
+    'y_pred': pred,
+    'y_lower': lower,
+    'y_upper': upper,
+})
+out.to_csv('predictions.csv', index=False)
+
+print("fit params: c0=%.4f c1=%.6f f=%.8f (P=%.4f d)" % (p_hat[0], p_hat[1], p_hat[2], 1 / p_hat[2]))
+print("amplitudes:", np.round(p_hat[3::2], 4))
+print("noise std: %.4f deg, dof=%d, tcrit=%.4f" % (np.sqrt(s2), dof, z))
+print("mean sigma_pred: %.4f (min %.4f, max %.4f)" % (sigma_pred.mean(), sigma_pred.min(), sigma_pred.max()))
+print(out.to_string(index=False))
+EOF
+cd /workspace && python predict.py
 ```
 
 ## [34] tool
@@ -1202,7 +1291,17 @@ Predictions look sensible (t=2268 predicts 229.9° vs last training value 228.2�
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && python -c "
+import pandas as pd
+p = pd.read_csv('predictions.csv'); t = pd.read_csv('data/test.csv')
+assert list(p.columns) == ['t','y_pred','y_lower','y_upper'], p.columns
+assert len(p) == len(t) == 10
+assert (p.t.values == t.t.values).all()
+assert ((p.y_pred>=0)&(p.y_pred<360)).all()
+assert (p.y_lower <= p.y_upper).all()
+assert (p.y_upper - p.y_lower < 5).all()
+print('predictions.csv OK: 10 rows, correct header, t matches test.csv')
+"
 ```
 
 ## [36] tool

@@ -85,7 +85,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool

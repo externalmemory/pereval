@@ -58,7 +58,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls data/
 ```
 
 ## [3] tool
@@ -78,13 +78,13 @@ train.csv
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -20 data/test.csv
 ```
 
 ## [5] tool
@@ -137,13 +137,13 @@ t
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/test.csv
 ```
 
 **tool call: bash**
 
 ```
-
+tail -10 data/train.csv
 ```
 
 ## [8] tool
@@ -185,7 +185,23 @@ t
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+print('Shape:', df.shape)
+print('Missing counts:')
+print(df.isnull().sum())
+print()
+print('First 5 rows:')
+print(df.head())
+print()
+print('Last 5 rows:')
+print(df.tail())
+print()
+print('Descriptive stats:')
+print(df.describe())
+"
 ```
 
 ## [11] tool

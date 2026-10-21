@@ -56,7 +56,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+cd /home/user 2>/dev/null || cd ~; ls -la; echo "---"; find . -name "*.csv" -maxdepth 3 2>/dev/null | head
 ```
 
 **tool call: python**
@@ -2532,7 +2532,70 @@ Multi-horizon CV RMSE (logit):
 **tool call: bash**
 
 ```
+cd /home/user; cat > make_pred.py << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+scen = pd.read_csv('data/scenario.csv')
+
+df = train.copy()
+for col in ['hpi','bbb_spread','sp500','djia','vix','nasdaq']:
+    df[col] = df[col].interpolate(method='linear', limit_direction='both')
+df['unemp_l1'] = df['unemployment'].shift(1)
+d = df.dropna().reset_index(drop=True)
+
+feats = ['unemployment','unemp_l1']
+X = sm.add_constant(d[feats])
+m = sm.OLS(d['default_rate'], X).fit()
+resid = m.resid.values
+sig = np.sqrt(m.mse_resid)
+coef = m.params.values
+
+# scenario features
+sc = scen.copy()
+sc['unemp_l1'] = sc['unemployment'].shift(1)
+sc.loc[0,'unemp_l1'] = d['unemployment'].iloc[-1]  # q80 unemployment
+Xsc = sm.add_constant(sc[feats])
+point = m.predict(Xsc).values
+
+# residual bootstrap for prediction intervals
+rng = np.random.default_rng(42)
+B = 4000
+n_train = len(d)
+Xm = X.values
+# prediction design matrix
+Xscm = Xsc.values
+draws = np.zeros((B, len(sc)))
+for b in range(B):
+    # residual bootstrap y
+    eb = rng.choice(resid, size=n_train, replace=True)
+    yb = m.fittedvalues.values + eb
+    coef_b, *_ = np.linalg.lstsq(Xm, yb, rcond=None)
+    pb = Xscm @ coef_b
+    sig_b = np.std(yb - Xm @ coef_b)
+    # add irreducible noise per horizon
+    noise = rng.normal(0, sig_b, size=len(sc))
+    draws[b] = pb + noise
+
+lower = np.percentile(draws, 2.5, axis=0)
+upper = np.percentile(draws, 97.5, axis=0)
+lower = np.clip(lower, 0, None)
+upper = np.clip(upper, 0, 1)
+
+out = pd.DataFrame({
+    'quarter': scen['quarter'],
+    'y_pred': point,
+    'y_lower': lower,
+    'y_upper': upper,
+})
+# also expand intervals slightly for furthest horizon? keep bootstrap
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+print("\nsig:", sig)
+EOF
+python make_pred.py
 ```
 
 ## [50] tool
@@ -2587,7 +2650,62 @@ sig: 0.015973465182271263
 **tool call: bash**
 
 ```
+cd "$HOME"; cat > make_pred2.py << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+scen = pd.read_csv('data/scenario.csv')
+
+df = train.copy()
+for col in ['hpi','bbb_spread','sp500','djia','vix','nasdaq']:
+    df[col] = df[col].interpolate(method='linear', limit_direction='both')
+df['unemp_l1'] = df['unemployment'].shift(1)
+df['logit_dr'] = np.log(df['default_rate']/(1-df['default_rate']))
+d = df.dropna().reset_index(drop=True)
+
+feats = ['unemployment','unemp_l1']
+X = sm.add_constant(d[feats])
+y = d['logit_dr'].values
+m = sm.OLS(y, X).fit()
+resid = m.resid.values
+
+sc = scen.copy()
+sc['unemp_l1'] = sc['unemployment'].shift(1)
+sc.loc[0,'unemp_l1'] = d['unemployment'].iloc[-1]
+Xsc = sm.add_constant(sc[feats])
+Xm = X.values; Xscm = Xsc.values
+point_logit = m.predict(Xsc).values
+
+def logit(x): return np.log(x/(1-x))
+def invlogit(z): return 1/(1+np.exp(-z))
+
+rng = np.random.default_rng(123)
+B = 6000
+draws = np.zeros((B, len(sc)))
+sig = np.sqrt(m.mse_resid)
+for b in range(B):
+    eb = rng.choice(resid, size=len(d), replace=True)
+    yb = m.fittedvalues.values + eb
+    coef_b, *_ = np.linalg.lstsq(Xm, yb, rcond=None)
+    sig_b = np.std(yb - Xm @ coef_b)
+    pb = Xscm @ coef_b
+    noise = rng.normal(0, sig_b, size=len(sc))
+    draws[b] = pb + noise
+
+draws_inv = invlogit(draws)
+point = invlogit(point_logit)
+lower = np.percentile(draws_inv, 2.5, axis=0)
+upper = np.percentile(draws_inv, 97.5, axis=0)
+
+out = pd.DataFrame({'quarter': scen['quarter'], 'y_pred': point,
+                    'y_lower': np.clip(lower,0,None), 'y_upper': np.clip(upper,0,1)})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+print("\nlogit resid sd:", sig, "point_logit:", point_logit)
+EOF
+python make_pred2.py
 ```
 
 ## [52] tool
@@ -2626,7 +2744,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/train.csv'
 **tool call: bash**
 
 ```
-
+pwd; ls; find / -maxdepth 3 -name "train.csv" 2>/dev/null
 ```
 
 ## [54] tool
@@ -2649,7 +2767,7 @@ predictions.csv
 **tool call: bash**
 
 ```
-
+cd /workspace; python make_pred2.py
 ```
 
 ## [56] tool
@@ -2669,7 +2787,61 @@ python: can't open file '/workspace/make_pred2.py': [Errno 2] No such file or di
 **tool call: bash**
 
 ```
+cd /workspace; cat > make_pred2.py << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+scen = pd.read_csv('data/scenario.csv')
+
+df = train.copy()
+for col in ['hpi','bbb_spread','sp500','djia','vix','nasdaq']:
+    df[col] = df[col].interpolate(method='linear', limit_direction='both')
+df['unemp_l1'] = df['unemployment'].shift(1)
+df['logit_dr'] = np.log(df['default_rate']/(1-df['default_rate']))
+d = df.dropna().reset_index(drop=True)
+
+feats = ['unemployment','unemp_l1']
+X = sm.add_constant(d[feats])
+y = d['logit_dr'].values
+m = sm.OLS(y, X).fit()
+resid = m.resid.values
+
+sc = scen.copy()
+sc['unemp_l1'] = sc['unemployment'].shift(1)
+sc.loc[0,'unemp_l1'] = d['unemployment'].iloc[-1]
+Xsc = sm.add_constant(sc[feats])
+Xm = X.values; Xscm = Xsc.values
+point_logit = m.predict(Xsc).values
+
+def invlogit(z): return 1/(1+np.exp(-z))
+
+rng = np.random.default_rng(123)
+B = 6000
+draws = np.zeros((B, len(sc)))
+sig = np.sqrt(m.mse_resid)
+for b in range(B):
+    eb = rng.choice(resid, size=len(d), replace=True)
+    yb = m.fittedvalues.values + eb
+    coef_b, *_ = np.linalg.lstsq(Xm, yb, rcond=None)
+    sig_b = np.std(yb - Xm @ coef_b)
+    pb = Xscm @ coef_b
+    noise = rng.normal(0, sig_b, size=len(sc))
+    draws[b] = pb + noise
+
+draws_inv = invlogit(draws)
+point = invlogit(point_logit)
+lower = np.percentile(draws_inv, 2.5, axis=0)
+upper = np.percentile(draws_inv, 97.5, axis=0)
+
+out = pd.DataFrame({'quarter': scen['quarter'], 'y_pred': point,
+                    'y_lower': np.clip(lower,0,None), 'y_upper': np.clip(upper,0,1)})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+print("\nlogit resid sd:", sig, "point_logit:", point_logit)
+EOF
+python make_pred2.py
 ```
 
 ## [58] tool
@@ -2908,7 +3080,35 @@ ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with
 **tool call: bash**
 
 ```
-
+cd /workspace; cat > dbg.py << 'EOF'
+import pandas as pd, numpy as np, statsmodels.api as sm
+train=pd.read_csv('data/train.csv')
+df=train.copy()
+for col in ['hpi','bbb_spread','sp500','djia','vix','nasdaq']:
+    df[col]=df[col].interpolate(method='linear',limit_direction='both')
+df['unemp_l1']=df['unemployment'].shift(1)
+df['logit_dr']=np.log(df['default_rate']/(1-df['default_rate']))
+d=df.dropna().reset_index(drop=True)
+feats=['unemployment','unemp_l1']
+tr=d.iloc[:50]
+Xtr=sm.add_constant(tr[feats]); ytr=tr['logit_dr'].values
+m=sm.OLS(ytr,Xtr).fit()
+resid=m.resid.values
+Xt0=sm.add_constant(d.iloc[50][feats].to_frame().T)
+Xm=Xtr.values
+print("Xm", Xm.shape, "Xt0", Xt0.values.shape, "resid", resid.shape)
+print("cols", Xtr.columns.tolist(), Xt0.columns.tolist())
+B=2
+for b in range(B):
+    eb=np.random.choice(resid,size=len(tr),replace=True)
+    yb=m.fittedvalues.values+eb
+    coef_b,*_=np.linalg.lstsq(Xm,yb,rcond=None)
+    print("coef_b", coef_b.shape)
+    sig_b=np.std(yb-Xm@coef_b)
+    pb=Xt0.values@coef_b
+    print(pb)
+EOF
+python dbg.py
 ```
 
 ## [64] tool
@@ -3058,7 +3258,19 @@ The bootstrap-based interval method shows ~94% empirical coverage, which is well
 **tool call: bash**
 
 ```
-
+cd /workspace; python make_pred2.py
+echo "--- verify ---"
+python - << 'EOF'
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+print(p.shape)
+print(p.columns.tolist())
+print(p.to_string(index=False))
+print("\nrows match scenario quarters:", (p['quarter'].values==pd.read_csv('data/scenario.csv')['quarter'].values).all())
+print("any NaN:", p.isnull().any().any())
+print("monotonic interval sane:", ((p['y_lower']<p['y_pred'])&(p['y_pred']<p['y_upper'])).all())
+EOF
+cat predictions.csv
 ```
 
 ## [68] tool

@@ -117,7 +117,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -143,7 +143,7 @@ drwxr-xr-x 1 root root 4096 Oct 19 17:34 ..
 **tool call: bash**
 
 ```
-
+cat data/transitions.csv
 ```
 
 ## [5] tool
@@ -302,7 +302,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+cat data/macro_history.csv
 ```
 
 ## [7] tool
@@ -401,7 +401,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+cat data/scenario.csv
 ```
 
 ## [9] tool
@@ -429,7 +429,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cat data/portfolio.csv
 ```
 
 ## [11] tool
@@ -455,7 +455,7 @@ CCC/C,290
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [13] tool
@@ -2577,7 +2577,7 @@ backtest.csv saved
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [41] tool
@@ -2612,7 +2612,7 @@ quarter,state,share
 **tool call: bash**
 
 ```
-
+cat matrices.csv | head -20
 ```
 
 ## [43] tool
@@ -2650,7 +2650,7 @@ quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC/C,to_D
 **tool call: bash**
 
 ```
-
+wc -l matrices.csv && wc -l backtest.csv
 ```
 
 ## [45] tool
@@ -2673,7 +2673,7 @@ quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC/C,to_D
 **tool call: bash**
 
 ```
-
+cat backtest.csv
 ```
 
 ## [47] tool
@@ -2712,7 +2712,15 @@ year,default_rate
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv && python -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Rows:', len(df))
+for q in [4, 9]:
+    subset = df[df['quarter'] == q]
+    print(f'Quarter {q} sum:', subset['share'].sum())
+    print(subset.to_string(index=False))
+"
 ```
 
 ## [49] tool

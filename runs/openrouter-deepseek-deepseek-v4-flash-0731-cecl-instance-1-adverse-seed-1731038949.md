@@ -86,7 +86,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+cd /home/user 2>/dev/null || cd ~; ls -la; find . -name "*.csv" -o -name "*.json" 2>/dev/null | head -50
 ```
 
 **tool call: python**
@@ -128,7 +128,7 @@ drwxr-xr-x 1 root root 4096 Oct 13 19:34 ..
 **tool call: bash**
 
 ```
-
+cd ~; cat data/policy.json; echo "---"; head -20 data/history.csv; echo "---"; wc -l data/history.csv; echo "---"; head -20 data/forecast.csv; echo "---"; wc -l data/forecast.csv; echo "---"; head -20 data/pools.csv; echo "---"; wc -l data/pools.csv
 ```
 
 ## [6] tool
@@ -160,7 +160,7 @@ wc: data/pools.csv: No such file or directory
 **tool call: bash**
 
 ```
-
+pwd; ls -la; ls -la data/ 2>/dev/null; find / -name "history.csv" 2>/dev/null
 ```
 
 ## [8] tool
@@ -191,7 +191,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 19:34 ..
 **tool call: bash**
 
 ```
-
+cd /workspace; cat data/policy.json; echo "==="; head -15 data/history.csv; echo "==="; wc -l data/history.csv; echo "==="; cat data/forecast.csv; echo "==="; wc -l data/forecast.csv; echo "==="; cat data/pools.csv; echo "==="; wc -l data/pools.csv
 ```
 
 ## [10] tool
@@ -257,7 +257,15 @@ C4,C,1143925.0,40
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+print(h.shape)
+print(h['segment'].value_counts())
+print(h.groupby('segment')['quarter'].agg(['min','max','count']))
+print()
+print(h.tail(10))
+"
 ```
 
 **tool call: python**
@@ -373,7 +381,24 @@ dtype: int64
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+piv_u = h.pivot(index='quarter', columns='segment', values='unemployment')
+piv_h = h.pivot(index='quarter', columns='segment', values='hpi_growth')
+print('unemployment equal across segments:', (piv_u.std(axis=1).max(), piv_u.std(axis=1).min()))
+print('hpi equal:', (piv_h.std(axis=1).max(), piv_h.std(axis=1).min()))
+print()
+print(piv_u.head())
+"
+echo "==="
+cd /workspace; python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+for s in ['A','B','C']:
+    d = h[h.segment==s]
+    print(s, 'pd mean', d.pd.mean(), 'lgd mean', d.lgd.mean(), 'prepay mean', d.prepay.mean(), 'pd std', d.pd.std(), 'lgd std', d.lgd.std())
+"
 ```
 
 ## [15] tool
@@ -426,7 +451,15 @@ for s in ['A','B','C']:
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+f = pd.read_csv('data/forecast.csv')
+print('forecast unemployment range:', f.unemployment.min(), f.unemployment.max())
+print('history unemployment range:', h.unemployment.min(), h.unemployment.max())
+print('forecast hpi range:', f.hpi_growth.min(), f.hpi_growth.max())
+print('history hpi range:', h.hpi_growth.min(), h.hpi_growth.max())
+"
 ```
 
 ## [17] tool
@@ -3247,7 +3280,107 @@ Sensitivity is small for LGD/prepay model choice; the logit-PD choice is dominan
 **tool call: bash**
 
 ```
+cat > /workspace/final_model.py << 'EOF'
+import pandas as pd, numpy as np, json, warnings
+warnings.filterwarnings('ignore')
+import statsmodels.api as sm
+from scipy.stats import norm
 
+# ---------- Load ----------
+hist = pd.read_csv('/workspace/data/history.csv')
+fc = pd.read_csv('/workspace/data/forecast.csv')
+pools = pd.read_csv('/workspace/data/pools.csv')
+policy = json.load(open('/workspace/data/policy.json'))
+F = policy['forecast_quarters']          # 8
+R = policy['reversion_quarters']         # 4
+rho = policy['rho']                      # 0.02
+pers = policy['persistence']             # 0.6
+
+# ---------- Conditional-mean rate models ----------
+# PD and prepay: logistic link in (unemployment, hpi_growth)  [best LOO-CV]
+# LGD: linear in (unemployment, hpi_growth)                   [best LOO-CV]
+models = {}
+for s in ['A', 'B', 'C']:
+    d = hist[hist.segment == s].sort_values('quarter')
+    X = sm.add_constant(d[['unemployment', 'hpi_growth']])
+    for y in ['pd', 'prepay']:
+        yb = np.clip(d[y], 1e-6, 1 - 1e-6)
+        m = sm.GLM(yb, X, family=sm.families.Binomial()).fit(maxiter=1000, disp=False)
+        models[(s, y)] = ('logit', m.params.values)
+    m = sm.OLS(d['lgd'], X).fit()
+    models[(s, 'lgd')] = ('lin', m.params.values)
+
+hist_mean = {(s, y): hist[hist.segment == s][y].mean()
+             for s in ['A', 'B', 'C'] for y in ['pd', 'lgd', 'prepay']}
+
+def predict_rate(s, y, u, h):
+    kind, p = models[(s, y)]
+    eta = p[0] + p[1] * u + p[2] * h
+    return 1.0 / (1.0 + np.exp(-eta)) if kind == 'logit' else eta
+
+def rate_path(s, y, maxQ):
+    fu = fc['unemployment'].values
+    fh = fc['hpi_growth'].values
+    fc_rates = np.array([predict_rate(s, y, fu[i], fh[i]) for i in range(len(fu))])
+    hm = hist_mean[(s, y)]
+    path = np.zeros(maxQ)
+    for q in range(1, maxQ + 1):
+        if q <= F:
+            path[q - 1] = fc_rates[q - 1]
+        elif q <= F + R:                      # linear blend to historical mean
+            k = q - F
+            path[q - 1] = (k / R) * hm + (1 - k / R) * fc_rates[-1]
+        else:
+            path[q - 1] = hm
+    return path
+
+# ---------- Monte Carlo simulation ----------
+maxT = int(pools['remaining_quarters'].max())
+n_paths = 1_000_000
+rng = np.random.default_rng(20240624)
+z = {}
+for s in ['A', 'B', 'C']:                     # segments independent
+    eps = rng.standard_normal((n_paths, maxT))
+    zs = np.zeros((n_paths, maxT))
+    zs[:, 0] = eps[:, 0]
+    for q in range(1, maxT):
+        zs[:, q] = pers * zs[:, q - 1] + np.sqrt(1 - pers ** 2) * eps[:, q]
+    z[s] = zs
+
+sq = np.sqrt(rho)
+rows = []
+for _, r in pools.iterrows():
+    s = r['segment']; B = float(r['balance']); T = int(r['remaining_quarters'])
+    pd_path = rate_path(s, 'pd', T)
+    lgd_path = rate_path(s, 'lgd', T)
+    pp_path = rate_path(s, 'prepay', T)
+    m = pd_path[None, :]
+    pd_s = norm.cdf((norm.ppf(m) + sq * z[s][:, :T]) / np.sqrt(1 - rho))
+    balance = np.full(n_paths, B)
+    loss = np.zeros(n_paths)
+    for q in range(T):                        # balance recursion, per full path
+        default = pd_s[:, q] * balance
+        loss += default * lgd_path[q]
+        after_def = balance - default
+        after_pp = after_def - pp_path[q] * after_def
+        balance = after_pp - after_pp / (T - q)   # equal-principal payment
+    ecl = float(loss.mean())
+    lo, hi = np.percentile(loss, [2.5, 97.5])
+    rows.append((r['pool_id'], round(ecl, 2), round(float(lo), 2), round(float(hi), 2)))
+
+pred = pd.DataFrame(rows, columns=['pool_id', 'ecl', 'ecl_lower', 'ecl_upper'])
+pred.to_csv('/workspace/predictions.csv', index=False)
+print(pred.to_string(index=False))
+
+# ---------- validation ----------
+bal = pools.set_index('pool_id')['balance']
+for _, x in pred.iterrows():
+    B = bal[x['pool_id']]
+    assert 0 <= x['ecl_lower'] <= x['ecl'] <= x['ecl_upper'] <= B, x['pool_id']
+print("\nValidation passed: 0 <= lower <= ecl <= upper <= balance for all pools")
+print("Portfolio allowance:", round(pred['ecl'].sum(), 2))
+EOF
+cd /workspace && python3 final_model.py
 ```
 
 ## [70] tool
@@ -3338,7 +3471,14 @@ Portfolio allowance: 8665766.02
 **tool call: bash**
 
 ```
-
+cd /workspace; cat predictions.csv; echo "---"; python3 -c "
+import pandas as pd
+p = pd.read_csv('predictions.csv')
+print(p.shape, p.columns.tolist())
+print(p.isna().sum().sum(), 'nulls')
+print(p['ecl'].between(0, 1e12).all())
+print(p['ecl_lower'].le(p['ecl']).all(), p['ecl'].le(p['ecl_upper']).all())
+"
 ```
 
 **tool call: python**
@@ -3558,7 +3698,17 @@ Everything validates. Let me do a final confirmation of the output file and a la
 **tool call: bash**
 
 ```
-
+cd /workspace; ls -la predictions.csv; echo "---"; python3 -c "
+import pandas as pd
+p = pd.read_csv('predictions.csv')
+print(p.to_string(index=False))
+print()
+print('Total portfolio allowance (sum of ecl):', round(p.ecl.sum(),2))
+print('Balance total:', round(pd.read_csv('data/pools.csv').balance.sum(),2))
+assert set(p.columns)=={'pool_id','ecl','ecl_lower','ecl_upper'}
+assert len(p)==12 and p.pool_id.nunique()==12 and p.pool_id.isna().sum()==0
+print('All structural checks passed.')
+"
 ```
 
 ## [77] tool
@@ -3710,7 +3860,7 @@ I'll do a final reproducibility check — re-run the complete pipeline in a fres
 **tool call: bash**
 
 ```
-
+cd /workspace && cp predictions.csv predictions_backup.csv && python3 final_model.py > /tmp/rerun_out.txt 2>&1; tail -15 /tmp/rerun_out.txt; echo "=== diff ==="; diff predictions_backup.csv predictions.csv && echo "IDENTICAL - predictions.csv reproducible"; echo "=== final file ==="; cat predictions.csv
 ```
 
 ## [81] tool

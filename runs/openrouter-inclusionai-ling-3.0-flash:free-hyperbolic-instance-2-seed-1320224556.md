@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/test.csv
 ```
 
 ## [3] tool
@@ -105,7 +105,28 @@ t
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print('Shape:', df.shape)
+print('Columns:', df.columns.tolist())
+print('t range:', df['t'].min(), '-', df['t'].max())
+print()
+# When is gamma observed?
+gamma_obs = df[df['gamma'].notna()]
+print('Gamma observations:', len(gamma_obs))
+print('Gamma t range:', gamma_obs['t'].min(), '-', gamma_obs['t'].max())
+print()
+beta_obs = df[df['beta'].notna()]
+print('Beta observations:', len(beta_obs))
+print('Beta t range:', beta_obs['t'].min(), '-', beta_obs['t'].max())
+print()
+print('First 30 rows:')
+print(df.head(30).to_string())
+print()
+print('Last 30 rows:')
+print(df.tail(30).to_string())
+"
 ```
 
 ## [5] tool
@@ -204,7 +225,58 @@ Last 30 rows:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
 
+# Look at gamma vs beta relationship
+obs = df[df['gamma'].notna()].copy()
+print('Gamma stats:')
+print(obs[['gamma','beta']].describe())
+print()
+
+# Check if gamma = alpha - beta or some similar relationship
+obs['gamma_alpha'] = obs['gamma'] - obs['alpha']
+obs['gamma_beta'] = obs['gamma'] - obs['beta']
+obs['alpha_beta'] = obs['alpha'] - obs['beta']
+print('gamma - alpha stats:', obs['gamma_alpha'].describe())
+print('gamma - beta stats:', obs['gamma_beta'].describe())
+print('alpha - beta stats:', obs['alpha_beta'].describe())
+print()
+
+# Maybe gamma is related to alpha and beta through some formula
+# Let's check: gamma = f(alpha, beta)
+# Try: gamma = alpha - beta?
+print('First 10 observations:')
+print(obs[['t','alpha','beta','gamma','alpha_beta']].head(10))
+print()
+
+# Check if gamma = alpha - beta + constant
+print('gamma - (alpha - beta):', (obs['gamma'] - (obs['alpha'] - obs['beta'])).describe())
+print()
+
+# Maybe gamma is related to the difference between alpha and beta through a trigonometric function
+# Let's check if gamma = arctan(something)
+# alpha and beta seem to be angles too
+# Let's convert to radians and check
+obs['alpha_rad'] = np.radians(obs['alpha'])
+obs['beta_rad'] = np.radians(obs['beta'])
+obs['gamma_rad'] = np.radians(obs['gamma'])
+
+# Try: gamma = alpha - beta (in degrees)
+diff = obs['alpha'] - obs['beta']
+print('alpha - beta vs gamma:')
+print('Correlation:', obs['gamma'].corr(diff))
+print()
+
+# Maybe it's a spherical trigonometry problem
+# Or maybe gamma depends on alpha and beta through some nonlinear relationship
+# Let's look at the trend more carefully
+print('alpha trend (first vs last):', obs['alpha'].iloc[0], obs['alpha'].iloc[-1])
+print('beta trend (first vs last):', obs['beta'].iloc[0], obs['beta'].iloc[-1])
+print('gamma trend (first vs last):', obs['gamma'].iloc[0], obs['gamma'].iloc[-1])
+"
 ```
 
 ## [7] tool
@@ -298,7 +370,61 @@ gamma trend (first vs last): 21.7887 -21.3418
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# Let's look at gamma as a function of t
+# And also check if there's a relationship with alpha and beta
+
+# Try polynomial fit of gamma vs t
+from numpy.polynomial import polynomial as P
+t_obs = obs['t'].values
+gamma_obs = obs['gamma'].values
+
+# Try different degrees
+for deg in [2, 3, 4, 5]:
+    coeffs = np.polyfit(t_obs, gamma_obs, deg)
+    pred = np.polyval(coeffs, t_obs)
+    resid = gamma_obs - pred
+    print(f'Degree {deg}: RMSE={np.sqrt(np.mean(resid**2)):.4f}, R2={1-np.var(resid)/np.var(gamma_obs):.4f}')
+
+print()
+# Now try with alpha and beta as features
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+
+X = obs[['alpha','beta']].values
+y = obs['gamma'].values
+
+# Linear
+lr = LinearRegression().fit(X, y)
+print(f'Linear R2: {lr.score(X, y):.4f}')
+print(f'Linear coeffs: {lr.coef_}, intercept: {lr.intercept_:.4f}')
+
+# Try polynomial features
+for deg in [2, 3]:
+    pf = PolynomialFeatures(degree=deg, include_bias=False)
+    X_poly = pf.fit_transform(X)
+    lr2 = LinearRegression().fit(X_poly, y)
+    print(f'Poly degree {deg} R2: {lr2.score(X_poly, y):.4f}')
+
+# Maybe gamma is related to alpha and beta through a specific formula
+# Let's check: gamma = alpha - beta + c?
+# Or gamma = some function of (alpha, beta)
+
+# Let's try: gamma = a*alpha + b*beta + c
+# Already did linear above
+
+# Let's look at the data more carefully
+print()
+print('Sample data points:')
+for i in [0, 50, 100, 150, 164]:
+    row = obs.iloc[i]
+    print(f't={row[\"t\"]:.0f}, alpha={row[\"alpha\"]:.2f}, beta={row[\"beta\"]:.2f}, gamma={row[\"gamma\"]:.2f}')
+"
 ```
 
 ## [9] tool
@@ -361,7 +487,63 @@ t=544, alpha=157.83, beta=191.88, gamma=-21.34
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# Let's check if gamma = alpha - beta + some function
+# Or maybe gamma is related to the difference between alpha and beta
+
+# Check: gamma = alpha - beta + offset?
+obs['diff'] = obs['alpha'] - obs['beta']
+print('gamma vs (alpha - beta):')
+print('Correlation:', obs['gamma'].corr(obs['diff']))
+
+# Maybe it's a spherical triangle problem
+# Let's try: gamma = arcsin(sin(alpha)*cos(beta) + ...) or similar
+
+# Actually, let me think about this differently
+# alpha increases ~0.36 per day, beta increases ~0.79 per day
+# gamma decreases ~0.26 per day
+
+# Let me check the rates
+from scipy import stats
+slope_alpha, intercept_alpha, r_alpha, _, _ = stats.linregress(obs['t'], obs['alpha'])
+slope_beta, intercept_beta, r_beta, _, _ = stats.linregress(obs['t'], obs['beta'])
+slope_gamma, intercept_gamma, r_gamma, _, _ = stats.linregress(obs['t'], obs['gamma'])
+print(f'alpha = {slope_alpha:.4f}*t + {intercept_alpha:.4f}, R2={r_alpha**2:.4f}')
+print(f'beta = {slope_beta:.4f}*t + {intercept_beta:.4f}, R2={r_beta**2:.4f}')
+print(f'gamma = {slope_gamma:.4f}*t + {intercept_gamma:.4f}, R2={r_gamma**2:.4f}')
+
+# So gamma = alpha - beta + constant approximately?
+# gamma = -0.26*t + intercept
+# alpha - beta = (0.36 - 0.79)*t + (intercept_alpha - intercept_beta) = -0.43*t + ...
+# So gamma ≈ (alpha - beta) + something that grows with t?
+# gamma - (alpha - beta) = -0.26*t + intercept - (-0.43*t + const) = 0.17*t + ...
+# That doesn't seem right either
+
+# Let me just try: gamma as a function of t with a polynomial
+# and see how well it extrapolates
+
+# Also check: maybe gamma = f(alpha, beta) where f is known
+# Try: gamma = 2*alpha - beta?
+obs['2alpha_minus_beta'] = 2*obs['alpha'] - obs['beta']
+print(f'gamma vs 2*alpha - beta corr: {obs[\"gamma\"].corr(obs[\"2alpha_minus_beta\"]):.4f}')
+
+# Try: gamma = alpha + beta - 180?
+obs['alpha_plus_beta_minus_180'] = obs['alpha'] + obs['beta'] - 180
+print(f'gamma vs alpha+beta-180 corr: {obs[\"gamma\"].corr(obs[\"alpha_plus_beta_minus_180\"]):.4f}')
+
+# Try: gamma = alpha - beta/2?
+obs['alpha_minus_beta_half'] = obs['alpha'] - obs['beta']/2
+print(f'gamma vs alpha-beta/2 corr: {obs[\"gamma\"].corr(obs[\"alpha_minus_beta_half\"]):.4f}')
+
+# Try: gamma = alpha/2 - beta/2?
+obs['half_alpha_minus_half_beta'] = obs['alpha']/2 - obs['beta']/2
+print(f'gamma vs alpha/2-beta/2 corr: {obs[\"gamma\"].corr(obs[\"half_alpha_minus_half_beta\"]):.4f}')
+"
 ```
 
 ## [11] tool
@@ -397,7 +579,78 @@ gamma vs alpha/2-beta/2 corr: -0.3566
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# gamma = a*(alpha + beta) + b
+from sklearn.linear_model import LinearRegression
+X = obs[['alpha','beta']].values
+y = obs['gamma'].values
+
+# Linear regression
+lr = LinearRegression().fit(X, y)
+print(f'gamma = {lr.coef_[0]:.4f}*alpha + {lr.coef_[1]:.4f}*beta + {lr.intercept_:.4f}')
+print(f'R2 = {lr.score(X, y):.6f}')
+
+# Check residuals
+pred = lr.predict(X)
+resid = y - pred
+print(f'Residual std: {np.std(resid):.4f}')
+print(f'Max residual: {np.max(np.abs(resid)):.4f}')
+
+# Let's also check: gamma = a*alpha + b*beta + c*alpha*beta + d
+from sklearn.preprocessing import PolynomialFeatures
+pf = PolynomialFeatures(degree=2, include_bias=False)
+X_poly = pf.fit_transform(X)
+lr2 = LinearRegression().fit(X_poly, y)
+print(f'\\nPoly degree 2 R2: {lr2.score(X_poly, y):.6f}')
+
+# Check specific formula: gamma = alpha + beta - constant?
+# At t=380: gamma=21.79, alpha=7.40, beta=57.06
+# alpha + beta = 64.46, gamma = 21.79, diff = 42.67
+# At t=544: gamma=-21.34, alpha=157.83, beta=191.88
+# alpha + beta = 349.71, gamma = -21.34, diff = 371.05
+# So gamma - alpha - beta changes from 42.67 to 371.05... not constant
+
+# Let's try: gamma = a*alpha + b*beta + c
+# Already did this above
+
+# Let me check if there's a trigonometric relationship
+# Maybe gamma = arcsin(sin(alpha)*sin(beta) + cos(alpha)*cos(beta)*cos(X))
+# for some angle X
+
+# Or maybe: gamma = f(alpha, beta) where the relationship involves
+# the fact that these are angles on a sphere
+
+# Let me try: gamma = alpha - beta + c*t or something
+obs['gamma_minus_alpha_plus_beta'] = obs['gamma'] - obs['alpha'] + obs['beta']
+print(f'\\ngamma - alpha + beta stats:')
+print(obs['gamma_minus_alpha_plus_beta'].describe())
+
+# Try: gamma = -alpha - beta + c*t + d
+obs['neg_alpha_neg_beta'] = -obs['alpha'] - obs['beta']
+from sklearn.linear_model import LinearRegression
+lr3 = LinearRegression().fit(np.column_stack([obs['t'].values, np.ones(len(obs))]), 
+                              obs['gamma_minus_alpha_neg_beta'])
+# Actually let me just do: gamma + alpha + beta = f(t)?
+obs['gamma_plus_alpha_plus_beta'] = obs['gamma'] + obs['alpha'] + obs['beta']
+print(f'\\ngamma + alpha + beta vs t:')
+slope, intercept, r, _, _ = stats.linregress(obs['t'], obs['gamma_plus_alpha_plus_beta'])
+print(f'  slope={slope:.4f}, intercept={intercept:.4f}, R2={r**2:.4f}')
+
+# Try: gamma = a*t^2 + b*t + c
+from numpy.polynomial import polynomial as P
+t_obs = obs['t'].values
+gamma_obs = obs['gamma'].values
+for deg in [1, 2, 3, 4, 5, 6]:
+    coeffs = np.polyfit(t_obs, gamma_obs, deg)
+    pred = np.polyval(coeffs, t_obs)
+    rmse = np.sqrt(np.mean((gamma_obs - pred)**2))
+    print(f'Degree {deg}: RMSE={rmse:.4f}')
+"
 ```
 
 ## [13] tool
@@ -458,7 +711,78 @@ Name: gamma_minus_alpha_plus_beta, dtype: float64
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# gamma + alpha + beta vs t
+obs['sum_all'] = obs['gamma'] + obs['alpha'] + obs['beta']
+slope, intercept, r, _, _ = stats.linregress(obs['t'], obs['sum_all'])
+print(f'gamma + alpha + beta = {slope:.4f}*t + {intercept:.4f}, R2={r**2:.4f}')
+
+# So gamma = -alpha - beta + slope*t + intercept
+# This is a linear relationship!
+# gamma = -alpha - beta + 0.899*t + ... 
+# Let's check: slope should be close to alpha_slope + beta_slope + gamma_slope
+# alpha_slope ≈ 0.899, beta_slope ≈ 0.786, gamma_slope ≈ -0.294
+# Sum of slopes = 0.899 + 0.786 - 0.294 = 1.391
+# But the slope of sum_all is 0.899? Let me check again
+
+# Actually wait, let me recompute
+print(f'slope of sum_all: {slope:.4f}')
+print(f'alpha slope: 0.8992')
+print(f'beta slope: 0.7863')
+print(f'gamma slope: -0.2935')
+print(f'sum of individual slopes: {0.8992 + 0.7863 - 0.2935:.4f}')
+
+# Hmm, the slope of sum_all should equal the sum of individual slopes if they're all linear
+# But 0.899 ≠ 1.392... Let me check
+
+# Actually, the individual regressions were done on obs only (t=380-544)
+# Let me check if alpha is linear over the full range
+full_alpha_slope, full_alpha_intercept, r_a, _, _ = stats.linregress(df['t'], df['alpha'])
+print(f'\\nFull range alpha slope: {full_alpha_slope:.4f}, R2={r_a**2:.4f}')
+
+# And beta - but beta is only observed from t=380
+# So beta slope is only valid for t>=380
+
+# Let me check: is gamma = -alpha - beta + c*t + d?
+# If so, then gamma + alpha + beta = c*t + d
+# And c should be the sum of the individual slopes
+# But we got slope=0.899 for sum_all, while individual slopes sum to 1.392
+# This doesn't match...
+
+# Let me just check the formula directly
+obs['pred_gamma'] = -obs['alpha'] - obs['beta'] + slope*obs['t'] + intercept
+resid = obs['gamma'] - obs['pred_gamma']
+print(f'\\nRMSE of gamma = -alpha - beta + {slope:.4f}*t + {intercept:.4f}: {np.sqrt(np.mean(resid**2)):.4f}')
+
+# Hmm, that's just a restatement. Let me think differently.
+# gamma = a*alpha + b*beta + c*t + d
+# Since alpha and beta are both functions of t, this is really gamma = f(t)
+
+# Let me just fit gamma as a polynomial of t and use that for prediction
+# But for extrapolation, high-degree polynomials can be unstable
+
+# Let me also check if there's a simpler relationship
+# Maybe gamma = alpha - beta + f(t) where f(t) is simple?
+obs['gamma_minus_alpha_plus_beta'] = obs['gamma'] - obs['alpha'] + obs['beta']
+s2, i2, r2, _, _ = stats.linregress(obs['t'], obs['gamma_minus_alpha_plus_beta'])
+print(f'\\ngamma - alpha + beta = {s2:.4f}*t + {i2:.4f}, R2={r2**2:.4f}')
+
+# Or gamma = 2*alpha - beta + f(t)?
+obs['2alpha_minus_beta'] = 2*obs['alpha'] - obs['beta']
+s3, i3, r3, _, _ = stats.linregress(obs['t'], obs['gamma'] - obs['2alpha_minus_beta'])
+print(f'gamma - 2*alpha + beta = {s3:.4f}*t + {i3:.4f}, R2={r3**2:.4f}')
+
+# Let me try: gamma = alpha + beta - 180 + f(t)?
+obs['alpha_plus_beta_minus_180'] = obs['alpha'] + obs['beta'] - 180
+s4, i4, r4, _, _ = stats.linregress(obs['t'], obs['gamma'] - obs['alpha_plus_beta_minus_180'])
+print(f'gamma - alpha - beta + 180 = {s4:.4f}*t + {i4:.4f}, R2={r4**2:.4f}')
+"
 ```
 
 ## [15] tool
@@ -534,7 +858,100 @@ gamma - alpha - beta + 180 = -1.9791*t + 914.2126, R2=0.9744
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# Let's try a comprehensive approach:
+# 1. Fit gamma as polynomial of t
+# 2. Fit gamma as function of alpha, beta
+# 3. Use the relationship gamma + alpha + beta = f(t)
+
+# Approach 1: Polynomial in t
+print('=== Polynomial fits for gamma vs t ===')
+t_obs = obs['t'].values
+y_obs = obs['gamma'].values
+
+for deg in range(1, 7):
+    coeffs = np.polyfit(t_obs, y_obs, deg)
+    pred = np.polyval(coeffs, t_obs)
+    rmse = np.sqrt(np.mean((y_obs - pred)**2))
+    resid = y_obs - pred
+    # Check for systematic pattern in residuals
+    slope_resid, _, r_resid, _, _ = stats.linregress(t_obs, resid)
+    print(f'Degree {deg}: RMSE={rmse:.4f}, resid trend slope={slope_resid:.6f}, R2_resid={r_resid**2:.4f}')
+
+# Approach 2: gamma = f(alpha, beta)
+print('\\n=== gamma = f(alpha, beta) ===')
+X = obs[['alpha','beta']].values
+y = obs['gamma'].values
+
+# Linear
+from sklearn.linear_model import LinearRegression
+lr = LinearRegression().fit(X, y)
+pred = lr.predict(X)
+rmse = np.sqrt(np.mean((y - pred)**2))
+print(f'Linear: RMSE={rmse:.4f}, coeffs={lr.coef_}, intercept={lr.intercept_:.4f}')
+
+# Check residuals for pattern
+resid = y - pred
+slope_resid, _, r_resid, _, _ = stats.linregress(obs['t'].values, resid)
+print(f'  resid trend: slope={slope_resid:.6f}, R2={r_resid**2:.4f}')
+
+# Approach 3: Use the sum relationship
+# gamma = -alpha - beta + 1.392*t - 459.277
+# But this has RMSE=10.6, which is worse than the direct linear model
+
+# Let me try: gamma = a*alpha + b*beta + c*t + d
+X3 = np.column_stack([obs['alpha'], obs['beta'], obs['t'], np.ones(len(obs))])
+from numpy.linalg import lstsq
+coeffs3, _, _, _ = lstsq(X3, y, rcond=None)
+pred3 = X3 @ coeffs3
+rmse3 = np.sqrt(np.mean((y - pred3)**2))
+print(f'\\nalpha+beta+t linear: RMSE={rmse3:.4f}, coeffs={coeffs3}')
+
+# Approach 4: gamma = a*alpha + b*beta + c*t^2 + d*t + e
+X4 = np.column_stack([obs['alpha'], obs['beta'], obs['t']**2, obs['t'], np.ones(len(obs))])
+coeffs4, _, _, _ = lstsq(X4, y, rcond=None)
+pred4 = X4 @ coeffs4
+rmse4 = np.sqrt(np.mean((y - pred4)**2))
+print(f'alpha+beta+t^2+t linear: RMSE={rmse4:.4f}')
+
+# Approach 5: Just polynomial in t, degree 3
+print('\\n=== Degree 3 polynomial ===')
+coeffs5 = np.polyfit(t_obs, y_obs, 3)
+pred5 = np.polyval(coeffs5, t_obs)
+rmse5 = np.sqrt(np.mean((y_obs - pred5)**2))
+print(f'Degree 3: RMSE={rmse5:.4f}')
+print(f'Coeffs: {coeffs5}')
+
+# For extrapolation, let's predict alpha and beta for test t values
+# and then use the gamma = f(alpha, beta) model
+# First, let's model alpha(t) and beta(t)
+
+print('\\n=== Modeling alpha(t) ===')
+# alpha is observed for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+for deg in range(1, 5):
+    c = np.polyfit(t_all, alpha_all, deg)
+    pred_a = np.polyval(c, t_all)
+    rmse_a = np.sqrt(np.mean((alpha_all - pred_a)**2))
+    print(f'Degree {deg}: RMSE={rmse_a:.4f}')
+
+print('\\n=== Modeling beta(t) ===')
+beta_obs_df = obs[['t','beta']].dropna()
+t_beta = beta_obs_df['t'].values
+beta_beta = beta_obs_df['beta'].values
+for deg in range(1, 5):
+    c = np.polyfit(t_beta, beta_beta, deg)
+    pred_b = np.polyval(c, t_beta)
+    rmse_b = np.sqrt(np.mean((beta_beta - pred_b)**2))
+    print(f'Degree {deg}: RMSE={rmse_b:.4f}')
+"
 ```
 
 ## [17] tool
@@ -591,7 +1008,71 @@ Degree 4: RMSE=1.0849
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
 
+# Look at alpha over the full range
+print('Alpha at key t values:')
+for t in [0, 50, 100, 150, 200, 250, 300, 350, 380, 400, 450, 500, 544]:
+    row = df[df['t']==t]
+    if len(row) > 0:
+        print(f'  t={t}: alpha={row[\"alpha\"].values[0]:.2f}')
+
+# Alpha seems to increase roughly linearly
+# Let me check the slope over different ranges
+from scipy import stats
+for t_start, t_end in [(0, 544), (380, 544), (400, 544)]:
+    subset = df[(df['t']>=t_start) & (df['t']<=t_end)]
+    slope, intercept, r, _, _ = stats.linregress(subset['t'], subset['alpha'])
+    print(f'Alpha t=[{t_start},{t_end}]: slope={slope:.4f}, intercept={intercept:.2f}, R2={r**2:.4f}')
+
+# Beta is only observed from t=380
+# Let me check beta over that range
+obs = df[df['gamma'].notna()].copy()
+for t_start, t_end in [(380, 544), (400, 544), (450, 544)]:
+    subset = obs[(obs['t']>=t_start) & (obs['t']<=t_end)]
+    slope, intercept, r, _, _ = stats.linregress(subset['t'], subset['beta'])
+    print(f'Beta t=[{t_start},{t_end}]: slope={slope:.4f}, intercept={intercept:.2f}, R2={r**2:.4f}')
+
+# Now let me think about the best approach for prediction
+# The test t values are 546-618
+# I need to predict gamma for these
+
+# Approach A: Direct polynomial fit of gamma vs t
+# Pros: simple, no need to predict alpha/beta
+# Cons: polynomials can diverge for extrapolation
+
+# Approach B: gamma = f(alpha, beta) where alpha and beta are modeled as functions of t
+# Pros: physically motivated
+# Cons: need to model alpha(t) and beta(t) too
+
+# Approach C: Use the relationship gamma + alpha + beta = 1.392*t - 459.277
+# This is very clean (R2=0.975)
+# If I model alpha(t) and beta(t), I can predict gamma
+
+# Let me try Approach A first with a degree 3 polynomial
+# and also try Approach B
+
+# For Approach B, I need:
+# 1. alpha(t) - use all data
+# 2. beta(t) - use observed beta data (t=380-544)
+# 3. gamma = a*alpha + b*beta + c (linear model)
+
+# Let me also check: is alpha roughly linear over the full range?
+# Looking at the values, alpha goes from ~44 at t=0 to ~158 at t=544
+# That's about 114/544 ≈ 0.21 per day on average
+# But the slope over t=380-544 is 0.899, which is much steeper
+# So alpha is NOT linear over the full range
+
+# Let me look at alpha more carefully
+print('\\nAlpha values at t=0,100,200,300,400,500,544:')
+for t in [0, 100, 200, 300, 400, 500, 544]:
+    row = df[df['t']==t]
+    if len(row) > 0:
+        print(f'  t={t}: alpha={row[\"alpha\"].values[0]:.2f}')
+"
 ```
 
 ## [19] tool
@@ -664,7 +1145,58 @@ Alpha values at t=0,100,200,300,400,500,544:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
 
+# Check alpha around the wrap point
+print('Alpha around t=350-390:')
+subset = df[(df['t']>=340) & (df['t']<=400)]
+print(subset[['t','alpha']].to_string())
+
+# If alpha wraps at 360, then the unwrapped alpha would be:
+# t=340: 346.98
+# t=350: 346.98 + 0.9*10 = 355.98 (if rate is 0.9/day)
+# Actually let me compute the daily differences
+print('\\nDaily alpha differences around wrap:')
+for i in range(len(df)-1):
+    if df['t'].iloc[i] >= 340 and df['t'].iloc[i] <= 400:
+        diff = df['alpha'].iloc[i+1] - df['alpha'].iloc[i]
+        if abs(diff) > 50 or df['t'].iloc[i+1] <= 390:
+            print(f't={df[\"t\"].iloc[i]}->{df[\"t\"].iloc[i+1]}: diff={diff:.2f}')
+
+# Let me unwrap alpha assuming it wraps at 360
+alpha_vals = df['alpha'].values
+t_vals = df['t'].values
+
+# Compute cumulative sum of daily changes
+# But first, let me just check: does alpha increase monotonically?
+# If not, there's a wrap
+
+# Let me compute the unwrapped alpha
+unwrapped_alpha = np.zeros(len(alpha_vals))
+unwrapped_alpha[0] = alpha_vals[0]
+for i in range(1, len(alpha_vals)):
+    diff = alpha_vals[i] - alpha_vals[i-1]
+    # If diff is very negative, it wrapped around 360
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha[i] = unwrapped_alpha[i-1] + diff
+
+print('\\nUnwrapped alpha at key points:')
+for t in [0, 100, 200, 300, 340, 350, 360, 370, 380, 390, 400, 500, 544]:
+    idx = np.where(t_vals == t)[0]
+    if len(idx) > 0:
+        print(f'  t={t}: wrapped={alpha_vals[idx[0]]:.2f}, unwrapped={unwrapped_alpha[idx[0]]:.2f}')
+
+# Check if unwrapped alpha is linear
+from scipy import stats
+slope, intercept, r, _, _ = stats.linregress(t_vals, unwrapped_alpha)
+print(f'\\nUnwrapped alpha vs t: slope={slope:.4f}, R2={r**2:.4f}')
+"
 ```
 
 ## [21] tool
@@ -816,7 +1348,102 @@ Unwrapped alpha vs t: slope=0.8407, R2=0.9976
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# Unwrap beta similarly
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+print('Unwrapped beta at key points:')
+for i in [0, 20, 40, 60, 80, 100, 120, 140, 164]:
+    print(f'  t={t_beta[i]:.0f}: wrapped={beta_vals[i]:.2f}, unwrapped={unwrapped_beta[i]:.2f}')
+
+from scipy import stats
+slope, intercept, r, _, _ = stats.linregress(t_beta, unwrapped_beta)
+print(f'\\nUnwrapped beta vs t: slope={slope:.4f}, R2={r**2:.4f}')
+
+# Now let's also unwrap gamma
+gamma_vals = obs['gamma'].values
+unwrapped_gamma = np.zeros(len(gamma_vals))
+unwrapped_gamma[0] = gamma_vals[0]
+for i in range(1, len(gamma_vals)):
+    diff = gamma_vals[i] - gamma_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_gamma[i] = unwrapped_gamma[i-1] + diff
+
+print('\\nUnwrapped gamma at key points:')
+for i in [0, 20, 40, 60, 80, 100, 120, 140, 164]:
+    print(f'  t={t_beta[i]:.0f}: wrapped={gamma_vals[i]:.2f}, unwrapped={unwrapped_gamma[i]:.2f}')
+
+slope_g, intercept_g, r_g, _, _ = stats.linregress(t_beta, unwrapped_gamma)
+print(f'\\nUnwrapped gamma vs t: slope={slope_g:.4f}, R2={r_g**2:.4f}')
+
+# Now the key insight: unwrapped alpha, beta, gamma are all linear in t
+# So the relationship is:
+# alpha = 0.84*t + c1
+# beta = 0.79*t + c2  
+# gamma = -0.29*t + c3
+# And gamma = f(alpha, beta) for some function f
+
+# Since all three are linear in t, gamma = a*alpha + b*beta + c is exact
+# if the relationship is linear
+
+# Let me verify: gamma = a*alpha + b*beta + c using unwrapped values
+X = np.column_stack([unwrapped_alpha := np.interp(t_beta, t_beta, unwrapped_alpha[:1] + 0.84*t_beta), 
+                      unwrapped_beta])
+# Actually let me compute unwrapped alpha for the beta observation range
+# alpha is observed for all t, so I can get unwrapped alpha for t_beta
+
+# Get unwrapped alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = np.zeros(len(alpha_all))
+unwrapped_alpha_all[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha_all[i] = unwrapped_alpha_all[i-1] + diff
+
+# Now get unwrapped alpha for beta observation times
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+
+# Now fit gamma = a*alpha + b*beta + c using unwrapped values
+from sklearn.linear_model import LinearRegression
+X_u = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+lr_u = LinearRegression().fit(X_u, gamma_vals)
+pred_u = lr_u.predict(X_u)
+rmse_u = np.sqrt(np.mean((gamma_vals - pred_u)**2))
+print(f'\\nUnwrapped linear: gamma = {lr_u.coef_[0]:.4f}*alpha + {lr_u.coef_[1]:.4f}*beta + {lr_u.intercept_:.4f}')
+print(f'RMSE = {rmse_u:.4f}')
+
+# Also check with just t
+from numpy.polynomial import polynomial as P
+for deg in range(1, 5):
+    coeffs = np.polyfit(t_beta, gamma_vals, deg)
+    pred = np.polyval(coeffs, t_beta)
+    rmse = np.sqrt(np.mean((gamma_vals - pred)**2))
+    print(f'Degree {deg} poly in t: RMSE={rmse:.4f}')
+"
 ```
 
 ## [23] tool
@@ -865,7 +1492,96 @@ Unwrapped gamma vs t: slope=-0.2935, R2=0.9603
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# Unwrap alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = np.zeros(len(alpha_all))
+unwrapped_alpha_all[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha_all[i] = unwrapped_alpha_all[i-1] + diff
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+# Get unwrapped alpha at beta observation times
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+
+# Fit gamma = a*alpha + b*beta + c using unwrapped values
+X_u = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+lr_u = LinearRegression().fit(X_u, obs['gamma'].values)
+pred_u = lr_u.predict(X_u)
+rmse_u = np.sqrt(np.mean((obs['gamma'].values - pred_u)**2))
+print(f'Unwrapped linear: gamma = {lr_u.coef_[0]:.4f}*alpha + {lr_u.coef_[1]:.4f}*beta + {lr_u.intercept_:.4f}')
+print(f'RMSE = {rmse_u:.4f}')
+
+# Now for prediction: I need to predict alpha and beta for test t values
+# alpha(t) = 0.8407*t + c1 (using unwrapped)
+# beta(t) = 0.7863*t + c2 (using unwrapped)
+
+# Let me compute the exact linear models
+from scipy import stats
+
+# Alpha: use all data
+slope_a, intercept_a, r_a, _, _ = stats.linregress(t_all, unwrapped_alpha_all)
+print(f'\\nUnwrapped alpha = {slope_a:.4f}*t + {intercept_a:.4f}, R2={r_a**2:.4f}')
+
+# Beta: use obs data
+slope_b, intercept_b, r_b, _, _ = stats.linregress(t_beta, unwrapped_beta)
+print(f'Unwrapped beta = {slope_b:.4f}*t + {intercept_b:.4f}, R2={r_b**2:.4f}')
+
+# Now predict for test t values
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
+
+# Predict unwrapped alpha and beta
+pred_alpha = slope_a * t_test + intercept_a
+pred_beta = slope_b * t_test + intercept_b
+
+# Predict gamma using the linear model
+X_test = np.column_stack([pred_alpha, pred_beta])
+pred_gamma = lr_u.predict(X_test)
+
+print(f'\\nTest predictions:')
+for i in range(len(t_test)):
+    print(f't={t_test[i]}: alpha={pred_alpha[i]:.2f}, beta={pred_beta[i]:.2f}, gamma={pred_gamma[i]:.2f}')
+
+# But wait - I should also check: is the linear model gamma = a*alpha + b*beta + c
+# really the right relationship? Let me check with wrapped alpha too
+# (since the observations are in wrapped form)
+
+# Actually, let me also try: gamma = a*alpha_wrapped + b*beta + c
+X_wrapped = np.column_stack([obs['alpha'].values, obs['beta'].values])
+lr_w = LinearRegression().fit(X_wrapped, obs['gamma'].values)
+pred_w = lr_w.predict(X_wrapped)
+rmse_w = np.sqrt(np.mean((obs['gamma'].values - pred_w)**2))
+print(f'\\nWrapped linear: gamma = {lr_w.coef_[0]:.4f}*alpha + {lr_w.coef_[1]:.4f}*beta + {lr_w.intercept_:.4f}')
+print(f'RMSE = {rmse_w:.4f}')
+
+# The wrapped version has RMSE=1.62, unwrapped has RMSE=?
+print(f'Unwrapped RMSE = {rmse_u:.4f}')
+"
 ```
 
 ## [25] tool
@@ -947,7 +1663,116 @@ Unwrapped RMSE = 1.6182
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
 
+# Unwrap alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = np.zeros(len(alpha_all))
+unwrapped_alpha_all[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha_all[i] = unwrapped_alpha_all[i-1] + diff
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+# Get unwrapped alpha at beta observation times
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+
+# === Approach 1: Linear gamma = a*alpha + b*beta + c ===
+X1 = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+lr1 = LinearRegression().fit(X1, obs['gamma'].values)
+pred1_train = lr1.predict(X1)
+rmse1 = np.sqrt(np.mean((obs['gamma'].values - pred1_train)**2))
+print(f'Approach 1 (linear in alpha,beta): RMSE={rmse1:.4f}')
+
+# Predict alpha, beta for test t
+slope_a, intercept_a, r_a, _, _ = stats.linregress(t_all, unwrapped_alpha_all)
+slope_b, intercept_b, r_b, _, _ = stats.linregress(t_beta, unwrapped_beta)
+pred_alpha_test = slope_a * t_test + intercept_a
+pred_beta_test = slope_b * t_test + intercept_b
+X_test1 = np.column_stack([pred_alpha_test, pred_beta_test])
+pred_gamma1 = lr1.predict(X_test1)
+
+# === Approach 2: Polynomial gamma vs t (degree 2) ===
+coeffs2 = np.polyfit(t_beta, obs['gamma'].values, 2)
+pred2_train = np.polyval(coeffs2, t_beta)
+rmse2 = np.sqrt(np.mean((obs['gamma'].values - pred2_train)**2))
+print(f'Approach 2 (poly degree 2 in t): RMSE={rmse2:.4f}')
+pred_gamma2 = np.polyval(coeffs2, t_test)
+
+# === Approach 3: Polynomial gamma vs t (degree 3) ===
+coeffs3 = np.polyfit(t_beta, obs['gamma'].values, 3)
+pred3_train = np.polyval(coeffs3, t_beta)
+rmse3 = np.sqrt(np.mean((obs['gamma'].values - pred3_train)**2))
+print(f'Approach 3 (poly degree 3 in t): RMSE={rmse3:.4f}')
+pred_gamma3 = np.polyval(coeffs3, t_test)
+
+# === Approach 4: Polynomial gamma vs t (degree 4) ===
+coeffs4 = np.polyfit(t_beta, obs['gamma'].values, 4)
+pred4_train = np.polyval(coeffs4, t_beta)
+rmse4 = np.sqrt(np.mean((obs['gamma'].values - pred4_train)**2))
+print(f'Approach 4 (poly degree 4 in t): RMSE={rmse4:.4f}')
+pred_gamma4 = np.polyval(coeffs4, t_test)
+
+# === Approach 5: gamma = a*alpha + b*beta + c*t + d ===
+X5 = np.column_stack([alpha_at_beta_t, unwrapped_beta, t_beta])
+lr5 = LinearRegression().fit(X5, obs['gamma'].values)
+pred5_train = lr5.predict(X5)
+rmse5 = np.sqrt(np.mean((obs['gamma'].values - pred5_train)**2))
+print(f'Approach 5 (alpha+beta+t linear): RMSE={rmse5:.4f}')
+
+X_test5 = np.column_stack([pred_alpha_test, pred_beta_test, t_test])
+pred_gamma5 = lr5.predict(X_test5)
+
+# === Approach 6: gamma = a*alpha + b*beta + c*t^2 + d*t + e ===
+X6 = np.column_stack([alpha_at_beta_t, unwrapped_beta, t_beta**2, t_beta])
+lr6 = LinearRegression().fit(X6, obs['gamma'].values)
+pred6_train = lr6.predict(X6)
+rmse6 = np.sqrt(np.mean((obs['gamma'].values - pred6_train)**2))
+print(f'Approach 6 (alpha+beta+t^2+t): RMSE={rmse6:.4f}')
+
+X_test6 = np.column_stack([pred_alpha_test, pred_beta_test, t_test**2, t_test])
+pred_gamma6 = lr6.predict(X_test6)
+
+# Print all predictions
+print('\\n=== Predictions ===')
+print('t, Approach1, Approach2, Approach3, Approach4, Approach5, Approach6')
+for i in range(len(t_test)):
+    print(f'{t_test[i]}, {pred_gamma1[i]:.4f}, {pred_gamma2[i]:.4f}, {pred_gamma3[i]:.4f}, {pred_gamma4[i]:.4f}, {pred_gamma5[i]:.4f}, {pred_gamma6[i]:.4f}')
+
+# Also check: what's the residual structure for approach 1?
+resid1 = obs['gamma'].values - pred1_train
+print(f'\\nApproach 1 residuals: mean={np.mean(resid1):.4f}, std={np.std(resid1):.4f}')
+print(f'Autocorrelation of residuals: {np.corrcoef(resid1[:-1], resid1[1:])[0,1]:.4f}')
+
+# Check if residuals correlate with t
+slope_r, intercept_r, r_r, _, _ = stats.linregress(t_beta, resid1)
+print(f'Residuals vs t: slope={slope_r:.6f}, R2={r_r**2:.4f}')
+"
 ```
 
 ## [27] tool
@@ -1036,7 +1861,95 @@ Residuals vs t: slope=0.000115, R2=0.0000
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# Unwrap alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = np.zeros(len(alpha_all))
+unwrapped_alpha_all[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha_all[i] = unwrapped_alpha_all[i-1] + diff
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+
+# Check residuals of linear model more carefully
+X = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+lr = LinearRegression().fit(X, obs['gamma'].values)
+resid = obs['gamma'].values - lr.predict(X)
+
+# Plot residuals vs t (just print key stats)
+print('Residuals vs t:')
+for t_start in range(380, 545, 20):
+    mask = (t_beta >= t_start) & (t_beta < t_start + 20)
+    if mask.sum() > 0:
+        print(f'  t=[{t_start},{t_start+20}): mean_resid={np.mean(resid[mask]):.3f}, std={np.std(resid[mask]):.3f}, n={mask.sum()}')
+
+# The autocorrelation of 0.577 suggests a systematic trend in residuals
+# Let me check if adding a t term helps
+X2 = np.column_stack([alpha_at_beta_t, unwrapped_beta, t_beta])
+lr2 = LinearRegression().fit(X2, obs['gamma'].values)
+resid2 = obs['gamma'].values - lr2.predict(X2)
+print(f'\\nWith t term: R2={lr2.score(X2, obs[\"gamma\"].values):.6f}, RMSE={np.sqrt(np.mean(resid2**2)):.4f}')
+print(f'Residual autocorrelation: {np.corrcoef(resid2[:-1], resid2[1:])[0,1]:.4f}')
+
+# Maybe the relationship is nonlinear in alpha and beta
+# Let me try: gamma = a*alpha + b*beta + c*alpha*beta + d
+from sklearn.preprocessing import PolynomialFeatures
+pf = PolynomialFeatures(degree=2, include_bias=False)
+X_poly = pf.fit_transform(X)
+lr_poly = LinearRegression().fit(X_poly, obs['gamma'].values)
+pred_poly = lr_poly.predict(X_poly)
+rmse_poly = np.sqrt(np.mean((obs['gamma'].values - pred_poly)**2))
+print(f'\\nPoly degree 2 in alpha,beta: RMSE={rmse_poly:.4f}')
+resid_poly = obs['gamma'].values - pred_poly
+print(f'Residual autocorrelation: {np.corrcoef(resid_poly[:-1], resid_poly[1:])[0,1]:.4f}')
+
+# Let me also try: gamma = a*alpha + b*beta + c*t + d*t^2 + e
+X3 = np.column_stack([alpha_at_beta_t, unwrapped_beta, t_beta, t_beta**2])
+lr3 = LinearRegression().fit(X3, obs['gamma'].values)
+pred3 = lr3.predict(X3)
+rmse3 = np.sqrt(np.mean((obs['gamma'].values - pred3)**2))
+print(f'\\nalpha+beta+t+t^2: RMSE={rmse3:.4f}')
+resid3 = obs['gamma'].values - pred3
+print(f'Residual autocorrelation: {np.corrcoef(resid3[:-1], resid3[1:])[0,1]:.4f}')
+
+# Let me also try a GAM-like approach: gamma = f(alpha) + g(beta) + h(t)
+# Using splines
+from sklearn.preprocessing import SplineTransformer
+spl = SplineTransformer(n_knots=5, degree=3)
+X_spl = spl.fit_transform(t_beta.reshape(-1, 1))
+lr_spl = LinearRegression().fit(X_spl, obs['gamma'].values)
+pred_spl = lr_spl.predict(X_spl)
+rmse_spl = np.sqrt(np.mean((obs['gamma'].values - pred_spl)**2))
+print(f'\\nSpline (5 knots, degree 3): RMSE={rmse_spl:.4f}')
+resid_spl = obs['gamma'].values - pred_spl
+print(f'Residual autocorrelation: {np.corrcoef(resid_spl[:-1], resid_spl[1:])[0,1]:.4f}')
+"
 ```
 
 ## [29] tool
@@ -1111,7 +2024,121 @@ Residual autocorrelation: 0.0002
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
 
+# Unwrap all angles
+def unwrap_angle(vals, t_vals):
+    result = np.zeros(len(vals))
+    result[0] = vals[0]
+    for i in range(1, len(vals)):
+        diff = vals[i] - vals[i-1]
+        if diff < -180:
+            diff += 360
+        elif diff > 180:
+            diff -= 360
+        result[i] = result[i-1] + diff
+    return result
+
+# Unwrap alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = unwrap_angle(alpha_all, t_all)
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = unwrap_angle(beta_vals, t_beta)
+
+# Unwrap gamma for obs times
+gamma_vals = obs['gamma'].values
+unwrapped_gamma = unwrap_angle(gamma_vals, t_beta)
+
+# Get unwrapped alpha at beta observation times
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+
+# Now fit various models using unwrapped values
+print('=== Models using unwrapped alpha, beta ===')
+
+# Model 1: Linear
+X1 = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+lr1 = LinearRegression().fit(X1, unwrapped_gamma)
+rmse1 = np.sqrt(np.mean((unwrapped_gamma - lr1.predict(X1))**2))
+print(f'Linear: RMSE={rmse1:.4f}')
+
+# Model 2: Quadratic features
+pf2 = PolynomialFeatures(degree=2, include_bias=False)
+X2 = pf2.fit_transform(np.column_stack([alpha_at_beta_t, unwrapped_beta]))
+lr2 = LinearRegression().fit(X2, unwrapped_gamma)
+rmse2 = np.sqrt(np.mean((unwrapped_gamma - lr2.predict(X2))**2))
+print(f'Quadratic: RMSE={rmse2:.4f}')
+
+# Model 3: Cubic features
+pf3 = PolynomialFeatures(degree=3, include_bias=False)
+X3 = pf3.fit_transform(np.column_stack([alpha_at_beta_t, unwrapped_beta]))
+lr3 = LinearRegression().fit(X3, unwrapped_gamma)
+rmse3 = np.sqrt(np.mean((unwrapped_gamma - lr3.predict(X3))**2))
+print(f'Cubic: RMSE={rmse3:.4f}')
+
+# Model 4: gamma = a*t + b (linear in t)
+X4 = t_beta.reshape(-1, 1)
+lr4 = LinearRegression().fit(X4, unwrapped_gamma)
+rmse4 = np.sqrt(np.mean((unwrapped_gamma - lr4.predict(X4))**2))
+print(f'Linear in t: RMSE={rmse4:.4f}')
+
+# Model 5: gamma = a*t^2 + b*t + c
+X5 = np.column_stack([t_beta**2, t_beta])
+lr5 = LinearRegression().fit(X5, unwrapped_gamma)
+rmse5 = np.sqrt(np.mean((unwrapped_gamma - lr5.predict(X5))**2))
+print(f'Quadratic in t: RMSE={rmse5:.4f}')
+
+# Model 6: gamma = a*t^3 + b*t^2 + c*t + d
+X6 = np.column_stack([t_beta**3, t_beta**2, t_beta])
+lr6 = LinearRegression().fit(X6, unwrapped_gamma)
+rmse6 = np.sqrt(np.mean((unwrapped_gamma - lr6.predict(X6))**2))
+print(f'Cubic in t: RMSE={rmse6:.4f}')
+
+# Now for prediction, let me use the best approach
+# The quadratic in alpha,beta has the best fit but may extrapolate poorly
+# The cubic in t might be better for extrapolation
+
+# Let me check: what does the quadratic alpha,beta model predict for test?
+# First, predict unwrapped alpha and beta for test t
+slope_a = 0.8407  # from earlier
+intercept_a = 54.6342
+slope_b = 0.7863
+intercept_b = -260.6677
+
+pred_alpha_test = slope_a * t_test + intercept_a
+pred_beta_test = slope_b * t_test + intercept_b
+
+# Predict using quadratic model
+X_test2 = pf2.transform(np.column_stack([pred_alpha_test, pred_beta_test]))
+pred_gamma2 = lr2.predict(X_test2)
+print(f'\\nQuadratic alpha,beta predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: gamma={pred_gamma2[i]:.2f}')
+
+# Predict using cubic in t
+pred_gamma6 = lr6.predict(np.column_stack([t_test**3, t_test**2, t_test]))
+print(f'\\nCubic in t predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: gamma={pred_gamma6[i]:.2f}')
+
+# Predict using linear in t
+pred_gamma4 = lr4.predict(t_test.reshape(-1, 1))
+print(f'\\nLinear in t predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: gamma={pred_gamma4[i]:.2f}')
+"
 ```
 
 ## [31] tool
@@ -1221,7 +2248,115 @@ Linear in t predictions:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
 
+# Let me check if gamma = alpha - beta + f(t) where f(t) is simple
+# gamma - alpha + beta = f(t)
+obs['gamma_minus_alpha_plus_beta'] = obs['gamma'] - obs['alpha'] + obs['beta']
+
+# Check if this is linear in t
+t_beta = obs['t'].values
+gmb = obs['gamma_minus_alpha_plus_beta'].values
+
+slope, intercept, r, _, _ = stats.linregress(t_beta, gmb)
+print(f'gamma - alpha + beta = {slope:.4f}*t + {intercept:.4f}, R2={r**2:.4f}')
+
+# Residuals
+pred = slope * t_beta + intercept
+resid = gmb - pred
+print(f'RMSE: {np.sqrt(np.mean(resid**2)):.4f}')
+print(f'Autocorrelation: {np.corrcoef(resid[:-1], resid[1:])[0,1]:.4f}')
+
+# Hmm, the linear model gamma = -0.168*alpha - 0.181*beta + 33.8 is equivalent to
+# gamma = a*alpha + b*beta + c
+# And gamma - alpha + beta = (a-1)*alpha + (b+1)*beta + c
+# With a=-0.168, b=-0.181: (a-1)=-1.168, (b+1)=0.819
+# This is NOT the same as a linear function of t unless alpha and beta are linear in t
+# Since alpha and beta ARE approximately linear in t, gamma - alpha + beta should be approximately linear in t
+
+# Let me check the relationship more carefully
+# gamma = a*alpha + b*beta + c
+# If alpha = sa*t + aa and beta = sb*t + ab
+# Then gamma = (a*sa + b*sb)*t + (a*aa + b*ab + c)
+# So gamma is linear in t with slope = a*sa + b*sb
+
+sa = 0.8407  # alpha slope
+sb = 0.7863  # beta slope
+a = -0.1681
+b = -0.1811
+c = 33.7991
+
+gamma_slope = a*sa + b*sb
+gamma_intercept = a*aa + b*ab + c  # need intercepts
+
+# Actually let me compute the intercepts
+aa = -336.08  # alpha intercept from earlier
+ab = -260.67  # beta intercept from earlier
+gamma_slope = a*sa + b*sb
+gamma_intercept = a*aa + b*ab + c
+print(f'\\nFrom linear model: gamma slope = {gamma_slope:.4f}, intercept = {gamma_intercept:.4f}')
+print(f'Actual gamma slope from regression: -0.2935')
+print(f'Actual gamma intercept: 137.47')
+
+# These should match if the model is exact
+# gamma_slope = -0.1681*0.8407 + (-0.1811)*0.7863 = -0.1413 - 0.1424 = -0.2837
+# But actual is -0.2935. Close but not exact due to noise.
+
+# Now let me think about what model to use for prediction
+# I'll go with a quadratic polynomial in t for gamma, but with a constraint
+# that gamma stays within [-90, 90]
+
+# Actually, let me try a different approach entirely
+# Let me use a Gaussian Process or similar model
+
+# Or let me just use the linear model gamma = a*alpha + b*beta + c
+# with unwrapped alpha and beta, and compute prediction intervals properly
+
+# For the prediction interval, I need:
+# 1. The noise variance (estimated from residuals)
+# 2. The uncertainty in the model parameters
+# 3. The uncertainty in the predicted alpha and beta
+
+# Let me compute a proper 95% prediction interval
+
+# First, let me finalize the model
+# I'll use the linear model in unwrapped alpha, beta
+# RMSE = 1.62
+
+# For prediction intervals, the standard formula is:
+# y_pred ± t_{n-p, 0.975} * sqrt(MSE * (1 + x^T (X^T X)^{-1} x))
+# where p is the number of parameters
+
+# But for simplicity, I'll use:
+# y_pred ± 1.96 * RMSE (approximately, for large n)
+
+# Actually, let me also try a more sophisticated approach
+# Let me fit a model using statsmodels for proper prediction intervals
+
+import statsmodels.api as sm
+
+# Use the linear model in unwrapped alpha, beta
+X_lm = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+X_lm_sm = sm.add_constant(X_lm)
+model = sm.OLS(unwrapped_gamma, X_lm_sm).fit()
+print('\\n=== Statsmodels linear regression ===')
+print(model.summary())
+
+# Get predictions for test
+pred_alpha_test = slope_a * t_test + intercept_a
+pred_beta_test = slope_b * t_test + intercept_b
+X_test_sm = sm.add_constant(np.column_stack([pred_alpha_test, pred_beta_test]))
+pred_test = model.get_prediction(X_test_sm)
+pred_summary = pred_test.summary_frame(alpha=0.05)
+print('\\nTest predictions with intervals:')
+for i in range(len(t_test)):
+    print(f't={t_test[i]}: y_pred={pred_summary.iloc[i][\"mean\"]:.2f}, [{pred_summary.iloc[i][\"mean_ci_lower\"]:.2f}, {pred_summary.iloc[i][\"mean_ci_upper\"]:.2f}]')
+"
 ```
 
 ## [33] tool
@@ -1248,7 +2383,78 @@ Autocorrelation: 0.9365
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
 
+# Unwrap alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = np.zeros(len(alpha_all))
+unwrapped_alpha_all[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha_all[i] = unwrapped_alpha_all[i-1] + diff
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+# Get unwrapped alpha at beta observation times
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+gamma_vals = obs['gamma'].values
+
+# Linear model using unwrapped alpha, beta
+X_lm = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+X_lm_sm = sm.add_constant(X_lm)
+model = sm.OLS(gamma_vals, X_lm_sm).fit()
+print('=== Statsmodels linear regression ===')
+print(f'R2={model.rsquared:.4f}, RMSE={np.sqrt(model.mse_resid):.4f}')
+print(f'Coefficients: {model.params.values}')
+
+# Predict for test
+slope_a, intercept_a = 0.8407, 54.6342
+slope_b, intercept_b = 0.7863, -260.6677
+pred_alpha_test = slope_a * t_test + intercept_a
+pred_beta_test = slope_b * t_test + intercept_b
+X_test_sm = sm.add_constant(np.column_stack([pred_alpha_test, pred_beta_test]))
+pred_test = model.get_prediction(X_test_sm)
+pred_summary = pred_test.summary_frame(alpha=0.05)
+
+print('\\nTest predictions with 95% prediction intervals:')
+for i in range(len(t_test)):
+    mean_pred = pred_summary.iloc[i]['mean']
+    obs_ci_lower = pred_summary.iloc[i]['obs_ci_lower']
+    obs_ci_upper = pred_summary.iloc[i]['obs_ci_upper']
+    print(f't={t_test[i]}: y_pred={mean_pred:.2f}, [{obs_ci_lower:.2f}, {obs_ci_upper:.2f}]')
+
+# Also compute using simple approach: y_pred ± 1.96*RMSE
+rmse = np.sqrt(model.mse_resid)
+print(f'\\nSimple approach (y_pred ± 1.96*{rmse:.2f}):')
+pred_simple = model.predict(X_test_sm)
+for i in range(len(t_test)):
+    print(f't={t_test[i]}: y_pred={pred_simple[i]:.2f}, [{pred_simple[i]-1.96*rmse:.2f}, {pred_simple[i]+1.96*rmse:.2f}]')
+"
 ```
 
 ## [35] tool
@@ -1272,7 +2478,70 @@ R2=0.9871, RMSE=1.6331
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
 
+# Unwrap alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = np.zeros(len(alpha_all))
+unwrapped_alpha_all[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha_all[i] = unwrapped_alpha_all[i-1] + diff
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+# Get unwrapped alpha at beta observation times
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+gamma_vals = obs['gamma'].values
+
+# Linear model using unwrapped alpha, beta
+X_lm = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+X_lm_sm = sm.add_constant(X_lm)
+model = sm.OLS(gamma_vals, X_lm_sm).fit()
+print(f'R2={model.rsquared:.4f}, RMSE={np.sqrt(model.mse_resid):.4f}')
+print(f'Coefficients: {model.params}')
+
+# Predict for test
+slope_a, intercept_a = 0.8407, 54.6342
+slope_b, intercept_b = 0.7863, -260.6677
+pred_alpha_test = slope_a * t_test + intercept_a
+pred_beta_test = slope_b * t_test + intercept_b
+X_test_sm = sm.add_constant(np.column_stack([pred_alpha_test, pred_beta_test]))
+pred_test = model.get_prediction(X_test_sm)
+pred_summary = pred_test.summary_frame(alpha=0.05)
+
+print('\\nTest predictions with 95% prediction intervals:')
+for i in range(len(t_test)):
+    mean_pred = pred_summary.iloc[i]['mean']
+    obs_ci_lower = pred_summary.iloc[i]['obs_ci_lower']
+    obs_ci_upper = pred_summary.iloc[i]['obs_ci_upper']
+    print(f't={t_test[i]}: y_pred={mean_pred:.2f}, [{obs_ci_lower:.2f}, {obs_ci_upper:.2f}]')
+"
 ```
 
 ## [37] tool
@@ -1374,7 +2643,56 @@ t=638: y_pred=-48.69, [-52.05, -45.33]
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy import stats
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
 
+t_beta = obs['t'].values
+gamma_vals = obs['gamma'].values
+
+# Try quadratic in t
+X_quad = np.column_stack([t_beta**2, t_beta])
+X_quad_sm = sm.add_constant(X_quad)
+model_quad = sm.OLS(gamma_vals, X_quad_sm).fit()
+print(f'Quadratic in t: R2={model_quad.rsquared:.4f}, RMSE={np.sqrt(model_quad.mse_resid):.4f}')
+
+# Predict
+pred_quad = model_quad.get_prediction(sm.add_constant(np.column_stack([t_test**2, t_test])))
+pred_summary_quad = pred_quad.summary_frame(alpha=0.05)
+print('\\nQuadratic predictions:')
+for i in range(len(t_test)):
+    print(f't={t_test[i]}: y_pred={pred_summary_quad.iloc[i][\"mean\"]:.2f}, [{pred_summary_quad.iloc[i][\"obs_ci_lower\"]:.2f}, {pred_summary_quad.iloc[i][\"obs_ci_upper\"]:.2f}]')
+
+# Try cubic in t
+X_cubic = np.column_stack([t_beta**3, t_beta**2, t_beta])
+X_cubic_sm = sm.add_constant(X_cubic)
+model_cubic = sm.OLS(gamma_vals, X_cubic_sm).fit()
+print(f'\\nCubic in t: R2={model_cubic.rsquared:.4f}, RMSE={np.sqrt(model_cubic.mse_resid):.4f}')
+
+pred_cubic = model_cubic.get_prediction(sm.add_constant(np.column_stack([t_test**3, t_test**2, t_test])))
+pred_summary_cubic = pred_cubic.summary_frame(alpha=0.05)
+print('\\nCubic predictions:')
+for i in range(len(t_test)):
+    print(f't={t_test[i]}: y_pred={pred_summary_cubic.iloc[i][\"mean\"]:.2f}, [{pred_summary_cubic.iloc[i][\"obs_ci_lower\"]:.2f}, {pred_summary_cubic.iloc[i][\"obs_ci_upper\"]:.2f}]')
+
+# Try degree 4 in t
+X_4 = np.column_stack([t_beta**4, t_beta**3, t_beta**2, t_beta])
+X_4_sm = sm.add_constant(X_4)
+model_4 = sm.OLS(gamma_vals, X_4_sm).fit()
+print(f'\\nDegree 4 in t: R2={model_4.rsquared:.4f}, RMSE={np.sqrt(model_4.mse_resid):.4f}')
+
+pred_4 = model_4.get_prediction(sm.add_constant(np.column_stack([t_test**4, t_test**3, t_test**2, t_test])))
+pred_summary_4 = pred_4.summary_frame(alpha=0.05)
+print('\\nDegree 4 predictions:')
+for i in range(len(t_test)):
+    print(f't={t_test[i]}: y_pred={pred_summary_4.iloc[i][\"mean\"]:.2f}, [{pred_summary_4.iloc[i][\"obs_ci_lower\"]:.2f}, {pred_summary_4.iloc[i][\"obs_ci_upper\"]:.2f}]')
+"
 ```
 
 ## [39] tool
@@ -1482,7 +2800,82 @@ t=638: y_pred=139.39, [100.86, 177.92]
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
 
+# Unwrap alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = np.zeros(len(alpha_all))
+unwrapped_alpha_all[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha_all[i] = unwrapped_alpha_all[i-1] + diff
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+# Get unwrapped alpha at beta observation times
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+gamma_vals = obs['gamma'].values
+
+# Linear model using unwrapped alpha, beta
+X_lm = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+X_lm_sm = sm.add_constant(X_lm)
+model = sm.OLS(gamma_vals, X_lm_sm).fit()
+print(f'R2={model.rsquared:.4f}, RMSE={np.sqrt(model.mse_resid):.4f}')
+
+# Predict for test
+# alpha(t) = 0.8407*t + 54.6342 (unwrapped)
+# beta(t) = 0.7863*t - 260.6677 (unwrapped)
+slope_a, intercept_a = 0.8407, 54.6342
+slope_b, intercept_b = 0.7863, -260.6677
+pred_alpha_test = slope_a * t_test + intercept_a
+pred_beta_test = slope_b * t_test + intercept_b
+X_test_sm = sm.add_constant(np.column_stack([pred_alpha_test, pred_beta_test]))
+pred_test = model.get_prediction(X_test_sm)
+pred_summary = pred_test.summary_frame(alpha=0.05)
+
+# Create predictions dataframe
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': pred_summary['mean'].values,
+    'y_lower': pred_summary['obs_ci_lower'].values,
+    'y_upper': pred_summary['obs_ci_upper'].values
+})
+
+print('\\nPredictions:')
+print(results.to_string(index=False))
+
+# Save to CSV
+results.to_csv('predictions.csv', index=False)
+print('\\nSaved to predictions.csv')
+
+# Verify
+print(f'\\nNumber of rows: {len(results)}')
+print(f'Number of test rows: {len(test_df)}')
+print(f'Columns: {results.columns.tolist()}')
+"
 ```
 
 ## [41] tool
@@ -1520,7 +2913,7 @@ Columns: ['t', 'y_pred', 'y_lower', 'y_upper']
 **tool call: bash**
 
 ```
-
+wc -l data/test.csv && cat data/test.csv
 ```
 
 ## [43] tool
@@ -1552,7 +2945,7 @@ t
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && wc -l predictions.csv
 ```
 
 ## [45] tool
@@ -1655,7 +3048,86 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+obs = df[df['gamma'].notna()].copy()
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
 
+# Unwrap alpha for all t
+alpha_all = df['alpha'].values
+t_all = df['t'].values
+unwrapped_alpha_all = np.zeros(len(alpha_all))
+unwrapped_alpha_all[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha_all[i] = unwrapped_alpha_all[i-1] + diff
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+alpha_at_beta_t = np.interp(t_beta, t_all, unwrapped_alpha_all)
+gamma_vals = obs['gamma'].values
+
+# Try model: gamma = a*alpha + b*beta + c*t + d
+X_full = np.column_stack([alpha_at_beta_t, unwrapped_beta, t_beta])
+X_full_sm = sm.add_constant(X_full)
+model_full = sm.OLS(gamma_vals, X_full_sm).fit()
+print(f'alpha+beta+t model: R2={model_full.rsquared:.4f}, RMSE={np.sqrt(model_full.mse_resid):.4f}')
+print(f'Coefficients: {model_full.params}')
+
+# Predict for test
+pred_alpha_test = 0.8407 * t_test + 54.6342
+pred_beta_test = 0.7863 * t_test - 260.6677
+X_test_full = sm.add_constant(np.column_stack([pred_alpha_test, pred_beta_test, t_test]))
+pred_test_full = model_full.get_prediction(X_test_full)
+pred_summary_full = pred_test_full.summary_frame(alpha=0.05)
+
+print('\\nalpha+beta+t predictions:')
+for i in range(len(t_test)):
+    print(f't={t_test[i]}: y_pred={pred_summary_full.iloc[i][\"mean\"]:.2f}, [{pred_summary_full.iloc[i][\"obs_ci_lower\"]:.2f}, {pred_summary_full.iloc[i][\"obs_ci_upper\"]:.2f}]')
+
+# Compare with simple linear model
+X_simple = np.column_stack([alpha_at_beta_t, unwrapped_beta])
+X_simple_sm = sm.add_constant(X_simple)
+model_simple = sm.OLS(gamma_vals, X_simple_sm).fit()
+
+pred_alpha_test2 = 0.8407 * t_test + 54.6342
+pred_beta_test2 = 0.7863 * t_test - 260.6677
+X_test_simple = sm.add_constant(np.column_stack([pred_alpha_test2, pred_beta_test2]))
+pred_test_simple = model_simple.get_prediction(X_test_simple)
+pred_summary_simple = pred_test_simple.summary_frame(alpha=0.05)
+
+print('\\nSimple linear predictions:')
+for i in range(len(t_test)):
+    print(f't={t_test[i]}: y_pred={pred_summary_simple.iloc[i][\"mean\"]:.2f}, [{pred_summary_simple.iloc[i][\"obs_ci_lower\"]:.2f}, {pred_summary_simple.iloc[i][\"obs_ci_upper\"]:.2f}]')
+
+# The alpha+beta+t model has slightly better fit but similar predictions
+# Let me also check: does adding t improve the prediction intervals?
+# The alpha+beta+t model has 3 parameters vs 2 for the simple model
+# The prediction interval should be slightly wider for the simple model
+# but the difference is small
+
+# Let me go with the simple linear model (alpha + beta only)
+# as it's more parsimonious and gives similar predictions
+"
 ```
 
 ## [47] tool
@@ -1743,7 +3215,85 @@ Now let me create a more comprehensive and robust prediction script that saves t
 **tool call: bash**
 
 ```
+cat > solve.py << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Extract observations where gamma is available
+obs = train[train['gamma'].notna()].copy()
+t_obs = obs['t'].values
+gamma_obs = obs['gamma'].values
+
+# Unwrap alpha for all t (handles 360-degree wrap)
+alpha_all = train['alpha'].values
+t_all = train['t'].values
+unwrapped_alpha = np.zeros(len(alpha_all))
+unwrapped_alpha[0] = alpha_all[0]
+for i in range(1, len(alpha_all)):
+    diff = alpha_all[i] - alpha_all[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_alpha[i] = unwrapped_alpha[i-1] + diff
+
+# Unwrap beta for obs times
+beta_vals = obs['beta'].values
+t_beta = obs['t'].values
+unwrapped_beta = np.zeros(len(beta_vals))
+unwrapped_beta[0] = beta_vals[0]
+for i in range(1, len(beta_vals)):
+    diff = beta_vals[i] - beta_vals[i-1]
+    if diff < -180:
+        diff += 360
+    elif diff > 180:
+        diff -= 360
+    unwrapped_beta[i] = unwrapped_beta[i-1] + diff
+
+# Get unwrapped alpha at beta observation times
+alpha_at_beta = np.interp(t_beta, t_all, unwrapped_alpha)
+
+# Fit linear model: gamma = a*alpha + b*beta + c
+X_train = np.column_stack([alpha_at_beta, unwrapped_beta])
+X_train_sm = sm.add_constant(X_train)
+model = sm.OLS(gamma_obs, X_train_sm).fit()
+
+# Predict unwrapped alpha and beta for test t values
+# alpha(t) = 0.8407*t + 54.6342
+# beta(t) = 0.7863*t - 260.6677
+slope_a, intercept_a = 0.8407, 54.6342
+slope_b, intercept_b = 0.7863, -260.6677
+
+pred_alpha_test = slope_a * test['t'].values + intercept_a
+pred_beta_test = slope_b * test['t'].values + intercept_b
+X_test = sm.add_constant(np.column_stack([pred_alpha_test, pred_beta_test]))
+
+# Get predictions with 95% prediction intervals
+pred = model.get_prediction(X_test)
+pred_summary = pred.summary_frame(alpha=0.05)
+
+# Build output
+results = pd.DataFrame({
+    't': test['t'].values,
+    'y_pred': pred_summary['mean'].values,
+    'y_lower': pred_summary['obs_ci_lower'].values,
+    'y_upper': pred_summary['obs_ci_upper'].values
+})
+
+# Save
+results.to_csv('predictions.csv', index=False)
+
+# Verify
+print(f"Rows: {len(results)}, Test rows: {len(test)}")
+print(f"Columns: {results.columns.tolist()}")
+print(results.to_string(index=False))
+EOF
+python3 solve.py
 ```
 
 ## [49] tool
@@ -1798,7 +3348,16 @@ Let me verify the output file is correct and complete.
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && wc -l predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Shape:', df.shape)
+print('Columns:', df.columns.tolist())
+print('t range:', df['t'].min(), '-', df['t'].max())
+print('y_pred range:', df['y_pred'].min(), '-', df['y_pred'].max())
+print('y_lower < y_pred < y_upper:', (df['y_lower'] < df['y_pred']).all() and (df['y_pred'] < df['y_upper']).all())
+print('All gamma values in [-90, 90]:', (df['y_pred'] >= -90).all() and (df['y_pred'] <= 90).all())
+"
 ```
 
 ## [51] tool

@@ -56,7 +56,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv && echo "---" && cat data/scenario.csv && echo "---" && wc -l data/scenario.csv
 ```
 
 ## [3] tool
@@ -124,7 +124,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cat data/train.csv | head -1 && tail -5 data/train.csv
 ```
 
 ## [5] tool
@@ -148,7 +148,32 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+print("Train shape:", train.shape)
+print("Scenario shape:", scenario.shape)
+print()
+print("Train columns:", list(train.columns))
+print("Scenario columns:", list(scenario.columns))
+print()
+print("Missing values per column in train:")
+print(train.isnull().sum())
+print()
+print("Train describe:")
+print(train.describe())
+print()
+print("Scenario describe:")
+print(scenario.describe())
+print()
+# Check correlation with default_rate
+print("Correlation with default_rate:")
+print(train.corr()['default_rate'].sort_values())
+EOF
 ```
 
 ## [7] tool
@@ -245,7 +270,34 @@ Name: default_rate, dtype: float64
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Look at missing patterns more carefully
+print("First 15 rows:")
+print(train.head(15).to_string())
+print()
+
+# Check when each series starts having data
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    first_valid = train[col].first_valid_index()
+    print(f"{col}: first valid at index {first_valid}, quarter {train.loc[first_valid, 'quarter']}")
+
+print()
+# Look at unemployment in scenario vs training
+print("Scenario unemployment:", scenario['unemployment'].tolist())
+print("Scenario vix:", scenario['vix'].tolist())
+print("Scenario bbb_spread:", scenario['bbb_spread'].tolist())
+print("Scenario gdp:", scenario['gdp'].tolist())
+print()
+print("Training unemployment range:", train['unemployment'].min(), "-", train['unemployment'].max())
+print("Training vix range:", train['vix'].min(), "-", train['vix'].max())
+print("Training bbb_spread range:", train['bbb_spread'].min(), "-", train['bbb_spread'].max())
+EOF
 ```
 
 ## [9] tool
@@ -330,7 +382,51 @@ Training bbb_spread range: 1.3922 - 7.2769
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+# Focus on complete cases for correlation analysis
+cols = ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi','default_rate']
+complete = train[cols].dropna()
+print("Complete cases:", len(complete))
+print()
+print("Correlations with default_rate:")
+print(complete.corr()['default_rate'].sort_values())
+print()
+
+# Check if unemployment has a non-linear relationship
+import matplotlib
+matplotlib.use('Agg')
+# Let's look at the relationship more carefully
+print("Unemployment vs default_rate (binned):")
+train['unemp_bin'] = pd.cut(train['unemployment'], bins=10)
+for name, group in train.groupby('unemp_bin'):
+    if len(group) > 2:
+        print(f"  {name}: mean={group['default_rate'].mean():.4f}, count={len(group)}")
+
+print()
+# Check GDP growth
+train['gdp_growth'] = train['gdp'].diff()
+print("GDP growth correlation with default_rate:")
+valid = train[['gdp_growth','default_rate']].dropna()
+print(f"  corr = {valid.corr().iloc[0,1]:.4f}")
+
+# Check vix relationship
+print("\nVIX vs default_rate (binned):")
+train['vix_bin'] = pd.cut(train['vix'], bins=10)
+for name, group in train.groupby('vix_bin'):
+    if len(group) > 2:
+        print(f"  {name}: mean={group['default_rate'].mean():.4f}, count={len(group)}")
+
+# Check bbb_spread relationship
+print("\nBBB spread vs default_rate:")
+for name, group in train.groupby(pd.cut(train['bbb_spread'], bins=8)):
+    if len(group) > 2:
+        print(f"  {name}: mean={group['default_rate'].mean():.4f}, count={len(group)}")
+EOF
 ```
 
 ## [11] tool
@@ -367,7 +463,56 @@ Name: default_rate, dtype: float64
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+# Check non-linear relationships
+print("Unemployment vs default_rate (binned):")
+train['unemp_bin'] = pd.cut(train['unemployment'], bins=10)
+for name, group in train.groupby('unemp_bin'):
+    if len(group) > 2:
+        print(f"  {name}: mean={group['default_rate'].mean():.4f}, count={len(group)}")
+
+print()
+# Check GDP growth
+train['gdp_growth'] = train['gdp'].diff()
+print("GDP growth correlation with default_rate:")
+valid = train[['gdp_growth','default_rate']].dropna()
+print(f"  corr = {valid.corr().iloc[0,1]:.4f}")
+
+# Check vix relationship
+print("\nVIX vs default_rate (binned):")
+for name, group in train.groupby(pd.cut(train['vix'], bins=8)):
+    if len(group) > 2:
+        print(f"  {name}: mean={group['default_rate'].mean():.4f}, count={len(group)}")
+
+# Check bbb_spread relationship
+print("\nBBB spread vs default_rate:")
+for name, group in train.groupby(pd.cut(train['bbb_spread'], bins=8)):
+    if len(group) > 2:
+        print(f"  {name}: mean={group['default_rate'].mean():.4f}, count={len(group)}")
+
+# Check sp500 relationship
+print("\nSP500 vs default_rate (binned):")
+for name, group in train.groupby(pd.cut(train['sp500'], bins=8)):
+    if len(group) > 2:
+        print(f"  {name}: mean={group['default_rate'].mean():.4f}, count={len(group)}")
+
+# Check if unemployment squared matters
+train['unemp_sq'] = train['unemployment'] ** 2
+print(f"\nunemployment^2 corr with default_rate: {train[['unemp_sq','default_rate']].dropna().corr().iloc[0,1]:.4f}")
+
+# Check interaction: unemployment * vix
+train['unemp_vix'] = train['unemployment'] * train['vix']
+print(f"unemp*vix corr with default_rate: {train[['unemp_vix','default_rate']].dropna().corr().iloc[0,1]:.4f}")
+
+# Check unemployment * bbb_spread
+train['unemp_bbb'] = train['unemployment'] * train['bbb_spread']
+print(f"unemp*bbb corr with default_rate: {train[['unemp_bbb','default_rate']].dropna().corr().iloc[0,1]:.4f}")
+EOF
 ```
 
 ## [13] tool
@@ -486,7 +631,38 @@ unemp*bbb corr with default_rate: 0.2352
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Check the distribution of default_rate more carefully
+print("default_rate stats:")
+print(train['default_rate'].describe())
+print(f"Min: {train['default_rate'].min():.6f}")
+print(f"Max: {train['default_rate'].max():.6f}")
+print(f"Skewness: {train['default_rate'].skew():.4f}")
+print(f"Kurtosis: {train['default_rate'].kurtosis():.4f}")
+
+# Check if log(default_rate) is more normal
+print(f"\nlog(default_rate) stats:")
+lr = np.log(train['default_rate'])
+print(lr.describe())
+print(f"Skewness: {lr.skew():.4f}")
+
+# Check complete cases for modeling
+feature_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+complete = train[feature_cols + ['default_rate']].dropna()
+print(f"\nComplete cases: {len(complete)} out of {len(train)}")
+
+# Let's also check: what if we use only variables with few missing values?
+# gdp: 0 missing, unemployment: 0 missing, cpi: 0 missing, nasdaq: 0 missing
+# These 4 variables are always available
+print("\nCorrelation of complete-case features with default_rate:")
+print(complete.corr()['default_rate'].sort_values())
+EOF
 ```
 
 ## [15] tool
@@ -607,7 +783,100 @@ Name: default_rate, dtype: float64
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Let's try a Gamma GLM approach
+# First, let's understand what features to use
+# Key insight: unemployment is the strongest predictor
+# Let's try several feature sets and compare
+
+# Feature engineering
+df = train.copy()
+
+# Create some transformed features
+df['unemp_sq'] = df['unemployment'] ** 2
+df['gdp_growth'] = df['gdp'].diff()
+df['vix_level'] = df['vix']
+df['bbb_spread_level'] = df['bbb_spread']
+
+# For the complete cases, let's try OLS on log(default_rate)
+feature_cols = ['unemployment', 'gdp', 'vix', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'hpi', 'cpi']
+
+# Use only complete cases for modeling
+complete = df[feature_cols + ['default_rate']].dropna()
+print(f"Complete cases: {len(complete)}")
+
+# Try OLS on log(default_rate)
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+
+X = complete[feature_cols].values
+y = np.log(complete['default_rate'].values)
+
+# Standardize features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Fit OLS
+lr = LinearRegression()
+lr.fit(X_scaled, y)
+
+# In-sample predictions
+y_pred_log = lr.predict(X_scaled)
+y_pred = np.exp(y_pred_log)
+residuals = complete['default_rate'].values - y_pred
+
+print(f"\nOLS on log(default_rate):")
+print(f"  R² (in-sample): {lr.score(X_scaled, y):.4f}")
+print(f"  RMSE: {np.sqrt(np.mean(residuals**2)):.6f}")
+print(f"  MAE: {np.mean(np.abs(residuals)):.6f}")
+print(f"  Coefficients: {dict(zip(feature_cols, lr.coef_))}")
+
+# Now let's try with just the most important features
+# unemployment is clearly the most important
+# Let's try stepwise or just use the top features
+
+# Try with just unemployment + gdp + vix + bbb_spread
+feature_cols2 = ['unemployment', 'gdp', 'vix', 'bbb_spread']
+complete2 = df[feature_cols2 + ['default_rate']].dropna()
+X2 = complete2[feature_cols2].values
+y2 = np.log(complete2['default_rate'].values)
+X2_scaled = scaler.fit_transform(X2)
+
+lr2 = LinearRegression()
+lr2.fit(X2_scaled, y2)
+y_pred2_log = lr2.predict(X2_scaled)
+y_pred2 = np.exp(y_pred2_log)
+residuals2 = complete2['default_rate'].values - y_pred2
+
+print(f"\nOLS on log(default_rate) - 4 features:")
+print(f"  R²: {lr2.score(X2_scaled, y2):.4f}")
+print(f"  RMSE: {np.sqrt(np.mean(residuals2**2)):.6f}")
+print(f"  MAE: {np.mean(np.abs(residuals2)):.6f}")
+
+# Try with just unemployment
+feature_cols3 = ['unemployment']
+X3 = complete[feature_cols3].values
+y3 = np.log(complete['default_rate'].values)
+X3_scaled = scaler.fit_transform(X3)
+
+lr3 = LinearRegression()
+lr3.fit(X3_scaled, y3)
+y_pred3_log = lr3.predict(X3_scaled)
+y_pred3 = np.exp(y_pred3_log)
+residuals3 = complete['default_rate'].values - y_pred3
+
+print(f"\nOLS on log(default_rate) - unemployment only:")
+print(f"  R²: {lr3.score(X3_scaled, y3):.4f}")
+print(f"  RMSE: {np.sqrt(np.mean(residuals3**2)):.6f}")
+print(f"  MAE: {np.mean(np.abs(residuals3)):.6f}")
+EOF
 ```
 
 ## [17] tool
@@ -697,7 +966,62 @@ OLS on log(default_rate) - unemployment only:
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.genmod.families import Gamma
+from statsmodels.genmod.families.links import log
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Feature engineering
+df = train.copy()
+
+# Use features with enough data coverage
+# Let's try: unemployment, gdp, vix, bbb_spread, sp500
+# These are available for most observations
+
+# For the complete cases
+feature_cols = ['unemployment', 'gdp', 'vix', 'bbb_spread', 'sp500']
+complete = df[feature_cols + ['default_rate']].dropna()
+print(f"Complete cases with 5 features: {len(complete)}")
+
+# Gamma GLM with log link
+X = complete[feature_cols]
+X = sm.add_constant(X)
+y = complete['default_rate']
+
+model = sm.GLM(y, X, family=Gamma(link=log()))
+result = model.fit()
+print(result.summary())
+
+# In-sample predictions
+y_pred = result.predict(X)
+print(f"\nIn-sample:")
+print(f"  Mean default_rate: {y.mean():.6f}")
+print(f"  Mean predicted: {y_pred.mean():.6f}")
+resid = y - y_pred
+print(f"  RMSE: {np.sqrt(np.mean(resid**2)):.6f}")
+print(f"  MAE: {np.mean(np.abs(resid)):.6f}")
+
+# Now let's also try with just unemployment + gdp (simpler, more robust)
+feature_cols_simple = ['unemployment', 'gdp']
+X_simple = sm.add_constant(complete[feature_cols_simple])
+model_simple = sm.GLM(y, X_simple, family=Gamma(link=log()))
+result_simple = model_simple.fit()
+print("\n\nSimple Gamma GLM (unemployment + gdp):")
+print(result_simple.summary())
+
+# Predictions on scenario
+scenario_features = scenario[feature_cols_simple].copy()
+scenario_features = sm.add_constant(scenario_features)
+scenario_pred = result_simple.predict(scenario_features)
+print(f"\nScenario predictions (simple):")
+for i, row in scenario.iterrows():
+    print(f"  Q{row['quarter']}: {scenario_pred.iloc[i]:.6f}")
+EOF
 ```
 
 ## [19] tool
@@ -870,7 +1194,33 @@ Scenario predictions (simple):
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Check if scenario values are beyond training range
+for col in ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']:
+    tr_min = train[col].min()
+    tr_max = train[col].max()
+    sc_min = scenario[col].min()
+    sc_max = scenario[col].max()
+    beyond = ""
+    if sc_min < tr_min or sc_max > tr_max:
+        beyond = " *** BEYOND TRAINING RANGE ***"
+    print(f"{col:15s}: train [{tr_min:.2f}, {tr_max:.2f}], scenario [{sc_min:.2f}, {sc_max:.2f}]{beyond}")
+
+# Also check: are any scenario values in the tails of the training distribution?
+print("\nScenario values vs training percentiles:")
+for col in ['unemployment', 'gdp', 'vix', 'bbb_spread']:
+    for q in [0.05, 0.1, 0.25, 0.75, 0.9, 0.95]:
+        pval = train[col].quantile(q)
+        print(f"  {col} {q:.0%} percentile: {pval:.4f}")
+    print(f"  Scenario range: [{scenario[col].min():.4f}, {scenario[col].max():.4f}]")
+    print()
+EOF
 ```
 
 ## [21] tool
@@ -983,7 +1333,104 @@ Now let me build the full model with proper prediction
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats as scipy_stats
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Feature engineering
+df = train.copy()
+
+# Use features that are available for most observations
+# Key features: unemployment, gdp, vix, bbb_spread
+# These have the most complete data and strongest relationships
+
+# Let's try a few feature sets and pick the best
+# Feature set 1: unemployment + gdp (simplest, most robust)
+# Feature set 2: unemployment + gdp + vix + bbb_spread
+# Feature set 3: unemployment + gdp + vix + bbb_spread + sp500
+
+# For OLS on log(default_rate), we need complete cases
+feature_sets = {
+    'simple': ['unemployment', 'gdp'],
+    'medium': ['unemployment', 'gdp', 'vix', 'bbb_spread'],
+    'full': ['unemployment', 'gdp', 'vix', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'hpi', 'cpi'],
+}
+
+for name, feats in feature_sets.items():
+    complete = df[feats + ['default_rate']].dropna()
+    X = sm.add_constant(complete[feats])
+    y = np.log(complete['default_rate'])
+    
+    model = sm.OLS(y, X).fit()
+    print(f"\n{name} features ({len(feats)}): R²={model.rsquared:.4f}, Adj R²={model.rsquared_adj:.4f}")
+    print(f"  N={len(complete)}, RMSE={np.sqrt(model.mse_resid):.6f}")
+    print(f"  Coefficients: {dict(zip(feats, model.params[1:].round(4)))}")
+
+# Let's go with the medium model (unemployment + gdp + vix + bbb_spread)
+# It has good coverage and reasonable complexity
+feats = ['unemployment', 'gdp', 'vix', 'bbb_spread']
+complete = df[feats + ['default_rate']].dropna()
+X = sm.add_constant(complete[feats])
+y = np.log(complete['default_rate'])
+
+model = sm.OLS(y, X).fit()
+print(f"\n\nFinal model (medium):")
+print(model.summary())
+
+# Now compute predictions and prediction intervals for scenario
+scenario_X = sm.add_constant(scenario[feats])
+scenario_pred_log = model.predict(scenario_X)
+scenario_pred = np.exp(scenario_pred_log)
+
+# Prediction intervals
+# For OLS, the prediction interval for a new observation is:
+# y_pred ± t_{alpha/2, df} * SE_pred
+# where SE_pred = sqrt(MSE * (1 + x_new' (X'X)^{-1} x_new))
+
+n = len(X)
+p = X.shape[1]  # including constant
+mse = model.mse_resid
+df_resid = model.df_resid
+t_val = scipy_stats.t.ppf(0.975, df_resid)
+
+# Compute prediction intervals for each scenario point
+y_lower = []
+y_upper = []
+
+for i in range(len(scenario)):
+    x_new = scenario_X.iloc[i].values.reshape(1, -1)
+    # SE of prediction = sqrt(MSE * (1 + x_new' (X'X)^{-1} x_new))
+    leverage = x_new @ np.linalg.inv(X.T @ X) @ x_new.T
+    se_pred = np.sqrt(mse * (1 + leverage[0, 0]))
+    
+    # Prediction interval on log scale
+    pred_lower_log = scenario_pred_log.iloc[i] - t_val * se_pred
+    pred_upper_log = scenario_pred_log.iloc[i] + t_val * se_pred
+    
+    # Transform back to original scale
+    y_lower.append(np.exp(pred_lower_log))
+    y_upper.append(np.exp(pred_upper_log))
+
+# Create output dataframe
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': scenario_pred.values,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print(f"\nPredictions:")
+print(output.to_string(index=False))
+
+# Save to file
+output.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv with {len(output)} rows")
+EOF
 ```
 
 ## [23] tool
@@ -1141,7 +1588,197 @@ Saved predictions.csv with 9 rows
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats as scipy_stats
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Let me try a more careful approach
+# Use Gamma GLM with log link for the default rate
+# Include unemployment + gdp as core features
+# Use bootstrap for prediction intervals
+
+df = train.copy()
+
+# Feature set: unemployment + gdp (most robust, uses all 80 observations)
+feats = ['unemployment', 'gdp']
+
+X = sm.add_constant(df[feats])
+y = df['default_rate']
+
+# Fit Gamma GLM with log link
+model = sm.GLM(y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+result = model.fit()
+print("Gamma GLM summary:")
+print(result.summary())
+
+# In-sample predictions
+y_pred = result.predict(X)
+resid = y - y_pred
+print(f"\nIn-sample:")
+print(f"  RMSE: {np.sqrt(np.mean(resid**2)):.6f}")
+print(f"  MAE: {np.mean(np.abs(resid)):.6f}")
+print(f"  Scale (phi): {result.scale:.4f}")
+
+# Now let's compute prediction intervals using two approaches:
+# 1. Analytical (using GLM theory)
+# 2. Bootstrap residual resampling
+
+# Approach 1: Analytical prediction intervals for Gamma GLM
+# For a Gamma GLM with log link:
+# - Predicted mean: mu_i = exp(X_i @ beta)
+# - Variance: Var(Y_i) = phi * mu_i^2
+# - The prediction interval accounts for uncertainty in mu_i and the irreducible variance
+
+# For the linear predictor eta = X @ beta:
+# SE(eta_new) = sqrt(x_new' Var(beta) x_new)
+# The prediction interval on the response scale uses the gamma distribution
+
+n = len(X)
+p = X.shape[1]
+phi = result.scale  # dispersion parameter
+
+# Get the covariance of the coefficients
+cov_beta = result.cov_params()
+
+# For each scenario point, compute prediction interval
+y_lower_analytical = []
+y_upper_analytical = []
+
+for i in range(len(scenario)):
+    x_new = scenario[feats].iloc[i].values
+    x_new = np.append(1, x_new)  # add intercept
+    
+    # Predicted mean
+    mu_pred = result.predict(sm.add_constant(scenario[feats].iloc[i:i+1]))[0]
+    
+    # SE of linear predictor
+    se_eta = np.sqrt(x_new @ cov_beta.values @ x_new)
+    
+    # For prediction interval, we need to account for both
+    # uncertainty in mu and irreducible variance
+    # 
+    # On the log scale, eta_new ~ N(eta_pred, se_eta^2)
+    # Y_new | eta_new ~ Gamma(shape=1/phi, scale=phi*exp(eta_new))
+    # 
+    # A reasonable approximation: 
+    # Use the 95% CI for eta_new, then transform to Y scale
+    # This captures uncertainty in the mean
+    # But we should also add irreducible variance
+    
+    # The variance of Y_new is phi * mu^2
+    # So the total variance on the log scale is approximately:
+    # se_eta^2 + phi (delta method: var(log(Y)) ≈ var(Y)/mu^2 = phi)
+    
+    total_se_log = np.sqrt(se_eta**2 + phi)
+    
+    # Prediction interval on log scale
+    eta_lower = np.log(mu_pred) - 1.96 * total_se_log
+    eta_upper = np.log(mu_pred) + 1.96 * total_se_log
+    
+    # Transform to response scale
+    y_lower_analytical.append(np.exp(eta_lower))
+    y_upper_analytical.append(np.exp(eta_upper))
+
+print(f"\nAnalytical prediction intervals:")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_pred_scenario[i]:.6f}, [{y_lower_analytical[i]:.6f}, {y_upper_analytical[i]:.6f}]")
+
+# Approach 2: Bootstrap prediction intervals
+# Resample residuals and refit
+np.random.seed(42)
+n_boot = 2000
+
+# Get fitted values and residuals
+fitted = result.predict(X).values
+resid_vals = (y.values - fitted)
+
+# Bootstrap
+boot_preds = np.zeros((n_boot, len(scenario)))
+
+for b in range(n_boot):
+    # Resample residuals
+    boot_resid = np.random.choice(resid_vals, size=len(y), replace=True)
+    boot_y = fitted + boot_resid
+    
+    # Refit model
+    try:
+        boot_model = sm.GLM(boot_y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+        boot_result = boot_model.fit()
+        
+        # Predict on scenario
+        boot_scenario_pred = boot_result.predict(sm.add_constant(scenario[feats]))
+        boot_preds[b, :] = boot_scenario_pred
+    except:
+        pass
+
+# Compute bootstrap prediction intervals
+# For each scenario point, compute 2.5th and 97.5th percentiles
+# But we also need to account for the fact that the bootstrap captures
+# parameter uncertainty, not irreducible variance
+# So we should add the irreducible variance
+
+# Actually, for prediction intervals, we want the distribution of NEW observations
+# The bootstrap of fitted values captures parameter uncertainty
+# We need to also add the irreducible variance
+
+# For Gamma GLM, the variance of Y is phi * mu^2
+# So we can add random gamma noise
+
+y_lower_boot = []
+y_upper_boot = []
+y_pred_final = []
+
+for i in range(len(scenario)):
+    mu_pred = result.predict(sm.add_constant(scenario[feats].iloc[i:i+1]))[0]
+    
+    # Bootstrap distribution of the mean prediction
+    mean_dists = boot_preds[:, i]
+    
+    # For prediction interval, we need to simulate new observations
+    # Y_new ~ Gamma(shape=1/phi, scale=phi*mu)
+    # where mu comes from the bootstrap distribution
+    
+    # Simulate new observations from the bootstrap distribution
+    # This captures both parameter uncertainty and irreducible variance
+    boot_y_new = np.zeros(n_boot)
+    for b in range(n_boot):
+        if not np.isnan(boot_preds[b, i]):
+            mu_b = boot_preds[b, i]
+            # Gamma distribution: shape = 1/phi, scale = phi * mu
+            shape = 1.0 / phi
+            scale = phi * mu_b
+            boot_y_new[b] = np.random.gamma(shape, scale)
+        else:
+            boot_y_new[b] = np.nan
+    
+    # Remove NaN
+    boot_y_new = boot_y_new[~np.isnan(boot_y_new)]
+    
+    y_pred_final.append(mu_pred)
+    y_lower_boot.append(np.percentile(boot_y_new, 2.5))
+    y_upper_boot.append(np.percentile(boot_y_new, 97.5))
+
+print(f"\nBootstrap prediction intervals:")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_pred_final[i]:.6f}, [{y_lower_boot[i]:.6f}, {y_upper_boot[i]:.6f}]")
+
+# Use the bootstrap intervals as they're more robust
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred_final,
+    'y_lower': y_lower_boot,
+    'y_upper': y_upper_boot
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv with {len(output)} rows")
+print(output.to_string(index=False))
+EOF
 ```
 
 ## [25] tool
@@ -1246,7 +1883,118 @@ In-sample:
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats as scipy_stats
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+df = train.copy()
+
+# Try several feature sets with Gamma GLM
+# Feature set 1: unemployment + gdp
+# Feature set 2: unemployment + gdp + vix
+# Feature set 3: unemployment + gdp + bbb_spread
+# Feature set 4: unemployment + gdp + vix + bbb_spread
+# Feature set 5: unemployment + gdp + unemployment^2
+
+# For Gamma GLM, we need positive y values (default_rate > 0, which it always is)
+# We also need complete cases for the features we use
+
+results = {}
+
+for name, feats in [
+    ('unemp_gdp', ['unemployment', 'gdp']),
+    ('unemp_gdp_vix', ['unemployment', 'gdp', 'vix']),
+    ('unemp_gdp_bbb', ['unemployment', 'gdp', 'bbb_spread']),
+    ('unemp_gdp_vix_bbb', ['unemployment', 'gdp', 'vix', 'bbb_spread']),
+    ('unemp_gdp_unemp2', ['unemployment', 'gdp', 'unemp_sq']),
+]:
+    if 'unemp_sq' in feats:
+        df_temp = df.copy()
+        df_temp['unemp_sq'] = df_temp['unemployment'] ** 2
+    else:
+        df_temp = df
+    
+    # Get complete cases
+    all_feats = feats
+    mask = df_temp[all_feats + ['default_rate']].notna().all(axis=1)
+    sub = df_temp[mask]
+    
+    X = sm.add_constant(sub[all_feats])
+    y = sub['default_rate']
+    
+    try:
+        model = sm.GLM(y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+        result = model.fit()
+        
+        # In-sample predictions
+        y_pred = result.predict(X)
+        resid = y - y_pred
+        rmse = np.sqrt(np.mean(resid**2))
+        mae = np.mean(np.abs(resid))
+        
+        # Pseudo R-squared
+        null_dev = result.null_deviance
+        resid_dev = result.deviance
+        pseudo_r2 = 1 - resid_dev / null_dev
+        
+        results[name] = {
+            'model': result,
+            'feats': all_feats,
+            'n': len(sub),
+            'rmse': rmse,
+            'mae': mae,
+            'pseudo_r2': pseudo_r2,
+            'scale': result.scale,
+        }
+        print(f"{name}: N={len(sub)}, R²={pseudo_r2:.4f}, RMSE={rmse:.6f}, MAE={mae:.6f}")
+        for f, c in zip(all_feats, result.params[1:]):
+            print(f"  {f}: {c:.6f} (p={result.pvalues[f]:.4f})")
+    except Exception as e:
+        print(f"{name}: ERROR - {e}")
+
+# Pick the best model - let's use unemp_gdp_vix_bbb (4 features, uses 69 complete cases)
+# Actually, let me also check unemp_gdp_unemp2
+print("\n\nLet me also check with log transformations of features...")
+
+# Try with log transformations of features that have wide range
+# log(unemployment), log(gdp), log(vix), log(bbb_spread)
+# But unemployment and gdp are always positive, so log is fine
+
+for name, feats, log_transform in [
+    ('unemp_gdp_log', ['unemployment', 'gdp'], [True, True]),
+    ('unemp_log_gdp', ['unemployment', 'gdp'], [True, False]),
+]:
+    df_temp = df.copy()
+    for f, lt in zip(feats, log_transform):
+        if lt:
+            df_temp[f'{f}_log'] = np.log(df_temp[f])
+    
+    use_feats = [f'{f}_log' if lt else f for f, lt in zip(feats, log_transform)]
+    
+    mask = df_temp[use_feats + ['default_rate']].notna().all(axis=1)
+    sub = df_temp[mask]
+    
+    X = sm.add_constant(sub[use_feats])
+    y = sub['default_rate']
+    
+    model = sm.GLM(y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+    result = model.fit()
+    
+    y_pred = result.predict(X)
+    resid = y - y_pred
+    rmse = np.sqrt(np.mean(resid**2))
+    pseudo_r2 = 1 - result.deviance / result.null_deviance
+    
+    print(f"{name}: N={len(sub)}, R²={pseudo_r2:.4f}, RMSE={rmse:.6f}")
+    for f, c in zip(use_feats, result.params[1:]):
+        print(f"  {f}: {c:.6f}")
+
+EOF
 ```
 
 ## [27] tool
@@ -1381,7 +2129,88 @@ unemp_log_gdp: N=80, R²=0.3961, RMSE=0.012703
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+df = train.copy()
+
+# Best model: unemployment + gdp + unemployment^2 (Gamma GLM)
+df['unemp_sq'] = df['unemployment'] ** 2
+feats = ['unemployment', 'gdp', 'unemp_sq']
+
+X = sm.add_constant(df[feats])
+y = df['default_rate']
+
+model = sm.GLM(y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+result = model.fit()
+print("Final model summary:")
+print(result.summary())
+
+# In-sample predictions
+y_pred = result.predict(X)
+resid = y - y_pred
+print(f"\nIn-sample RMSE: {np.sqrt(np.mean(resid**2)):.6f}")
+print(f"Scale (phi): {result.scale:.4f}")
+
+# Bootstrap prediction intervals
+np.random.seed(42)
+n_boot = 5000
+n_obs = len(y)
+n_scenario = len(scenario)
+
+# Fitted values
+fitted = y_pred.values
+
+# Bootstrap
+boot_preds = np.zeros((n_boot, n_scenario))
+
+for b in range(n_boot):
+    # Resample residuals with replacement
+    boot_resid = np.random.choice(resid.values, size=n_obs, replace=True)
+    boot_y = fitted + boot_resid
+    
+    # Refit model
+    try:
+        boot_model = sm.GLM(boot_y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+        boot_result = boot_model.fit()
+        
+        # Predict on scenario
+        scenario_X = sm.add_constant(scenario[feats])
+        boot_preds[b, :] = boot_result.predict(scenario_X)
+    except:
+        boot_preds[b, :] = np.nan
+
+# Compute prediction intervals
+# Remove NaN rows (failed fits)
+valid = ~np.isnan(boot_preds).any(axis=1)
+boot_preds_valid = boot_preds[valid]
+print(f"\nBootstrap: {valid.sum()} successful fits out of {n_boot}")
+
+y_pred_final = result.predict(sm.add_constant(scenario[feats]))
+y_lower = np.percentile(boot_preds_valid, 2.5, axis=0)
+y_upper = np.percentile(boot_preds_valid, 97.5, axis=0)
+
+print(f"\nFinal predictions:")
+for i in range(n_scenario):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_pred_final[i]:.6f}, [{y_lower[i]:.6f}, {y_upper[i]:.6f}]")
+
+# Save
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred_final.values,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv with {len(output)} rows")
+print(output.to_string(index=False))
+EOF
 ```
 
 ## [29] tool
@@ -1456,7 +2285,95 @@ Bootstrap: 0 successful fits out of 5000
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats as scipy_stats
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+df = train.copy()
+
+# Feature engineering
+df['unemp_sq'] = df['unemployment'] ** 2
+
+# Use OLS on log(default_rate) for stability
+# Features: unemployment, gdp, unemp_sq
+feats = ['unemployment', 'gdp', 'unemp_sq']
+
+X = sm.add_constant(df[feats])
+y = np.log(df['default_rate'])
+
+model = sm.OLS(y, X).fit()
+print("OLS on log(default_rate) summary:")
+print(model.summary())
+
+# In-sample predictions
+y_pred_log = model.predict(X)
+y_pred = np.exp(y_pred_log)
+resid = df['default_rate'].values - y_pred
+print(f"\nIn-sample:")
+print(f"  RMSE: {np.sqrt(np.mean(resid**2)):.6f}")
+print(f"  MAE: {np.mean(np.abs(resid)):.6f}")
+
+# Now compute predictions and prediction intervals for scenario
+# Need to add unemp_sq to scenario
+scenario_df = scenario.copy()
+scenario_df['unemp_sq'] = scenario_df['unemployment'] ** 2
+
+scenario_X = sm.add_constant(scenario_df[feats])
+scenario_pred_log = model.predict(scenario_X)
+scenario_pred = np.exp(scenario_pred_log)
+
+# Prediction intervals for OLS
+# For a new observation, the prediction interval on the log scale is:
+# y_pred_log ± t_{alpha/2, df} * SE_pred
+# where SE_pred = sqrt(MSE * (1 + x_new' (X'X)^{-1} x_new))
+
+n = len(X)
+p = X.shape[1]
+mse = model.mse_resid
+df_resid = model.df_resid
+t_val = scipy_stats.t.ppf(0.975, df_resid)
+
+# Compute prediction intervals on log scale, then transform
+y_lower_log = []
+y_upper_log = []
+
+for i in range(len(scenario)):
+    x_new = scenario_X.iloc[i].values.reshape(1, -1)
+    
+    # Leverage
+    leverage = x_new @ np.linalg.inv(X.T @ X) @ x_new.T
+    
+    # SE of prediction
+    se_pred = np.sqrt(mse * (1 + leverage[0, 0]))
+    
+    # Prediction interval on log scale
+    y_lower_log.append(scenario_pred_log.iloc[i] - t_val * se_pred)
+    y_upper_log.append(scenario_pred_log.iloc[i] + t_val * se_pred)
+
+# Transform to original scale
+y_lower = np.exp(y_lower_log)
+y_upper = np.exp(y_upper_log)
+
+print(f"\nPredictions with 95% prediction intervals:")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={scenario_pred[i]:.6f}, [{y_lower[i]:.6f}, {y_upper[i]:.6f}]")
+
+# Save
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': scenario_pred.values,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv with {len(output)} rows")
+EOF
 ```
 
 ## [31] tool
@@ -1575,7 +2492,146 @@ Saved predictions.csv with 9 rows
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats as scipy_stats
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+df = train.copy()
+
+# Center unemployment to reduce multicollinearity with unemp_sq
+unemp_mean = df['unemployment'].mean()
+df['unemp_c'] = df['unemployment'] - unemp_mean
+df['unemp_c_sq'] = df['unemp_c'] ** 2
+
+# Try several feature sets with OLS on log(default_rate)
+feature_sets = {
+    'unemp_gdp_unemp2': ['unemp_c', 'gdp', 'unemp_c_sq'],
+    'unemp_gdp_vix_unemp2': ['unemp_c', 'gdp', 'vix', 'unemp_c_sq'],
+    'unemp_gdp_bbb_unemp2': ['unemp_c', 'gdp', 'bbb_spread', 'unemp_c_sq'],
+    'unemp_gdp_vix_bbb_unemp2': ['unemp_c', 'gdp', 'vix', 'bbb_spread', 'unemp_c_sq'],
+    'unemp_gdp_vix_bbb_sp500_unemp2': ['unemp_c', 'gdp', 'vix', 'bbb_spread', 'sp500', 'unemp_c_sq'],
+}
+
+for name, feats in feature_sets.items():
+    # Get complete cases
+    mask = df[feats + ['default_rate']].notna().all(axis=1)
+    sub = df[mask]
+    
+    X = sm.add_constant(sub[feats])
+    y = np.log(sub['default_rate'])
+    
+    model = sm.OLS(y, X).fit()
+    
+    # Count complete cases
+    n = len(sub)
+    r2 = model.rsquared
+    rmse = np.sqrt(model.mse_resid)
+    
+    # Check significance of key features
+    sig = [(f, model.pvalues[f]) for f in feats if model.pvalues[f] < 0.1]
+    
+    print(f"{name}: N={n}, R²={r2:.4f}, RMSE={rmse:.6f}, sig_features={sig}")
+
+# Let me also check: what about using just unemployment (with or without quadratic)?
+# And what about using the Gamma GLM with bootstrap properly?
+
+print("\n\n--- Gamma GLM with bootstrap ---")
+# For Gamma GLM bootstrap, I need to handle the fact that 
+# resampling residuals can produce negative y values
+# Solution: use Pearson residuals which are standardized
+
+df['unemp_c'] = df['unemployment'] - unemp_mean
+df['unemp_c_sq'] = df['unemp_c'] ** 2
+
+feats = ['unemp_c', 'gdp', 'unemp_c_sq']
+X = sm.add_constant(df[feats])
+y = df['default_rate']
+
+# Fit Gamma GLM
+glm_model = sm.GLM(y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+glm_result = glm_model.fit()
+
+# Get fitted values and Pearson residuals
+fitted = glm_result.fittedvalues
+pearson_resid = glm_result.resid_pearson
+
+print(f"Pearson residuals: min={pearson_resid.min():.4f}, max={pearson_resid.max():.4f}")
+print(f"Min fitted value: {fitted.min():.6f}")
+print(f"Max negative residual magnitude: {abs(pearson_resid.min()):.4f}")
+
+# Check if any fitted + pearson_resid could be negative
+min_possible = fitted + pearson_resid * np.sqrt(glm_result.scale)
+print(f"Min possible boot_y: {min_possible.min():.6f}")
+
+# Actually, Pearson residuals are (y - mu) / sqrt(V(mu)) where V(mu) = phi * mu^2
+# So y = mu + resid_pearson * sqrt(phi) * mu
+# The minimum y would be mu - |resid_pearson_max| * sqrt(phi) * mu
+# = mu * (1 - |resid_pearson_max| * sqrt(phi))
+
+sqrt_phi = np.sqrt(glm_result.scale)
+print(f"sqrt(phi) = {sqrt_phi:.4f}")
+print(f"1 - sqrt(phi) * |max resid| = {1 - sqrt_phi * abs(pearson_resid.min()):.4f}")
+
+# If this is positive, then all bootstrap y values will be positive
+# If not, some will be negative and we need to discard those
+
+# Let's try the bootstrap
+np.random.seed(42)
+n_boot = 3000
+n_scenario = len(scenario)
+scenario_df = scenario.copy()
+scenario_df['unemp_c'] = scenario_df['unemployment'] - unemp_mean
+scenario_df['unemp_c_sq'] = scenario_df['unemp_c'] ** 2
+scenario_X = sm.add_constant(scenario_df[feats])
+
+boot_preds = np.zeros((n_boot, n_scenario))
+n_success = 0
+
+for b in range(n_boot):
+    # Resample Pearson residuals
+    boot_resid = np.random.choice(pearson_resid.values, size=len(y), replace=True)
+    # Reconstruct y: y = mu + resid_pearson * sqrt(phi) * mu
+    # But we need to be more careful. The Pearson residual is:
+    # r_i = (y_i - mu_i) / sqrt(phi * mu_i^2)
+    # So y_i = mu_i + r_i * sqrt(phi) * mu_i = mu_i * (1 + r_i * sqrt(phi))
+    boot_y = fitted * (1 + boot_resid * sqrt_phi)
+    
+    # Check if all positive
+    if (boot_y > 0).all():
+        try:
+            boot_glm = sm.GLM(boot_y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+            boot_result = boot_glm.fit()
+            boot_preds[b, :] = boot_result.predict(scenario_X)
+            n_success += 1
+        except:
+            boot_preds[b, :] = np.nan
+    else:
+        boot_preds[b, :] = np.nan
+
+print(f"Bootstrap: {n_success} successful fits out of {n_boot}")
+
+# Compute prediction intervals
+valid = ~np.isnan(boot_preds).any(axis=1)
+boot_preds_valid = boot_preds[valid]
+print(f"Valid bootstrap samples: {len(boot_preds_valid)}")
+
+# Point predictions from the original model
+y_pred = glm_result.predict(scenario_X)
+
+# Prediction intervals from bootstrap
+y_lower = np.percentile(boot_preds_valid, 2.5, axis=0)
+y_upper = np.percentile(boot_preds_valid, 97.5, axis=0)
+
+print(f"\nGamma GLM Bootstrap predictions:")
+for i in range(n_scenario):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_pred[i]:.6f}, [{y_lower[i]:.6f}, {y_upper[i]:.6f}]")
+
+EOF
 ```
 
 ## [33] tool
@@ -1660,7 +2716,112 @@ Gamma GLM Bootstrap predictions:
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+df = train.copy()
+
+# Center unemployment to reduce multicollinearity
+unemp_mean = df['unemployment'].mean()
+df['unemp_c'] = df['unemployment'] - unemp_mean
+df['unemp_c_sq'] = df['unemp_c'] ** 2
+
+feats = ['unemp_c', 'gdp', 'unemp_c_sq']
+
+X = sm.add_constant(df[feats])
+y = df['default_rate']
+
+# Fit Gamma GLM
+glm_model = sm.GLM(y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+glm_result = glm_model.fit()
+
+print("Gamma GLM summary:")
+print(glm_result.summary())
+
+# Scenario data
+scenario_df = scenario.copy()
+scenario_df['unemp_c'] = scenario_df['unemployment'] - unemp_mean
+scenario_df['unemp_c_sq'] = scenario_df['unemp_c'] ** 2
+scenario_X = sm.add_constant(scenario_df[feats])
+
+# Point predictions
+y_pred = glm_result.predict(scenario_X)
+
+# Proper bootstrap prediction intervals
+# For each bootstrap iteration:
+# 1. Resample residuals (Pearson)
+# 2. Reconstruct y values
+# 3. Refit model
+# 4. Predict on scenario
+# 5. Draw new Y from Gamma distribution for each prediction
+# 6. Collect all drawn Y values
+
+np.random.seed(42)
+n_boot = 5000
+n_scenario = len(scenario)
+
+fitted = glm_result.fittedvalues
+pearson_resid = glm_result.resid_pearson
+phi = glm_result.scale  # dispersion parameter
+sqrt_phi = np.sqrt(phi)
+
+boot_y_pred = np.zeros((n_boot, n_scenario))
+
+for b in range(n_boot):
+    # Resample Pearson residuals
+    boot_resid = np.random.choice(pearson_resid.values, size=len(y), replace=True)
+    
+    # Reconstruct y: y = mu * (1 + r * sqrt(phi))
+    boot_y = fitted * (1 + boot_resid * sqrt_phi)
+    
+    # Check if all positive
+    if (boot_y > 0).all():
+        try:
+            boot_glm = sm.GLM(boot_y, X, family=sm.families.Gamma(link=sm.families.links.Log()))
+            boot_result = boot_glm.fit()
+            
+            # Get predicted means for scenario
+            mu_pred = boot_result.predict(scenario_X)
+            
+            # Draw new Y from Gamma(shape=1/phi, scale=phi*mu)
+            # This adds irreducible variance
+            shape = 1.0 / phi
+            for i in range(n_scenario):
+                scale = phi * mu_pred[i]
+                boot_y_pred[b, i] = np.random.gamma(shape, scale)
+        except:
+            boot_y_pred[b, :] = np.nan
+    else:
+        boot_y_pred[b, :] = np.nan
+
+# Compute prediction intervals
+valid = ~np.isnan(boot_y_pred).any(axis=1)
+boot_y_pred_valid = boot_y_pred[valid]
+print(f"\nBootstrap: {valid.sum()} successful fits out of {n_boot}")
+
+y_lower = np.percentile(boot_y_pred_valid, 2.5, axis=0)
+y_upper = np.percentile(boot_y_pred_valid, 97.5, axis=0)
+
+print(f"\nGamma GLM Bootstrap predictions (with irreducible variance):")
+for i in range(n_scenario):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_pred[i]:.6f}, [{y_lower[i]:.6f}, {y_upper[i]:.6f}]")
+
+# Save
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred.values,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nSaved predictions.csv with {len(output)} rows")
+EOF
 ```
 
 ## [35] tool
@@ -1726,7 +2887,7 @@ Saved predictions.csv with 9 rows
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && wc -l predictions.csv
 ```
 
 ## [37] tool
@@ -1762,7 +2923,34 @@ quarter,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
 
+pred = pd.read_csv('predictions.csv')
+print("Shape:", pred.shape)
+print("Columns:", list(pred.columns))
+print("Dtypes:")
+print(pred.dtypes)
+print()
+print(pred.to_string())
+print()
+
+# Verify: one row per scenario quarter
+scenario = pd.read_csv('data/scenario.csv')
+print("Scenario quarters:", scenario['quarter'].tolist())
+print("Prediction quarters:", pred['quarter'].tolist())
+print("Match:", list(pred['quarter']) == list(scenario['quarter']))
+print()
+
+# Verify all values are valid fractions
+print("y_pred range:", pred['y_pred'].min(), "-", pred['y_pred'].max())
+print("y_lower range:", pred['y_lower'].min(), "-", pred['y_lower'].max())
+print("y_upper range:", pred['y_upper'].min(), "-", pred['y_upper'].max())
+print("All y_lower < y_pred < y_upper:", 
+      all(pred['y_lower'] < pred['y_pred']) and all(pred['y_pred'] < pred['y_upper']))
+print("All values positive:", (pred[['y_pred', 'y_lower', 'y_upper']] > 0).all().all())
+print("All values < 1:", (pred[['y_pred', 'y_lower', 'y_upper']] < 1).all().all())
+EOF
 ```
 
 ## [39] tool
@@ -1832,7 +3020,15 @@ The predictions.csv is complete and valid. Let me verify once more and
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+pred = pd.read_csv('predictions.csv')
+print(f'Rows: {len(pred)}')
+print(f'Columns: {list(pred.columns)}')
+print(f'All quarters present: {set(pred.quarter) == set(range(81,90))}')
+print(f'All values are fractions (0,1): {(pred[["y_pred","y_lower","y_upper"]] > 0).all().all() and (pred[["y_pred","y_lower","y_upper"]] < 1).all().all()}')
+print(f'Intervals valid (lower < pred < upper): {(pred.y_lower < pred.y_pred).all() and (pred.y_pred < pred.y_upper).all()}')
+"
 ```
 
 ## [41] tool

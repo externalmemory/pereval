@@ -52,7 +52,7 @@ Let me start by examining the data files to understand the structure and
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/test.csv
 ```
 
 ## [3] tool
@@ -106,7 +106,18 @@ t
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv && echo "---" && python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+print('Train t range:', train['t'].min(), '-', train['t'].max())
+print('Test t range:', test['t'].min(), '-', test['t'].max())
+print('Train alpha range:', train['alpha'].min(), '-', train['alpha'].max())
+print('Test t values:', test['t'].values)
+print('Train shape:', train.shape)
+print('Test shape:', test.shape)
+"
 ```
 
 ## [5] tool
@@ -153,7 +164,21 @@ Test shape: (10, 1)
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+# Look at alpha at various t values
+for i in range(0, len(train), 300):
+    row = train.iloc[i]
+    print(f't={row[\"t\"]:6d}, alpha={row[\"alpha\"]:8.4f}')
+print('---')
+# Check if alpha wraps around 360
+# Let's see the raw values near the transition
+for i in range(len(train)):
+    if train.iloc[i]['alpha'] < 10 or train.iloc[i]['alpha'] > 350:
+        print(f't={train.iloc[i][\"t\"]:6d}, alpha={train.iloc[i][\"alpha\"]:8.4f}')
+"
 ```
 
 ## [7] tool
@@ -175,7 +200,20 @@ ValueError: Unknown format code 'd' for object of type 'float'
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+# Look at alpha at various t values
+for i in range(0, len(train), 300):
+    row = train.iloc[i]
+    print(f't={int(row[\"t\"]):6d}, alpha={row[\"alpha\"]:8.4f}')
+print('---')
+# Check if alpha wraps around 360
+for i in range(len(train)):
+    if train.iloc[i]['alpha'] < 10 or train.iloc[i]['alpha'] > 350:
+        print(f't={int(train.iloc[i][\"t\"]):6d}, alpha={train.iloc[i][\"alpha\"]:8.4f}')
+"
 ```
 
 ## [9] tool
@@ -365,7 +403,37 @@ t=  3114, alpha=  9.4432
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+# Unwrap alpha: add 360 whenever there's a big drop
+alpha = train['alpha'].values
+unwrapped = np.copy(alpha)
+for i in range(1, len(alpha)):
+    diff = alpha[i] - alpha[i-1]
+    if diff < -180:
+        unwrapped[i:] += 360
+    elif diff > 180:
+        unwrapped[i:] -= 360
 
+# Now fit a linear model to unwrapped alpha
+from numpy.polynomial import polynomial as P
+# Try linear fit
+coeffs = np.polyfit(train['t'].values, unwrapped, 1)
+print('Linear fit coefficients (slope, intercept):', coeffs)
+print('Slope (degrees/day):', coeffs[0])
+
+# Check residuals
+predicted = np.polyval(coeffs, train['t'].values)
+residuals = unwrapped - predicted
+print('Residual std:', np.std(residuals))
+print('Residual mean:', np.mean(residuals))
+
+# Check at a few points
+for i in [0, 100, 500, 1000, 2000, 3000, 3228]:
+    print(f't={int(train.iloc[i][\"t\"]):5d}, alpha={alpha[i]:8.4f}, unwrapped={unwrapped[i]:8.4f}, predicted={np.polyval(coeffs, train.iloc[i][\"t\"]):8.4f}')
+"
 ```
 
 ## [11] tool
@@ -401,7 +469,51 @@ t= 3228, alpha=108.9891, unwrapped=2988.9891, predicted=2975.1334
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+alpha = train['alpha'].values
+t = train['t'].values
 
+# Unwrap alpha
+unwrapped = np.copy(alpha)
+for i in range(1, len(alpha)):
+    diff = alpha[i] - alpha[i-1]
+    if diff < -180:
+        unwrapped[i:] += 360
+    elif diff > 180:
+        unwrapped[i:] -= 360
+
+# Linear fit
+coeffs = np.polyfit(t, unwrapped, 1)
+predicted = np.polyval(coeffs, t)
+residuals = unwrapped - predicted
+
+# Check for periodic patterns in residuals
+# Try FFT
+from numpy.fft import fft, fftfreq
+N = len(residuals)
+yf = fft(residuals)
+xf = fftfreq(N, 1)  # 1 day spacing
+
+# Find dominant frequencies
+magnitudes = np.abs(yf[:N//2])
+freqs = xf[:N//2]
+# Exclude DC
+top_idx = np.argsort(magnitudes[1:])[-10:] + 1
+print('Top frequencies (cycles/day):')
+for idx in top_idx:
+    print(f'  freq={freqs[idx]:.6f} cycles/day, period={1/freqs[idx]:.2f} days, magnitude={magnitudes[idx]:.2f}')
+
+# Let's also check if there's a quadratic component
+coeffs2 = np.polyfit(t, unwrapped, 2)
+predicted2 = np.polyval(coeffs2, t)
+residuals2 = unwrapped - predicted2
+print(f'\\nLinear residual std: {np.std(residuals):.4f}')
+print(f'Quadratic residual std: {np.std(residuals2):.4f}')
+print(f'Quadratic coefficients: {coeffs2}')
+"
 ```
 
 ## [13] tool
@@ -449,7 +561,61 @@ Quadratic coefficients: [5.52572672e-07 8.47751271e-01 2.33793830e+02]
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+
+# Unwrap alpha
+unwrapped = np.copy(alpha)
+for i in range(1, len(alpha)):
+    diff = alpha[i] - alpha[i-1]
+    if diff < -180:
+        unwrapped[i:] += 360
+    elif diff > 180:
+        unwrapped[i:] -= 360
+
+# Try linear + sinusoidal model
+def model(t, slope, intercept, amp, freq, phase):
+    return slope * t + intercept + amp * np.sin(2 * np.pi * freq * t + phase)
+
+# Initial guess from linear fit
+coeffs = np.polyfit(t, unwrapped, 1)
+slope0, intercept0 = coeffs
+
+# Try to find the dominant frequency from FFT
+from numpy.fft import fft, fftfreq
+N = len(unwrapped)
+yf = fft(unwrapped - (slope0 * t + intercept0))
+xf = fftfreq(N, 1)
+magnitudes = np.abs(yf[:N//2])
+freqs = xf[:N//2]
+# Skip very low frequencies
+mask = freqs > 0.001
+top_idx = np.argsort(magnitudes[mask])[-5:]
+top_freqs = freqs[mask][top_idx]
+print('Top frequencies:', top_freqs)
+print('Top periods:', 1/top_freqs)
+
+# Try fitting with the dominant frequency
+freq0 = top_freqs[-1]  # strongest
+print(f'\\nTrying freq={freq0:.6f}')
+
+try:
+    p0 = [slope0, intercept0, 20, freq0, 0]
+    popt, pcov = curve_fit(model, t, unwrapped, p0=p0, maxfev=10000)
+    print('Fitted params:', popt)
+    pred = model(t, *popt)
+    resid = unwrapped - pred
+    print(f'Residual std: {np.std(resid):.4f}')
+    print(f'Amplitude: {popt[2]:.4f}')
+except Exception as e:
+    print(f'Error: {e}')
+"
 ```
 
 ## [15] tool
@@ -485,7 +651,58 @@ Amplitude: -22.1022
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+
+# Unwrap alpha
+unwrapped = np.copy(alpha)
+for i in range(1, len(alpha)):
+    diff = alpha[i] - alpha[i-1]
+    if diff < -180:
+        unwrapped[i:] += 360
+    elif diff > 180:
+        unwrapped[i:] -= 360
+
+# Try linear + sinusoidal model with multiple frequencies
+def model2(t, slope, intercept, amp1, freq1, phase1, amp2, freq2, phase2):
+    return slope * t + intercept + amp1 * np.sin(2 * np.pi * freq1 * t + phase1) + amp2 * np.sin(2 * np.pi * freq2 * t + phase2)
+
+# First fit with one sinusoid
+def model1(t, slope, intercept, amp, freq, phase):
+    return slope * t + intercept + amp * np.sin(2 * np.pi * freq * t + phase)
+
+# Fit with one sinusoid
+popt1, pcov1 = curve_fit(model1, t, unwrapped, p0=[0.85, 233, -22, 0.00236, 1.5], maxfev=20000)
+pred1 = model1(t, *popt1)
+resid1 = unwrapped - pred1
+print(f'1 sinusoid: residual std = {np.std(resid1):.4f}')
+print(f'  params: slope={popt1[0]:.6f}, intercept={popt1[1]:.4f}, amp={popt1[2]:.4f}, freq={popt1[3]:.6f}, phase={popt1[4]:.4f}')
+
+# Try 2 sinusoids
+popt2, pcov2 = curve_fit(model2, t, unwrapped, p0=[0.85, 233, -22, 0.00236, 1.5, 15, 0.004, 0.5], maxfev=20000)
+pred2 = model2(t, *popt2)
+resid2 = unwrapped - pred2
+print(f'\\n2 sinusoids: residual std = {np.std(resid2):.4f}')
+print(f'  params: slope={popt2[0]:.6f}, intercept={popt2[1]:.4f}')
+print(f'  amp1={popt2[2]:.4f}, freq1={popt2[3]:.6f}, phase1={popt2[4]:.4f}')
+print(f'  amp2={popt2[5]:.4f}, freq2={popt2[6]:.6f}, phase2={popt2[7]:.4f}')
+
+# Also try with a quadratic term
+def model_quad(t, a, b, c, amp, freq, phase):
+    return a * t**2 + b * t + c + amp * np.sin(2 * np.pi * freq * t + phase)
+
+popt_q, pcov_q = curve_fit(model_quad, t, unwrapped, p0=[0, 0.85, 233, -22, 0.00236, 1.5], maxfev=20000)
+pred_q = model_quad(t, *popt_q)
+resid_q = unwrapped - pred_q
+print(f'\\nQuadratic + 1 sinusoid: residual std = {np.std(resid_q):.4f}')
+print(f'  params: a={popt_q[0]:.2e}, b={popt_q[1]:.6f}, c={popt_q[2]:.4f}, amp={popt_q[3]:.4f}, freq={popt_q[4]:.6f}, phase={popt_q[5]:.4f}')
+"
 ```
 
 ## [17] tool
@@ -543,7 +760,95 @@ Quadratic + 1 sinusoid: residual std = 1.9450
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+
+# Unwrap alpha
+unwrapped = np.copy(alpha)
+for i in range(1, len(alpha)):
+    diff = alpha[i] - alpha[i-1]
+    if diff < -180:
+        unwrapped[i:] += 360
+    elif diff > 180:
+        unwrapped[i:] -= 360
+
+# Fit linear + sinusoidal
+def model1(t, slope, intercept, amp, freq, phase):
+    return slope * t + intercept + amp * np.sin(2 * np.pi * freq * t + phase)
+
+popt, pcov = curve_fit(model1, t, unwrapped, p0=[0.85, 233, -22, 0.00236, 1.5], maxfev=20000)
+pred = model1(t, *popt)
+resid = unwrapped - pred
+resid_std = np.std(resid)
+print(f'Residual std: {resid_std:.4f}')
+print(f'Parameters: {popt}')
+
+# Compute prediction intervals for test data
+test = pd.read_csv('data/test.csv')
+t_test = test['t'].values
+
+# Predict unwrapped alpha
+pred_test = model1(t_test, *popt)
+
+# Compute parameter uncertainty
+# Number of parameters
+n_params = len(popt)
+n_data = len(t)
+dof = n_data - n_params
+
+# Standard error of prediction
+# For each test point, compute the variance from parameter uncertainty
+# Var(y_pred) = x^T * Cov * x where x is the Jacobian
+# Plus the observation noise variance
+
+# Jacobian of model w.r.t. parameters
+def jacobian(t_vals, popt):
+    slope, intercept, amp, freq, phase = popt
+    J = np.zeros((len(t_vals), n_params))
+    J[:, 0] = t_vals  # d/d(slope)
+    J[:, 1] = 1.0     # d/d(intercept)
+    J[:, 2] = np.sin(2 * np.pi * freq * t_vals + phase)  # d/d(amp)
+    J[:, 3] = amp * 2 * np.pi * t_vals * np.cos(2 * np.pi * freq * t_vals + phase)  # d/d(freq)
+    J[:, 4] = amp * np.cos(2 * np.pi * freq * t_vals + phase)  # d/d(phase)
+    return J
+
+J_test = jacobian(t_test, popt)
+
+# Variance from parameter uncertainty for each test point
+param_var = np.sum((J_test @ pcov) * J_test, axis=1)
+
+# Total prediction variance = param_var + resid_std^2
+total_var = param_var + resid_std**2
+total_std = np.sqrt(total_var)
+
+# 95% prediction interval
+z = 1.96
+y_lower_unwrapped = pred_test - z * total_std
+y_upper_unwrapped = pred_test + z * total_std
+
+# Convert back to 0-360 range
+y_pred = pred_test % 360
+y_lower = y_lower_unwrapped % 360
+y_upper = y_upper_unwrapped % 360
+
+# But wait - the prediction interval for a wrapped angle is tricky
+# If the interval crosses 0 or 360, the simple modulo approach doesn't work well
+# Let me think about this...
+
+# Actually, for the prediction interval, we should report it in a way that makes sense
+# for an angle. If the interval doesn't cross 0/360, we can just report [lower, upper].
+# If it does cross, we need to handle it differently.
+
+# Let me check if any intervals cross 0 or 360
+for i in range(len(t_test)):
+    print(f't={int(t_test[i])}, pred={y_pred[i]:.2f}, lower={y_lower[i]:.2f}, upper={y_upper[i]:.2f}, total_std={total_std[i]:.2f}')
+"
 ```
 
 ## [19] tool
@@ -596,7 +901,49 @@ t=3738, pred=159.92, lower=156.10, upper=163.75, total_std=1.95
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+
+# Unwrap alpha
+unwrapped = np.copy(alpha)
+for i in range(1, len(alpha)):
+    diff = alpha[i] - alpha[i-1]
+    if diff < -180:
+        unwrapped[i:] += 360
+    elif diff > 180:
+        unwrapped[i:] -= 360
+
+# Fit linear + sinusoidal with multiple starting points
+def model1(t, slope, intercept, amp, freq, phase):
+    return slope * t + intercept + amp * np.sin(2 * np.pi * freq * t + phase)
+
+best_popt = None
+best_std = float('inf')
+
+# Try different initial frequencies
+for freq0 in [0.002, 0.0023, 0.0025, 0.003, 0.004]:
+    for amp0 in [-20, -10, 10, 20]:
+        try:
+            p0 = [0.85, 233, amp0, freq0, 0]
+            popt, pcov = curve_fit(model1, t, unwrapped, p0=p0, maxfev=50000)
+            pred = model1(t, *popt)
+            resid_std = np.std(unwrapped - pred)
+            if resid_std < best_std:
+                best_std = resid_std
+                best_popt = popt
+                print(f'New best: freq0={freq0}, amp0={amp0}, std={resid_std:.4f}, params={popt}')
+        except:
+            pass
+
+print(f'\\nBest residual std: {best_std:.4f}')
+print(f'Best params: {best_popt}')
+"
 ```
 
 ## [21] tool
@@ -654,7 +1001,106 @@ Now let me write the complete prediction script:
 **tool call: bash**
 
 ```
+cat > predict.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+# Read data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = train['t'].values
+alpha_train = train['alpha'].values
+t_test = test['t'].values
+
+# Unwrap alpha: add/subtract 360 when there's a big jump
+unwrapped = np.copy(alpha_train)
+for i in range(1, len(alpha_train)):
+    diff = alpha_train[i] - alpha_train[i-1]
+    if diff < -180:
+        unwrapped[i:] += 360
+    elif diff > 180:
+        unwrapped[i:] -= 360
+
+# Model: linear trend + sinusoidal component
+def model(t, slope, intercept, amp, freq, phase):
+    return slope * t + intercept + amp * np.sin(2 * np.pi * freq * t + phase)
+
+# Fit the model
+popt, pcov = curve_fit(model, t_train, unwrapped, 
+                        p0=[0.85, 233, -22, 0.00236, 1.5], 
+                        maxfev=50000)
+
+# Compute residual standard deviation (observation noise)
+pred_train = model(t_train, *popt)
+residuals = unwrapped - pred_train
+resid_std = np.std(residuals)
+n_data = len(t_train)
+n_params = len(popt)
+dof = n_data - n_params
+
+print(f"Residual std (observation noise): {resid_std:.4f}")
+print(f"Parameters: slope={popt[0]:.6f}, intercept={popt[1]:.4f}, amp={popt[2]:.4f}, freq={popt[3]:.6f}, phase={popt[4]:.4f}")
+print(f"Period: {1/popt[3]:.1f} days")
+
+# Predict for test data
+pred_test = model(t_test, *popt)
+
+# Compute prediction uncertainty
+# Jacobian of model w.r.t. parameters
+slope, intercept, amp, freq, phase = popt
+J = np.zeros((len(t_test), n_params))
+J[:, 0] = t_test  # d/d(slope)
+J[:, 1] = 1.0     # d/d(intercept)
+J[:, 2] = np.sin(2 * np.pi * freq * t_test + phase)  # d/d(amp)
+J[:, 3] = amp * 2 * np.pi * t_test * np.cos(2 * np.pi * freq * t_test + phase)  # d/d(freq)
+J[:, 4] = amp * np.cos(2 * np.pi * freq * t_test + phase)  # d/d(phase)
+
+# Variance from parameter uncertainty
+param_var = np.sum((J @ pcov) * J, axis=1)
+
+# Total prediction variance = parameter uncertainty + observation noise
+total_var = param_var + resid_std**2
+total_std = np.sqrt(total_var)
+
+# 95% prediction interval using t-distribution
+from scipy import stats
+t_crit = stats.t.ppf(0.975, dof)
+
+y_lower_unwrapped = pred_test - t_crit * total_std
+y_upper_unwrapped = pred_test + t_crit * total_std
+
+# Convert back to 0-360 range
+y_pred = pred_test % 360
+y_lower = y_lower_unwrapped % 360
+y_upper = y_upper_unwrapped % 360
+
+# Create output dataframe
+output = pd.DataFrame({
+    't': t_test,
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+# Check for intervals that cross 0/360 boundary
+# If lower > upper after wrapping, the interval crosses the boundary
+# In that case, we need to report it differently or adjust
+crosses = y_lower > y_upper
+if crosses.any():
+    print(f"Warning: {crosses.sum()} intervals cross 0/360 boundary")
+    # For intervals crossing the boundary, the prediction is still valid
+    # but the interval wraps around. We'll keep the modulo values as-is.
+
+print(f"\nOutput shape: {output.shape}")
+print(output.to_string())
+
+# Write to CSV
+output.to_csv('predictions.csv', index=False)
+print("\nPredictions written to predictions.csv")
+EOF
+python3 predict.py
 ```
 
 ## [23] tool
@@ -693,7 +1139,19 @@ Let me verify the output file:
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && wc -l predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+print(f'Predictions rows: {len(pred)}')
+print(f'Test rows: {len(test)}')
+print(f'Columns: {list(pred.columns)}')
+print(f't match: {(pred[\"t\"].values == test[\"t\"].values).all()}')
+print(f'All y_pred in [0,360]: {(pred[\"y_pred\"] >= 0).all() and (pred[\"y_pred\"] <= 360).all()}')
+print(f'All y_lower in [0,360]: {(pred[\"y_lower\"] >= 0).all() and (pred[\"y_lower\"] <= 360).all()}')
+print(f'All y_upper in [0,360]: {(pred[\"y_upper\"] >= 0).all() and (pred[\"y_upper\"] <= 360).all()}')
+print(f'y_lower <= y_pred <= y_upper: {((pred[\"y_lower\"] <= pred[\"y_pred\"]) & (pred[\"y_pred\"] <= pred[\"y_upper\"])).all()}')
+"
 ```
 
 ## [25] tool

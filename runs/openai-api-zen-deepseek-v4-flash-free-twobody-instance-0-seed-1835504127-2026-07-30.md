@@ -52,7 +52,7 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls data/
 ```
 
 ## [3] tool
@@ -72,19 +72,19 @@ train.csv
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -20 data/test.csv
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/test.csv
 ```
 
 ## [5] tool
@@ -2508,6 +2508,22 @@ ACF of angular velocity (lags 330-340):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+import sys
+sys.path.insert(0, '/usr/lib/python3/dist-packages')
+# Just print some summaries
+train = pd.read_csv('data/train.csv')
+print('t range:', train['t'].min(), '-', train['t'].max())
+print('alpha range:', train['alpha'].min(), '-', train['alpha'].max())
+# Unwrap to see trend
+alpha_rad = np.deg2rad(train['alpha'].values)
+unwrapped_rad = np.unwrap(alpha_rad)
+unwrapped_deg = np.rad2deg(unwrapped_rad)
+print('Unwrapped range:', unwrapped_deg.min(), '-', unwrapped_deg.max())
+print('Slope:', (unwrapped_deg[-1] - unwrapped_deg[0]) / (train['t'].iloc[-1] - train['t'].iloc[0]))
+"
 
 ```
 
@@ -7295,7 +7311,7 @@ Predictions saved to predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [141] tool

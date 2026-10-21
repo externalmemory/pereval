@@ -66,7 +66,7 @@ Predict y with a 95% interval for every row in data/test.csv and write predictio
 **tool call: bash**
 
 ```
-
+cd data && head -20 train.csv && echo "---" && head -20 test.csv && echo "---" && wc -l train.csv test.csv
 ```
 
 ## [3] tool
@@ -129,7 +129,14 @@ NyIqGn,500.0
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd
+tr=pd.read_csv('train.csv')
+te=pd.read_csv('test.csv')
+for c,g in tr.groupby('category'):
+    print(c, g.x.min(), g.x.max(), len(g), 'test', te[te.category==c].x.min(), te[te.category==c].x.max(), len(te[te.category==c]))
+print('cats train', tr.category.nunique(), 'test', te.category.unique())
+"
 ```
 
 ## [5] tool
@@ -157,7 +164,14 @@ Length: 5, dtype: str
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd
+tr=pd.read_csv('train.csv')
+for c,g in tr.groupby('category'):
+    g=g.sort_values('x')
+    print('====',c,'====')
+    print(g.to_string(index=False))
+"
 ```
 
 ## [7] tool
@@ -475,7 +489,22 @@ category     x       y
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+for c,g in tr.groupby('category'):
+    if c not in ['Lbo0TZ','NyIqGn']: continue
+    m=g.groupby('x').y.mean()
+    x=np.array(m.index); y=np.array(m.values)
+    # try fits: linear in x, sqrt x, log x, x^1.5
+    for name,feat in [('x',x),('sqrt',np.sqrt(x)),('log',np.log(x)),('x^1.5',x**1.5),('x^2',x**2)]:
+        A=np.column_stack([np.ones_like(x),feat])
+        coef,res,_,_=np.linalg.lstsq(A,y,rcond=None)
+        pred=A@coef
+        ss=((y-pred)**2).sum()
+        print(c,name,'coef',np.round(coef,3),'rmse',round(np.sqrt(ss/len(x)),4))
+    print()
+"
 ```
 
 ## [9] tool
@@ -519,6 +548,43 @@ NyIqGn x^2 coef [-0.024 -0.   ] rmse 0.0378
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+# global power model: y=a_c + b_c * x^p
+def make(p):
+    def f(X,a0,a1,a2,a3,a4,b0,b1,b2,b3,b4):
+        cats2=sorted(tr.category.unique())
+        x=np.array(X)
+        y=np.zeros_like(x,dtype=float)
+        for i,c in enumerate(cats2):
+            m=x==i
+            y[m]=a0 if i==0 else (a1 if i==1 else (a2 if i==2 else (a3 if i==3 else a4)))
+            y[m]+= (b0 if i==0 else (b1 if i==1 else (b2 if i==2 else (b3 if i==3 else b4))))*x[m]**p
+        return y
+    return f
+# build X as category index
+X=np.array([cats.index(c) for c in tr.category])
+yt=tr.y.values
+from scipy.optimize import differential_evolution
+best=None
+for p in np.linspace(1.0,2.2,25):
+    f=make(p)
+    try:
+        popt,pcov=curve_fit(f,X,yt,p0=[0.1]*5+[-0.001]*5,maxfev=100000)
+        resid=f(X,*popt)-yt
+        sse=(resid**2).sum()
+        if best is None or sse<best[0]:
+            best=(sse,p,popt)
+    except Exception as e:
+        pass
+print('best',best[1],best[0])
+popt=best[2]
+print('a',popt[:5])
+print('b',popt[5:])
+"
 
 ```
 
@@ -559,6 +625,16 @@ b [-1.00000000e-03  1.02477439e+00  4.45036959e+00 -5.69766717e+00
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+xs=sorted(tr.x.unique())
+print('unique x:',xs)
+# print mean y at each x for categories with enough data
+for c,g in tr.groupby('category'):
+    m=g.groupby('x').y.mean()
+    print(c, np.round(m.reindex(xs).values,3))
+"
 
 ```
 
@@ -620,6 +696,14 @@ ZD5BTm [-0.098 -0.172 -0.393 -0.691    nan    nan    nan    nan    nan    nan
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+for c in ['JyETCo','Lbo0TZ','NyIqGn','ZD5BTm']:
+    g=tr[tr.category==c]
+    s=g.groupby('x').y.std()
+    print(c, np.round(s.values,4), 'mean std', round(s.mean(),4))
+"
 
 ```
 
@@ -654,6 +738,20 @@ ZD5BTm [0.03   0.0819 0.2453 0.2345] mean std 0.1479
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+xs=[25.,50.,75.,100.,125.,150.,175.,200.,225.,250.,275.,300.,325.,350.,375.,400.]
+m={}
+for c in ['FNE4K9','Lbo0TZ','NyIqGn']:
+    g=tr[tr.category==c]
+    m[c]=g.groupby('x').y.mean().reindex(xs).values
+ref=m['FNE4K9']
+for c in ['Lbo0TZ','NyIqGn']:
+    coef=np.polyfit(ref,m[c],1)
+    pred=np.polyval(coef,ref)
+    print(c,'slope',round(coef[0],3),'inter',round(coef[1],3),'rmse',round(np.sqrt(((pred-m[c])**2).mean()),4))
+"
 
 ```
 
@@ -680,6 +778,36 @@ NyIqGn slope 1.093 inter 0.008 rmse 0.1148
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+tr=pd.read_csv('train.csv')
+xs=[25.,50.,75.,100.,125.,150.,175.,200.,225.,250.,275.,300.,325.,350.,375.,400.]
+cats=['FNE4K9','Lbo0TZ','NyIqGn']
+med={}
+for c in cats:
+    g=tr[tr.category==c]
+    med[c]=g.groupby('x').y.mean().reindex(xs).values
+X=np.array(xs)
+def loss(par):
+    # par: for each cat a,b then p
+    n=len(cats)
+    a=par[:n]; b=par[n:2*n]; p=par[2*n]
+    tot=0
+    for i,c in enumerate(cats):
+        pred=a[i]+b[i]*X**p
+        tot+=((pred-med[c])**2).sum()
+    return tot
+res=None
+for p0 in np.linspace(0.5,3.5,31):
+    n=len(cats)
+    par0=np.concatenate([[0]*n,[-0.001]*n,[p0]])
+    r=minimize(loss,par0,method='Nelder-Mead',options={'maxiter':20000})
+    if res is None or r.fun<res.fun: res=r
+print('best p',res.x[-1],'loss',res.fun)
+print('a',res.x[:len(cats)])
+print('b',res.x[len(cats):2*len(cats)])
+"
 
 ```
 
@@ -727,6 +855,27 @@ b [-1.76798481e-05 -1.90535539e-05 -1.99573466e-05]
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+tr=pd.read_csv('train.csv')
+xs=sorted(tr.x.unique())
+for c,g in tr.groupby('category'):
+    pts=g.groupby('x').y.mean().values; X=np.array(g.groupby('x').y.mean().index)
+    y=g.groupby('x').y.mean().values
+    # quadratic
+    cq=np.polyfit(X,y,2); predq=np.polyval(cq,X); rmq=np.sqrt(((predq-y)**2).mean())
+    # power p fixed via scalar
+    def loss(p):
+        # y=a+b*x^p
+        A=np.column_stack([np.ones_like(X),X**p])
+        coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+        return ((A@coef-y)**2).sum()
+    r=minimize_scalar(loss,bounds=(0.5,3.5),method='bounded')
+    A=np.column_stack([np.ones_like(X),X**r.x]); coef=np.linalg.lstsq(A,y,rcond=None)[0]
+    rmp=np.sqrt(((A@coef-y)**2).mean())
+    print(c,'quad rmse',round(rmq,4),'power p',round(r.x,3),'rmse',round(rmp,4),'coef',np.round(coef,4))
+"
 
 ```
 
@@ -774,6 +923,34 @@ ZD5BTm quad rmse 0.0081 power p 2.402 rmse 0.0103 coef [-0.0686 -0.    ]
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+med={}
+for c in cats:
+    g=tr[tr.category==c]
+    med[c]=g.groupby('x').y.mean().reindex(sorted(tr.x.unique())).values
+xs=np.array(sorted(tr.x.unique()))
+def loss(par):
+    n=len(cats); a=par[:n]; b=par[n:2*n]; p=par[2*n]
+    tot=0
+    for i,c in enumerate(cats):
+        m=med[c][~np.isnan(med[c])]
+        xx=xs[~np.isnan(med[c])]
+        tot+=((a[i]+b[i]*xx**p - m)**2).sum()
+    return tot
+best=None
+for p0 in np.linspace(1.5,2.5,21):
+    n=len(cats)
+    par0=np.concatenate([[0]*n,[-0.001]*n,[p0]])
+    r=minimize(loss,par0,method='Nelder-Mead',options={'maxiter':30000,'xatol':1e-10,'fatol':1e-10})
+    if best is None or r.fun<best.fun: best=r
+print('p',best.x[-1],'loss',best.fun)
+print('a',np.round(best.x[:5],4))
+print('b',best.x[5:10])
+"
 
 ```
 
@@ -804,6 +981,27 @@ b [-1.22922264e-05 -9.97253330e-05 -1.35763206e-05 -1.37271533e-05
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import minimize
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+# model y = A + b_c * x^2, shared A
+X=tr.x.values; Y=tr.y.values
+# linear: A and b per cat. Build design
+import numpy as np
+# per category mean fit for A shared: solve
+# use raw obs to also get noise estimate
+def loss(par):
+    A=par[0]; b=par[1:6]
+    tot=0
+    for i,c in enumerate(cats):
+        msk=tr.category==c
+        tot+=((A+b[i]*X[msk]**2 - Y[msk])**2).sum()
+    return tot
+r=minimize(loss,np.concatenate([[ -0.05],[-1e-5]*5]),method='Nelder-Mead',options={'maxiter':50000})
+print('A',r.x[0],'b',r.x[1:6],'loss',r.fun)
+"
 
 ```
 
@@ -846,6 +1044,19 @@ A -0.03649645222039197 b [-7.54531438e-06 -6.28632092e-05 -8.13473051e-06 -8.445
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+for c,g in tr.groupby('category'):
+    X=g.x.values; Y=g.y.values
+    A=np.column_stack([np.ones_like(X),X**2])
+    coef=np.linalg.lstsq(A,Y,rcond=None)[0]
+    resid=Y-A@coef
+    # residual std (dof = n-2)
+    dof=len(Y)-2
+    s=np.sqrt((resid**2).sum()/dof)
+    print(c,'a',round(coef[0],5),'b',round(coef[1],8),'resid_std',round(s,4),'n',len(Y))
+"
 
 ```
 
@@ -895,6 +1106,21 @@ ZD5BTm a -0.03467 b -6.481e-05 resid_std 0.1693 n 28
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+def fit_loss(p):
+    tot=0
+    for c,g in tr.groupby('category'):
+        X=g.x.values; Y=g.y.values
+        A=np.column_stack([np.ones_like(X),X**p])
+        coef=np.linalg.lstsq(A,Y,rcond=None)[0]
+        tot+=((Y-A@coef)**2).sum()
+    return tot
+for p in [1.5,1.7,1.8,1.9,2.0,2.1,2.2,2.4,2.6,3.0]:
+    print(p, round(fit_loss(p),3))
+"
 
 ```
 
@@ -945,6 +1171,18 @@ ZD5BTm a -0.03467 b -6.481e-05 resid_std 0.1693 n 28
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+for c,g in tr.groupby('category'):
+    X=g.x.values; Y=g.y.values
+    A=np.column_stack([np.ones_like(X),X,X**2])
+    coef=np.linalg.lstsq(A,Y,rcond=None)[0]
+    resid=Y-A@coef
+    dof=len(Y)-3
+    s=np.sqrt((resid**2).sum()/dof)
+    print(c,'a',round(coef[0],4),'b',round(coef[1],6),'c',round(coef[2],8),'resid_std',round(s,4))
+"
 
 ```
 
@@ -1003,6 +1241,30 @@ ZD5BTm a -0.1178 b 0.003178 c -8.945e-05 resid_std 0.1718
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy import stats
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+for c in cats:
+    g=tr[tr.category==c]
+    X=g.x.values; Y=g.y.values
+    A=np.column_stack([np.ones_like(X),X**2])
+    coef=np.linalg.lstsq(A,Y,rcond=None)[0]
+    n=len(Y); dof=n-2
+    resid=Y-A@coef
+    s=np.sqrt((resid**2).sum()/dof)
+    XtXinv=np.linalg.inv(A.T@A)
+    print('===',c,'a',coef[0],'b',coef[1],'s',s,'dof',dof)
+    # for test points
+    for x in [500,800] if c in ['FNE4K9','Lbo0TZ','NyIqGn'] else [125,200]:
+        xv=np.array([1,x**2])
+        var=s**2*(1+xv@XtXinv@xv)
+        se=np.sqrt(var)
+        lo=coef@xv - stats.t.ppf(0.975,dof)*se
+        hi=coef@xv + stats.t.ppf(0.975,dof)*se
+        print('  x',x,'pred',round(coef@xv,3),'lo',round(lo,3),'hi',round(hi,3),'se',round(se,3))
+"
 
 ```
 
@@ -1066,6 +1328,22 @@ ZD5BTm a -0.1178 b 0.003178 c -8.945e-05 resid_std 0.1718
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+for c,g in tr.groupby('category'):
+    X=g.x.values; Y=g.y.values
+    n=len(Y)
+    # fit quadratic and cubic, compare resid std
+    A2=np.column_stack([np.ones_like(X),X**2])
+    c2=np.linalg.lstsq(A2,Y,rcond=None)[0]; r2=Y-A2@c2; s2=np.sqrt((r2**2).sum()/(n-2))
+    A3=np.column_stack([np.ones_like(X),X**2,X**3])
+    c3=np.linalg.lstsq(A3,Y,rcond=None)[0]; r3=Y-A3@c3; s3=np.sqrt((r3**2).sum()/(n-3))
+    # also cubic in x
+    A3b=np.column_stack([np.ones_like(X),X,X**2,X**3])
+    c3b=np.linalg.lstsq(A3b,Y,rcond=None)[0]; r3b=Y-A3b@c3b; s3b=np.sqrt((r3b**2).sum()/(n-4))
+    print(c,'x2:',round(s2,4),' +x3:',round(s3,4),' full cubic:',round(s3b,4))
+"
 
 ```
 
@@ -1112,7 +1390,44 @@ ZD5BTm x2: 0.1693  +x3: 0.172  full cubic: 0.1752
 **tool call: bash**
 
 ```
+cd data && cat > ../solution.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+
+rows = []
+for c, g in tr.groupby('category'):
+    X = g.x.values
+    Y = g.y.values
+    n = len(Y)
+    d = np.column_stack([np.ones(n), X**2])     # y = a + b * x^2
+    coef, res, rank, sv = np.linalg.lstsq(d, Y, rcond=None)
+    resid = Y - d @ coef
+    dof = n - 2
+    s2 = float((resid**2).sum() / dof)
+    XtXinv = np.linalg.inv(d.T @ d)
+    tcrit = stats.t.ppf(0.975, dof)
+
+    test = te[te.category == c].copy()
+    for _, r in test.iterrows():
+        x0 = r.x
+        xv = np.array([1.0, x0**2])
+        pred = float(xv @ coef)
+        var = s2 * (1.0 + xv @ XtXinv @ xv)
+        se = np.sqrt(var)
+        rows.append((c, x0, pred, pred - tcrit*se, pred + tcrit*se))
+
+out = pd.DataFrame(rows, columns=['category', 'x', 'y_pred', 'y_lower', 'y_upper'])
+out = out.merge(te[['category', 'x']], on=['category', 'x'], how='right')
+cols = out.columns.tolist()
+out = out[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+out.to_csv('predictions.csv', index=False)
+print(out.to_string(index=False))
+print('rows', len(out), 'test rows', len(te))
+EOF
+cd .. && python3 solution.py
 ```
 
 ## [37] tool
@@ -1199,7 +1514,16 @@ The solution is complete. Let me verify the output file is well-formed.
 **tool call: bash**
 
 ```
-
+cd .. && python3 -c "
+import pandas as pd, numpy as np
+p=pd.read_csv('predictions.csv')
+t=pd.read_csv('data/test.csv')
+print('cols', list(p.columns))
+print('rows pred', len(p), 'rows test', len(t))
+print('any null:', p.isnull().values.any())
+print('lower<upper all:', (p.y_lower<p.y_upper).all())
+print((p[['category','x']].reset_index(drop=True)==t[['category','x']].reset_index(drop=True)).all().all())
+"
 ```
 
 ## [39] tool
@@ -1236,7 +1560,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'predictions.csv'
 **tool call: bash**
 
 ```
-
+cd .. 2>/dev/null; pwd; ls -la predictions.csv solution.py 2>&1; head -3 predictions.csv 2>&1
 ```
 
 ## [41] tool
@@ -1258,7 +1582,7 @@ head: cannot open 'predictions.csv' for reading: No such file or directory
 **tool call: bash**
 
 ```
-
+find / -name 'predictions.csv' -o -name 'solution.py' 2>/dev/null; echo "---"; pwd; ls
 ```
 
 ## [43] tool
@@ -1285,7 +1609,13 @@ solution.py
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); t=pd.read_csv('data/test.csv')
+print('cols', list(p.columns),'rows',len(p),len(t))
+print('null',p.isnull().values.any(),'lower<upper',(p.y_lower<p.y_upper).all())
+print('match', (p[['category','x']].astype(str).reset_index(drop=True)==t[['category','x']].astype(str).reset_index(drop=True)).all().all())
+"
 ```
 
 ## [45] tool

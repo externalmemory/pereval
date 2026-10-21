@@ -90,7 +90,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la
 ```
 
 ## [3] tool
@@ -112,7 +112,7 @@ drwxr-xr-x 2 root root 4096 Oct 13 19:19 data
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [5] tool
@@ -137,7 +137,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 19:19 ..
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [7] tool
@@ -155,7 +155,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 19:19 ..
 **tool call: bash**
 
 ```
-
+head -20 data/history.csv
 ```
 
 ## [9] tool
@@ -195,7 +195,7 @@ A,19,6.533130558112341,0.009623213351205199,0.0449,0.6179495916452915,0.0426
 **tool call: bash**
 
 ```
-
+cat data/forecast.csv
 ```
 
 ## [11] tool
@@ -224,7 +224,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+cat data/pools.csv
 ```
 
 ## [13] tool
@@ -376,7 +376,7 @@ C4,C,6330337.0,40
 **tool call: bash**
 
 ```
-
+cut -d, -f2 data/history.csv | sort -nu | tail -5
 ```
 
 ## [15] tool
@@ -399,7 +399,7 @@ C4,C,6330337.0,40
 **tool call: bash**
 
 ```
-
+cut -d, -f2 data/history.csv | sort -nu | head -5
 ```
 
 ## [17] tool
@@ -599,7 +599,236 @@ NameError: name 'history' is not defined
 **tool call: bash**
 
 ```
+cd /workspace
+cat > model.py << 'EOF'
+import pandas as pd
+import numpy as np
+import json
+from scipy.stats import norm
+import sys
 
+# Load data
+history = pd.read_csv('data/history.csv')
+forecast = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+with open('data/policy.json') as f:
+    policy = json.load(f)
+
+forecast_quarters = policy['forecast_quarters']
+reversion_quarters = policy['reversion_quarters']
+rho = policy['rho']
+persistence = policy['persistence']
+interval_level = policy['interval_level']  # 0.95
+
+print("Loaded data")
+print("History shape:", history.shape)
+print("Forecast shape:", forecast.shape)
+print("Pools shape:", pools.shape)
+print("Policy:", policy)
+
+# Historical means per segment
+hist_means = history.groupby('segment')[['pd','lgd','prepay']].mean()
+print("\nHistorical means:")
+print(hist_means)
+
+# Fit regression models per segment for pd, lgd, prepay
+from sklearn.linear_model import LinearRegression
+
+def fit_segment_models(segment_df):
+    X = segment_df[['unemployment', 'hpi_growth']]
+    models = {}
+    for col in ['pd','lgd','prepay']:
+        y = segment_df[col]
+        reg = LinearRegression().fit(X, y)
+        models[col] = reg
+    return models
+
+segment_models = {}
+for seg in history['segment'].unique():
+    seg_df = history[history['segment']==seg]
+    segment_models[seg] = fit_segment_models(seg_df)
+    print(f"\nSegment {seg} models:")
+    for col, model in segment_models[seg].items():
+        print(f"  {col}: intercept={model.intercept_:.6f}, coef_unemp={model.coef_[0]:.6f}, coef_hpi={model.coef_[1]:.6f}")
+
+# Function to predict rates given unemployment, hpi_growth using segment models
+def predict_rates(segment, unemployment, hpi_growth):
+    models = segment_models[segment]
+    X = np.array([[unemployment, hpi_growth]])
+    pd_pred = models['pd'].predict(X)[0]
+    lgd_pred = models['lgd'].predict(X)[0]
+    prepay_pred = models['prepay'].predict(X)[0]
+    # Clip to reasonable bounds
+    pd_pred = max(0.0, min(1.0, pd_pred))
+    lgd_pred = max(0.0, min(1.0, lgd_pred))
+    prepay_pred = max(0.0, min(1.0, prepay_pred))
+    return pd_pred, lgd_pred, prepay_pred
+
+# Generate projected rates for each segment for each quarter up to max needed
+max_T = pools['remaining_quarters'].max()
+print(f"\nMaximum remaining quarters among pools: {max_T}")
+
+# We'll create arrays: rates[segment][quarter_index] where quarter_index 0-based for quarter 1..max_T
+# We'll compute mean rates (m) first, then later apply shock.
+# We need mean PD, LGD, Prepay for each quarter.
+# For quarters 1..forecast_quarters: use forecast unemployment/hpi_growth
+# For quarters forecast_quarters+1 .. forecast_quarters+reversion_quarters: blend
+# Beyond that: historical mean.
+
+# Extract forecast series
+forecast_unemp = forecast['unemployment'].values  # length forecast_quarters
+forecast_hpi = forecast['hpi_growth'].values
+
+# Initialize dictionaries to hold mean rates per segment per quarter
+mean_rates = {}  # segment -> dict of arrays pd, lgd, prepay length max_T
+
+for seg in history['segment'].unique():
+    # Arrays to fill
+    pd_arr = np.zeros(max_T)
+    lgd_arr = np.zeros(max_T)
+    prepay_arr = np.zeros(max_T)
+    
+    # Forecast period
+    for q in range(forecast_quarters):  # q=0..forecast_quarters-1 corresponds to quarter q+1
+        u = forecast_unemp[q]
+        h = forecast_hpi[q]
+        pd, lgd, prepay = predict_rates(seg, u, h)
+        pd_arr[q] = pd
+        lgd_arr[q] = lgd
+        prepay_arr[q] = prepay
+    
+    # Reversion period
+    if reversion_quarters > 0:
+        last_pd = pd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'pd']
+        last_lgd = lgd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'lgd']
+        last_prepay = prepay_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'prepay']
+        target_pd = hist_means.loc[seg,'pd']
+        target_lgd = hist_means.loc[seg,'lgd']
+        target_prepay = hist_means.loc[seg,'prepay']
+        for k in range(1, reversion_quarters+1):  # k=1..reversion_quarters
+            idx = forecast_quarters - 1 + k  # zero-based index
+            if idx >= max_T:
+                break
+            weight = k / reversion_quarters
+            pd_arr[idx] = (1-weight)*last_pd + weight*target_pd
+            lgd_arr[idx] = (1-weight)*last_lgd + weight*target_lgd
+            prepay_arr[idx] = (1-weight)*last_prepay + weight*target_prepay
+    
+    # After reversion period, fill remaining with historical mean
+    start_idx = forecast_quarters + reversion_quarters
+    if start_idx < max_T:
+        pd_arr[start_idx:] = hist_means.loc[seg,'pd']
+        lgd_arr[start_idx:] = hist_means.loc[seg,'lgd']
+        prepay_arr[start_idx:] = hist_means.loc[seg,'prepay']
+    
+    mean_rates[seg] = {'pd': pd_arr, 'lgd': lgd_arr, 'prepay': prepay_arr}
+    print(f"\nSegment {seg} mean rates first 10 quarters:")
+    for i in range(min(10, max_T)):
+        print(f"  Q{i+1}: PD={pd_arr[i]:.6f}, LGD={lgd_arr[i]:.6f}, Prepay={prepay_arr[i]:.6f}")
+
+# Now we need to simulate latent factor z for each segment
+# We'll generate Npaths simulations
+np.random.seed(12345)  # for reproducibility
+n_paths = 2000
+print(f"\nSimulating {n_paths} paths for each segment...")
+
+# We'll store losses per pool: dictionary pool_id -> list of losses across paths
+pool_losses = {pool_id: [] for pool_id in pools['pool_id']}
+
+# For each segment, generate z paths
+for seg in history['segment'].unique():
+    print(f"Processing segment {seg}")
+    # Get mean rates arrays for this segment
+    pd_mean = mean_rates[seg]['pd']  # length max_T
+    lgd_mean = mean_rates[seg]['lgd']
+    prepay_mean = mean_rates[seg]['prepay']
+    
+    # Generate z paths: shape (n_paths, max_T)
+    z = np.random.normal(size=(n_paths, max_T))  # z_1 ~ N(0,1) for each path
+    # Actually we need to generate AR(1) process: z_t = persistence * z_{t-1} + sqrt(1-persistence^2)*epsilon_t
+    # We'll generate epsilon and compute recursively.
+    eps = np.random.normal(size=(n_paths, max_T))
+    z_paths = np.zeros_like(eps)
+    z_paths[:,0] = eps[:,0]  # z_1 = epsilon_1? Actually we want z_1 ~ N(0,1). Since eps[:,0] ~ N(0,1), okay.
+    for t in range(1, max_T):
+        z_paths[:,t] = persistence * z_paths[:,t-1] + np.sqrt(1 - persistence**2) * eps[:,t]
+    # Now z_paths[:,t] is z_{t+1}? Let's check: t=0 corresponds to quarter 1.
+    # We'll treat z_paths[:,q] as z for quarter q+1.
+    
+    # Compute realized PD for each path and quarter using the transform
+    # pd_realized = norm.cdf((norm.ppf(pd_mean) + sqrt(rho)*z) / sqrt(1-rho))
+    sqrt_rho = np.sqrt(rho)
+    sqrt_one_minus_rho = np.sqrt(1 - rho)
+    # Avoid infinite values if pd_mean is 0 or 1; norm.ppf will produce -inf/inf.
+    # Clip pd_mean to (epsilon, 1-epsilon)
+    eps_clip = 1e-12
+    pd_mean_clipped = np.clip(pd_mean, eps_clip, 1 - eps_clip)
+    ppf_vals = norm.ppf(pd_mean_clipped)  # shape (max_T,)
+    # Expand to (n_paths, max_T)
+    ppf_vals_exp = np.tile(ppf_vals, (n_paths, 1))
+    # Argument:
+    arg = (ppf_vals_exp + sqrt_rho * z_paths) / sqrt_one_minus_rho
+    pd_realized = norm.cdf(arg)  # shape (n_paths, max_T)
+    # Ensure bounds
+    pd_realized = np.clip(pd_realized, 0.0, 1.0)
+    
+    # LGD and prepay remain deterministic (no shock)
+    lgd_realized = np.tile(lgd_mean, (n_paths, 1))
+    prepay_realized = np.tile(prepay_mean, (n_paths, 1))
+    
+    # Now compute loss for each pool in this segment for each path
+    seg_pools = pools[pools['segment']==seg]
+    for _, row in seg_pools.iterrows():
+        pool_id = row['pool_id']
+        B = row['balance']
+        T = row['remaining_quarters']
+        # We only need first T quarters of rates
+        pd_path = pd_realized[:, :T]  # shape (n_paths, T)
+        lgd_path = lgd_realized[:, :T]
+        prepay_path = prepay_realized[:, :T]
+        # Compute loss for each path
+        losses = np.zeros(n_paths)
+        for p in range(n_paths):
+            Ssurv = 1.0
+            loss = 0.0
+            for t in range(T):
+                s_factor = 1.0 - t / T  # because t is zero-based: quarter t+1, (q-1)/T = t/T
+                A_t = B * s_factor * Ssurv
+                loss_t = pd_path[p, t] * A_t * lgd_path[p, t]
+                loss += loss_t
+                Ssurv = Ssurv * (1.0 - pd_path[p, t]) * (1.0 - prepay_path[p, t])
+            losses[p] = loss
+        # Store losses
+        pool_losses[pool_id].extend(losses.tolist())
+    print(f"  Completed segment {seg}")
+
+# After processing all segments, compute mean and percentiles for each pool
+print("\nComputing ECL and intervals...")
+results = []
+for pool_id in pools['pool_id']:
+    losses = np.array(pool_losses[pool_id])
+    ecl = losses.mean()
+    lower = np.percentile(losses, (1-interval_level)/2 * 100)  # 2.5th percentile
+    upper = np.percentile(losses, (1+interval_level)/2 * 100)  # 97.5th percentile
+    # Ensure within bounds [0, balance]
+    balance = pools.loc[pools['pool_id']==pool_id, 'balance'].values[0]
+    lower = max(0.0, min(balance, lower))
+    upper = max(0.0, min(balance, upper))
+    ecl = max(0.0, min(balance, ecl))
+    results.append({
+        'pool_id': pool_id,
+        'ecl': ecl,
+        'ecl_lower': lower,
+        'ecl_upper': upper
+    })
+    print(f"{pool_id}: balance={balance:.0f}, ecl={ecl:.2f}, lower={lower:.2f}, upper={upper:.2f}")
+
+# Save to predictions.csv
+out_df = pd.DataFrame(results)
+out_df.to_csv('predictions.csv', index=False, float_format='%.6f')
+print("\nPredictions saved to predictions.csv")
+print(out_df)
+EOF
 ```
 
 ## [23] tool
@@ -638,7 +867,7 @@ SyntaxError: invalid syntax
 **tool call: bash**
 
 ```
-
+python model.py
 ```
 
 ## [27] tool
@@ -971,7 +1200,218 @@ C4: balance=6330337, ecl=236031.59, lower=180078.06, upper=301339.12
 **tool call: bash**
 
 ```
+cat > model2.py << 'EOF'
+import pandas as pd
+import numpy as np
+import json
+from scipy.stats import norm
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+history = pd.read_csv('data/history.csv')
+forecast = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+with open('data/policy.json') as f:
+    policy = json.load(f)
+
+forecast_quarters = policy['forecast_quarters']
+reversion_quarters = policy['reversion_quarters']
+rho = policy['rho']
+persistence = policy['persistence']
+interval_level = policy['interval_level']  # 0.95
+
+print("Loaded data")
+
+# Historical means per segment
+hist_means = history.groupby('segment')[['pd','lgd','prepay']].mean()
+print("Historical means:")
+print(hist_means)
+
+# Fit regression models per segment for pd, lgd, prepay
+from sklearn.linear_model import LinearRegression
+
+def fit_segment_models(segment_df):
+    X = segment_df[['unemployment', 'hpi_growth']]
+    models = {}
+    for col in ['pd','lgd','prepay']:
+        y = segment_df[col]
+        reg = LinearRegression().fit(X, y)
+        models[col] = reg
+    return models
+
+segment_models = {}
+for seg in history['segment'].unique():
+    seg_df = history[history['segment']==seg]
+    segment_models[seg] = fit_segment_models(seg_df)
+
+# Function to predict rates given unemployment, hpi_growth using segment models
+def predict_rates(segment, unemployment, hpi_growth):
+    models = segment_models[segment]
+    X = np.array([[unemployment, hpi_growth]])
+    pd_pred = models['pd'].predict(X)[0]
+    lgd_pred = models['lgd'].predict(X)[0]
+    prepay_pred = models['prepay'].predict(X)[0]
+    # Clip to reasonable bounds
+    pd_pred = max(0.0, min(1.0, pd_pred))
+    lgd_pred = max(0.0, min(1.0, lgd_pred))
+    prepay_pred = max(0.0, min(1.0, prepay_pred))
+    return pd_pred, lgd_pred, prepay_pred
+
+# Generate projected rates for each segment for each quarter up to max needed
+max_T = pools['remaining_quarters'].max()
+print(f"\nMaximum remaining quarters among pools: {max_T}")
+
+# Extract forecast series
+forecast_unemp = forecast['unemployment'].values  # length forecast_quarters
+forecast_hpi = forecast['hpi_growth'].values
+
+# Initialize dictionaries to hold mean rates per segment per quarter
+mean_rates = {}  # segment -> dict of arrays pd, lgd, prepay length max_T
+
+for seg in history['segment'].unique():
+    # Arrays to fill
+    pd_arr = np.zeros(max_T)
+    lgd_arr = np.zeros(max_T)
+    prepay_arr = np.zeros(max_T)
+    
+    # Forecast period
+    for q in range(forecast_quarters):  # q=0..forecast_quarters-1 corresponds to quarter q+1
+        u = forecast_unemp[q]
+        h = forecast_hpi[q]
+        pd, lgd, prepay = predict_rates(seg, u, h)
+        pd_arr[q] = pd
+        lgd_arr[q] = lgd
+        prepay_arr[q] = prepay
+    
+    # Reversion period
+    if reversion_quarters > 0:
+        last_pd = pd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'pd']
+        last_lgd = lgd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'lgd']
+        last_prepay = prepay_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'prepay']
+        target_pd = hist_means.loc[seg,'pd']
+        target_lgd = hist_means.loc[seg,'lgd']
+        target_prepay = hist_means.loc[seg,'prepay']
+        for k in range(1, reversion_quarters+1):  # k=1..reversion_quarters
+            idx = forecast_quarters - 1 + k  # zero-based index
+            if idx >= max_T:
+                break
+            weight = k / reversion_quarters
+            pd_arr[idx] = (1-weight)*last_pd + weight*target_pd
+            lgd_arr[idx] = (1-weight)*last_lgd + weight*target_lgd
+            prepay_arr[idx] = (1-weight)*last_prepay + weight*target_prepay
+    
+    # After reversion period, fill remaining with historical mean
+    start_idx = forecast_quarters + reversion_quarters
+    if start_idx < max_T:
+        pd_arr[start_idx:] = hist_means.loc[seg,'pd']
+        lgd_arr[start_idx:] = hist_means.loc[seg,'lgd']
+        prepay_arr[start_idx:] = hist_means.loc[seg,'prepay']
+    
+    mean_rates[seg] = {'pd': pd_arr, 'lgd': lgd_arr, 'prepay': prepay_arr}
+    print(f"\nSegment {seg} mean rates first 10 quarters:")
+    for i in range(min(10, max_T)):
+        print(f"  Q{i+1}: PD={pd_arr[i]:.6f}, LGD={lgd_arr[i]:.6f}, Prepay={prepay_arr[i]:.6f}")
+
+# Now we need to simulate latent factor z for each segment
+# We'll generate Npaths simulations
+np.random.seed(12345)  # for reproducibility
+n_paths = 2000
+print(f"\nSimulating {n_paths} paths for each segment...")
+
+# We'll store losses per pool: dictionary pool_id -> list of losses across paths
+pool_losses = {pool_id: [] for pool_id in pools['pool_id']}
+
+# For each segment, generate z paths
+for seg in history['segment'].unique():
+    print(f"Processing segment {seg}")
+    # Get mean rates arrays for this segment
+    pd_mean = mean_rates[seg]['pd']  # length max_T
+    lgd_mean = mean_rates[seg]['lgd']
+    prepay_mean = mean_rates[seg]['prepay']
+    
+    # Generate z paths: shape (n_paths, max_T)
+    eps = np.random.normal(size=(n_paths, max_T))
+    z_paths = np.zeros_like(eps)
+    z_paths[:,0] = eps[:,0]  # z_1 ~ N(0,1)
+    for t in range(1, max_T):
+        z_paths[:,t] = persistence * z_paths[:,t-1] + np.sqrt(1 - persistence**2) * eps[:,t]
+    # Now z_paths[:,t] is z for quarter t+1
+    
+    # Compute realized PD for each path and quarter using the transform
+    # pd_realized = norm.cdf((norm.ppf(pd_mean) + sqrt(rho)*z) / sqrt(1-rho))
+    sqrt_rho = np.sqrt(rho)
+    sqrt_one_minus_rho = np.sqrt(1 - rho)
+    # Avoid infinite values if pd_mean is 0 or 1; norm.ppf will produce -inf/inf.
+    # Clip pd_mean to (epsilon, 1-epsilon)
+    eps_clip = 1e-12
+    pd_mean_clipped = np.clip(pd_mean, eps_clip, 1 - eps_clip)
+    ppf_vals = norm.ppf(pd_mean_clipped)  # shape (max_T,)
+    # Expand to (n_paths, max_T)
+    ppf_vals_exp = np.tile(ppf_vals, (n_paths, 1))
+    # Argument:
+    arg = (ppf_vals_exp + sqrt_rho * z_paths) / sqrt_one_minus_rho
+    pd_realized = norm.cdf(arg)  # shape (n_paths, max_T)
+    # Ensure bounds
+    pd_realized = np.clip(pd_realized, 0.0, 1.0)
+    
+    # LGD and prepay remain deterministic (no shock)
+    lgd_realized = np.tile(lgd_mean, (n_paths, 1))
+    prepay_realized = np.tile(prepay_mean, (n_paths, 1))
+    
+    # Now compute loss for each pool in this segment for each path
+    seg_pools = pools[pools['segment']==seg]
+    for _, row in seg_pools.iterrows():
+        pool_id = row['pool_id']
+        B = row['balance']
+        T = row['remaining_quarters']
+        # We only need first T quarters of rates
+        pd_path = pd_realized[:, :T]  # shape (n_paths, T)
+        lgd_path = lgd_realized[:, :T]
+        prepay_path = prepay_realized[:, :T]
+        # Compute loss for each path
+        losses = np.zeros(n_paths)
+        for p in range(n_paths):
+            Ssurv = 1.0
+            loss = 0.0
+            for t in range(T):
+                s_factor = 1.0 - t / T  # because t is zero-based: quarter t+1, (q-1)/T = t/T
+                A_t = B * s_factor * Ssurv
+                loss_t = pd_path[p, t] * A_t * lgd_path[p, t]
+                loss += loss_t
+                Ssurv = Ssurv * (1.0 - pd_path[p, t]) * (1.0 - prepay_path[p, t])
+            losses[p] = loss
+        # Store losses
+        pool_losses[pool_id].extend(losses.tolist())
+    print(f"  Completed segment {seg}")
+
+# After processing all segments, compute mean and percentiles for each pool
+print("\nComputing ECL and intervals...")
+results_list = []
+for pool_id in pools['pool_id']:
+    losses = np.array(pool_losses[pool_id])
+    ecl = losses.mean()
+    lower = np.percentile(losses, (1-interval_level)/2 * 100)  # 2.5th percentile
+    upper = np.percentile(losses, (1+interval_level)/2 * 100)  # 97.5th percentile
+    # Ensure within bounds [0, balance]
+    balance = pools.loc[pools['pool_id']==pool_id, 'balance'].values[0]
+    lower = max(0.0, min(balance, lower))
+    upper = max(0.0, min(balance, upper))
+    ecl = max(0.0, min(balance, ecl))
+    results_list.append({
+        'pool_id': pool_id,
+        'ecl': float(ecl),
+        'ecl_lower': float(lower),
+        'ecl_upper': float(upper)
+    })
+    print(f"{pool_id}: balance={balance:.0f}, ecl={ecl:.2f}, lower={lower:.2f}, upper={upper:.2f}")
+
+# Save to predictions.csv
+out_df = pd.DataFrame(results_list)
+out_df.to_csv('predictions.csv', index=False, float_format='%.6f')
+print("\nPredictions saved to predictions.csv")
+print(out_df)
+EOF
 ```
 
 ## [29] tool
@@ -987,7 +1427,7 @@ C4: balance=6330337, ecl=236031.59, lower=180078.06, upper=301339.12
 **tool call: bash**
 
 ```
-
+python model2.py
 ```
 
 ## [31] tool
@@ -1120,7 +1560,161 @@ C4: balance=6330337, ecl=235675.14, lower=181852.40, upper=297101.16
 **tool call: bash**
 
 ```
+cat > debug.py << 'EOF'
+import pandas as pd
+import numpy as np
+import json
+from scipy.stats import norm
+import warnings
+warnings.filterwarnings('ignore')
 
+history = pd.read_csv('data/history.csv')
+forecast = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+with open('data/policy.json') as f:
+    policy = json.load(f)
+
+forecast_quarters = policy['forecast_quarters']
+reversion_quarters = policy['reversion_quarters']
+rho = policy['rho']
+persistence = policy['persistence']
+interval_level = policy['interval_level']
+
+# Historical means per segment
+hist_means = history.groupby('segment')[['pd','lgd','prepay']].mean()
+
+from sklearn.linear_model import LinearRegression
+def fit_segment_models(segment_df):
+    X = segment_df[['unemployment', 'hpi_growth']]
+    models = {}
+    for col in ['pd','lgd','prepay']:
+        y = segment_df[col]
+        reg = LinearRegression().fit(X, y)
+        models[col] = reg
+    return models
+
+segment_models = {}
+for seg in history['segment'].unique():
+    seg_df = history[history['segment']==seg]
+    segment_models[seg] = fit_segment_models(seg_df)
+
+def predict_rates(segment, unemployment, hpi_growth):
+    models = segment_models[segment]
+    X = np.array([[unemployment, hpi_growth]])
+    pd_pred = models['pd'].predict(X)[0]
+    lgd_pred = models['lgd'].predict(X)[0]
+    prepay_pred = models['prepay'].predict(X)[0]
+    pd_pred = max(0.0, min(1.0, pd_pred))
+    lgd_pred = max(0.0, min(1.0, lgd_pred))
+    prepay_pred = max(0.0, min(1.0, prepay_pred))
+    return pd_pred, lgd_pred, prepay_pred
+
+max_T = pools['remaining_quarters'].max()
+forecast_unemp = forecast['unemployment'].values
+forecast_hpi = forecast['hpi_growth'].values
+
+mean_rates = {}
+for seg in history['segment'].unique():
+    pd_arr = np.zeros(max_T)
+    lgd_arr = np.zeros(max_T)
+    prepay_arr = np.zeros(max_T)
+    for q in range(forecast_quarters):
+        u = forecast_unemp[q]
+        h = forecast_hpi[q]
+        pd, lgd, prepay = predict_rates(seg, u, h)
+        pd_arr[q] = pd
+        lgd_arr[q] = lgd
+        prepay_arr[q] = prepay
+    if reversion_quarters > 0:
+        last_pd = pd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'pd']
+        last_lgd = lgd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'lgd']
+        last_prepay = prepay_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'prepay']
+        target_pd = hist_means.loc[seg,'pd']
+        target_lgd = hist_means.loc[seg,'lgd']
+        target_prepay = hist_means.loc[seg,'prepay']
+        for k in range(1, reversion_quarters+1):
+            idx = forecast_quarters - 1 + k
+            if idx >= max_T:
+                break
+            weight = k / reversion_quarters
+            pd_arr[idx] = (1-weight)*last_pd + weight*target_pd
+            lgd_arr[idx] = (1-weight)*last_lgd + weight*target_lgd
+            prepay_arr[idx] = (1-weight)*last_prepay + weight*target_prepay
+    start_idx = forecast_quarters + reversion_quarters
+    if start_idx < max_T:
+        pd_arr[start_idx:] = hist_means.loc[seg,'pd']
+        lgd_arr[start_idx:] = hist_means.loc[seg,'lgd']
+        prepay_arr[start_idx:] = hist_means.loc[seg,'prepay']
+    mean_rates[seg] = {'pd': pd_arr, 'lgd': lgd_arr, 'prepay': prepay_arr}
+
+np.random.seed(12345)
+n_paths = 2000
+pool_losses = {pool_id: [] for pool_id in pools['pool_id']}
+
+for seg in history['segment'].unique():
+    pd_mean = mean_rates[seg]['pd']
+    lgd_mean = mean_rates[seg]['lgd']
+    prepay_mean = mean_rates[seg]['prepay']
+    eps = np.random.normal(size=(n_paths, max_T))
+    z_paths = np.zeros_like(eps)
+    z_paths[:,0] = eps[:,0]
+    for t in range(1, max_T):
+        z_paths[:,t] = persistence * z_paths[:,t-1] + np.sqrt(1 - persistence**2) * eps[:,t]
+    sqrt_rho = np.sqrt(rho)
+    sqrt_one_minus_rho = np.sqrt(1 - rho)
+    eps_clip = 1e-12
+    pd_mean_clipped = np.clip(pd_mean, eps_clip, 1 - eps_clip)
+    ppf_vals = norm.ppf(pd_mean_clipped)
+    ppf_vals_exp = np.tile(ppf_vals, (n_paths, 1))
+    arg = (ppf_vals_exp + sqrt_rho * z_paths) / sqrt_one_minus_rho
+    pd_realized = norm.cdf(arg)
+    pd_realized = np.clip(pd_realized, 0.0, 1.0)
+    lgd_realized = np.tile(lgd_mean, (n_paths, 1))
+    prepay_realized = np.tile(prepay_mean, (n_paths, 1))
+    seg_pools = pools[pools['segment']==seg]
+    for _, row in seg_pools.iterrows():
+        pool_id = row['pool_id']
+        B = row['balance']
+        T = row['remaining_quarters']
+        pd_path = pd_realized[:, :T]
+        lgd_path = lgd_realized[:, :T]
+        prepay_path = prepay_realized[:, :T]
+        losses = np.zeros(n_paths)
+        for p in range(n_paths):
+            Ssurv = 1.0
+            loss = 0.0
+            for t in range(T):
+                s_factor = 1.0 - t / T
+                A_t = B * s_factor * Ssurv
+                loss_t = pd_path[p, t] * A_t * lgd_path[p, t]
+                loss += loss_t
+                Ssurv = Ssurv * (1.0 - pd_path[p, t]) * (1.0 - prepay_path[p, t])
+            losses[p] = loss
+        pool_losses[pool_id].extend(losses.tolist())
+
+print("Computing ECL and intervals...")
+results_list = []
+for pool_id in pools['pool_id']:
+    losses = np.array(pool_losses[pool_id])
+    ecl = losses.mean()
+    lower = np.percentile(losses, (1-interval_level)/2 * 100)
+    upper = np.percentile(losses, (1+interval_level)/2 * 100)
+    balance = pools.loc[pools['pool_id']==pool_id, 'balance'].values[0]
+    lower = max(0.0, min(balance, lower))
+    upper = max(0.0, min(balance, upper))
+    ecl = max(0.0, min(balance, ecl))
+    results_list.append({
+        'pool_id': pool_id,
+        'ecl': float(ecl),
+        'ecl_lower': float(lower),
+        'ecl_upper': float(upper)
+    })
+    print(f"{pool_id}: balance={balance:.0f}, ecl={ecl:.2f}, lower={lower:.2f}, upper={upper:.2f}")
+
+print("\nType of results_list:", type(results_list))
+print("Length:", len(results_list))
+print("First element:", results_list[0] if results_list else None)
+EOF
 ```
 
 ## [33] tool
@@ -1136,7 +1730,7 @@ C4: balance=6330337, ecl=235675.14, lower=181852.40, upper=297101.16
 **tool call: bash**
 
 ```
-
+python debug.py
 ```
 
 ## [35] tool
@@ -1177,7 +1771,167 @@ First element: {'pool_id': 'A1', 'ecl': 84574.1900446963, 'ecl_lower': 44859.409
 **tool call: bash**
 
 ```
+cat > final_model.py << 'EOF'
+import pandas as pd
+import numpy as np
+import json
+from scipy.stats import norm
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+history = pd.read_csv('data/history.csv')
+forecast = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+with open('data/policy.json') as f:
+    policy = json.load(f)
+
+forecast_quarters = policy['forecast_quarters']
+reversion_quarters = policy['reversion_quarters']
+rho = policy['rho']
+persistence = policy['persistence']
+interval_level = policy['interval_level']  # 0.95
+
+# Historical means per segment
+hist_means = history.groupby('segment')[['pd','lgd','prepay']].mean()
+
+# Fit regression models per segment for pd, lgd, prepay
+from sklearn.linear_model import LinearRegression
+
+def fit_segment_models(segment_df):
+    X = segment_df[['unemployment', 'hpi_growth']]
+    models = {}
+    for col in ['pd','lgd','prepay']:
+        y = segment_df[col]
+        reg = LinearRegression().fit(X, y)
+        models[col] = reg
+    return models
+
+segment_models = {}
+for seg in history['segment'].unique():
+    seg_df = history[history['segment']==seg]
+    segment_models[seg] = fit_segment_models(seg_df)
+
+def predict_rates(segment, unemployment, hpi_growth):
+    models = segment_models[segment]
+    X = np.array([[unemployment, hpi_growth]])
+    pd_pred = models['pd'].predict(X)[0]
+    lgd_pred = models['lgd'].predict(X)[0]
+    prepay_pred = models['prepay'].predict(X)[0]
+    # Clip to reasonable bounds
+    pd_pred = max(0.0, min(1.0, pd_pred))
+    lgd_pred = max(0.0, min(1.0, lgd_pred))
+    prepay_pred = max(0.0, min(1.0, prepay_pred))
+    return pd_pred, lgd_pred, prepay_pred
+
+# Generate projected rates for each segment for each quarter up to max needed
+max_T = pools['remaining_quarters'].max()
+forecast_unemp = forecast['unemployment'].values
+forecast_hpi = forecast['hpi_growth'].values
+
+mean_rates = {}  # segment -> dict of arrays pd, lgd, prepay length max_T
+
+for seg in history['segment'].unique():
+    pd_arr = np.zeros(max_T)
+    lgd_arr = np.zeros(max_T)
+    prepay_arr = np.zeros(max_T)
+    # Forecast period
+    for q in range(forecast_quarters):
+        u = forecast_unemp[q]
+        h = forecast_hpi[q]
+        pd, lgd, prepay = predict_rates(seg, u, h)
+        pd_arr[q] = pd
+        lgd_arr[q] = lgd
+        prepay_arr[q] = prepay
+    # Reversion period
+    if reversion_quarters > 0:
+        last_pd = pd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'pd']
+        last_lgd = lgd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'lgd']
+        last_prepay = prepay_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'prepay']
+        target_pd = hist_means.loc[seg,'pd']
+        target_lgd = hist_means.loc[seg,'lgd']
+        target_prepay = hist_means.loc[seg,'prepay']
+        for k in range(1, reversion_quarters+1):
+            idx = forecast_quarters - 1 + k
+            if idx >= max_T:
+                break
+            weight = k / reversion_quarters
+            pd_arr[idx] = (1-weight)*last_pd + weight*target_pd
+            lgd_arr[idx] = (1-weight)*last_lgd + weight*target_lgd
+            prepay_arr[idx] = (1-weight)*last_prepay + weight*target_prepay
+    # After reversion period, fill remaining with historical mean
+    start_idx = forecast_quarters + reversion_quarters
+    if start_idx < max_T:
+        pd_arr[start_idx:] = hist_means.loc[seg,'pd']
+        lgd_arr[start_idx:] = hist_means.loc[seg,'lgd']
+        prepay_arr[start_idx:] = hist_means.loc[seg,'prepay']
+    mean_rates[seg] = {'pd': pd_arr, 'lgd': lgd_arr, 'prepay': prepay_arr}
+
+# Simulate latent factor z for each segment
+np.random.seed(12345)  # for reproducibility
+n_paths = 2000
+pool_losses = {pool_id: [] for pool_id in pools['pool_id']}
+
+for seg in history['segment'].unique():
+    pd_mean = mean_rates[seg]['pd']
+    lgd_mean = mean_rates[seg]['lgd']
+    prepay_mean = mean_rates[seg]['prepay']
+    eps = np.random.normal(size=(n_paths, max_T))
+    z_paths = np.zeros_like(eps)
+    z_paths[:,0] = eps[:,0]
+    for t in range(1, max_T):
+        z_paths[:,t] = persistence * z_paths[:,t-1] + np.sqrt(1 - persistence**2) * eps[:,t]
+    sqrt_rho = np.sqrt(rho)
+    sqrt_one_minus_rho = np.sqrt(1 - rho)
+    eps_clip = 1e-12
+    pd_mean_clipped = np.clip(pd_mean, eps_clip, 1 - eps_clip)
+    ppf_vals = norm.ppf(pd_mean_clipped)
+    ppf_vals_exp = np.tile(ppf_vals, (n_paths, 1))
+    arg = (ppf_vals_exp + sqrt_rho * z_paths) / sqrt_one_minus_rho
+    pd_realized = norm.cdf(arg)
+    pd_realized = np.clip(pd_realized, 0.0, 1.0)
+    lgd_realized = np.tile(lgd_mean, (n_paths, 1))
+    prepay_realized = np.tile(prepay_mean, (n_paths, 1))
+    seg_pools = pools[pools['segment']==seg]
+    for _, row in seg_pools.iterrows():
+        pool_id = row['pool_id']
+        B = row['balance']
+        T = row['remaining_quarters']
+        pd_path = pd_realized[:, :T]
+        lgd_path = lgd_realized[:, :T]
+        prepay_path = prepay_realized[:, :T]
+        losses = np.zeros(n_paths)
+        for p in range(n_paths):
+            Ssurv = 1.0
+            loss = 0.0
+            for t in range(T):
+                s_factor = 1.0 - t / T
+                A_t = B * s_factor * Ssurv
+                loss_t = pd_path[p, t] * A_t * lgd_path[p, t]
+                loss += loss_t
+                Ssurv = Ssurv * (1.0 - pd_path[p, t]) * (1.0 - prepay_path[p, t])
+            losses[p] = loss
+        pool_losses[pool_id].extend(losses.tolist())
+
+# Compute ECL and intervals
+results = []
+for pool_id in pools['pool_id']:
+    losses = np.array(pool_losses[pool_id])
+    ecl = losses.mean()
+    lower = np.percentile(losses, (1-interval_level)/2 * 100)
+    upper = np.percentile(losses, (1+interval_level)/2 * 100)
+    balance = pools.loc[pools['pool_id']==pool_id, 'balance'].values[0]
+    lower = max(0.0, min(balance, lower))
+    upper = max(0.0, min(balance, upper))
+    ecl = max(0.0, min(balance, ecl))
+    results.append([pool_id, ecl, lower, upper])
+
+# Write predictions.csv
+pred_df = pd.DataFrame(results, columns=['pool_id', 'ecl', 'ecl_lower', 'ecl_upper'])
+pred_df.to_csv('predictions.csv', index=False, float_format='%.6f')
+print("Predictions saved to predictions.csv")
+print(pred_df)
+EOF
 ```
 
 ## [37] tool
@@ -1193,7 +1947,7 @@ First element: {'pool_id': 'A1', 'ecl': 84574.1900446963, 'ecl_lower': 44859.409
 **tool call: bash**
 
 ```
-
+python final_model.py
 ```
 
 ## [39] tool
@@ -1241,7 +1995,163 @@ AttributeError: 'numpy.float64' object has no attribute 'DataFrame'
 **tool call: bash**
 
 ```
+cat > solve.py << 'EOF'
+import pandas as pd
+import numpy as np
+import json
+from scipy.stats import norm
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+history = pd.read_csv('data/history.csv')
+forecast = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+with open('data/policy.json') as f:
+    policy = json.load(f)
+
+forecast_quarters = policy['forecast_quarters']
+reversion_quarters = policy['reversion_quarters']
+rho = policy['rho']
+persistence = policy['persistence']
+interval_level = policy['interval_level']
+
+# Historical means per segment
+hist_means = history.groupby('segment')[['pd','lgd','prepay']].mean()
+
+# Fit regression models per segment for pd, lgd, prepay
+from sklearn.linear_model import LinearRegression
+
+def fit_segment_models(segment_df):
+    X = segment_df[['unemployment', 'hpi_growth']]
+    models = {}
+    for col in ['pd','lgd','prepay']:
+        y = segment_df[col]
+        reg = LinearRegression().fit(X, y)
+        models[col] = reg
+    return models
+
+segment_models = {}
+for seg in history['segment'].unique():
+    seg_df = history[history['segment']==seg]
+    segment_models[seg] = fit_segment_models(seg_df)
+
+def predict_rates(segment, unemployment, hpi_growth):
+    models = segment_models[segment]
+    X = np.array([[unemployment, hpi_growth]])
+    pd_pred = models['pd'].predict(X)[0]
+    lgd_pred = models['lgd'].predict(X)[0]
+    prepay_pred = models['prepay'].predict(X)[0]
+    pd_pred = max(0.0, min(1.0, pd_pred))
+    lgd_pred = max(0.0, min(1.0, lgd_pred))
+    prepay_pred = max(0.0, min(1.0, prepay_pred))
+    return pd_pred, lgd_pred, prepay_pred
+
+# Generate projected rates for each segment for each quarter up to max needed
+max_T = pools['remaining_quarters'].max()
+forecast_unemp = forecast['unemployment'].values
+forecast_hpi = forecast['hpi_growth'].values
+
+mean_rates = {}
+for seg in history['segment'].unique():
+    pd_arr = np.zeros(max_T)
+    lgd_arr = np.zeros(max_T)
+    prepay_arr = np.zeros(max_T)
+    for q in range(forecast_quarters):
+        u = forecast_unemp[q]
+        h = forecast_hpi[q]
+        pd, lgd, prepay = predict_rates(seg, u, h)
+        pd_arr[q] = pd
+        lgd_arr[q] = lgd
+        prepay_arr[q] = prepay
+    if reversion_quarters > 0:
+        last_pd = pd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'pd']
+        last_lgd = lgd_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'lgd']
+        last_prepay = prepay_arr[forecast_quarters-1] if forecast_quarters>0 else hist_means.loc[seg,'prepay']
+        target_pd = hist_means.loc[seg,'pd']
+        target_lgd = hist_means.loc[seg,'lgd']
+        target_prepay = hist_means.loc[seg,'prepay']
+        for k in range(1, reversion_quarters+1):
+            idx = forecast_quarters - 1 + k
+            if idx >= max_T:
+                break
+            weight = k / reversion_quarters
+            pd_arr[idx] = (1-weight)*last_pd + weight*target_pd
+            lgd_arr[idx] = (1-weight)*last_lgd + weight*target_lgd
+            prepay_arr[idx] = (1-weight)*last_prepay + weight*target_prepay
+    start_idx = forecast_quarters + reversion_quarters
+    if start_idx < max_T:
+        pd_arr[start_idx:] = hist_means.loc[seg,'pd']
+        lgd_arr[start_idx:] = hist_means.loc[seg,'lgd']
+        prepay_arr[start_idx:] = hist_means.loc[seg,'prepay']
+    mean_rates[seg] = {'pd': pd_arr, 'lgd': lgd_arr, 'prepay': prepay_arr}
+
+# Simulate latent factor z for each segment
+np.random.seed(12345)
+n_paths = 2000
+pool_losses = {pool_id: [] for pool_id in pools['pool_id']}
+
+for seg in history['segment'].unique():
+    pd_mean = mean_rates[seg]['pd']
+    lgd_mean = mean_rates[seg]['lgd']
+    prepay_mean = mean_rates[seg]['prepay']
+    eps = np.random.normal(size=(n_paths, max_T))
+    z_paths = np.zeros_like(eps)
+    z_paths[:,0] = eps[:,0]
+    for t in range(1, max_T):
+        z_paths[:,t] = persistence * z_paths[:,t-1] + np.sqrt(1 - persistence**2) * eps[:,t]
+    sqrt_rho = np.sqrt(rho)
+    sqrt_one_minus_rho = np.sqrt(1 - rho)
+    eps_clip = 1e-12
+    pd_mean_clipped = np.clip(pd_mean, eps_clip, 1 - eps_clip)
+    ppf_vals = norm.ppf(pd_mean_clipped)
+    ppf_vals_exp = np.tile(ppf_vals, (n_paths, 1))
+    arg = (ppf_vals_exp + sqrt_rho * z_paths) / sqrt_one_minus_rho
+    pd_realized = norm.cdf(arg)
+    pd_realized = np.clip(pd_realized, 0.0, 1.0)
+    lgd_realized = np.tile(lgd_mean, (n_paths, 1))
+    prepay_realized = np.tile(prepay_mean, (n_paths, 1))
+    seg_pools = pools[pools['segment']==seg]
+    for _, row in seg_pools.iterrows():
+        pool_id = row['pool_id']
+        B = row['balance']
+        T = row['remaining_quarters']
+        pd_path = pd_realized[:, :T]
+        lgd_path = lgd_realized[:, :T]
+        prepay_path = prepay_realized[:, :T]
+        losses = np.zeros(n_paths)
+        for p in range(n_paths):
+            Ssurv = 1.0
+            loss = 0.0
+            for t in range(T):
+                s_factor = 1.0 - t / T
+                A_t = B * s_factor * Ssurv
+                loss_t = pd_path[p, t] * A_t * lgd_path[p, t]
+                loss += loss_t
+                Ssurv = Ssurv * (1.0 - pd_path[p, t]) * (1.0 - prepay_path[p, t])
+            losses[p] = loss
+        pool_losses[pool_id].extend(losses.tolist())
+
+# Compute ECL and intervals
+out_lines = []
+out_lines.append("pool_id,ecl,ecl_lower,ecl_upper")
+for pool_id in pools['pool_id']:
+    losses = np.array(pool_losses[pool_id])
+    ecl = losses.mean()
+    lower = np.percentile(losses, (1-interval_level)/2 * 100)
+    upper = np.percentile(losses, (1+interval_level)/2 * 100)
+    balance = pools.loc[pools['pool_id']==pool_id, 'balance'].values[0]
+    lower = max(0.0, min(balance, lower))
+    upper = max(0.0, min(balance, upper))
+    ecl = max(0.0, min(balance, ecl))
+    out_lines.append(f"{pool_id},{ecl:.6f},{lower:.6f},{upper:.6f}")
+    print(f"{pool_id}: balance={balance:.0f}, ecl={ecl:.2f}, lower={lower:.2f}, upper={upper:.2f}")
+
+# Write to file
+with open('predictions.csv', 'w') as f:
+    f.write("\n".join(out_lines))
+print("\nPredictions saved to predictions.csv")
+EOF
 ```
 
 ## [41] tool
@@ -1257,7 +2167,7 @@ AttributeError: 'numpy.float64' object has no attribute 'DataFrame'
 **tool call: bash**
 
 ```
-
+python solve.py
 ```
 
 ## [43] tool
@@ -1289,7 +2199,7 @@ Predictions saved to predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [45] tool
@@ -1321,7 +2231,21 @@ C4,235675.135642,181852.398412,297101.156795
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd
+pools = pd.read_csv('data/pools.csv')
+pred = pd.read_csv('predictions.csv')
+merged = pools.merge(pred, on='pool_id')
+print(merged[['pool_id','balance','ecl','ecl_lower','ecl_upper']])
+print('\\nCheck ecl <= balance:')
+print((merged['ecl'] <= merged['balance']).all())
+print('Check ecl_lower >= 0:')
+print((merged['ecl_lower'] >= 0).all())
+print('Check ecl_upper <= balance:')
+print((merged['ecl_upper'] <= merged['balance']).all())
+print('Check ecl_lower <= ecl_upper:')
+print((merged['ecl_lower'] <= merged['ecl_upper']).all())
+"
 ```
 
 ## [47] tool
@@ -1373,7 +2297,7 @@ True
 **tool call: bash**
 
 ```
-
+ls -l predictions.csv
 ```
 
 ## [49] tool
@@ -1396,7 +2320,7 @@ True
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [51] tool

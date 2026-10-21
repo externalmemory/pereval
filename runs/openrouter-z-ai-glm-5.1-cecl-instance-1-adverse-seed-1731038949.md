@@ -86,7 +86,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+cd /devdata/nvme1n1/zqlai/qwen25-cache/turn43/predictions && ls -la data/ 2>/dev/null; echo "---"; cat data/policy.json 2>/dev/null; echo "---"; head -5 data/history.csv 2>/dev/null; echo "---"; head -5 data/forecast.csv 2>/dev/null; echo "---"; head -5 data/pools.csv 2>/dev/null
 ```
 
 ## [3] tool
@@ -119,7 +119,7 @@ A4,A,9498719.0,40
 **tool call: bash**
 
 ```
-
+find / -name "policy.json" 2>/dev/null | head -5; echo "---"; find / -name "pools.csv" 2>/dev/null | head -5
 ```
 
 ## [5] tool
@@ -134,7 +134,7 @@ A4,A,9498719.0,40
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -la; echo "---"; wc -l data/*.csv; echo "---"; cat data/policy.json; echo "---"; head -10 data/history.csv; echo "---"; head -10 data/forecast.csv; echo "---"; head -10 data/pools.csv
 ```
 
 ## [7] tool
@@ -188,7 +188,15 @@ C1,C,4152412.0,4
 **tool call: bash**
 
 ```
-
+cd /workspace && cat data/pools.csv; echo "==="; cat data/forecast.csv; echo "==="; python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+print(h['segment'].value_counts())
+print('Total rows:', len(h))
+print(h.groupby('segment').size())
+print('Quarters per segment:')
+print(h.groupby('segment')['quarter'].agg(['min','max','count']))
+"
 ```
 
 ## [9] tool
@@ -2203,7 +2211,158 @@ Let me write a complete, self-contained script and generate the first prediction
 **tool call: bash**
 
 ```
+cat > /workspace/solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import statsmodels.api as sm
+import json
+import time
 
+def main():
+    # Load data
+    h = pd.read_csv('data/history.csv')
+    f = pd.read_csv('data/forecast.csv')
+    pools_df = pd.read_csv('data/pools.csv')
+    with open('data/policy.json') as fp:
+        policy = json.load(fp)
+
+    F = policy['forecast_quarters']  # 8
+    R = policy['reversion_quarters']  # 4
+    rho = policy['rho']  # 0.02
+    pers = policy['persistence']  # 0.6
+    alpha = 1 - policy['interval_level']  # 0.05
+    T_max = int(pools_df['remaining_quarters'].max())  # 40
+
+    # === Step 1: Fit models per segment ===
+    # PD: probit (Phi^{-1}(PD) ~ 1 + unemployment + hpi_growth)
+    # LGD: linear (LGD ~ 1 + unemployment + hpi_growth)
+    # Prepay: linear (prepay ~ 1 + unemployment + hpi_growth)
+    seg_models = {}
+    for seg in ['A', 'B', 'C']:
+        d = h[h.segment == seg].copy()
+        X = sm.add_constant(d[['unemployment', 'hpi_growth']].values)
+        pd_probit = stats.norm.ppf(np.clip(d['pd'].values, 1e-10, 1 - 1e-10))
+        m_pd = sm.OLS(pd_probit, X).fit()
+        m_lgd = sm.OLS(d['lgd'].values, X).fit()
+        m_pp = sm.OLS(d['prepay'].values, X).fit()
+        seg_models[seg] = {
+            'pd_model': m_pd, 'lgd_model': m_lgd, 'pp_model': m_pp,
+            'hist_mean_pd': d['pd'].mean(),
+            'hist_mean_lgd': d['lgd'].mean(),
+            'hist_mean_pp': d['prepay'].mean(),
+        }
+
+    # === Step 2: Build rate paths ===
+    # Quarters 1..F: forecast rates from model
+    # Quarters F+1..F+R: blend from last forecast to hist mean
+    # Quarters F+R+1..T_max: hold at hist mean
+    rate_paths = {}
+    for seg in ['A', 'B', 'C']:
+        s = seg_models[seg]
+        Xf = sm.add_constant(f[['unemployment', 'hpi_growth']].values)
+        pd_fc = np.clip(stats.norm.cdf(s['pd_model'].predict(Xf)), 1e-10, 1 - 1e-10)
+        lgd_fc = np.clip(s['lgd_model'].predict(Xf), 0, 1)
+        pp_fc = np.clip(s['pp_model'].predict(Xf), 0, 1)
+
+        pd_p = np.zeros(T_max)
+        lgd_p = np.zeros(T_max)
+        pp_p = np.zeros(T_max)
+        pd_p[:F] = pd_fc
+        lgd_p[:F] = lgd_fc
+        pp_p[:F] = pp_fc
+
+        for i in range(R):
+            w = (i + 1) / R
+            q = F + i
+            if q < T_max:
+                pd_p[q] = (1 - w) * pd_fc[-1] + w * s['hist_mean_pd']
+                lgd_p[q] = (1 - w) * lgd_fc[-1] + w * s['hist_mean_lgd']
+                pp_p[q] = (1 - w) * pp_fc[-1] + w * s['hist_mean_pp']
+        for q in range(F + R, T_max):
+            pd_p[q] = s['hist_mean_pd']
+            lgd_p[q] = s['hist_mean_lgd']
+            pp_p[q] = s['hist_mean_pp']
+
+        rate_paths[seg] = {'pd': pd_p, 'lgd': lgd_p, 'pp': pp_p}
+
+    # === Step 3: Monte Carlo Simulation ===
+    N_sim = 500000
+    np.random.seed(42)
+    sqrt_rho = np.sqrt(rho)
+    sqrt_1mrho = np.sqrt(1 - rho)
+    sqrt_1m_pers2 = np.sqrt(1 - pers ** 2)
+
+    # Precompute Phi^{-1}(mean PD) for each segment
+    seg_probit_mean = {}
+    for seg in ['A', 'B', 'C']:
+        seg_probit_mean[seg] = stats.norm.ppf(rate_paths[seg]['pd'])
+
+    # Generate z paths and shocked PD for each segment
+    seg_shocked_pd = {}
+    for seg in ['A', 'B', 'C']:
+        z = np.zeros((N_sim, T_max))
+        z[:, 0] = np.random.randn(N_sim)
+        for q in range(1, T_max):
+            z[:, q] = pers * z[:, q - 1] + sqrt_1m_pers2 * np.random.randn(N_sim)
+        probit_mean = seg_probit_mean[seg]
+        shocked = stats.norm.cdf((probit_mean[np.newaxis, :] + sqrt_rho * z) / sqrt_1mrho)
+        seg_shocked_pd[seg] = np.clip(shocked, 0, 1)
+
+    # === Step 4: Compute losses per pool ===
+    results = []
+    for _, pool in pools_df.iterrows():
+        seg = pool['segment']
+        B = pool['balance']
+        T = int(pool['remaining_quarters'])
+
+        shocked_pd = seg_shocked_pd[seg][:, :T]  # (N_sim, T)
+        lgd = rate_paths[seg]['lgd'][:T]
+        pp = rate_paths[seg]['pp'][:T]
+
+        # Balance recursion
+        surviving = np.ones(N_sim)
+        total_loss = np.zeros(N_sim)
+        for q in range(T):
+            beg_principal = B * (1 - q / T)
+            pd_q = shocked_pd[:, q]
+            lgd_q = lgd[q]
+            pp_q = pp[q]
+            loss_q = surviving * pd_q * lgd_q * beg_principal
+            total_loss += loss_q
+            surviving *= (1 - pd_q) * (1 - pp_q)
+
+        ecl = np.mean(total_loss)
+        ecl_lower = np.percentile(total_loss, 100 * alpha / 2)
+        ecl_upper = np.percentile(total_loss, 100 * (1 - alpha / 2))
+
+        # Enforce bounds
+        ecl = float(np.clip(ecl, 0, B))
+        ecl_lower = float(np.clip(ecl_lower, 0, B))
+        ecl_upper = float(np.clip(ecl_upper, 0, B))
+        ecl_lower = min(ecl_lower, ecl_upper)
+        ecl_upper = max(ecl_lower, ecl_upper)
+
+        results.append({
+            'pool_id': pool['pool_id'],
+            'ecl': ecl,
+            'ecl_lower': ecl_lower,
+            'ecl_upper': ecl_upper,
+        })
+
+    # Write predictions
+    out = pd.DataFrame(results)
+    out.to_csv('predictions.csv', index=False)
+    print(out.to_string())
+    print(f"\nPortfolio ECL: {out['ecl'].sum():.0f}")
+    print(f"Written to predictions.csv")
+
+if __name__ == '__main__':
+    t0 = time.time()
+    main()
+    print(f"Total time: {time.time()-t0:.1f}s")
+PYEOF
+cd /workspace && python3 solution.py
 ```
 
 ## [27] tool
@@ -4734,7 +4893,168 @@ Good - no significant lag structure or time trends. The model with current macro
 **tool call: bash**
 
 ```
+cat > /workspace/solution_final.py << 'PYEOF'
+"""
+Lifetime ECL estimation for closed-end loan pools.
+- PD: probit model (Phi^{-1}(PD) ~ unemployment + hpi_growth) per segment
+- LGD: linear model per segment
+- Prepay: logit model per segment
+- Reversion: linear blend from last forecast to historical mean
+- Simulation: probit AR(1) systemic shocks on PD, Monte Carlo ECL and 95% intervals
+"""
+import pandas as pd
+import numpy as np
+from scipy import stats
+import statsmodels.api as sm
+import json
+import time
 
+def main():
+    # Load data
+    h = pd.read_csv('data/history.csv')
+    f = pd.read_csv('data/forecast.csv')
+    pools_df = pd.read_csv('data/pools.csv')
+    with open('data/policy.json') as fp:
+        policy = json.load(fp)
+
+    F = policy['forecast_quarters']   # 8
+    R = policy['reversion_quarters']  # 4
+    rho = policy['rho']               # 0.02
+    pers = policy['persistence']      # 0.6
+    alpha = 1 - policy['interval_level']  # 0.05
+    T_max = int(pools_df['remaining_quarters'].max())  # 40
+    segments = ['A', 'B', 'C']
+
+    # === Step 1: Fit models per segment ===
+    seg_models = {}
+    hist_means = {}
+    for seg in segments:
+        d = h[h.segment == seg].copy()
+        X = sm.add_constant(d[['unemployment', 'hpi_growth']].values)
+        # PD: probit
+        m_pd = sm.OLS(stats.norm.ppf(np.clip(d['pd'].values, 1e-10, 1 - 1e-10)), X).fit()
+        # LGD: linear
+        m_lgd = sm.OLS(d['lgd'].values, X).fit()
+        # Prepay: logit
+        m_pp = sm.OLS(np.log(d['prepay'].values / (1 - d['prepay'].values)), X).fit()
+        seg_models[seg] = {'pd': m_pd, 'lgd': m_lgd, 'pp': m_pp}
+        hist_means[seg] = {
+            'pd': d['pd'].mean(),
+            'lgd': d['lgd'].mean(),
+            'pp': d['prepay'].mean(),
+        }
+
+    # === Step 2: Build mean rate paths ===
+    # Q 1..F: forecast (model on forecast macro)
+    # Q F+1..F+R: linear blend from last forecast value to hist mean
+    #   weight on history at post-forecast quarter i (0-based): (i+1)/R
+    # Q F+R+1..T_max: hold at hist mean
+    rate_paths = {}
+    for seg in segments:
+        s = seg_models[seg]
+        Xf = sm.add_constant(f[['unemployment', 'hpi_growth']].values)
+        pd_fc = np.clip(stats.norm.cdf(s['pd'].predict(Xf)), 1e-10, 1 - 1e-10)
+        lgd_fc = np.clip(s['lgd'].predict(Xf), 0, 1)
+        pp_fc = np.clip(1.0 / (1.0 + np.exp(-s['pp'].predict(Xf))), 1e-10, 1 - 1e-10)
+
+        pd_p = np.zeros(T_max)
+        lgd_p = np.zeros(T_max)
+        pp_p = np.zeros(T_max)
+        pd_p[:F] = pd_fc
+        lgd_p[:F] = lgd_fc
+        pp_p[:F] = pp_fc
+
+        for i in range(R):
+            w = (i + 1) / R
+            q = F + i
+            if q < T_max:
+                pd_p[q] = (1 - w) * pd_fc[-1] + w * hist_means[seg]['pd']
+                lgd_p[q] = (1 - w) * lgd_fc[-1] + w * hist_means[seg]['lgd']
+                pp_p[q] = (1 - w) * pp_fc[-1] + w * hist_means[seg]['pp']
+        for q in range(F + R, T_max):
+            pd_p[q] = hist_means[seg]['pd']
+            lgd_p[q] = hist_means[seg]['lgd']
+            pp_p[q] = hist_means[seg]['pp']
+
+        rate_paths[seg] = {'pd': pd_p, 'lgd': lgd_p, 'pp': pp_p}
+
+    # === Step 3: Monte Carlo simulation ===
+    N_sim = 1000000
+    np.random.seed(42)
+    sqrt_rho = np.sqrt(rho)
+    sqrt_1mrho = np.sqrt(1 - rho)
+    sqrt_1m_pers2 = np.sqrt(1 - pers ** 2)
+
+    # Precompute Phi^{-1}(mean PD)
+    probit_mean = {seg: stats.norm.ppf(rate_paths[seg]['pd']) for seg in segments}
+
+    # Generate z paths and shocked PD per segment
+    seg_shocked_pd = {}
+    for seg in segments:
+        z = np.zeros((N_sim, T_max))
+        z[:, 0] = np.random.randn(N_sim)
+        for q in range(1, T_max):
+            z[:, q] = pers * z[:, q - 1] + sqrt_1m_pers2 * np.random.randn(N_sim)
+        pm = probit_mean[seg]
+        shocked = stats.norm.cdf((pm[np.newaxis, :] + sqrt_rho * z) / sqrt_1mrho)
+        seg_shocked_pd[seg] = np.clip(shocked, 0, 1)
+
+    # === Step 4: Compute losses per pool ===
+    results = []
+    for _, pool in pools_df.iterrows():
+        seg = pool['segment']
+        B = float(pool['balance'])
+        T = int(pool['remaining_quarters'])
+
+        shocked_pd = seg_shocked_pd[seg][:, :T]
+        lgd = rate_paths[seg]['lgd'][:T]
+        pp = rate_paths[seg]['pp'][:T]
+
+        # Balance recursion: for each simulation path
+        surviving = np.ones(N_sim)
+        total_loss = np.zeros(N_sim)
+        for q in range(T):
+            beg_principal = B * (1.0 - q / T)
+            pd_q = shocked_pd[:, q]
+            lgd_q = lgd[q]
+            pp_q = pp[q]
+            # Default occurs first on beginning principal
+            total_loss += surviving * pd_q * lgd_q * beg_principal
+            # Nondefaulting loans may prepay; remaining make scheduled payment
+            surviving *= (1.0 - pd_q) * (1.0 - pp_q)
+
+        ecl = float(np.mean(total_loss))
+        ecl_lower = float(np.percentile(total_loss, 100 * alpha / 2))
+        ecl_upper = float(np.percentile(total_loss, 100 * (1 - alpha / 2)))
+
+        # Enforce bounds
+        ecl = np.clip(ecl, 0.0, B)
+        ecl_lower = np.clip(ecl_lower, 0.0, B)
+        ecl_upper = np.clip(ecl_upper, 0.0, B)
+        ecl_lower = min(ecl_lower, ecl_upper)
+        ecl_upper = max(ecl_lower, ecl_upper)
+
+        results.append({
+            'pool_id': pool['pool_id'],
+            'ecl': ecl,
+            'ecl_lower': ecl_lower,
+            'ecl_upper': ecl_upper,
+        })
+
+    # Write predictions
+    out = pd.DataFrame(results)
+    out.to_csv('predictions.csv', index=False)
+    print(out.to_string())
+    print(f"\nPortfolio ECL: {out['ecl'].sum():,.0f}")
+    print(f"Portfolio balance: {pools_df['balance'].sum():,.0f}")
+    print(f"Portfolio ECL rate: {out['ecl'].sum()/pools_df['balance'].sum()*100:.4f}%")
+
+if __name__ == '__main__':
+    t0 = time.time()
+    main()
+    print(f"Total time: {time.time()-t0:.1f}s")
+PYEOF
+cd /workspace && python3 solution_final.py
 ```
 
 ## [43] tool
@@ -5120,7 +5440,7 @@ Let me do a final check on the CSV format and consider if any refinements are ne
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && echo "---" && head -1 predictions.csv
 ```
 
 ## [47] tool
@@ -5807,7 +6127,19 @@ All checks pass. The Monte Carlo ECL is correctly lower than the mean-path ECL (
 **tool call: bash**
 
 ```
-
+cd /workspace && wc -l predictions.csv && echo "---" && cat predictions.csv && echo "---" && python3 -c "
+import pandas as pd, numpy as np
+p = pd.read_csv('predictions.csv')
+pools = pd.read_csv('data/pools.csv')
+print('Columns:', list(p.columns))
+print('Rows:', len(p))
+print('Pool IDs match:', list(p['pool_id']) == list(pools['pool_id']))
+print('All finite:', np.all(np.isfinite(p.iloc[:,1:].values)))
+m = p.merge(pools, on='pool_id')
+print('All 0<=ecl<=B:', np.all((m.ecl>=0) & (m.ecl<=m.balance)))
+print('All 0<=lower<=upper<=B:', np.all((m.ecl_lower>=0) & (m.ecl_upper<=m.balance) & (m.ecl_lower<=m.ecl_upper)))
+print('All lower<=ecl<=upper:', np.all((m.ecl_lower<=m.ecl) & (m.ecl<=m.ecl_upper)))
+"
 ```
 
 ## [51] tool

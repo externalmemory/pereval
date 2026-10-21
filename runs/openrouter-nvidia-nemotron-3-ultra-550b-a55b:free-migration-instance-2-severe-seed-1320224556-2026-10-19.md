@@ -117,7 +117,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -5097,7 +5097,7 @@ The files have been generated successfully. Let me verify the output format once
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [45] tool
@@ -5134,7 +5134,7 @@ quarter,state,share
 **tool call: bash**
 
 ```
-
+cat matrices.csv
 ```
 
 ## [47] tool
@@ -5218,7 +5218,7 @@ quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+cat backtest.csv
 ```
 
 ## [49] tool

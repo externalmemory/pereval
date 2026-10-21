@@ -111,7 +111,7 @@ The re-runs move cells hard, and mostly not because of the scorer:
 | Claude Haiku 4.5 | 575 | **1850** (re-scored, not re-run) |
 | GLM-5.1 | 321 | **436** |
 | mimo-v2.5 | 2438 | 2426 |
-| ling-3.0-flash | — | 3309 |
+| ling-3.0-flash | n/a | 3309 |
 
 nemotron-3-super improving 7.4x on byte-identical instances is not a scoring correction; it is the same run-to-run instability the reproducibility study measured, reappearing in the column that was supposed to be getting cleaner. Only Haiku's move is attributable to the scorer, because it was re-scored rather than re-run. The lesson is that re-running to fix a scoring defect also resamples the agent, so it cannot separate the two, and a column rebuilt this way inherits the instability along with the fix.
 
@@ -141,20 +141,24 @@ Two rules follow for any future paid run. Estimate from a run under the **same**
 
 ## What Completing One Row Did to the Aggregate
 
-Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. Completing K3 took it to p = 0.037, and adding a complete deepseek-v4-flash-0731 row took it to **p = 0.004 on the spread and p = 0.007 on the range** over ten ranked rows.
+Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. Completing K3 took it to p = 0.037, and adding a complete deepseek-v4-flash-0731 row took it to p = 0.004 on the spread and p = 0.007 on the range, measured over the six columns the table then had. Adding the CECL column took the spread to p = 0.001 and the range to p = 0.016, and completing a minimax-m3.1-flash:free row takes them to **p < 0.0001 on the spread and p = 0.002 on the range** over ten ranked rows and seven columns.
 
 That is not the aggregate becoming trustworthy. Dropping rows one at a time shows where the signal lives:
 
 | Rows tested | p (spread) |
 | --- | --- |
-| all ten | 0.004 |
-| without deepseek-0731 | 0.037 |
-| without Kimi K3 | 0.090 |
-| without both | 0.561 |
+| all ten | < 0.0001 |
+| without minimax-m3.1-flash | 0.0015 |
+| without deepseek-0731 | 0.0001 |
+| without Kimi K3 | 0.0003 |
+| without minimax and K3 | 0.052 |
+| without all three of the top rows | 0.558 |
 
-K3 alone still carries a detectable signal; deepseek alone does not quite reach one; without both, the remaining eight rows are as unordered as they were at the start. So the column detects that the top one or two models are genuinely different, not that anything below them is ranked. Read as a ranking of the eight rows beneath them, it is still noise.
+Dropping any single row leaves a detectable signal, which is a change from the six-column table where K3 carried it almost alone. Dropping the top two takes the spread to the edge of significance, and dropping the top three returns the remaining seven rows to the noise they started as. So the column detects that the top two or three models are genuinely different, not that anything below them is ranked. Read as a ranking of the seven rows beneath them, it is still noise.
 
-The positive finding is that the suite has resolving power at the top of the range, which was not previously demonstrable. Every model measured before this clustered within a factor of a few on the orbital tasks and none beat the degenerate answer on flyby. K3 is 3.3 on three-body against a next-best of 436, and 50 on flyby against 292, beating the degenerate answer on all three of its flyby runs. Those are gaps this suite can resolve, and until now nothing had produced one.
+Ranks are recomputed from the cells for each subset rather than deleted from a fixed rank matrix, since dropping a row re-ranks the rows beneath it. Ties are given the average of the ranks they span, which is the rule the published mean-rank column was computed with.
+
+The positive finding is that the suite has resolving power at the top of the range, which was not previously demonstrable. Every model measured before this clustered within a factor of a few on the orbital tasks and none beat the degenerate answer on flyby. K3 is 3.3 on three-body against a next-best of 164, and 50 on flyby against 292, beating the degenerate answer on all three of its flyby runs. Those are gaps this suite can resolve, and until now nothing had produced one.
 
 That the same model is unremarkable on CCAR and quantile is not a limitation and not news. CCAR was built tractable on purpose, "included deliberately as a contrast to three-body", and the per-task doc has recorded since the first cast that "CCAR is tractable even for cheap models". A frontier model failing to separate on a task designed to be solvable by cheap ones is the difficulty gradient working as intended. The genuine caveat about the aggregate leaning on the physics tasks is a property of the task mix, and is covered under [The Overall Rank Depends on the Task Mix](#the-overall-rank-depends-on-the-task-mix).
 
@@ -163,6 +167,10 @@ That the same model is unremarkable on CCAR and quantile is not a limitation and
 A model id is not a guarantee of which weights answered. Kimi K3's row was measured across two serving paths: CCAR, ballistic, two-body and three-body on OpenRouter's paid endpoint, and flyby and quantile on tokenrouter's free `kimi-k3-free`, after the paid budget ran out. The two were compared on one matched instance, two-body instance-0, scoring 0.023 free against 0.024 paid, which is consistent with the same model but is a single comparison rather than a proof.
 
 Nothing in the harness detects a provider silently substituting a quantized or distilled variant, changing a default sampling parameter, or routing to a different build under the same name. Cells assembled from more than one endpoint are therefore weaker evidence than cells from one, and the split is recorded per row rather than averaged away. This is a general property of evaluating through aggregators, not a defect of any particular one.
+
+**One of those two endpoints no longer exists.** As of 2026-10-19, `moonshotai/kimi-k3-free` returns 503 `model_not_found` on tokenrouter: it has been dropped from the catalog. The flyby and quantile cells in Kimi K3's row are therefore not reproducible on the path that produced them, and the single matched comparison that justified mixing the two paths cannot be repeated or extended. Nothing about those two cells changes, but their standing does: they are now an archived measurement rather than a checkable one, and the right response if they are ever disputed is to re-measure the whole row on one surviving endpoint rather than to defend the mix.
+
+**Free tiers are a scheduling constraint as well as a provenance one.** The same probe found every tokenrouter model, including the ids that advertise themselves as free, returning 403 `insufficient_user_quota` against an account at $0.00. A free model id does not imply a servable model id, so the practical consequence is that a model can be listed, be free, and still be unusable for a row, and the surviving path has to be found by a live call rather than from a price list.
 
 ## Dropping a Row Costs Aggregate Power
 
@@ -181,6 +189,72 @@ None of this is evidence about any model. It is a property of the estimator: a r
 
 The archived laguna measurements are kept in the per-task documents. Only its summary row is gone.
 
+## The Transcript Archive Was Hollow
+
+Every reported number in this repository is auditable from `runs/`, which is the point of saving a markdown transcript for each sample rather than only a score. For most of the project's life that archive was missing the thing it exists to preserve.
+
+`scripts/save_transcript.py` read a tool call's body from `code`, `cmd` or `answer`. Inspect's own `bash()` and `python()` tools name that argument `command`, which was not on the list, and the lookup fell through to the empty string without complaint. In one migration run, 259 of 281 calls archived as an empty code block. Swept across the whole archive, **291 of 365 transcripts** were affected, on every task. What survived was each model's reasoning with the work it actually did deleted, which reads as a complete record and is not one.
+
+The defect was found by trying to answer a question the archive was supposed to answer, namely which modelling approaches the agents used, and discovering the answer had to be rebuilt from the `.eval` logs instead.
+
+| | transcripts |
+| --- | ---: |
+| reserialized from a surviving log | 151 |
+| already complete | 41 |
+| still hollow, source log deleted | 144 |
+
+The 151 were overwritten in place rather than saved as a new generation, which is a deliberate exception to the no-clobber rule in that script. The rule exists because model, task, instance and seed identify a cell and not a run, so re-saving could destroy the record of a different attempt. That risk does not apply when the input is the same `.eval` file and the output differs only by containing more of it; each rewrite was matched to its log by comparing content with tool bodies blanked, not by trusting the filename. The repaired files grew from 20.0M to 24.6M, so about a fifth of each run had been missing.
+
+The 144 that remain are unrecoverable, and they are concentrated in the older tasks: 39 CCAR, 26 quantile, 22 ballistic, 19 two-body, 19 flyby, 18 three-body, 1 CECL. No migration transcript is among them. For those cells the archived reasoning is all there is, and a claim about what the agent computed cannot be checked against the code it ran.
+
+## The Flyby Task Discarded Its Repeats Argument
+
+`pereval/tasks/orbit/task.py@hyperbolic` accepted `-T repeats=3` and built its `Task` without `epochs`. Two-body and three-body get theirs from a shared `_build` helper; the flyby constructs its own `Task` and omitted the line, so the argument was accepted, documented in its own docstring, and then thrown away.
+
+The failure was silent in every channel a run reports through. The dataset was the right length for a single draw, the eval finished with `status: success`, and the stability reducer still emitted `runs` and `regret_spread` from one score each, so the summary read `runs 1.000, regret_spread 0.000`. A spread of zero is the signature of a model that has collapsed to a deterministic method, which is the worst behaviour these tasks exist to expose, and here it meant the opposite: nothing had been repeated at all. The only unambiguous witness is `eval.config.epochs` in the log header, which read 1 where the three completed runs beside it read 3.
+
+It cost a seven hour run, 363M tokens, five samples that are valid single draws and void as a cell. No archived number is affected, because no flyby cell in this repository was ever measured with `repeats`: the column was always three separate instances at one draw each, which is the convention discussed in the next section. The regression test is a cross-task invariant rather than a test of this task, since the defect was a task building its own `Task` and forgetting a shared argument, and nothing stops the next task from doing the same.
+
+## The Worst Case Needs the Same Sample Count in Every Row of a Column
+
+Nothing in the scores table is compared across columns, and it says so: the cells are not commensurable and the mean rank is a Borda count computed within each column. So a difference in how two columns were measured costs nothing. A difference between two rows of the **same** column is the whole ranking.
+
+That is what the MiniMax row introduced. The table's rule is the worst-case regret over at least three runs, which is not a definition, because the maximum of a heavy-tailed sample grows with the size of the sample. Every archived row in the mechanism columns is the maximum over **three samples**, three instances at one draw each, which is what the per-task docs mean by their `runs` column; CCAR's is the maximum over eight, one per instance. The MiniMax row was measured with `-T repeats=3` on five instances, so its maximum is over fifteen, and twenty four on CCAR. Same rule, three to eight times the exposure, and the bias runs one way.
+
+Three draws per instance are enough to measure the size of it, because the old convention can be reconstructed from the new measurement: average the maximum over one draw per instance across every combination of draws, and the result estimates what a three-sample run would have produced.
+
+| | over every sample | three-sample convention | ratio | samples |
+| --- | ---: | ---: | ---: | ---: |
+| CCAR | 0.0910 | 0.0802 | 1.13 | 24 |
+| CECL | 1.16e-05 | 6.53e-06 | 1.78 | 9 |
+| Ballistic | 11.04 | 4.31 | 2.56 | 15 |
+| Two-body | 0.1017 | 0.0694 | 1.47 | 15 |
+| Three-body | 361.2 | 164.2 | 2.20 | 15 |
+| Flyby | 1891 | 361.2 | 5.24 | 15 |
+| Quantile | 0.0756 | 0.0699 | 1.08 | 9 |
+
+The size of the correction is not uniform and is not predictable from the column: it runs from 1.08 on quantile, where the three draws of an instance sit within a few percent of each other, to 5.24 on the flyby, where one instance returned 1891 on its second draw against 367 and 271 on its other two, and a second instance spread 648, 88 and 101 across its three.
+
+Two columns would have been ranked wrongly. On two-body the raw maximum sits third in the column behind GLM-5.1 and Kimi K3, and the matched cell is first ahead of both. On the flyby the raw 1891 would have placed ninth of ten ranked rows, worse than every model but the naive baseline, where the matched 361 places third. A rank inversion caused by sample count alone is not a caveat, it is a wrong answer, and it lands in the mean rank because the Borda count is within-column.
+
+**So the cells are published on the three-sample convention, matched to the rows they sit beside, with the raw count and the full-sample maximum in the row's footnote.** The alternative, publishing the fifteen-sample maximum because the stated rule technically permits it, would have been a measurement artifact dressed as a result. The repeated draws are not wasted: they are what makes the correction possible and what the `regret_spread` column reports.
+
+The quantile column needed more than a rescaling. Its archived runs are three separate evals at `-T n_instances=1` on base seeds 1, 2 and 3, which the ids in `runs/` confirm: `quantile-0-seed-1835504127`, `-2834126987` and `-1576890651` are the first instance of `SeedSequence(1)`, `(2)` and `(3)`. A run at `-T n_instances=8` on base seed 1 draws eight instances of which exactly one is in that set, so it is not an over-sampled version of the column, it is a different population. It was relaunched as three one-sample runs on the archived seeds, which completed 9 of 9 and produced the matched cell above. The eight-instance design is the better one and a future column should use it, but it cannot be mixed into this one.
+
+That relaunch cost the comparison something else. All three runs were given a four-hour per-sample wall clock, and seven of the nine samples hit it, including the one that sets the raw maximum, whereas none of the archived quantile runs was clock-bound: their limits were 7200, 36000, 72000 and 108000 seconds and no sample reached them. So the quantile cell is an upper bound on this model's regret rather than a measurement of it, and it is the one cell in the row whose caveat is about the budget rather than the sample count. The flyby needs no such note: it time-capped three of fifteen samples and archived flyby rows time-capped too, and the sample that sets its raw maximum ran to completion.
+
+The general repair is to re-measure the whole table at a fixed instance count and a fixed draw count, which is ten models by seven tasks and is not affordable here. Until then the rule in the table header carries its sample count explicitly, so a row measured any other way is visibly a different statistic rather than silently one.
+
+## A Lookahead Is Left in Place in the CCAR Macro Columns
+
+The CCAR generator builds `sp500` and `djia` by standardising NASDAQ returns, and that standardisation runs over the whole simulated path, stress window included. So the severity of the future scenario sets the scale of two macro columns throughout the published history. Holding the seed and changing only the scenario label moves 49 of 80 history rows.
+
+It is a lookahead defect: a published historical series depends on data from after the history ends. Nothing in the CCAR task can exploit it, because an instance there carries one scenario and an agent has nothing to compare against, and the two columns are collinear distractors rather than drivers of the response law. But it is the kind of thing that, found in a bank's feature pipeline, would be a finding regardless of whether anyone could trade on it.
+
+It is fixed only where it bites. The migration task publishes one history alongside three scenario paths, and there the defect is a contradiction rather than an inefficiency: the three would disagree about the past, and the size of the discontinuity at the join would encode the severity. `_simulate` therefore takes a `sibling_ref` argument and migration passes `pre_stress`, while the default stays at the whole-path behaviour.
+
+The reason the default stays is archive preservation, not a judgement that the lookahead is acceptable. Flipping it moves two published columns on every archived CCAR instance, which would void the completed CCAR column of the README table and buy that task nothing. The cost of that choice is that a reader of CCAR's macro history is reading a file with a known defect in two of its nine columns, and that this page is the only place saying so.
+
 ## Contamination
 
 The repo is public, so anything fixed in it can enter training corpora. The four generated tasks (CCAR, ballistic, orbital) therefore draw fresh instances per run from a seeded, public generator with per-run randomized parameters (orbital elements, ballistic loads, macro draws, and the CCAR response law including which macros drive it), so there are no fixed answers to memorize and every score is computed against freshly drawn ground truth. The residual exposure is structural: a model could learn the generator's functional form from the source. That is largely defanged by design, because knowing the form does not reveal an instance's parameters, which must still be estimated from the provided data, which is the task itself.
@@ -191,7 +265,7 @@ The quantile task is the exception and needs its own argument, because its data 
 
 ## Sample Size
 
-Every score table reports at least three runs per model as mean ± 2 SD, after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p = 0.004 on the spread of mean ranks), but only because the top one or two rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What Completing One Row Did to the Aggregate](#what-completing-one-row-did-to-the-aggregate) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
+Every score table reports at least three runs per model as mean ± 2 SD, after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p < 0.0001 on the spread of mean ranks), but only because the top two or three rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What Completing One Row Did to the Aggregate](#what-completing-one-row-did-to-the-aggregate) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
 
 ## Run-to-Run Reproducibility
 

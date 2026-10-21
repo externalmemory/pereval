@@ -56,7 +56,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+cd /root 2>/dev/null; find . -maxdepth 3 -name '*.csv' 2>/dev/null; echo '---'; ls -la
 ```
 
 ## [3] tool
@@ -75,7 +75,7 @@ drwxr-xr-x 1 root root 4096 Aug 11 05:23 ..
 **tool call: bash**
 
 ```
-
+cd /; ls -la; echo '---'; find / -maxdepth 4 -name '*.csv' 2>/dev/null | head
 ```
 
 ## [5] tool
@@ -114,7 +114,7 @@ drwxr-xr-x   1 root root 4096 Aug 11 05:23 workspace
 **tool call: bash**
 
 ```
-
+cd /workspace; cat data/train.csv; echo '====SCENARIO===='; cat data/scenario.csv
 ```
 
 ## [7] tool
@@ -238,7 +238,18 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+print(tr.shape, sc.shape)
+print(tr.describe())
+print('NULLS per col:')
+print(tr.isnull().sum())
+# scenario ranges vs train ranges
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    print(c, 'train[min,max]=', tr[c].min(), tr[c].max(), 'scenario[min,max]=', sc[c].min(), sc[c].max())
+EOF
 ```
 
 ## [9] tool
@@ -302,7 +313,25 @@ cpi train[min,max]= 103.8827 193.1457 scenario[min,max]= 185.937 192.3311
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+# correlation of default_rate with features
+d = tr.copy()
+print("corr with default_rate:")
+print(d[['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']].corrwith(d['default_rate']))
+print()
+print("corr with logit(default):")
+from scipy.special import logit
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+print(d[['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']].corrwith(d['logit']))
+print()
+# log of stock indices corr
+for c in ['sp500','djia','nasdaq']:
+    print(c, 'log corr with logit:', np.corrcoef(np.log(d[c]), d['logit'])[0,1])
+print('log hpi corr logit:', np.corrcoef(np.log(d['hpi']), d['logit'])[0,1])
+print('log gdp corr logit:', np.corrcoef(np.log(d['gdp']), d['logit'])[0,1])
+EOF
 ```
 
 ## [11] tool
@@ -375,7 +404,32 @@ log gdp corr logit: 0.25970816989081236
 **tool call: bash**
 
 ```
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d10 = d[d['quarter']>=10].copy()
+print('n quarters >=10:', len(d10))
 
+import statsmodels.api as sm
+# Model A: bbb_spread + unemployment
+for Xcols in [
+    ['bbb_spread','unemployment'],
+    ['bbb_spread','unemployment','vix'],
+    ['bbb_spread','unemployment','vix','log(gdp/hpi)'],
+    ['bbb_spread','vix'],
+    ['unemployment','bbb_spread','cpi'],
+]:
+    X = d10[Xcols].copy()
+    X['const']=1
+    y = d10['logit']
+    m = sm.OLS(y, X).fit()
+    print('\n', Xcols, 'R2=', m.rsquared, 'adjR2=', m.rsquared_adj)
+    print(m.params.round(4).to_dict())
+    print('pvals:', m.pvalues.round(3).to_dict())
+EOF
 ```
 
 ## [13] tool
@@ -433,7 +487,33 @@ pvals: {'bbb_spread': 0.0, 'unemployment': 0.389, 'vix': 0.058, 'const': 0.0}
 **tool call: bash**
 
 ```
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit
+from scipy.stats import pearsonr
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d10 = d[d['quarter']>=10].copy()
 
+def r(x,y):
+    m=~np.isnan(x)&~np.isnan(y)
+    return pearsonr(x[m],y[m])[0]
+
+feats = ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+for c in feats:
+    x=d10[c]; y=d10['logit']
+    print(f"{c:12s} raw r={r(x,y):.3f}", end='')
+    if x.min()>0:
+        print(f"  log r={r(np.log(x),y):.3f}", end='')
+    # change vs previous
+    print()
+# also autocorrelation of logit
+print('logit autocorr lags1-4:', [pearsonr(d['logit'].values[i:], d['logit'].values[:-i])[0] if len(d['logit'].values[i:])==len(d['logit'].values[:-i]) else np.nan for i in range(1,5)])
+print('default rate autocorr:', [pd.Series(d['default_rate'].values).autocorr(i) for i in range(1,5)])
+# bbb_spread vs default scatter simple
+print(d10[['quarter','bbb_spread','unemployment','vix','default_rate']].sort_values('quarter').tail(20).to_string())
+EOF
 ```
 
 ## [15] tool
@@ -493,7 +573,46 @@ default rate autocorr: [np.float64(0.3829266036850162), np.float64(0.33993213974
 **tool call: bash**
 
 ```
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit, expit
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d10 = d[d['quarter']>=10].copy()
+sc['logit_l'] = np.log(sc['bbb_spread'])
 
+def fit(Xcols):
+    X = d10[Xcols].copy(); X['const']=1
+    y = d10['logit']
+    m = sm.OLS(y,X).fit()
+    return m
+
+for Xcols in [
+    ['log(bbb)'],
+    ['log(bbb)','unemployment'],
+    ['log(bbb)','unemployment','log(vix)'],
+    ['log(bbb)','log(vix)'],
+    ['log(bbb)','unemployment','log(vix)','log(gdp)'],
+]:
+    dd=d10.copy()
+    dd['log(bbb)']=np.log(dd['bbb_spread'])
+    dd['log(vix)']=np.log(dd['vix'])
+    dd['log(gdp)']=np.log(dd['gdp'])
+    m=fit(Xcols)
+    print('\n',Xcols,'R2=%.3f adj=%.3f'%(m.rsquared,m.rsquared_adj))
+    print(m.params.round(3).to_dict())
+    print('pvals',m.pvalues.round(3).to_dict())
+    # scenario prediction
+    s=sc.copy()
+    s['log(bbb)']=np.log(s['bbb_spread']); s['log(vix)']=np.log(s['vix']); s['log(gdp)']=np.log(s['gdp'])
+    Xs=s[Xcols].copy(); Xs['const']=1
+    pred=m.predict(Xs)
+    print('scenario logit preds:', pred.round(2).tolist())
+    print('scenario default preds:', expit(pred).round(4).tolist())
+EOF
 ```
 
 ## [17] tool
@@ -517,7 +636,44 @@ KeyError: "None of [Index(['log(bbb)'], dtype='str')] are in the [columns]"
 **tool call: bash**
 
 ```
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit, expit
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d10 = d[d['quarter']>=10].copy()
+d10['log(bbb)']=np.log(d10['bbb_spread'])
+d10['log(vix)']=np.log(d10['vix'])
+d10['log(gdp)']=np.log(d10['gdp'])
+d10['unemp2']=d10['unemployment']**2
+s=sc.copy()
+s['log(bbb)']=np.log(s['bbb_spread']); s['log(vix)']=np.log(s['vix']); s['log(gdp)']=np.log(s['gdp']); s['unemp2']=s['unemployment']**2
 
+def go(Xcols):
+    X=d10[Xcols].copy(); X['const']=1
+    y=d10['logit']
+    m=sm.OLS(y,X).fit()
+    Xs=s[Xcols].copy(); Xs['const']=1
+    pred=m.predict(Xs)
+    print('\n',Xcols,'R2=%.3f adj=%.3f'%(m.rsquared,m.rsquared_adj))
+    print(m.params.round(3).to_dict())
+    print('pvals',m.pvalues.round(3).to_dict())
+    print('scen default:', np.round(expit(pred),4).tolist())
+
+for Xcols in [
+    ['log(bbb)'],
+    ['log(bbb)','unemployment'],
+    ['log(bbb)','unemployment','log(vix)'],
+    ['log(bbb)','log(vix)'],
+    ['log(bbb)','unemployment','log(vix)','log(gdp)'],
+    ['log(bbb)','unemployment','unemp2'],
+    ['log(bbb)','unemployment','log(vix)','cpi'],
+]:
+    go(Xcols)
+EOF
 ```
 
 ## [19] tool
@@ -616,7 +772,21 @@ scen default: [0.0367, 0.0389, 0.041, 0.043, 0.0449, 0.0466, 0.0483, 0.0499, 0.0
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit
+from scipy.stats import pearsonr
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d10 = d[d['quarter']>=10].copy()
+# collinearity
+print("corr of features with each other (q>=10)")
+f=['log(bbb)','log(vix)','unemployment','log(gdp)','log(hpi)','log(sp500)','log(djia)','log(nasdaq)','log(cpi)']
+for c in f:
+    d10[c]=np.log(d10[c.replace('log(','').replace(')','')])
+print(d10[f].corr().round(2).to_string())
+EOF
 ```
 
 ## [21] tool
@@ -650,7 +820,23 @@ corr of features with each other (q>=10)
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d10 = d[d['quarter']>=10].copy()
+for c in ['bbb_spread','vix','gdp','hpi','sp500','djia','nasdaq','cpi']:
+    d10['log_'+c]=np.log(d10[c])
+f=['log_bbb_spread','log_vix','unemployment','log_gdp','log_hpi','log_sp500','log_djia','log_nasdaq','log_cpi']
+print(d10[f].corr().round(2).to_string())
+print()
+# corr with logit
+y=d10['logit']
+for c in f:
+    print(c, round(np.corrcoef(d10[c],y)[0,1],3))
+EOF
 ```
 
 ## [23] tool
@@ -710,7 +896,53 @@ log_cpi 0.085
 **tool call: bash**
 
 ```
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit, expit
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d['log_bbb']=np.log(d['bbb_spread'])
+d['log_vix']=np.log(d['vix'])
+d['unemp2']=d['unemployment']**2
+d10=d[d['quarter']>=10].reset_index(drop=True)
 
+def cv_model(Xcols, start=10):
+    # rolling: train quarters < t, predict t, for t in train
+    preds=[]; worse=0
+    idx=d10.index[d10['quarter']>=start].tolist()
+    # use expanding window
+    # simpler: train on first 60%, test on last 40%? do growing window
+    res=[]
+    for i in range(len(d10)):
+        q=d10['quarter'].iloc[i]
+        if q<start: continue
+        train=d10[d10['quarter']<q]
+        test=d10.iloc[[i]]
+        if len(train)<15: continue
+        Xtr=train[Xcols].copy(); Xtr['const']=1
+        Xte=test[Xcols].copy(); Xte['const']=1
+        try:
+            m=sm.OLS(train['logit'],Xtr).fit()
+            p=m.predict(Xte)[0]
+            res.append((expit(p), test['default_rate'].iloc[0]))
+        except: pass
+    res=np.array(res)
+    rmse=np.sqrt(np.mean((res[:,0]-res[:,1])**2))
+    mae=np.mean(np.abs(res[:,0]-res[:,1]))
+    return rmse,mae,len(res)
+
+for Xcols in [
+    ['log_bbb'],
+    ['log_bbb','unemployment'],
+    ['log_bbb','unemployment','log_vix'],
+    ['log_bbb','log_vix'],
+    ['unemployment','log_vix'],
+    ['log_bbb','unemployment','unemp2'],
+]:
+    print(Xcols, 'rmse=%.4f mae=%.4f n=%d'%cv_model(Xcols, start=20))
+EOF
 ```
 
 ## [25] tool
@@ -727,7 +959,48 @@ IndexError: too many indices for array: array is 1-dimensional, but 2 were index
 **tool call: bash**
 
 ```
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit, expit
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d['log_bbb']=np.log(d['bbb_spread'])
+d['log_vix']=np.log(d['vix'])
+d['unemp2']=d['unemployment']**2
+d10=d[d['quarter']>=10].reset_index(drop=True)
 
+def cv_model(Xcols, start=20):
+    res=[]
+    for i in range(len(d10)):
+        q=d10['quarter'].iloc[i]
+        if q<start: continue
+        train=d10[d10['quarter']<q]
+        test=d10.iloc[[i]]
+        if len(train)<15: continue
+        Xtr=train[Xcols].copy(); Xtr['const']=1
+        Xte=test[Xcols].copy(); Xte['const']=1
+        try:
+            m=sm.OLS(train['logit'],Xtr).fit()
+            p=m.predict(Xte)[0]
+            res.append((expit(p), test['default_rate'].iloc[0]))
+        except: pass
+    res=np.array(res)
+    rmse=np.sqrt(np.mean((res[:,0]-res[:,1])**2))
+    mae=np.mean(np.abs(res[:,0]-res[:,1]))
+    return rmse,mae,len(res)
+
+for Xcols in [
+    ['log_bbb'],
+    ['log_bbb','unemployment'],
+    ['log_bbb','unemployment','log_vix'],
+    ['log_bbb','log_vix'],
+    ['unemployment','log_vix'],
+    ['log_bbb','unemployment','unemp2'],
+]:
+    print(Xcols, 'rmse=%.4f mae=%.4f n=%d'%cv_model(Xcols, start=20))
+EOF
 ```
 
 ## [27] tool
@@ -750,7 +1023,48 @@ IndexError: too many indices for array: array is 1-dimensional, but 2 were index
 **tool call: bash**
 
 ```
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit, expit
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d['log_bbb']=np.log(d['bbb_spread'])
+d['log_vix']=np.log(d['vix'])
+d['unemp2']=d['unemployment']**2
+d10=d[d['quarter']>=10].reset_index(drop=True)
 
+def cv_model(Xcols, start=20):
+    res=[]
+    for i in range(len(d10)):
+        q=d10['quarter'].iloc[i]
+        if q<start: continue
+        train=d10[d10['quarter']<q]
+        test=d10.iloc[[i]]
+        if len(train)<15: continue
+        Xtr=train[Xcols].copy(); Xtr['const']=1
+        Xte=test[Xcols].copy(); Xte['const']=1
+        try:
+            m=sm.OLS(train['logit'],Xtr).fit()
+            p=np.asarray(m.predict(Xte)).ravel()[0]
+            res.append((expit(p), test['default_rate'].iloc[0]))
+        except: pass
+    res=np.array(res)
+    rmse=np.sqrt(np.mean((res[:,0]-res[:,1])**2))
+    mae=np.mean(np.abs(res[:,0]-res[:,1]))
+    return rmse,mae,len(res)
+
+for Xcols in [
+    ['log_bbb'],
+    ['log_bbb','unemployment'],
+    ['log_bbb','unemployment','log_vix'],
+    ['log_bbb','log_vix'],
+    ['unemployment','log_vix'],
+    ['log_bbb','unemployment','unemp2'],
+]:
+    print(Xcols, 'rmse=%.4f mae=%.4f n=%d'%cv_model(Xcols, start=20))
+EOF
 ```
 
 ## [29] tool
@@ -816,7 +1130,45 @@ IndexError: too many indices for array: array is 1-dimensional, but 2 were index
 **tool call: bash**
 
 ```
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit, expit
+import statsmodels.api as sm
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d['log_bbb']=np.log(d['bbb_spread'])
+d10=d[d['quarter']>=10].reset_index(drop=True)
+d10['lag1']=d10['logit'].shift(1)
 
+def cv_model(Xcols, start=20):
+    res=[]
+    dd=d10.dropna()
+    for i in range(len(dd)):
+        q=dd['quarter'].iloc[i]
+        if q<start: continue
+        train=dd[dd['quarter']<q]
+        test=dd.iloc[[i]]
+        if len(train)<15: continue
+        Xtr=train[Xcols].copy(); Xtr['const']=1
+        Xte=test[Xcols].copy(); Xte['const']=1
+        m=sm.OLS(train['logit'],Xtr).fit()
+        p=np.asarray(m.predict(Xte)).ravel()[0]
+        res.append((expit(p), test['default_rate'].iloc[0]))
+    res=np.array(res)
+    return np.sqrt(np.mean((res[:,0]-res[:,1])**2)), np.mean(np.abs(res[:,0]-res[:,1])), len(res)
+
+for Xcols in [['log_bbb'], ['log_bbb','lag1'], ['lag1'], ['log_bbb','lag1','unemployment']]:
+    print(Xcols, 'rmse=%.4f mae=%.4f'%cv_model(Xcols, start=25)[:2])
+
+# full fit info
+X=d10[['log_bbb']].copy(); X['const']=1
+m=sm.OLS(d10['logit'],X).fit()
+print(m.summary())
+resid = m.resid
+print('resid sd (logit):', resid.std(ddof=2))
+print('MSE:', m.mse_resid)
+EOF
 ```
 
 ## [31] tool
@@ -892,7 +1244,38 @@ MSE: 0.22756397133768222
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 - <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit, expit
+from sklearn.linear_model import ElasticNetCV, LassoCV, RidgeCV
+from sklearn.preprocessing import StandardScaler
+tr = pd.read_csv('data/train.csv')
+d = tr.copy()
+d['logit'] = logit(d['default_rate'].clip(1e-6,1-1e-6))
+d['log_bbb']=np.log(d['bbb_spread'])
+d['log_vix']=np.log(d['vix'])
+d['log_gdp']=np.log(d['gdp'])
+d['log_hpi']=np.log(d['hpi'])
+d['log_nasdaq']=np.log(d['nasdaq'])
+d['log_cpi']=np.log(d['cpi'])
+d10=d[d['quarter']>=10].dropna().reset_index(drop=True)
+feats=['log_bbb','unemployment','log_vix','log_gdp','log_hpi','log_nasdaq','log_cpi']
+X=d10[feats].values; y=d10['logit'].values
+sc=StandardScaler(); Xs=sc.fit_transform(X)
+for model,name in [(LassoCV(cv=5,random_state=0),'lasso'),(RidgeCV(),'ridge'),(ElasticNetCV(cv=5,random_state=0),'enet')]:
+    model.fit(Xs,y)
+    coefs=dict(zip(feats,model.coef_))
+    print(name, 'alpha=', getattr(model,'alpha_',None))
+    print({k:round(v,3) for k,v in coefs.items()})
+print()
+# OLS all
+import statsmodels.api as sm
+Xall=sm.add_constant(X)
+m=sm.OLS(y,Xall).fit()
+print(m.params.round(3).to_dict())
+print(m.pvalues.round(3).to_dict())
+print('adjR2',m.rsquared_adj)
+EOF
 ```
 
 ## [33] tool
@@ -943,7 +1326,63 @@ The data strongly indicates the credit spread `bbb_spread` (log-transformed) is 
 **tool call: bash**
 
 ```
+cd /workspace; cat > make_pred.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.special import logit, expit
+from scipy import stats
+import statsmodels.api as sm
 
+tr = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+
+tr = tr.copy()
+tr['logit'] = logit(tr['default_rate'].clip(1e-6, 1-1e-6))
+tr['log_bbb'] = np.log(tr['bbb_spread'])
+sc = sc.copy()
+sc['log_bbb'] = np.log(sc['bbb_spread'])
+
+# Use training rows where bbb_spread is observed
+use = tr.dropna(subset=['bbb_spread']).copy()
+
+X = sm.add_constant(use[['log_bbb']], has_constant='add')
+y = use['logit'].values
+model = sm.OLS(y, X).fit()
+
+Xt = sm.add_constant(sc[['log_bbb']], has_constant='add')
+logit_pred = model.predict(Xt)
+
+n = model.df_resid + model.df_model     # number obs
+k = model.df_model                      # number predictors (incl const)
+mse = model.mse_resid
+tcrit = stats.t.ppf(0.975, n - k)
+
+# prediction standard errors (sqrt of Var(pred) = MSE*(1 + leverage))
+Xarr = X.values
+XXinv = np.linalg.inv(Xarr.T @ Xarr)
+lev = np.array([x @ XXinv @ x for x in Xt.values])
+se_pred = np.sqrt(mse * (1 + lev))
+
+lower_logit = logit_pred - tcrit * se_pred
+upper_logit = logit_pred + tcrit * se_pred
+
+y_pred = expit(logit_pred)
+y_low  = expit(lower_logit)
+y_up   = expit(upper_logit)
+
+out = pd.DataFrame({'quarter': sc['quarter'].values,
+                    'y_pred': y_pred,
+                    'y_lower': y_low,
+                    'y_upper': y_up})
+out.to_csv('predictions.csv', index=False)
+
+print("Model fit (n=%d):" % n)
+print(model.params.round(4).to_dict())
+print("resid sd(logit)=%.3f  MSE=%.4f  tcrit=%.3f" % (np.sqrt(mse), mse, tcrit))
+print()
+print(out.round(4).to_string(index=False))
+print("\nrows:", len(out))
+EOF
+python3 make_pred.py
 ```
 
 ## [35] tool
@@ -981,7 +1420,7 @@ rows: 9
 **tool call: bash**
 
 ```
-
+cd /workspace; head -1 predictions.csv; echo '...'; cat predictions.csv; echo; wc -l predictions.csv
 ```
 
 ## [37] tool
@@ -1023,7 +1462,15 @@ The predictions are complete and valid. Let me verify one last time that it matc
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 - <<'EOF'
+import pandas as pd
+sc=pd.read_csv('data/scenario.csv'); p=pd.read_csv('predictions.csv')
+print("columns:", list(p.columns))
+print("n scenario quarters:", len(sc), "| n pred rows:", len(p))
+print("quarters match:", list(sc['quarter'])==list(p['quarter']))
+print("monotonic increasing y_pred:", (p['y_pred'].diff().dropna()>0).all())
+print("intervals valid:", ((p['y_lower']<=p['y_pred'])&(p['y_pred']<=p['y_upper'])).all())
+EOF
 ```
 
 ## [39] tool

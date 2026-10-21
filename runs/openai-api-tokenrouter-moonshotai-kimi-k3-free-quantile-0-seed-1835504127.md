@@ -49,7 +49,7 @@ Estimate the population tail quantiles for all 100 blocks described in data/task
 **tool call: bash**
 
 ```
-
+cat data/task.txt; echo "---"; head -20 data/blocks.csv; echo "---"; wc -l data/blocks.csv
 ```
 
 ## [3] tool
@@ -707,7 +707,39 @@ I'll start by exploring the data and understanding the problem structure, then b
 **tool call: bash**
 
 ```
+mkdir -p work && cat > work/explore.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+df = pd.read_csv('data/blocks.csv')
+m_map = {1:267,2:330,3:292,4:276,5:397,6:423,7:297,8:551,9:377,10:381}
+# parse m from task.txt
+import re
+ms = {}
+txt = open('data/task.txt').read()
+for bmm, mv in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt):
+    ms[int(bmm)] = int(mv)
+print("n blocks parsed:", len(ms), "m range:", min(ms.values()), max(ms.values()))
+
+rows = []
+for b, g in df.groupby('block'):
+    x = np.sort(g.x.values)
+    n = len(x)
+    rows.append(dict(block=b, n=n, m=ms[b], mean=x.mean(), sd=x.std(ddof=1),
+                     med=np.median(x), skew=stats.skew(x), kurt=stats.kurtosis(x),
+                     mn=x.min(), mx=x.max(),
+                     tail_ratio=(x.max()-np.median(x))/max(1e-9,(np.median(x)-x.min()))))
+S = pd.DataFrame(rows)
+pd.set_option('display.width', 200)
+print(S.describe().T[['mean','std','min','max']])
+print("\nSkew distribution quantiles:", np.quantile(S.skew, [0,.1,.25,.5,.75,.9,1]).round(2))
+print("Kurtosis quantiles:", np.quantile(S.kurt, [0,.1,.25,.5,.75,.9,1]).round(2))
+print("\nBlocks with |skew|>1.5:")
+print(S.loc[S.skew.abs()>1.5, ['block','m','skew','kurt','mn','mx','tail_ratio']].round(2).to_string(index=False))
+print("\nBlocks with kurt>3:")
+print(S.loc[S.kurt>3, ['block','m','skew','kurt','tail_ratio']].round(2).to_string(index=False))
+EOF
+python work/explore.py
 ```
 
 ## [5] tool
@@ -762,7 +794,34 @@ tail_ratio    1.720492    1.587542    0.128839    11.949360
 **tool call: bash**
 
 ```
+cat > work/explore2.py << 'EOF'
+import pandas as pd, numpy as np, re
+from scipy import stats
 
+df = pd.read_csv('data/blocks.csv')
+txt = open('data/task.txt').read()
+ms = {int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+
+rows=[]
+for b,g in df.groupby('block'):
+    x=np.sort(g.x.values)
+    rows.append(dict(block=b,m=ms[b],sk=stats.skew(x),ku=stats.kurtosis(x),
+                     mn=x.min(),mx=x.max(),sd=x.std(ddof=1),
+                     t8=x[7],t9=x[8],t10=x[9],
+                     tr=(x[9]-np.median(x))/max(1e-9,(np.median(x)-x[0]))))
+S=pd.DataFrame(rows)
+print("skew quantiles:", np.round(np.quantile(S['sk'],[0,.1,.25,.5,.75,.9,1]),2))
+print("kurt quantiles:", np.round(np.quantile(S['ku'],[0,.1,.25,.5,.75,.9,1]),2))
+print("\n|skew|>1.2 blocks:")
+print(S.loc[S['sk'].abs()>1.2].round(2).to_string(index=False))
+print("\nnormality-ish blocks (|sk|<0.5,|ku|<0.8):", ((S['sk'].abs()<0.5)&(S['ku'].abs()<0.8)).sum())
+print("right-skew blocks (sk>0.5):",(S['sk']>0.5).sum(), " left-skew:",(S['sk']<-0.5).sum())
+# gap ratio top values
+S['gap98']=(S.t10-S.t9)/S.sd
+print("\nlargest top-gap ratios (potential extreme tail):")
+print(S.nlargest(12,'gap98')[['block','m','sk','ku','gap98']].round(2).to_string(index=False))
+EOF
+python work/explore2.py
 ```
 
 ## [7] tool
@@ -892,7 +951,7 @@ The data is a mix of roughly symmetric blocks and strongly right-skewed blocks. 
 **tool call: bash**
 
 ```
-
+python -c "import pymc" 2>&1 | head -1; python -c "import numpyro" 2>&1 | head -1; python -c "import scipy; print('scipy', scipy.__version__)"; python -c "import statsmodels; print('sm ok')"
 ```
 
 ## [9] tool
@@ -916,7 +975,35 @@ No MCMC libraries — I'll write my own sampler. First, a rough valid prediction
 **tool call: bash**
 
 ```
-
+cat > work/rough.py << 'EOF'
+import pandas as pd, numpy as np, re
+from scipy import stats
+df = pd.read_csv('data/blocks.csv')
+txt = open('data/task.txt').read()
+ms = {int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+out=[]
+for b,g in df.groupby('block'):
+    x=np.sort(g.x.values); m=ms[b]; n=len(x)
+    mu,sd=x.mean(),x.std(ddof=1)
+    g1=stats.skew(x)
+    lam=max(0.1,1+g1*0.6)
+    f=np.sqrt((n+0.5)/(m+1.5))
+    zpd={0.9:1.2816,0.95:1.6449,0.99:2.3263}
+    q={t: mu+sd*lam*z for t,z in zpd.items()}
+    fill=(x[-1]-x[-2]) if n>1 else sd
+    f99=max((x[-1]-x[-2]),(x[-2]-x[-3])) if n>2 else sd
+    for t,z in zpd.items():
+        need=(1-t)*m
+        base=x[-3] if need>3 else (x[-2] if need>2 else (x[-1] if need>1 else x[-1]+fill))
+        extra=max(0,need-3)*0.5*f99
+        q[t]=max(q[t], base+0.9*extra)
+    lo=min(q[0.95],x[-1]); hi=max(q[0.95]+2.5*sd*0.9, x[-1]+1.5*f99)
+    hi=min(hi, q[0.99]*3 if q[0.99]>0 else hi)
+    out.append((b,q[0.9],q[0.95],q[0.99],lo,hi))
+pd.DataFrame(out,columns=['block','q90','q95','q99','lo','hi']).to_csv('predictions.csv',index=False)
+print("rows:",len(out)); print(open('predictions.csv').read().splitlines()[:5])
+EOF
+python work/rough.py
 ```
 
 ## [11] tool
@@ -932,7 +1019,38 @@ Those rough values are garbage (bad formula sign). Let me write a sane interim v
 **tool call: bash**
 
 ```
-
+cat > work/rough.py << 'EOF'
+import pandas as pd, numpy as np, re
+from scipy import stats
+df = pd.read_csv('data/blocks.csv')
+txt = open('data/task.txt').read()
+ms = {int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+out=[]
+for b,g in df.groupby('block'):
+    x=np.sort(g.x.values); m=ms[b]; n=len(x)
+    mu,sd=x.mean(),x.std(ddof=1)
+    med=np.median(x)
+    # upper tail center, skew-aware
+    z90,z95,z99=1.2816,1.6449,2.3263
+    q90=min(mu+sd*z90, x[-1])
+    q95=min(mu+sd*z95, x[-1]+ (x[-1]-x[-2]))
+    need=(1-0.99)*m
+    f99=max(x[-1]-x[-2], x[-2]-x[-3], 0.5*sd)
+    if need>1: q99=x[-1]+(need-1)*0.5*f99
+    else: q99=x[-1]+0.5*f99*max(0.2,need)
+    q99=max(q99, mu+sd*z99*0.8)
+    q95=max(q95, q90)
+    lo=min(q95, x[-2])
+    hi=max(q95*2 if q95>0 else q95, q99)
+    if q95>0: hi=min(hi, q99*3)
+    out.append((b,q90,q95,q99,lo,hi))
+res=pd.DataFrame(out,columns=['block','q90','q95','q99','lo','hi'])
+res.to_csv('predictions.csv',index=False)
+bad=(res.q90>res.q95)|(res.q95>res.q99)
+print("rows:",len(res),"monotone violations:",bad.sum())
+print(res.head(6).round(2).to_string(index=False))
+EOF
+python work/rough.py && head -3 predictions.csv && wc -l predictions.csv
 ```
 
 ## [13] tool
@@ -958,7 +1076,34 @@ A sane interim file is on disk. Now let me test/scaffold the flexible families (
 **tool call: bash**
 
 ```
+cat > work/test_fam.py << 'EOF'
+import numpy as np
+from scipy import stats
+rng=np.random.default_rng(0)
 
+# Skewed-t (Fernandez-Steel): pdf = (2/(s+1/s)) * [f_helix(z/s) if z>=0 else f_h(s z)], f_h = standard t(df)
+fs=1.4; nu=6.0
+def logpdf_st(z, fs, nu):
+    c=2.0/(fs+1.0/fs)
+    return np.where(z>=0, np.log(c)+stats.t.logpdf(z/fs, nu), np.log(c)+stats.t.logpdf(z*fs, nu))
+def epanech(z, eps):  # |z|<=1, peakedness eps>0
+    a=np.abs(z)
+    # eps parameterization via power: f ∝ (1-u^2)^(eps-1)... use direct exponent as peakedness k>0
+    return np.where(a<1, z*0, -np.inf)
+# EPD kernel: |z|<1, r = eps*(eps+(1-eps)*z^2) in (0,1], f=(1-r)^2
+def logpdf_sepd(z, fs, eps):
+    a=np.abs(z)
+    u=np.where(z>=0, z/fs, z*fs)
+    r=eps*(eps+(1-eps)*u*u)
+    out=np.where(np.abs(u)<1, np.log(2.0/(fs+1.0/fs))+2.0*np.log(np.maximum(1e-300,1-r)), -np.inf)
+    return out
+zs=np.linspace(-1,1,7)
+for fs_ in [0.8,1.0,1.8]:
+    for eps in [0.3,0.6,0.9]:
+        v=logpdf_sepd(zs,fs_,eps)
+        print("sepd fs=%.1f eps=%.1f"%(fs_,eps), np.round(v,4), "max@z=",zs[np.argmax(v)])
+EOF
+python work/test_fam.py
 ```
 
 ## [15] tool
@@ -981,7 +1126,278 @@ Both cores are flat at 0 — good. Now the main hierarchical sampler with data-d
 **tool call: bash**
 
 ```
+cat > work/model.py << 'EOF'
+import numpy as np, pandas as pd, re, time
+from scipy import stats, special
 
+rng=np.random.default_rng(20240501)
+df=pd.read_csv('data/blocks.csv')
+txt=open('data/task.txt').read()
+MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+B=max(MS); N=10
+blocks=sorted(MS)
+X=np.stack([np.sort(df[df.block==b].x.values) for b in blocks])   # B x 10 sorted
+M=np.array([MS[b] for b in blocks],float)
+
+# ---------- families ----------
+def logpdf_st(u,th):
+    fs,nu=th
+    c=2.0/(fs+1.0/fs)
+    z=np.where(u>=0,u/fs,u*fs)
+    return np.log(c)+stats.t.logpdf(z,nu)
+def logpdf_sepd(u,th):
+    fs,eps=th
+    c=2.0/(fs+1.0/fs)
+    z=np.where(u>=0,u/fs,u*fs)
+    r=eps*(eps+(1.0-eps)*z*z)
+    return np.where(np.abs(z)<1, np.log(c)+2.0*np.log(np.maximum(1- r,1e-300)), -np.inf)
+
+zgrid=np.linspace(-1,1,20001); dz=zgrid[1]-zgrid[0]
+def quantile_fn(fam, th, taus):
+    lp = logpdf_st(zgrid,th) if fam==0 else logpdf_sepd(zgrid,th)
+    f=np.exp(lp-lp.max())
+    cdf=np.cumsum(f)*dz
+    cdf/=cdf[-1]
+    zq=np.interp(taus,cdf,zgrid); zq=np.maximum(zq,-0.999999)
+    # mass beyond -1: left tail exponential with slope matched
+    lz = zgrid[1:201]; lf = (logpdf_st(lz,th) if fam==0 else logpdf_sepd(lz,th))
+    lf=lf-lp.max()
+    a=np.exp(lf); A=np.trapezoid(a,lz)
+    b=np.exp(lf)*lz; Bv=np.trapezoid(b,lz)
+    meanz=Bv/max(A,1e-300); varz=np.trapezoid(np.exp(lf)*(lz-meanz)**2,lz)/max(A,1e-300)
+    return zq, meanz, np.sqrt(max(varz,1e-12))
+
+def quantiles_all(fam,th,mu,sig,tau):
+    zg=zgrid
+    lp = logpdf_st(zg,th) if fam==0 else logpdf_sepd(zg,th)
+    f=np.exp(lp-lp.max())
+    c=np.cumsum(f)*dz; c/=c[-1]
+    zq=np.interp(tau,c,zg); zq=np.maximum(zq,-0.999999)
+    lz=zg[1:201]; lf=(logpdf_st(lz,th) if fam==0 else logpdf_sepd(lz,th))-lp.max(); a=np.exp(lf)
+    A=np.trapezoid(a,lz); mn=np.trapezoid(a*lz,lz)/max(A,1e-300); vr=np.trapezoid(a*(lz-mn)**2,lz)/max(A,1e-300)
+    return mu+sig*zq, mn, np.sqrt(max(vr,1e-12))
+
+# ---------- model ----------
+NS=12000; BURN=6000; THIN=3
+TAUS=np.array([0.90,0.95,0.99])
+
+# data-driven init
+sd_init=X.std(axis=1,ddof=1); mu_init=X.mean(axis=1)
+sigma0=sd_init.copy(); mu0=mu_init.copy()
+eta_inv=np.ones(B); aeta=2.0; vhyper=np.ones(B); av=2.0
+psi=np.full(B,0.3); mupsi=0.3; sp=0.5
+xih=np.zeros(B); sxi=0.5
+lfam=np.zeros(B); pfam=0.5
+# per-block shape params per family
+kst=np.zeros(B)      # log-nu offset (fam 0)
+kep=np.zeros(B)      # eps = plogis(1.1+logit(.6)+kep)
+mukst=0.0
+sk_shapes=np.zeros((2,B))
+
+# storage
+keep=(NS-BURN)//THIN
+Q90=np.zeros((keep,B)); Q95=np.zeros((keep,B)); Q99=np.zeros((keep,B))
+MU=np.zeros((keep,B)); SIG=np.zeros((keep,B)); SK=np.zeros((keep,B)); FAM=np.zeros((keep,B))
+NH=np.zeros((keep,B)); VH=np.zeros((keep,B)); PSI=np.zeros((keep,B))
+C=0.8; C95=1.0
+
+def ll_block(fam,th,b,mu,sig,etaH,vH,ps_):
+    u=(X[b]-mu)/sig
+    lp = logpdf_st(u,th) if fam==0 else logpdf_sepd(u,th)
+    val=lp.sum() - N*np.log(sig)
+    _,mz,sz=quantile_fn(fam,th,TAUS)
+    d=(mz*sig-mu*sz)/(np.sqrt(vH)*C) + np.log(np.abs(sig)*sz/np.sqrt(vH))
+    val-=0.5*d*d
+    val-=0.5*np.log(sig*sig/(C*C*etaH))
+    val-=0.5*np.log(((fs_logpdf_nonneg(mu,sig,mz,sz,ps_)-C95)/0.9)**2)
+    return val
+def fs_logpdf_nonneg(mu,sig,mz,sz,ps_):
+    Q95v=mu+sig*np.interp(0.95,*_cdf(fam_cache[0],fam_cache[1])) # placeholder not used
+    return 0.
+
+# simpler: compute q95 directly inside
+def negterm(fam,th,mu,sig,ps_):
+    q,_,_=quantiles_all(fam,th,mu,sig,[0.95])
+    q95=q[0]
+    g=(C95-q95)/(0.9*sig)
+    return 0.5*np.log(g*g)
+
+# ---------------- sampler ----------------
+def logpost_all(famv,thv,mu,sig,etaH,vH,ps_):
+    u=(X-mu[:,None])/sig[:,None]
+    lp=np.empty((B,N))
+    th_st=(thv[0], np.exp(np.log(4.0)+thv[2]))
+    th_ep=(thv[0], special.expit(special.logit(0.6)+thv[3]))
+    lpS=logpdf_st(u,th_st); lpE=logpdf_sepd(u,th_ep)
+    lp=np.where(famv[:,None]==0,lpS,lpE)
+    val=(lp.sum(axis=1)-N*np.log(sig))
+    # shape-dependent terms per block with its own fam
+    out=np.empty(B)
+    for b in range(B):
+        th=th_st if famv[b]==0 else th_ep
+        _,mz,sz=quantile_fn(famv[b],th,TAUS)
+        d=(mz*sig[b]-mu[b]*sz)/(np.sqrt(vH[b])*C)+np.log(np.abs(sig[b])*sz/np.sqrt(vH[b]))
+        out[b]=val[b]-0.5*d*d-0.5*np.log(sig[b]*sig[b]/(C*C*etaH[b]))-negterm_inline(famv[b],th,mu[b],sig[b],ps_[b])
+    return out
+def negterm_inline(fam,th,mu,sig,ps_):
+    q,_,_=quantiles_all(fam,th,mu,sig,[0.95]); q95=q[0]
+    g=(C95-q95)/(0.9*sig)
+    return 0.5*np.log(g*g)
+
+t0=time.time()
+print("building initial logposts...")
+# thv per block: [eta(=mu), xi(=log sig), kst, kep]
+thv=np.zeros((B,4)); thv[:,0]=mu0.copy(); thv[:,1]=np.log(sigma0)
+famv=np.zeros(B,dtype=int)
+for b in range(B):
+    e=np.mean(np.abs(X[b]-np.median(X[b])))
+    mad=np.median(np.abs(X[b]-np.median(X[b])))
+    if mad/(e+1e-9) < 0.82 or e/(X[b].max()-np.median(X[b])+1e-9) > 2.2:
+        famv[b]=1
+lp_cur=logpost_all(famv,thv[:,0],np.exp(thv[:,1]),eta_inv,vhyper,psi)
+
+def prior_all():
+    # hierarchical pieces (shared)
+    p = -B*np.log(aeta) - (eta_inv.sum())/aeta
+    p+= -B*np.log(av) - (vhyper.sum())/av
+    p+= -(psi-mupsi).dot(psi-mupsi)/(2*sp*sp)
+    p+= -0.5*xih.dot(xih)/(sxi*sxi)
+    p+= -0.5*kst.dot(kst)  # st. dev 1, mean 0 -> handled via mu k
+    p+= -0.5*kep.dot(kep)
+    # fam prior
+    p+= (famv==0).sum()*np.log(max(pfam,1e-6)) + (famv==1).sum()*np.log(max(1-pfam,1e-6))
+    return p
+
+# per-block lp recalc storage with shapes folded
+def block_lp(b, fam_b, mu_b, sig_b, kst_b, kep_b):
+    if fam_b==0: th=(None, np.exp(np.log(4.0)+kst_b))
+    else: th=(None, special.expit(special.logit(0.6)+kep_b))
+    u=(X[b]-mu_b)/sig_b
+    z=np.where(u>=0,u/fs_glob,u*fs_glob)
+    if fam_b==0:
+        nu=np.exp(np.log(4.0)+kst_b)
+        lp=stats.t.logpdf(z,nu)
+    else:
+        eps=special.expit(special.logit(0.6)+kep_b)
+        r=eps*(eps+(1-eps)*z*z)
+        lp=np.where(np.abs(z)<1, 2*np.log(np.maximum(1-r,1e-300)), -np.inf)
+    val=lp.sum()+N*np.log(2.0/(fs_glob+1.0/fs_glob))-N*np.log(sig_b)
+    th=(fs_glob, np.exp(np.log(4.0)+kst_b)) if fam_b==0 else (fs_glob, special.expit(special.logit(0.6)+kep_b))
+    _,mz,sz=quantile_fn(fam_b,th,TAUS)
+    d=(mz*sig_b-mu_b*sz)/(np.sqrt(vhyper[b])*C)+np.log(np.abs(sig_b)*sz/np.sqrt(vhyper[b]))
+    val-=0.5*d*d
+    val-=0.5*np.log(sig_b*sig_b/(C*C*eta_inv[b]))
+    val-=negterm_inline(fam_b,th,mu_b,sig_b,psi[b])
+    return val
+
+fs_glob=np.exp(0.3)  # init skewness
+print("init done, starting MH")
+ki=0
+acc=np.zeros(4); att=np.zeros(4)
+for it in range(NS):
+    # ---- hierarchical params ----
+    aeta=1.0/rng.gamma(2.0+0.5*B, 1.0/(1.0+0.5*eta_inv.sum()))
+    av  =1.0/rng.gamma(2.0+0.5*B, 1.0/(1.0+0.5*vhyper.sum()))
+    eta_inv=1.0/rng.gamma(1.0+0.5, 1.0/(aeta+0.5*(np.exp(thv[:,1])/C)**2))
+    vhyper =1.0/rng.gamma(1.0+0.5, 1.0/(av+0.5))  # placeholder, d depends on th, refine below
+    # vhyper with d: sample via MH-ish using current d
+    for b in range(B):
+        th=(fs_glob, np.exp(np.log(4.0)+kst[b])) if famv[b]==0 else (fs_glob, special.expit(special.logit(0.6)+kep[b]))
+        _,mz,sz=quantile_fn(famv[b],th,TAUS)
+        mu_b=thv[b,0]; sig_b=np.exp(thv[b,1])
+        d=(mz*sig_b-mu_b*sz)/C+np.log(np.abs(sig_b)*sz)*0  # linearize log
+        # use actual expression
+        d=(mz*sig_b-mu_b*sz)/C + np.log(np.abs(sig_b)*sz)
+        vhyper[b]=1.0/rng.gamma(1.0+0.5, 1.0/(av+0.5*d*d))
+    mupsi=rng.normal(psi.mean()/ (1.0+2.0/(B*sp*sp)), np.sqrt(sp*sp/(B+ (sp/1.0)**2)))
+    mupsi=rng.normal(psi.mean(), sp/np.sqrt(B))
+    fs_prop=np.exp(np.log(fs_glob)+rng.normal(0,0.05))
+    # mh for fs
+    lpo=np.zeros(B); lpn=np.zeros(B)
+    fs_old=fs_glob
+    for b in range(B):
+        th=(fs_old if famv[b]==0 else fs_old, None)
+    # recompute block lp with fs_prop
+    lp_old=np.array([block_lp(b,famv[b],thv[b,0],np.exp(thv[b,1]),kst[b],kep[b]) for b in range(B)])
+    fs_glob=fs_prop
+    lp_new=np.array([block_lp(b,famv[b],thv[b,0],np.exp(thv[b,1]),kst[b],kep[b]) for b in range(B)])
+    diff=lp_new.sum()-lp_old.sum() + (-0.5*((np.log(fs_prop)-mupsi)/sp)**2 + 0.5*((np.log(fs_old)-mupsi)/sp)**2)
+    if np.log(rng.uniform())<diff:
+        acc[0]+=1
+    else:
+        fs_glob=fs_old
+    att[0]+=1
+    sp=1.0/rng.gamma(2.0+0.5, 1.0/(1.0+0.5*(np.log(fs_glob)-mupsi)**2 + 0.5*((mupsi-0.0)/1.0)**2*0))
+    # psi_b
+    psi=np.clip(np.log(fs_glob)+rng.normal(0,sp,B),-1.2,1.2)
+    # xi
+    lpx=np.log(1.0+np.exp(thv[:,1]))
+    sxi=1.0/rng.gamma(2.0+0.5*B, 1.0/(1.0+0.5*lpx.dot(lpx)))
+    xih=np.clip(lpx+rng.normal(0,sxi,B),-2,8)
+    # pfam
+    n0=(famv==0).sum()
+    pfam=rng.beta(1+n0,1+B-n0)
+    # ---- per block: fam switch (RJ) & param updates ----
+    for b in range(B):
+        mu_b=thv[b,0]; sig_b=np.exp(thv[b,1])
+        # family RJ swap
+        fam_p=1-famv[b]
+        lkst_p=-kst[b] if fam_p==0 else kep[b]
+        lkep_p=kst[b] if fam_p==0 else -kep[b]
+        lp_b_old=block_lp(b,famv[b],mu_b,sig_b,kst[b],kep[b])+np.log(max(pfam if famv[b]==0 else 1-pfam,1e-6))
+        # temp set
+        ks_o,ke_o=kst[b],kep[b]
+        kst[b],kep[b]=(lkst_p,lkep_p) if fam_p==0 else (lkst_p,lkep_p)
+        lp_b_new=block_lp(b,fam_p,mu_b,sig_b,kst[b],kep[b])+np.log(max(pfam if fam_p==0 else 1-pfam,1e-6))
+        # jacobian: shapes swap, |J|=1
+        diff=lp_b_new-lp_b_old
+        if np.log(rng.uniform())<diff:
+            famv[b]=fam_p; acc[1]+=1
+        else:
+            kst[b],kep[b]=ks_o,ke_o
+        att[1]+=1
+        # eta,xi update
+        for jj,(scale) in enumerate([(0.15),(0.08)]):
+            thp=thv[b].copy(); thp[jj]+=rng.normal(0,scale)
+            lp_n=block_lp(b,famv[b],thp[0] if jj==0 else mu_b, np.exp(thp[1]) if jj==1 else sig_b, kst[b],kep[b])
+            # hierarchical pull
+            lhi_old=-0.5*(( lp x:=0 )) if False else 0.0
+            # add hyper density on lpxi
+            dhi=0.0
+            if jj==1:
+                lpo_v=np.logaddexp(0,thp[1]); lpo_o=np.logaddexp(0,thv[b,1])
+                dhi=-0.5*((lpo_v-xih[b])/sxi)**2+0.5*((lpo_o-xih[b])/sxi)**2
+            elif jj==0:
+                pass
+            lp_o=block_lp(b,famv[b],mu_b,sig_b,kst[b],kep[b])
+            if np.log(rng.uniform())<lp_n-lp_o+dhi:
+                if jj==0: thv[b,0]=thp[0]
+                else: thv[b,1]=thp[1]
+                mu_b=thv[b,0]; sig_b=np.exp(thv[b,1]); acc[2+0]+=1
+            att[2]+=1
+        # shape param rw
+        for jj in [2,3]:
+            if (famv[b]==0 and jj==2) or (famv[b]==1 and jj==3):
+                thp=thv[b].copy()
+                if jj==2:
+                    kn=kst[b]+rng.normal(0,0.1); pr=-0.5*(kn*kn-kst[b]*kst[b])
+                    lp_n=block_lp(b,famv[b],mu_b,sig_b,kn,kep[b])+pr
+                    lp_o=block_lp(b,famv[b],mu_b,sig_b,kst[b],kep[b])
+                    if np.log(rng.uniform())<lp_n-lp_o: kst[b]=kn; acc[3]+=1
+                else:
+                    kn=kep[b]+rng.normal(0,0.1); pr=-0.5*(kn*kn-kep[b]*kep[b])
+                    lp_n=block_lp(b,famv[b],mu_b,sig_b,kst[b],kn)+pr
+                    lp_o=block_lp(b,famv[b],mu_b,sig_b,kst[b],kep[b])
+                    if np.log(rng.uniform())<lp_n-lp_o: kep[b]=kn; acc[3]+=1
+                att[3]+=1
+    # ---- store ----
+    if it>=BURN and (it-BURN)%THIN==0:
+        ki+=0
+f_clk=time.time()-t0
+print("step_rate accept:", np.round(acc/np.maximum(att,1),3), "time/iter", round(f_clk/NS,4))
+# NOTE storage skipped here for speed test
+EOF
+timeout 300 python work/model.py 2>&1 | tail -20
 ```
 
 ## [17] tool
@@ -999,7 +1415,202 @@ That draft is a mess. Let me write a clean, complete, and verified implementatio
 **tool call: bash**
 
 ```
+cat > work/model2.py << 'EOF'
+import numpy as np, pandas as pd, re, time
+from scipy import stats, special
 
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS); B=len(blocks)
+    X=np.stack([np.sort(df[df.block==b].x.values) for b in blocks])
+    M=np.array([MS[b] for b in blocks],float)
+    return blocks,X,M,B
+blocks,X,M,B=load(); N=10
+
+# ---------- family log-pdfs of standardized z ----------
+C=0.8; C95=1.0
+def logpdf_st(u,fs,nu):
+    z=np.where(u>=0,u/fs,u*fs); return np.log(2.0/(fs+1.0/fs))+stats.t.logpdf(z,nu)
+def logpdf_sepd(u,fs,eps):
+    z=np.where(u>=0,u/fs,u*fs)
+    r=eps*(eps+(1.0-eps)*z*z)
+    return np.where(np.abs(z)<1, np.log(2.0/(fs+1.0/fs))+2.0*np.log(np.maximum(1.0-r,1e-300)), -np.inf)
+
+zg=np.linspace(-1,1,24001); dz=zg[1]-zg[0]
+_zcache={}
+def _core(fam,fs,sh):
+    key=(fam,round(fs,10),round(sh,10))
+    if key in _zcache: return _zcache[key]
+    lp=logpdf_st(zg,fs,sh) if fam==0 else logpdf_sepd(zg,fs,sh)
+    lp=lp-lp.max(); f=np.exp(lp)
+    c=np.cumsum(f); c=0.5*(f[0]+f[-1])+np.concatenate([[0],np.cumsum(f[1:-1])])  # rough; use cumulative trapezoid below
+    # cumulative trapezoid properly
+    c=np.concatenate([[0],np.cumsum(0.5*(f[1:]+f[:-1]))*dz])
+    c/=c[-1]
+    lz=zg[1:401]
+    lf=(logpdf_st(lz,fs,sh) if fam==0 else logpdf_sepd(lz,fs,sh))
+    lf=lf-lf.max(); a=np.exp(lf)
+    A=np.trapezoid(a,lz); b1=np.trapezoid(a*lz,lz); b2=np.trapezoid(a*lz*lz,lz)
+    mn=b1/max(A,1e-300); sd=np.sqrt(max(b2/max(A,1e-300)-mn*mn,1e-12))
+    out=(c,mn,sd); _zcache[key]=out
+    return out
+_cache_full={}
+def core_full(fam,fs,sh):
+    key=(fam,round(fs,10),round(sh,10))
+    if key in _cache_full: return _cache_full[key]
+    lp=logpdf_st(zg,fs,sh) if fam==0 else logpdf_sepd(zg,fs,sh)
+    lp=lp-lp.max(); f=np.exp(lp)
+    c=np.concatenate([[0],np.cumsum(0.5*(f[1:]+f[:-1]))*dz]); c/=c[-1]
+    lz=zg[1:401]
+    lf=(logpdf_st(lz,fs,sh) if fam==0 else logpdf_sepd(lz,fs,sh)); lf=lf-lf.max()
+    a=np.exp(lf); A=np.trapezoid(a,lz); b1=np.trapezoid(a*lz,lz); b2=np.trapezoid(a*lz*lz,lz)
+    mn=b1/max(A,1e-300); sd=np.sqrt(max(b2/max(A,1e-300)-mn*mn,1e-12))
+    out=(f,c,mn,sd); _cache_full[key]=out; return out
+
+def fam_quantiles(fam,fs,sh,taus):
+    f,c,mn,sd=core_full(fam,fs,sh)
+    zq=np.interp(taus,c,zg); zq=np.maximum(zq,-0.999999)
+    return zq,mn,sd
+
+def shapeparams(fam,k):
+    return np.exp(np.log(4.0)+k) if fam==0 else special.expit(special.logit(0.6)+k)
+
+def block_lp(b,fam,th,k,mu,sig,fs,eta,vh,psi_):
+    # hierarchical offsets folded into k
+    sh=shapeparams(fam,k)
+    u=(X[b]-mu)/sig
+    lp=logpdf_st(u,fs,sh) if fam==0 else logpdf_sepd(u,fs,sh)
+    val=lp.sum()-N*np.log(sig)
+    zq,mn,sd=fam_quantiles(fam,fs,sh,[0.90,0.95,0.99])
+    d=(mn*sig-mu*sd)/(np.sqrt(vh)*C)+np.log(np.abs(sig)*sd/np.sqrt(vh))
+    val-=0.5*d*d
+    val-=0.5*np.log(sig*sig/(C*C*eta))
+    g=(C95-(mu+sig*zq[1]))/(0.9*sig)
+    val-=0.5*np.log(g*g)
+    return val
+
+def prior_lpxi(xi,mu_xi,sig_xi): return -0.5*((xi-mu_xi)/sig_xi)**2
+
+# ---------- init ----------
+th=np.zeros((B,3)); th[:,0]=X.mean(1); th[:,1]=np.log(X.std(1,ddof=1))
+kst=np.zeros(B); kep=np.zeros(B)
+fam=np.zeros(B,int)
+for b in range(B):
+    med=np.median(X[b]); e=np.mean(np.abs(X[b]-med)); mad=np.median(np.abs(X[b]-med))
+    if mad/max(e,1e-9)<0.83: fam[b]=1
+fs=np.exp(0.35); mupsi=0.35; sp=0.5; psi=np.full(B,0.35)
+eta=np.ones(B); vh=np.ones(B); aeta=2.0; av=2.0
+lpxi=np.log1p(np.exp(th[:,1])); muxi=lpxi.mean(); sxi=lpxi.std()
+kstmu=0.0; kep_mu=0.0; sk_=1.0
+pfam=0.7
+
+lp=np.array([block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],th[b,0],np.exp(th[b,1]),fs,eta[b],vh[b],psi[b]) for b in range(B)])
+
+NS=9000; BURN=5000; THIN=4
+keep=(NS-BURN)//THIN
+Q90=np.zeros((keep,B));Q95=np.zeros((keep,B));Q99=np.zeros((keep,B))
+MU=np.zeros((keep,B));SIG=np.zeros((keep,B));FA=np.zeros((keep,B));PS=np.zeros((keep,B));
+acc=np.zeros(6);att=np.zeros(6)
+rng=np.random.default_rng(7)
+t0=time.time()
+for it in range(NS):
+    # --- hyper ---
+    aeta=1.0/rng.gamma(2.0+0.5*B,1.0/(1.0+0.5*eta.sum()))
+    av  =1.0/rng.gamma(2.0+0.5*B,1.0/(1.0+0.5*vh.sum()))
+    for b in range(B):
+        eta[b]=1.0/rng.gamma(1.5,1.0/(aeta+0.5*(np.exp(th[b,1])/C)**2))
+    # vh conditioned on current d (approx Gibbs with exact d using current state)
+    for b in range(B):
+        fsb=fs
+        sh=shapeparams(fam[b],kst[b] if fam[b]==0 else kep[b])
+        _,mn,sd_=fam_quantiles(fam[b],fsb,sh,[0.5])
+        mu_b=th[b,0];sig_b=np.exp(th[b,1])
+        d=(mn*sig_b-mu_b*sd_)/C*np.sqrt(vh[b])/np.sqrt(vh[b])+np.log(sig_b*sd_)  # placeholder, exact below
+        # exact d used in lp: (mn*sig-mu*sd)/(sqrt(vh)C)+log(sig*sd/sqrt(vh)); define w=d*sqrt(vh)
+        w=(mn*sig_b-mu_b*sd_)/C+np.log(sig_b*sd_)
+        # vh ~ InvGamma(1+0.5, av+ w^2/(2 vh))... implicit; MH single step
+        pass
+    mupsi=rng.normal((psi.sum()/(sp*sp))/ (B/(sp*sp)+1.0), np.sqrt(1.0/(B/sp/sp+1.0)))
+    sp=1.0/np.sqrt(rng.gamma(2.0+0.5*B,1.0/(1.0+0.5*np.sum((psi-mupsi)**2))))
+    # fs RW (log space)
+    fsp=np.exp(np.log(fs)+rng.normal(0,0.05))
+    lpold=np.array([block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],th[b,0],np.exp(th[b,1]),fs,eta[b],vh[b],psi[b]) for b in range(B)])
+    lpnew=np.array([block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],th[b,0],np.exp(th[b,1]),fsp,eta[b],vh[b],psi[b]) for b in range(B)])
+    pr=-0.5*((np.log(fsp)-mupsi)/sp)**2+0.5*((np.log(fs)-mupsi)/sp)**2
+    if np.log(rng.uniform())<lpnew.sum()-lpold.sum()+pr: fs=fsp; acc[0]+=1
+    att[0]+=1
+    # psi individual
+    psi=np.clip(np.log(fs)+rng.normal(0,sp,B),-1.2,1.2)
+    # lpxi hierarchy
+    lpxi=np.log1p(np.exp(th[:,1]))
+    muxi=rng.normal((lpxi.sum()/(sxi*sxi))/(B/(sxi*sxi)+1.0),np.sqrt(1.0/(B/sxi/sxi+1.0)))
+    sxi=1.0/np.sqrt(rng.gamma(2.0+0.5*B,1.0/(1.0+0.5*np.sum((lpxi-muxi)**2))))
+    # pfam
+    n0=(fam==0).sum(); pfam=rng.beta(1.0+n0,1.0+B-n0)
+    # --- blocks ---
+    for b in range(B):
+        mu_b=th[b,0];sig_b=np.exp(th[b,1])
+        # MH for eta
+        mu_p=mu_b+rng.normal(0,0.15*max(sig_b,1e-9))
+        lpn=block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],mu_p,sig_b,fs,eta[b],vh[b],psi[b])
+        lpo=block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],mu_b,sig_b,fs,eta[b],vh[b],psi[b])
+        if np.log(rng.uniform())<lpn-lpo: th[b,0]=mu_p;mu_b=mu_p;acc[1]+=1
+        att[1]+=1
+        # MH for xi (logsig)
+        x_p=th[b,1]+rng.normal(0,0.10)
+        sig_p=np.exp(x_p)
+        lpn=block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],mu_b,sig_p,fs,eta[b],vh[b],psi[b])
+        lpo=block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],mu_b,sig_b,fs,eta[b],vh[b],psi[b])
+        lpx_p=np.log1p(np.exp(x_p)); lpx_o=np.log1p(np.exp(th[b,1]))
+        pr=-0.5*((lpx_p-muxi)/sxi)**2+0.5*((lpx_o-muxi)/sxi)**2
+        if np.log(rng.uniform())<lpn-lpo+pr: th[b,1]=x_p;sig_b=sig_p;acc[2]+=1
+        att[2]+=1
+        # shape RW on active family
+        if fam[b]==0:
+            kp=kst[b]+rng.normal(0,0.10)
+            lpn=block_lp(b,fam[b],th,kp,mu_b,sig_b,fs,eta[b],vh[b],psi[b])-0.5*kp*kp
+            lpo=block_lp(b,fam[b],th,kst[b],mu_b,sig_b,fs,eta[b],vh[b],psi[b])-0.5*kst[b]*kst[b]
+            if np.log(rng.uniform())<lpn-lpo: kst[b]=kp;acc[3]+=1
+        else:
+            kp=kep[b]+rng.normal(0,0.10)
+            lpn=block_lp(b,fam[b],th,kp,mu_b,sig_b,fs,eta[b],vh[b],psi[b])-0.5*kp*kp
+            lpo=block_lp(b,fam[b],th,kep[b],mu_b,sig_b,fs,eta[b],vh[b],psi[b])-0.5*kep[b]*kep[b]
+            if np.log(rng.uniform())<lpn-lpo: kep[b]=kp;acc[3]+=1
+        att[3]+=1
+        # vh MH
+        vhp=np.exp(np.log(vh[b])+rng.normal(0,0.3))
+        lpn=block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],mu_b,sig_b,fs,eta[b],vhp,psi[b])-(2.5)*np.log(vhp)-av/vhp+np.log(vhp)
+        lpo=block_lp(b,fam[b],th,kst[b] if fam[b]==0 else kep[b],mu_b,sig_b,fs,eta[b],vh[b],psi[b])-(2.5)*np.log(vh[b])-av/vh[b]+np.log(vh[b])
+        if np.log(rng.uniform())<lpn-lpo: vh[b]=vhp;acc[4]+=1
+        att[4]+=1
+        # family RJ swap
+        fam_p=1-fam[b]; kp=kst[b] if fam_p==0 else kep[b]; kp=-(kst[b] if fam[b]==0 else kep[b])
+        lpn=block_lp(b,fam_p,th,kp,mu_b,sig_b,fs,eta[b],vh[b],psi[b])+np.log(pfam if fam_p==0 else 1-pfam)-0.5*kp*kp
+        kact=kst[b] if fam[b]==0 else kep[b]
+        lpo=block_lp(b,fam[b],th,kact,mu_b,sig_b,fs,eta[b],vh[b],psi[b])+np.log(pfam if fam[b]==0 else 1-pfam)-0.5*kact*kact
+        if np.log(rng.uniform())<lpn-lpo:
+            fam[b]=fam_p
+            if fam_p==0: kst[b]=kp
+            else: kep[b]=kp
+            acc[5]+=1
+        att[5]+=1
+    # storage
+    if it>=BURN and (it-BURN)%THIN==0:
+        kk=(it-BURN)//THIN
+        for b in range(B):
+            sh=shapeparams(fam[b],kst[b] if fam[b]==0 else kep[b])
+            zq,_,_=fam_quantiles(fam[b],fs,sh,[0.9,0.95,0.99])
+            Q90[kk,b]=th[b,0]+np.exp(th[b,1])*zq[0]
+            Q95[kk,b]=th[b,0]+np.exp(th[b,1])*zq[1]
+            Q99[kk,b]=th[b,0]+np.exp(th[b,1])*zq[2]
+            MU[kk,b]=th[b,0];SIG[kk,b]=np.exp(th[b,1]);FA[kk,b]=fam[b];PS[kk,b]=psi[b]
+        if kk%200==0: print("iter",it,"t",round(time.time()-t0,1),"acc",np.round(acc/np.maximum(att,1),3))
+np.savez('work/fit.npz',Q90=Q90,Q95=Q95,Q99=Q99,MU=MU,SIG=SIG,FA=FA,PS=PS,M=M,blocks=blocks,X=X)
+print("done",time.time()-t0)
+EOF
+timeout 1200 python work/model2.py 2>&1 | tail -30
 ```
 
 ## [19] tool
@@ -1015,7 +1626,151 @@ There's a numerical issue in the tail-moment computation. Let me fix `core_full`
 **tool call: bash**
 
 ```
+cat > work/model3.py << 'EOF'
+import numpy as np, pandas as pd, re, time
+from scipy import stats, special
 
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS); B=len(blocks)
+    X=np.stack([np.sort(df[df.block==b].x.values) for b in blocks])
+    M=np.array([MS[b] for b in blocks],float)
+    return blocks,X,M,B
+blocks,X,M,B=load(); N=10
+C=0.8; C95=1.0
+
+def logpdf_st(u,fs,nu):
+    z=np.where(u>=0,u/fs,u*fs); return np.log(2.0/(fs+1.0/fs))+stats.t.logpdf(z,nu)
+def logpdf_sepd(u,fs,eps):
+    z=np.where(u>=0,u/fs,u*fs)
+    r=eps*(eps+(1.0-eps)*z*z)
+    return np.where(np.abs(z)<1, np.log(2.0/(fs+1.0/fs))+2.0*np.log(np.maximum(1.0-r,1e-300)), -np.inf)
+
+zg=np.linspace(-1,1,24001); dz=zg[1]-zg[0]
+_cache={}
+def core_full(fam,fs,sh):
+    key=(fam,round(float(fs),9),round(float(sh),9))
+    if key in _cache: return _cache[key]
+    lp=(logpdf_st(zg,fs,sh) if fam==0 else logpdf_sepd(zg,fs,sh))
+    L=lp.max()
+    f=np.exp(lp-L)
+    c=np.concatenate([[0.0],np.cumsum(0.5*(f[1:]+f[:-1]))*dz]); c/=c[-1]
+    lz=zg[1:401]
+    lf=(logpdf_st(lz,fs,sh) if fam==0 else logpdf_sepd(lz,fs,sh))
+    a=np.exp(lf-L)
+    A=np.trapezoid(a,lz); b1=np.trapezoid(a*lz,lz); b2=np.trapezoid(a*lz*lz,lz)
+    mn=b1/max(A,1e-300); sd=np.sqrt(max(b2/max(A,1e-300)-mn*mn,1e-12))
+    out=(c,mn,sd); _cache[key]=out; return out
+
+def fam_quantiles(fam,fs,sh,taus):
+    c,mn,sd=core_full(fam,fs,sh)
+    zq=np.interp(taus,c,zg); zq=np.maximum(zq,-0.999999)
+    return zq,mn,sd
+
+def shapep(fam,k): return np.exp(np.log(4.0)+k) if fam==0 else special.expit(special.logit(0.6)+k)
+
+def block_lp(b,fam,k,mu,sig,fs,eta,vh):
+    sh=shapep(fam,k)
+    u=(X[b]-mu)/sig
+    lp=logpdf_st(u,fs,sh) if fam==0 else logpdf_sepd(u,fs,sh)
+    val=lp.sum()-N*np.log(sig)
+    zq,mn,sd=fam_quantiles(fam,fs,sh,[0.90,0.95,0.99])
+    d=(mn*sig-mu*sd)/(np.sqrt(vh)*C)+np.log(np.abs(sig)*sd/np.sqrt(vh))
+    val-=0.5*d*d
+    val-=0.5*np.log(sig*sig/(C*C*eta))
+    g=(C95-(mu+sig*zq[1]))/(0.9*sig)
+    val-=0.5*np.log(max(g*g,1e-30))
+    return val
+
+th=np.zeros((B,2)); th[:,0]=X.mean(1); th[:,1]=np.log(X.std(1,ddof=1))
+kst=np.zeros(B); kep=np.zeros(B)
+fam=np.zeros(B,int)
+for b in range(B):
+    med=np.median(X[b]); e=np.mean(np.abs(X[b]-med)); mad=np.median(np.abs(X[b]-med))
+    if mad/max(e,1e-9)<0.83: fam[b]=1
+fs=np.exp(0.35); mupsi=0.35; sp=0.5
+eta=np.ones(B); vh=np.ones(B); aeta=2.0; av=2.0
+lpxi=np.log1p(np.exp(th[:,1])); muxi=lpxi.mean(); sxi=lpxi.std()
+pfam=0.4
+rng=np.random.default_rng(7)
+
+NS=9000;BURN=5000;THIN=4;keep=(NS-BURN)//THIN
+Q={t:np.zeros((keep,B)) for t in [90,95,99]};MU=np.zeros((keep,B));SI=np.zeros((keep,B));FA=np.zeros((keep,B))
+acc=np.zeros(6);att=np.zeros(6)
+t0=time.time()
+for it in range(NS):
+    aeta=1.0/rng.gamma(2.0+0.5*B,1.0/(1.0+0.5*eta.sum()))
+    av  =1.0/rng.gamma(2.0+0.5*B,1.0/(1.0+0.5*vh.sum()))
+    sig_v=np.exp(th[:,1])
+    eta=1.0/rng.gamma(1.5,1.0/(aeta+0.5*(sig_v/C)**2))
+    mupsi=rng.normal(np.log(fs),0.02)
+    sp=1.0/np.sqrt(rng.gamma(2.5,1.0/(1.0+0.5))) # mild
+    # fs RW
+    fsp=np.exp(np.log(fs)+rng.normal(0,0.05))
+    lpold=np.array([block_lp(b,fam[b],kst[b] if fam[b]==0 else kep[b],th[b,0],sig_v[b],fs,eta[b],vh[b]) for b in range(B)])
+    lpnew=np.array([block_lp(b,fam[b],kst[b] if fam[b]==0 else kep[b],th[b,0],sig_v[b],fsp,eta[b],vh[b]) for b in range(B)])
+    pr=-0.5*((np.log(fsp)-mupsi)/sp)**2+0.5*((np.log(fs)-mupsi)/sp)**2
+    if np.log(rng.uniform())<lpnew.sum()-lpold.sum()+pr: fs=fsp;acc[0]+=1
+    att[0]+=1
+    lpxi=np.log1p(sig_v)
+    muxi=rng.normal(lpxi.mean(),sxi/np.sqrt(B))
+    sxi=1.0/np.sqrt(rng.gamma(2.0+0.5*B,1.0/(1.0+0.5*np.sum((lpxi-muxi)**2))))
+    n0=(fam==0).sum(); pfam=rng.beta(1.0+n0,1.0+B-n0)
+    for b in range(B):
+        mu_b=th[b,0];sig_b=np.exp(th[b,1])
+        kact=kst[b] if fam[b]==0 else kep[b]
+        # eta
+        mu_p=mu_b+rng.normal(0,0.15*max(sig_b,1e-9))
+        if rng.uniform()<np.exp(block_lp(b,fam[b],kact,mu_p,sig_b,fs,eta[b],vh[b])-block_lp(b,fam[b],kact,mu_b,sig_b,fs,eta[b],vh[b])):
+            th[b,0]=mu_b=mu_p;acc[1]+=1
+        att[1]+=1
+        # xi
+        x_p=th[b,1]+rng.normal(0,0.10); sig_p=np.exp(x_p)
+        lpn=block_lp(b,fam[b],kact,mu_b,sig_p,fs,eta[b],vh[b]);lpo=block_lp(b,fam[b],kact,mu_b,sig_b,fs,eta[b],vh[b])
+        lpx_p=np.log1p(sig_p);lpx_o=np.log1p(sig_b)
+        pr=-0.5*((lpx_p-muxi)/sxi)**2+0.5*((lpx_o-muxi)/sxi)**2
+        if rng.uniform()<np.exp(lpn-lpo+pr): th[b,1]=x_p;sig_b=sig_p;acc[2]+=1
+        att[2]+=1
+        # shape
+        kp=kact+rng.normal(0,0.10)
+        lpn=block_lp(b,fam[b],kp,mu_b,sig_b,fs,eta[b],vh[b])-0.5*kp*kp
+        lpo=block_lp(b,fam[b],kact,mu_b,sig_b,fs,eta[b],vh[b])-0.5*kact*kact
+        if rng.uniform()<np.exp(lpn-lpo):
+            if fam[b]==0:kst[b]=kp
+            else:kep[b]=kp
+            kact=kp;acc[3]+=1
+        att[3]+=1
+        # vh
+        vhp=np.exp(np.log(vh[b])+rng.normal(0,0.3))
+        lpn=block_lp(b,fam[b],kact,mu_b,sig_b,fs,eta[b],vhp)-2.5*np.log(vhp)-av/vhp+np.log(vhp)
+        lpo=block_lp(b,fam[b],kact,mu_b,sig_b,fs,eta[b],vh[b])-2.5*np.log(vh[b])-av/vh[b]+np.log(vh[b])
+        if rng.uniform()<np.exp(lpn-lpo): vh[b]=vhp;acc[4]+=1
+        att[4]+=1
+        # family RJ swap
+        fam_p=1-fam[b]; kp=-kact
+        lpn=block_lp(b,fam_p,kp,mu_b,sig_b,fs,eta[b],vh[b])+np.log(pfam if fam_p==0 else 1-pfam)-0.5*kp*kp
+        lpo=block_lp(b,fam[b],kact,mu_b,sig_b,fs,eta[b],vh[b])+np.log(pfam if fam[b]==0 else 1-pfam)-0.5*kact*kact
+        if rng.uniform()<np.exp(lpn-lpo):
+            fam[b]=fam_p
+            if fam_p==0:kst[b]=kp
+            else:kep[b]=kp
+            acc[5]+=1
+        att[5]+=1
+    if it>=BURN and (it-BURN)%THIN==0:
+        kk=(it-BURN)//THIN
+        for b in range(B):
+            sh=shapep(fam[b],kst[b] if fam[b]==0 else kep[b])
+            zq,_,_=fam_quantiles(fam[b],fs,sh,[0.9,0.95,0.99])
+            s=np.exp(th[b,1]);mu=th[b,0]
+            Q[90][kk,b]=mu+s*zq[0];Q[95][kk,b]=mu+s*zq[1];Q[99][kk,b]=mu+s*zq[2]
+            MU[kk,b]=mu;SI[kk,b]=s;FA[kk,b]=fam[b]
+        if kk%250==0:print("keep",kk,"t",round(time.time()-t0),"acc",np.round(acc/np.maximum(att,1),3))
+np.savez('work/fit.npz',Q90=Q[90],Q95=Q[95],Q99=Q[99],MU=MU,SI=SI,FA=FA,M=M,blocks=blocks,X=X)
+print("DONE",time.time()-t0)
+EOF
+timeout 1800 python work/model3.py 2>&1 | tail -15
 ```
 
 ## [21] tool
@@ -1042,7 +1797,8 @@ There's a numerical issue in the tail-moment computation. Let me fix `core_full`
 **tool call: bash**
 
 ```
-
+sed -i 's/np.exp(lpn-lpo)/np.exp(min(0.0,lpn-lpo))/g; s/np.exp(lpn-lpo+pr)/np.exp(min(0.0,lpn-lpo+pr))/g; s/np.exp(block_lp(b,fam\[b\],kact,mu_p,sig_b,fs,eta\[b\],vh\[b\])-block_lp(b,fam\[b\],kact,mu_b,sig_b,fs,eta\[b\],vh\[b\]))/np.exp(min(0.0,block_lp(b,fam[b],kact,mu_p,sig_b,fs,eta[b],vh[b])-block_lp(b,fam[b],kact,mu_b,sig_b,fs,eta[b],vh[b])))/g' work/model3.py
+cd work && timeout 2400 python model3.py 2>&1 | tail -12
 ```
 
 ## [23] tool
@@ -1066,7 +1822,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/blocks.csv'
 **tool call: bash**
 
 ```
-
+timeout 2400 python work/model3.py 2>&1 | tail -12
 ```
 
 ## [25] tool
@@ -1088,7 +1844,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/blocks.csv'
 **tool call: bash**
 
 ```
-
+timeout 2400 python work/model3.py 2>&1 | tail -12
 ```
 
 ## [27] tool
@@ -1116,7 +1872,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/blocks.csv'
 **tool call: bash**
 
 ```
-
+timeout 3000 python work/model3.py > work/log3.txt 2>&1; tail -12 work/log3.txt
 ```
 
 ## [29] tool
@@ -1142,7 +1898,31 @@ The sampler is too slow/crash-prone. Time to step back and pick the right tool: 
 **tool call: bash**
 
 ```
-
+cat > work/test_epd.py << 'EOF'
+import numpy as np
+from scipy import stats, special
+from scipy.stats import epd
+zg=np.linspace(-1,1,40001);dz=zg[1]-zg[0]
+def epd_q(eps,taus):
+    r=eps*(eps+(1-eps)*zg*zg); f=np.where(np.abs(zg)<1,(1-r)**2,0)
+    f/=np.trapezoid(f,zg)
+    c=np.concatenate([[0.],np.cumsum(0.5*(f[1:]+f[:-1]))*dz])
+    q=np.interp(taus,c,zg)
+    lz=zg[1:501];lr=eps*(eps+(1-eps)*lz*lz);lf=np.where(np.abs(lz)<1,(1-lr)**2,0)
+    lf=lf/np.trapezoid(f,zg)
+    mn=np.trapezoid(lf*lz,lz);sd=np.sqrt(np.trapezoid(lf*lz*lz,lz)-mn**2)
+    return q,mn,sd
+for eps in [0.3,0.5,0.7,0.85,0.95,1.0]:
+    q,mn,sd=epd_q(eps,[0.9,0.95,0.99,0.999])
+    print(f"eps={eps}: z90={q[0]:.3f} z95={q[1]:.3f} z99={q[2]:.3f} z999={q[3]:.3f} sdCore={sd:.3f}")
+# scipy epd
+import scipy
+print("scipy epd:", [a for a in dir(epd)][:5] if hasattr(epd,'rvs') else "rvs?")
+try:
+    print(epd(var=0.6).mean())
+except Exception as e: print("epd ctor err",e)
+EOF
+python work/test_epd.py
 ```
 
 ## [31] tool
@@ -1161,7 +1941,42 @@ No scipy EPD — fine, my manual implementation shows EPD(ε) with small ε is l
 **tool call: bash**
 
 ```
-
+cat > work/test_st.py << 'EOF'
+import numpy as np
+from scipy import stats
+for nu in [2.5,4,7,15]:
+    for fs in [1.0,1.5,2.2]:
+        q99=fs*stats.t.ppf(1-(1-0.99)/(2/(1+fs**2))*0+0.0,nu)  # via mixture formula below
+# FS skew-t quantile: for z>0: F(t(z/fs))=1-(1-tau)(fs+1/fs)/(2)*? use numeric grid
+zg=np.linspace(-0.999999,0.999999,30001)
+def fsq(fs,nu,taus):
+    z=np.where(zg>=0,zg/fs,zg*fs)
+    lp=np.log(2/(fs+1/fs))+stats.t.logpdf(z,nu); lp-=lp.max()
+    f=np.exp(lp)
+    # tail beyond 0.999999 bounded: extend via t tail for fs>1 right
+    from scipy.integrate import cumulative_trapezoid
+    dz=zg[1]-zg[0]
+    c=np.concatenate([[0.],cumulative_trapezoid(f,zg)])
+    tot=c[-1] + (2/(fs+1/fs))*fs*stats.t.sf(0.999999/fs,nu)  # right tail mass beyond grid
+    cn=c/tot
+    r=[]
+    for t in taus:
+        zq=np.interp(t,cn,zg)
+        if zq>=0.999998: # invert tail
+            # tau = (mass<=0.999999)/tot + (2/(fs+1/fs))*fs*(T(1/fs)-T(t))/tot
+            base=(cn[-1])
+            from scipy.optimize import brentq
+            def g(tv): return base+(2/(fs+1/fs))*fs*(stats.t.cdf(0.999999/fs,nu)-stats.t.cdf(tv,nu))/tot - t
+            tv=brentq(g,0.999999/fs,300); zq=fs*tv
+        r.append(zq)
+    return r
+for nu in [2.5,4,7,15]:
+    row=[]
+    for fs in [1.0,1.5,2.2]:
+        z90,z95,z99=fsq(fs,nu,[0.9,0.95,0.99]); row.append(f"fs{fs}: {z95:.2f}/{z99:.2f}")
+    print(f"nu={nu}: "+" | ".join(row))
+EOF
+python work/test_st.py
 ```
 
 ## [33] tool
@@ -1185,7 +2000,30 @@ ValueError: f(a) and f(b) must have different signs
 **tool call: bash**
 
 ```
-
+cat > work/test_st2.py << 'EOF'
+import numpy as np
+from scipy import stats
+# FS skew-t: quantile via analytic mixture. For z>0: F = 1 - (1-T_nu(t))*(fs^2+1)/ (?) -> derive:
+# pdf_norm = (2/(fs+1/fs))*t_nu(z/fs)/fs for z>0. Mass z>0 = fs/(fs+1/fs).
+def ppf(tau,nu,fs):
+    from scipy.optimize import brentq
+    def cdfz(zv):
+        z=np.where(zv>=0,zv/fs,zv*fs)
+        t=stats.t.cdf(z,nu)
+        out=np.where(zv>=0, (2*fs/(fs+1/fs))*(t-0.5)+0.5*(fs-1/fs)/(fs+1/fs)*0+ (fs/(fs+1/fs))*0, (2/(fs+1/fs))*(1/fs)*t)
+        # left mass total = (1/fs)/(fs+1/fs); right = fs/(fs+1/fs)
+        leftm=(1/fs)/(fs+1/fs); rightm=fs/(fs+1/fs)
+        out=np.where(zv>=0, leftm+2*rightm*(t-0.5), 2*leftm*t)
+        return out
+    lo,hi=-1e2,1e2
+    return brentq(lambda v: cdfz(v)-tau,lo,hi,maxiter=200)
+for nu in [2.5,4,7,15]:
+    row=[]
+    for fs in [1.0,1.5,2.2]:
+        z90=ppf(0.9,nu,fs);z95=ppf(0.95,nu,fs);z99=ppf(0.99,nu,fs); row.append(f"fs{fs}: {z95:.2f}/{z99:.2f}/{z99-z95:.2f}")
+    print(f"nu={nu}: "+" | ".join(row))
+EOF
+python work/test_st2.py
 ```
 
 ## [35] tool
@@ -1203,7 +2041,110 @@ Skew-t quantile behavior confirmed. Now the full parametric residual bootstrap e
 **tool call: bash**
 
 ```
+cat > work/estimator.py << 'EOF'
+"""Parametric residual bootstrap estimator with skewed-t (FS) family + EPD low-vol switch."""
+import numpy as np, pandas as pd, re, time
+from scipy import stats, special
+from scipy.optimize import brentq
 
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS)
+    X=[np.sort(df[df.block==b].x.values) for b in blocks]
+    M=np.array([MS[b] for b in blocks])
+    return blocks,X,M
+
+# ---------------- skewed-t family (Fernandez-Steel) ----------------
+TMOM={}
+def tmoms(nu):
+    if nu in TMOM: return TMOM[nu]
+    from scipy.integrate import quad
+    tpdf=lambda t: np.exp(stats.t.logpdf(t,nu))
+    A=quad(lambda t: tpdf(t),0,np.inf)[0]
+    m1=quad(lambda t: t*tpdf(t),0,np.inf)[0]/A
+    m2=quad(lambda t: t*t*tpdf(t),0,np.inf)[0]/A
+    TMOM[nu]=(m1,m2)
+    return m1,m2
+def st_mom(fs,nu):
+    m1,m2=tmoms(nu)
+    c=2.0/(fs+1.0/fs)
+    mean=c*(fs*fs-1.0/fs)*m1
+    sd=np.sqrt(c*(fs**3+1.0/fs**3)*m2-mean*mean)
+    return mean,max(sd,1e-9)
+def st_zquantile(tau,fs,nu):
+    c=2.0/(fs+1.0/fs); leftm=c/fs*0.5; rightm=c*fs*0.5
+    if tau<=leftm: return stats.t.ppf(0.5*tau/leftm,nu)/fs
+    u=(tau-leftm)/rightm
+    return fs*stats.t.ppf(1-0.5*(1-u),nu)
+
+# ---------------- EPD low-vol profile (bounded, light) ----------------
+ZG=np.linspace(-0.9999999,0.9999999,20001); DZ=ZG[1]-ZG[0]
+EPDM={}
+def epd_core(eps):
+    if eps in EPDM: return EPDM[eps]
+    r=eps*(eps+(1-eps)*ZG*ZG)
+    f=np.where(np.abs(ZG)<1,np.maximum(1-r,0)**2,0.0)
+    c=np.concatenate([[0.],np.cumsum(0.5*(f[1:]+f[:-1]))*DZ]); c/=c[-1]
+    lz=ZG[1:401];rr=eps*(eps+(1-eps)*lz*lz);lf=np.maximum(1-rr,0)**2
+    A=np.trapezoid(lf,lz);mn=np.trapezoid(lf*lz,lz)/A;sd=np.sqrt(np.trapezoid(lf*lz*lz,lz)/A-mn*mn)
+    EPDM[eps]=(c,mn,max(sd,1e-9));return EPDM[eps]
+def epd_q(eps,taus):
+    c,_,_=epd_core(eps)
+    return np.interp(taus,c,ZG)
+
+def choose_fam(x):
+    med=np.median(x)
+    e=np.mean(np.abs(x-med)); mad=np.median(np.abs(x-med))
+    return 1 if mad/max(e,1e-12)<0.83 else 0
+
+def st_nll(p,x,fs):
+    xi,om,k=p; nu=np.exp(k)
+    z=(x-xi)/om; zz=np.where(z>=0,z/fs,z*fs)
+    c=2.0/(fs+1.0/fs)
+    return -(np.log(c)+stats.t.logpdf(zz,nu)).sum()+len(x)*np.log(om)
+
+def fit_params(x):
+    """Return dict(fam, xi, om, k or eps, fs, momat) after plug-in shrinkage."""
+    x=np.asarray(x,float); n=len(x); med=np.median(x); sd=x.std(ddof=1); sd=max(sd,1e-9)
+    g1=np.mean(((x-x.mean())/np.std(x))**3)*np.sqrt(n*(n-1))/(n-2)
+    g2=np.mean(((x-x.mean())/np.std(x))**4)-3
+    fam=choose_fam(x)
+    sk=float(np.clip(g1*0.62,-0.95,1.8))
+    # crude correction for t-heaviness reducing sample skew
+    if g2>1.0: sk=float(np.clip(sk*1.12,-0.95,1.8))
+    fs=float(max(np.exp(sk),0.667))
+    if fam==0:
+        kraw=0.6+0.16*g2
+        k=float(np.log(2.4)+0.55*np.log(7.0/2.4)*special.expit((kraw-np.log(2.8))*1.4))
+        from scipy.optimize import minimize_scalar
+        rz=minimize_scalar(lambda w: st_nll((med,np.exp(w),k),x,fs),bounds=(np.log(sd)-2.5,np.log(sd)+1.5),method='bounded')
+        om=float(np.exp(rz.x)); om=float(np.clip(om,0.18*sd,3.0*sd))
+        mn_,sd_=st_mom(fs,np.exp(k))
+        xi=float(med)-om*mn_/sd_
+        # sanity: xi must be left of upper mass
+        xi=min(xi, np.quantile(x,0.6))
+        return dict(fam=0,xi=xi,om=om,k=k,fs=fs,sd=sd)
+    else:
+        dome=np.std(x[x<=med]) if (x<=med).sum()>=3 else sd*0.7
+        eps=float(np.clip(0.55*dome/sd,0.25,0.97))
+        # omega: total sd = om*sd_eps(sd_core units) -> om = sd/sd_eps
+        _,mn_e,sd_e=epd_core(eps)
+        om=float(sd/sd_e); om=float(np.clip(om,0.3*sd,2.5*sd))
+        xi=float(med)  # nearly symmetric profile
+        return dict(fam=1,xi=xi,om=om,eps=eps,fs=fs,sd=sd)
+
+def raw_q(p,tau,fix=0.667):
+    if p['fam']==0:
+        z=st_zquantile(tau,max(p['fs'],fix),np.exp(p['k']))
+        return p['xi']+p['om']*z
+    mn_e,sd_e=epd_core(p['eps'])[1:]
+    z=np.interp(tau,epd_core(p['eps'])[0],ZG)
+    z=max(z,-0.999999)
+    return p['xi']+p['om']*z
+EOF
+echo "module written"
 ```
 
 ## [37] tool
@@ -1216,7 +2157,47 @@ module written
 **tool call: bash**
 
 ```
+cat > work/simcheck.py << 'EOF'
+"""Monte-Carlo validation of the raw estimator against known DGPs."""
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from scipy import stats
+from estimator import fit_params, raw_q, st_mom, st_zquantile
+rng=np.random.default_rng(3)
 
+def sim_truth(mu,sd,sk,L,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk)
+    F=stats.johnsonsu.ppf(np.arange(1,m+1)/(m+1),-sk,cc,loc=xi,scale=sd)
+    F=F-F.mean()+mu  # recenter
+    return np.sort(F)
+dgps=[
+ ("sym_norm",0,25,0.0,0.0),
+ ("sym_right",5,30,0.8,2.0),
+ ("heavy_right",0,40,1.5,0.5),
+ ("mild_right",10,15,0.55,0.9),
+ ("left",0,20,-0.7,1.0),
+ ("strong_right_small",2,10,1.4,0.5),
+ ("near_zero_sd",0.4,0.5,0.2,1.0),
+ ("very_heavy",0,60,2.6,0.3),
+]
+for name,mu,sd,sk,L in dgps:
+    errs={90:[],95:[],99:[]}
+    cover=[]; wid=[]
+    for rep in range(400):
+        m=int(rng.integers(250,590)); F=sim_truth(mu,sd,sk,L,m)
+        s=rng.choice(F,10,replace=False)
+        p=fit_params(s)
+        for t in [0.90,0.95,0.99]:
+            q=raw_q(p,t)
+            qt=np.quantile(F,int(np.ceil(t*len(F)))/len(F),method='higher')
+            qt=F[int(np.ceil(t*m))-1]
+            errs[int(t*100)].append((q-qt)/sd)
+    for t in [90,95,99]:
+        e=np.array(errs[t])
+        print(name, "tau",t, "bias%sd=%.2f"%e.mean(), "rmse%sd=%.2f"%np.sqrt((e*e).mean()), "P(under)=%.2f"%(e<0).mean())
+    print()
+EOF
+python work/simcheck.py
 ```
 
 ## [39] tool
@@ -1234,7 +2215,8 @@ TypeError: not enough arguments for format string
 **tool call: bash**
 
 ```
-
+sed -i 's/"bias%sd=%.2f"/"bias_sd=%.2f"/; s/"rmse%sd=%.2f"/"rmse_sd=%.2f"/; s/"P(under)=%.2f"/"Punder=%.2f"/' work/simcheck.py
+python work/simcheck.py
 ```
 
 ## [41] tool
@@ -1280,7 +2262,41 @@ The validation has a bug (JohnsoNSU transform was mangling everything; the "near
 **tool call: bash**
 
 ```
+cat > work/simcheck2.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from scipy import stats
+from estimator import fit_params, raw_q
+rng=np.random.default_rng(3)
 
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    if nu==np.inf: g=stats.norm()
+    else: g=stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    Fg=g.ppf(np.arange(1,m+1)/(m+1))
+    F=su.ppf(stats.norm.cdf(Fg))
+    return np.sort(F-F.mean()+mu)
+
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("near_zero_sd",0.4,0.5,0.2,np.inf),("very_heavy",0,60,2.2,2.8)]
+for name,mu,sdv,sk,nu in dgps:
+    errs={90:[],95:[],99:[]}
+    for rep in range(300):
+        m=int(rng.integers(250,590));F=F_grid(mu,sdv,sk,nu,m)
+        s=rng.choice(F,10,replace=False)
+        p=fit_params(s)
+        sd=F.std()
+        for t in [0.90,0.95,0.99]:
+            q=raw_q(p,t); qt=F[int(np.ceil(t*m))-1]
+            errs[int(t*100)].append((q-qt)/sd)
+    ln=""
+    for t in [90,95,99]:
+        e=np.array(errs[t]); ln+=f" t{t}: bias={e.mean()/1:.2f} rmse={np.sqrt((e*e).mean()):.2f} punder={(e<0).mean():.2f} |"
+    print(f"{name:14s}"+ln)
+EOF
+python work/simcheck2.py
 ```
 
 ## [43] tool
@@ -1302,7 +2318,71 @@ Fits are reasonable now but heavy-tailed cases overestimate ν (fattening tails)
 **tool call: bash**
 
 ```
+cat >> work/estimator.py << 'EOF'
 
+# ---------------- direct skewed-t MLE per block ----------------
+def st_mle(x, nu_grid=None):
+    x=np.asarray(x,float); n=len(x); mu0=x.mean(); sd0=x.std(ddof=1); sd0=max(sd0,1e-9)
+    med=np.median(x)
+    if nu_grid is None:
+        nu_grid=np.exp(np.linspace(np.log(2.6),np.log(45.0),9))
+    best=None
+    for nu in nu_grid:
+        def neg(pw,nu=nu):
+            xi,w,k=pw; om=np.exp(w); fs=np.exp(k)
+            z=(x-xi)/om; zc=np.where(z>=0,z/fs,z*fs)
+            ll=(np.log(2.0/(fs+1.0/fs))+stats.t.logpdf(zc,nu)).sum()-n*np.log(om)
+            return -ll
+        from scipy.optimize import minimize
+        r=minimize(neg,[med,np.log(sd0),0.0],method='Nelder-Mead',
+                   options=dict(maxiter=1500,xatol=1e-8,fatol=1e-8))
+        if best is None or r.fun<best.fun: best=r; best.x[2]=best.x[2]; best_nu=nu
+    xi,w,k=best.x
+    # constrain fs>=1 (identifiability: reflect if needed)
+    fs=np.exp(k)
+    if fs<1.0:  # reflect: negated sample would have skew>0
+        fs=1.0/fs  # approximate (keep)
+    mn,sd_=st_mom(fs,best_nu)
+    return dict(xi=best.x[0],om=np.exp(best.x[1]),k=np.log(best_nu),nnu=best_nu,fs=fs,mn=mn,sd_=sd_)
+
+def mle_quantiles(x,taus):
+    e=st_mle(x)
+    out=[]
+    for t in taus:
+        z=st_zquantile(t,e['fs'],e['nnu']); out.append(e['xi']+e['om']*z)
+    return out,e
+EOF
+cat > work/simcheck3.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np,time
+from scipy import stats
+from estimator import mle_quantiles
+rng=np.random.default_rng(3)
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    F=su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1))))
+    return np.sort(F-F.mean()+mu)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("near_zero_sd",0.4,0.5,0.2,np.inf),("very_heavy",0,60,2.2,2.8)]
+t00=time.time()
+for name,mu,sdv,sk,nu in dgps:
+    errs={90:[],95:[],99:[]}
+    for rep in range(120):
+        m=int(rng.integers(250,590));F=F_grid(mu,sdv,sk,nu,m)
+        s=rng.choice(F,10,replace=False)
+        qv,_=mle_quantiles(s,[0.9,0.95,0.99]); sd=F.std()
+        for i,t in enumerate([90,95,99]):
+            qt=F[int(np.ceil(t/100*m))-1]; errs[t].append((qv[i]-qt)/sd)
+    ln=""
+    for t in [90,95,99]:
+        e=np.array(errs[t]);ln+=f" t{t}: b={e.mean():+.2f} rmse={np.sqrt((e*e).mean()):.2f} pu={(e<0).mean():.2f} |"
+    print(f"{name:14s}"+ln)
+print("t",time.time()-t00)
+EOF
+python work/simcheck3.py
 ```
 
 ## [45] tool
@@ -1318,7 +2398,87 @@ Direct MLE is too slow. Let me make it fast using L-BFGS-B and a coarse ν grid 
 **tool call: bash**
 
 ```
+cat > work/estimator_fast.py << 'EOF'
+import numpy as np, pandas as pd, re, time
+from scipy import stats, special
+from scipy.optimize import minimize
 
+# ---------- FS skewed-t core ----------
+TMOM={}
+def tmoms(nu):
+    if nu in TMOM: return TMOM[nu]
+    from scipy.integrate import quad
+    tpdf=lambda t: np.exp(stats.t.logpdf(t,nu))
+    A=quad(tpdf,0,np.inf)[0]
+    m1=quad(lambda t:t*tpdf(t),0,np.inf)[0]/A
+    m2=quad(lambda t:t*t*tpdf(t),0,np.inf)[0]/A
+    TMOM[nu]=(m1,m2); return m1,m2
+def st_mom(fs,nu):
+    m1,m2=tmoms(nu); c=2.0/(fs+1.0/fs)
+    mean=c*(fs*fs-1.0/fs)*m1
+    return mean,max(np.sqrt(c*(fs**3+1.0/fs**3)*m2-mean*mean),1e-9)
+def st_zq(tau,fs,nu):
+    c=2.0/(fs+1.0/fs); lm=c/fs*0.5; rm=c*fs*0.5
+    if tau<=lm: return stats.t.ppf(0.5*tau/lm,nu)/fs
+    u=(tau-lm)/rm
+    return fs*stats.t.ppf(1-0.5*(1-u),nu)
+
+def st_nll_pw(pw,x,nu):
+    xi,w,k=pw; om=np.exp(w); fs=np.exp(k)
+    z=(x-xi)/om; zc=np.where(z>=0,z/fs,z*fs)
+    ll=(np.log(2.0/(fs+1.0/fs))+stats.t.logpdf(zc,nu)).sum()-len(x)*np.log(om)
+    return -ll
+
+def mle_fit(x, nu_list=(3.0,4.5,7.0,12.0,25.0)):
+    x=np.asarray(x,float); n=len(x)
+    med=np.median(x); sd=x.std(ddof=1); sd=max(sd,1e-9)
+    starts=[(med,np.log(sd),0.0),(x.mean(),np.log(sd),0.1)]
+    best=None;bnu=None
+    for nu in nu_list:
+        for s0 in starts:
+            r=minimize(st_nll_pw,s0,args=(x,nu),method='L-BFGS-B',
+                       bounds=[(x.min()-6*sd,x.max()+6*sd),(np.log(sd)-4,np.log(sd)+3),( -0.6,2.2)],
+                       options=dict(maxiter=400))
+            if best is None or r.fun<best.fun: best=r;bnu=nu
+    xi,w,k=best.x
+    mn,sd_=st_mom(np.exp(k),bnu)
+    return dict(xi=xi,om=np.exp(w),fs=np.exp(k),nu=bnu,mn=mn,sd_=sd_,negll=best.fun)
+
+def mle_q(x,taus):
+    e=mle_fit(x)
+    return [e['xi']+e['om']*st_zq(t,e['fs'],e['nu']) for t in taus],e
+EOF
+cat > work/sim5.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np,time
+from scipy import stats
+from estimator_fast import mle_q
+rng=np.random.default_rng(3)
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    F=su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1))))
+    return np.sort(F-F.mean()+mu)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("near_zero_sd",0.4,0.5,0.2,np.inf),("very_heavy",0,60,2.2,2.8)]
+t00=time.time()
+for name,mu,sdv,sk,nu in dgps:
+    errs={90:[],95:[],99:[]}
+    for rep in range(200):
+        m=int(rng.integers(250,590));F=F_grid(mu,sdv,sk,nu,m)
+        s=rng.choice(F,10,replace=False)
+        qv,_=mle_q(s,[0.9,0.95,0.99]); sd=F.std()
+        for i,t in enumerate([90,95,99]):
+            qt=F[int(np.ceil(t/100*m))-1]; errs[t].append((qv[i]-qt)/sd)
+    ln=""
+    for t in [90,95,99]:
+        e=np.array(errs[t]);ln+=f" t{t}: b={e.mean():+.2f} rmse={np.sqrt((e*e).mean()):.2f} pu={(e<0).mean():.2f} |"
+    print(f"{name:14s}"+ln, flush=True)
+print("t",round(time.time()-t00))
+EOF
+timeout 900 python work/sim5.py
 ```
 
 ## [47] tool
@@ -1336,7 +2496,14 @@ Let me profile a single fit — something is pathologically slow (likely `stats.
 **tool call: bash**
 
 ```
-
+cat > work/prof.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np,time
+from estimator_fast import mle_fit
+x=np.sort(np.random.default_rng(0).normal(5,30,10))
+t=time.time(); e=mle_fit(x); print("one fit:",round(time.time()-t,2),"s", {k:round(v,3) for k,v in e.items() if k!='negll'})
+EOF
+timeout 120 python work/prof.py
 ```
 
 ## [49] tool
@@ -1351,7 +2518,36 @@ one fit: 0.43 s {'xi': np.float64(11.952), 'om': np.float64(21.492), 'fs': np.fl
 **tool call: bash**
 
 ```
-
+cat > work/sim6.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np,time
+from scipy import stats
+from estimator import fit_params, raw_q
+rng=np.random.default_rng(3)
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    F=su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1))))
+    return np.sort(F-F.mean()+mu)
+dgps=[("heavy_right",0,40,1.5,4.0),("strong_right",2,10,1.4,3.5),
+ ("very_heavy",0,60,2.2,2.8),("sym_norm",0,25,0.0,np.inf)]
+for name,mu,sdv,sk,nu in dgps:
+    row={95:[],99:[]}
+    for rep in range(300):
+        m=int(rng.integers(250,590));F=F_grid(mu,sdv,sk,nu,m); sd=F.std()
+        s=rng.choice(F,10,replace=False)
+        p=fit_params(s)
+        for t in [0.95,0.99]:
+            q=raw_q(p,t); qt=F[int(np.ceil(t*m))-1]
+            row[int(t*100)].append((q-qt)/sd)
+    for t in [95,99]:
+        e=np.array(row[t])
+        # pinball excess per sd: E[rho_tau(x-q)-rho_tau(x-qt)] = tau*(qt-q)*1[q<qt] + (1-tau)*(q-qt)*1[q>qt]
+        d=np.array(row[t]); tau=t/100
+        exc=np.where(d<0,tau*( -d)*(1.0),0)+np.where(d>0,(1-tau)*d*(1.0),0)
+        print(f"{name} tau{t}: bias={e.mean():+.2f} pinball_excess/sd={exc.mean():.3f}")
+EOF
+python work/sim6.py
 ```
 
 ## [51] tool
@@ -1373,7 +2569,38 @@ The plug-in core works well for Q95 but the pinball loss critically underestimat
 **tool call: bash**
 
 ```
-
+cat > work/sim7.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from scipy import stats
+from estimator import fit_params, raw_q
+rng=np.random.default_rng(11)
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    F=su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1))))
+    return np.sort(F-F.mean()+mu)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("very_heavy",0,60,2.2,2.8),("norm_leptok",0,30,0.3,5.0)]
+def pinball(F,q,tau):
+    d=F-q
+    return np.mean(np.where(d>=0,tau*d,(tau-1)*d))
+for name,mu,sdv,sk,nu in dgps:
+    tot={90:[],95:[],99:[]}
+    for rep in range(250):
+        m=int(rng.integers(250,590));F=F_grid(mu,sdv,sk,nu,m); sd=F.std()
+        s=rng.choice(F,10,replace=False)
+        p=fit_params(s)
+        for t in [0.9,0.95,0.99]:
+            qt=F[int(np.ceil(t*m))-1]
+            exc=(pinball(F,raw_q(p,t),t)-pinball(F,qt,t))/sd
+            tot[int(t*100)].append(exc)
+    ln=" ".join(f"t{t}: {np.mean(tot[t]):+.3f}(se {np.std(tot[t])/np.sqrt(len(tot[t])):.3f})" for t in [90,95,99])
+    print(f"{name:13s} {ln}")
+EOF
+python work/sim7.py
 ```
 
 ## [53] tool
@@ -1395,7 +2622,41 @@ Q99 excess (~0.4·σ̂) is much worse than Q95 (~0.14·σ̂) — the asymmetry a
 **tool call: bash**
 
 ```
-
+python - << 'EOF'
+p='work/estimator.py'
+s=open(p).read()
+s=s.replace("def raw_q(p,tau,fix=0.667):\n    if p['fam']==0:",
+"""def raw_q(p,tau,fix=0.667,inflate=None):
+    if inflate is None: inflate=1.0+0.25*max(0.0,min(1.0,np.exp(p['k'])/6.0-0.6))
+    if p['fam']==0:""")
+open(p,'w').write(s)
+print("patched")
+EOF
+cat > work/sim8.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from scipy import stats
+from estimator import fit_params, raw_q
+rng=np.random.default_rng(11)
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    return np.sort(su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1))))-mu+mu)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8)]
+for name,mu,sdv,sk,nu in dgps:
+    tot=[]
+    for rep in range(300):
+        m=int(rng.integers(250,590));F=F_grid(mu,sdv,sk,nu,m); sd=F.std()
+        s=rng.choice(F,10,replace=False); p=fit_params(s)
+        t=0.99; qt=F[int(np.ceil(t*m))-1]
+        d=(raw_q(p,t)-qt)/sd
+        exc=np.where(d<0,t*(-d),0)+np.where(d>0,(1-t)*d,0)
+        tot.append(exc)
+    print(f"{name:13s} t99 excess/sd: {np.mean(tot):.4f} se {np.std(tot)/np.sqrt(len(tot)):.4f}")
+EOF
+python work/sim8.py
 ```
 
 ## [55] tool
@@ -1417,7 +2678,14 @@ patched
 **tool call: bash**
 
 ```
-
+python - << 'EOF'
+p='work/estimator.py'
+s=open(p).read()
+s=s.replace("def raw_q(p,tau,fix=0.667,inflate=None):\n    if inflate is None: inflate=1.0+0.25*max(0.0,min(1.0,np.exp(p['k'])/6.0-0.6))",
+"def raw_q(p,tau,fix=0.667,inflate=None):\n    if inflate is None: inflate=1.0+0.25*max(0.0,min(1.0,np.exp(p['k'])/6.0-0.6)) if p['fam']==0 else 1.0")
+open(p,'w').write(s)
+EOF
+python work/sim8.py
 ```
 
 ## [57] tool
@@ -1437,7 +2705,86 @@ The plug-in is structurally wrong for Q95 too (it **over**estimates even symmetr
 **tool call: bash**
 
 ```
+cat > work/tune1.py << 'EOF'
+import numpy as np
+from scipy import stats, special
+from scipy.optimize import minimize
+rng=np.random.default_rng(42)
 
+# skew-t utilities
+TM={}
+def tmoms(nu):
+    if nu in TM:return TM[nu]
+    from scipy.integrate import quad
+    tp=lambda t:np.exp(stats.t.logpdf(t,nu)); A=quad(tp,0,np.inf)[0]
+    m1=quad(lambda t:t*tp,0,np.inf)[0]/A;m2=quad(lambda t:t*t*tp,0,np.inf)[0]/A
+    TM[nu]=(m1,m2);return m1,m2
+def st_zq(tau,fs,nu):
+    c=2.0/(fs+1.0/fs);lm=c/fs*0.5;rm=c*fs*0.5
+    if tau<=lm:return stats.t.ppf(0.5*tau/lm,nu)/fs
+    return fs*stats.t.ppf(1-0.5*((tau-lm)/rm-1)*-1+0*( (tau-lm)/rm )*0+ (0.5*(1-(tau-lm)/rm)) ,nu)*0+ fs*stats.t.ppf(1-0.5*(1-(tau-lm)/rm),nu)
+def st_q(tau,xi,om,fs,nu): return xi+om*st_zq(tau,fs,nu)
+
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("very_heavy",0,60,2.2,2.8),("norm_lepto",0,30,0.3,5.0),("flat",0,20,0.0,np.inf)]
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    return np.sort(su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1))))-mu+mu)
+
+# precompute sample draws
+NSIM=260
+pool=[]
+for j,(name,mu,sd,sk,nu) in enumerate(dgps):
+    for rep in range(NSIM):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+        s=rng.choice(F,10,replace=False)
+        ts={t:F[int(np.ceil(t*m))-1] for t in [0.9,0.95,0.99]}
+        pool.append((name,s,F,ts))
+
+def features(s):
+    s=np.sort(s);n=10
+    mean=s.mean();sd=s.std(ddof=1);med=np.median(s)
+    g1=np.mean(((s-mean)/s.std())**3)*np.sqrt(n*(n-1))/(n-2)
+    g2=np.mean(((s-mean)/s.std())**4)-3
+    return dict(mean=mean,sd=max(sd,1e-9),med=med,g1=g1,g2=g2,n=n)
+
+def make_est(P):
+    a_om,b_om,c_om,a_sk,b_sk,a_nu,b_nu,c_nu,d_nu=P
+    def est(s):
+        f=features(s)
+        g1,g2=f['g1'],f['g2']
+        sk=np.clip(a_sk*g1+b_sk*max(0.,g1)**2,-0.95,2.2)
+        fs=max(np.exp(sk),0.667)
+        nu=float(np.exp(np.log(a_nu)+b_nu*np.log(7.0/a_nu)*special.expit(c_nu*(np.log(2.8)-np.log(7.0))+0))+0.0)
+        # nu from kurt: mon map g2-> nu in [2.5,45]
+        kraw=0.6+0.16*g2
+        nu=np.exp(np.log(2.5)+b_nu*(np.log(45/2.5))*special.expit(c_nu*(kraw-np.log(2.8))))
+        om=f['sd']*(a_om+b_om*np.clip(g2,0,8))
+        # location: keep mean-ish
+        xi=f['mean']-om*0*0
+        return xi,om,fs,nu
+    return est
+
+def pinball_excess(P,subset=None):
+    est=make_est(P)
+    tot=0.0;cnt=0
+    for name,s,F,ts in pool:
+        xi,om,fs,nu=est(s)
+        sd=F.std()
+        for t in [0.9,0.95,0.99]:
+            q=st_q(t,xi,om,fs,nu); qt=ts[t]
+            d=(q-qt)/sd; tau=t
+            exc=np.where(d<0,tau*(-d),0)+np.where(d>0,(1-tau)*d,0)
+            tot+=exc;cnt+=1
+    return tot/cnt
+P0=np.array([0.62,0.0, 7.0,1.0,1.4,   1.3])
+print("start objective:",round(pinball_excess( (P0[0],P0[1],0.0, P0[2], 1.0,1.4),1),4))
+# simpler paramization, re-do below
+EOF
+python work/tune1.py
 ```
 
 ## [59] tool
@@ -1463,7 +2810,80 @@ My tuning skeleton was sloppy. Let me write a careful, correct tuner with a clea
 **tool call: bash**
 
 ```
+cat > work/tune2.py << 'EOF'
+import numpy as np
+from scipy import stats, special
+from scipy.optimize import minimize
+rng=np.random.default_rng(42)
+TM={}
+def tmoms(nu):
+    if nu in TM:return TM[nu]
+    from scipy.integrate import quad
+    tp=lambda t:np.exp(stats.t.logpdf(t,nu));A=quad(tp,0,np.inf)[0]
+    m1=quad(lambda t:t*tp,0,np.inf)[0]/A;m2=quad(lambda t:t*t*tp,0,np.inf)[0]/A
+    TM[nu]=(m1,m2);return m1,m2
+def st_zq(tau,fs,nu):
+    c=2.0/(fs+1.0/fs);lm=c/fs*0.5;rm=c*fs*0.5
+    if tau<=lm:return stats.t.ppf(0.5*tau/lm,nu)/fs
+    return fs*stats.t.ppf(1-0.5*(1-(tau-lm)/rm),nu)
+def st_q(tau,xi,om,fs,nu): return xi+om*st_zq(tau,fs,nu)
 
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("very_heavy",0,60,2.2,2.8),("norm_lepto",0,30,0.3,5.0)]
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    return np.sort(su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1)))))
+
+NSIM=200
+pool=[]
+for (name,mu,sd,sk,nu) in dgps:
+    for rep in range(NSIM):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+        s=rng.choice(F,10,replace=False)
+        ts={t:F[int(np.ceil(t*m))-1] for t in [0.9,0.95,0.99]}
+        pool.append((s,F,ts))
+
+def feat(s):
+    s=np.sort(np.asarray(s,float));n=10
+    mean=s.mean();sd=max(s.std(ddof=1),1e-9);med=np.median(s)
+    g1=np.mean(((s-mean)/s.std())**3)*np.sqrt(n*(n-1))/(n-2)
+    g2=np.mean(((s-mean)/s.std())**4)-3
+    return mean,sd,med,g1,g2
+
+# parameter vector P:
+# P[0]=om0, P[1]=om_g2, P[2]=log_sd_max_inf
+# P[3]=sk_a (linear g1), P[4]=sk_b (quadratic)
+# P[5]=nu_a (base log nu), P[6]=nu_c (steepness of g2 map), P[7]=nu_shift
+def est(P,s):
+    mean,sd,med,g1,g2=feat(s)
+    om=sd*(P[0]+P[1]*np.clip(g2,0,8))
+    om=min(om,P[2])
+    sk=np.clip(P[3]*g1+P[4]*np.clip(g1,0,None)**2,-0.95,2.3)
+    fs=max(np.exp(sk),0.667)
+    kraw=0.6+0.16*g2
+    nu=np.exp(np.log(2.5)+P[6]*np.log(45/2.5)*special.expit(P[7]*(kraw-np.log(2.8))))
+    return mean,om,fs,nu
+
+def objective(P):
+    tot=0.0;cnt=0
+    for s,F,ts in pool:
+        xi,om,fs,nu=est(P,s); sd=F.std()
+        for t in [0.9,0.95,0.99]:
+            q=st_q(t,xi,om,fs,nu); d=(q-ts[t])/sd
+            tot+=np.where(d<0,t*(-d),(1-t)*d);cnt+=1
+    return tot/cnt
+P0=np.array([0.55,0.05,50.0, 0.62,0.0, 7.0,1.0,1.4])
+import time;t0=time.time()
+print("P0 obj:",round(objective(P0),4),"t",round(time.time()-t0,1))
+res=minimize(objective,P0,method='Nelder-Mead',options=dict(maxiter=1200,xatol=1e-3,fatol=5e-4))
+print("opt obj:",round(objective(res.x),4))
+np.save('work/tuneP.npy',res.x)
+print("params:",np.round(res.x,4))
+EOF
+timeout 1500 python work/tune2.py
 ```
 
 ## [61] tool
@@ -1473,7 +2893,15 @@ My tuning skeleton was sloppy. Let me write a careful, correct tuner with a clea
 **tool call: bash**
 
 ```
-
+python - << 'EOF'
+# reduce simulations, count objective evaluations for speed
+import re
+s=open('work/tune2.py').read()
+s=s.replace("NSIM=200","NSIM=90")
+s=s.replace("maxiter=1200","maxiter=500")
+open('work/tune2.py','w').write(s)
+EOF
+cd work && timeout 1500 python tune2.py; cd ..
 ```
 
 ## [63] tool
@@ -1497,7 +2925,13 @@ Excellent — 0.3s per objective evaluation, 8x improvement found (0.64→0.073)
 **tool call: bash**
 
 ```
-
+python - << 'EOF'
+s=open('work/tune2.py').read()
+s=s.replace("np.save('work/tuneP.npy',res.x)","np.save('tuneP.npy',res.x)")
+s=s.replace("NSIM=90","NSIM=90")
+open('work/tune2.py','w').write(s)
+EOF
+cd work && timeout 900 python tune2.py 2>&1; ls -la tuneP.npy; cd ..
 ```
 
 ## [65] tool
@@ -1516,7 +2950,60 @@ The tuning geometry was flawed (P0 wasn't starting correctly). Let me rewrite pr
 **tool call: bash**
 
 ```
-
+cat > work/tune3.py << 'EOF'
+import numpy as np, time
+from scipy import stats, special
+from scipy.optimize import minimize
+rng=np.random.default_rng(42)
+TM={}
+def tmoms(nu):
+    if nu in TM:return TM[nu]
+    from scipy.integrate import quad
+    tp=lambda t:np.exp(stats.t.logpdf(t,nu));A=quad(tp,0,np.inf)[0]
+    m1=quad(lambda t:t*tp,0,np.inf)[0]/A;m2=quad(lambda t:t*t*tp,0,np.inf)[0]/A
+    TM[nu]=(m1,m2);return m1,m2
+def st_zq(tau,fs,nu):
+    c=2.0/(fs+1.0/fs);lm=c/fs*0.5;rm=c*fs*0.5
+    if tau<=float(lm):return stats.t.ppf(0.5*tau/lm,nu)/fs
+    return fs*stats.t.ppf(1-0.5*(1-(tau-lm)/rm),nu)
+def st_q(tau,xi,om,fs,nu): return xi+om*st_zq(tau,fs,nu)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("very_heavy",0,60,2.2,2.8),("norm_lepto",0,30,0.3,5.0)]
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    return np.sort(su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1)))))
+NSIM=220
+pool=[]
+for (name,mu,sd,sk,nu) in dgps:
+    for rep in range(NSIM):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+        s=rng.choice(F,10,replace=False)
+        mean=s.mean();sdv=max(s.std(ddof=1),1e-9)
+        g1=np.mean(((s-mean)/s.std())**3)*10.0/8.0*0  # placeholder
+        g1=np.mean(((s-mean)/s.std())**3)*np.sqrt(10*9)/8
+        g2=np.mean(((s-mean)/s.std())**4)-3
+        ts={t:(F[int(np.ceil(t*m))-1]-mean)/sdv for t in [0.9,0.95,0.99]}
+        pool.append((mean,sdv,g1,g2,ts))
+def unpack(P):
+    om0,om_g2=P[0],P[1]
+    sk_a,sk_b=P[2],P[3]
+    nu_lo,nu_c=P[4],P[5]
+    zcal_90,zcal_hi,zcal_g2=P[6],P[7],P[8]
+    return om0,om_g2,sk_a,sk_b,nu_lo,nu_c,zcal_90,zcal_hi,zcal_g2
+TAUS=np.array([0.9,0.95,0.99])
+def est(P,f):
+    mean,sdv,g1,g2,ts=f
+    om0,om_g2,sk_a,sk_b,nu_lo,nu_c,z90,zhi,zg2=unpack(P)
+    om=sdv*max(0.2,om0+om_g2*np.clip(g2,0,8))
+    sk=np.clip(sk_a*g1+sk_b*np.clip(g1,0,None)**2,-0.95,2.4)
+    fs=max(np.exp(sk),0.667)
+    kraw=0.6+0.16*g2
+    nu=np.exp(np.log(2.5)+nu_c*np.log(60/2.5)*special.expit(1.4*(kraw-np.log(2.8))))*0+ np.exp(np.log(2.5)+ (np.log(60)-np.log(2.5))*special.expit(1.4*(kraw-np.log(7.0)))*nu_c ; return nu
+EOF
+echo "rewrite too messy, do in file"
 ```
 
 ## [67] tool
@@ -1531,7 +3018,95 @@ I'm wasting time with broken edits. Let me write the definitive tuner in one cle
 **tool call: bash**
 
 ```
+cat > work/tuner.py << 'EOF'
+import numpy as np
+from scipy import stats, special, integrate
+from scipy.optimize import minimize
 
+TM={}
+def tmoms(nu):
+    if nu in TM: return TM[nu]
+    tp=lambda t: np.exp(stats.t.logpdf(t,nu))
+    A=integrate.quad(tp,0,np.inf)[0]
+    m1=integrate.quad(lambda t:t*tp,0,np.inf)[0]/A
+    m2=integrate.quad(lambda t:t*t*tp,0,np.inf)[0]/A
+    TM[nu]=(m1,m2); return m1,m2
+def st_mom(fs,nu):
+    m1,m2=tmoms(nu); c=2.0/(fs+1.0/fs)
+    mean=c*(fs*fs-1.0/fs)*m1
+    return mean,max(np.sqrt(c*(fs**3+1.0/fs**3)*m2-mean*mean),1e-9)
+def st_zq(tau,fs,nu):
+    c=2.0/(fs+1.0/fs); lm=c/fs*0.5; rm=c*fs*0.5
+    if tau<=float(lm): return stats.t.ppf(0.5*tau/lm,nu)/fs
+    return fs*stats.t.ppf(1-0.5*(1.0-(tau-lm)/rm),nu)
+
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    return np.sort(su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1)))))
+
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("very_heavy",0,60,2.2,2.8),("norm_lepto",0,30,0.3,5.0)]
+def build_pool(seed,nsim=220):
+    r=np.random.default_rng(seed); pool=[]
+    for (name,mu,sd,sk,nu) in DGPS:
+        for rep in range(nsim):
+            m=int(r.integers(250,590)); F=F_grid(mu,sd,sk,nu,m)
+            s=r.choice(F,10,replace=False)
+            mean=s.mean(); sdv=max(s.std(ddof=1),1e-9)
+            g1=np.mean(((s-mean)/s.std())**3)*np.sqrt(10*9)/8
+            g2=np.mean(((s-mean)/s.std())**4)-3
+            ts=np.array([(F[int(np.ceil(t*m))-1]-mean)/sdv for t in [0.9,0.95,0.99]])
+            pool.append((mean,sdv,g1,g2,ts))
+    return pool
+
+TAUS=np.array([0.9,0.95,0.99])
+def est_q(P,f):
+    mean,sdv,g1,g2,ts=f
+    om=sdv*max(0.2,P[0]+P[1]*np.clip(g2,0,8))
+    sk=np.clip(P[2]*g1+P[3]*np.clip(g1,0,None)**2,-0.95,2.4)
+    fs=max(np.exp(sk),0.667)
+    kraw=0.6+0.16*g2
+    nu=np.exp(np.log(2.5)+(np.log(60.0)-np.log(2.5))*special.expit(1.4*(kraw-np.log(2.8)))*P[4] + np.log(P[5]))
+    nu=float(np.clip(nu,2.4,80))
+    cal90=P[6]; cal95=P[7]; calg2=P[8]
+    out=np.empty(3)
+    for i,t in enumerate(TAUS):
+        z=st_zq(t,fs,nu)
+        ca={0.9:cal90,0.95:cal95,0.99:P[7]*(1.0+2.7*(1.0-cal90)) }[t]
+        zz=z*ca*(1.0+calg2*np.clip(g2,0,8))
+        out[i]=mean+om*zz
+    return out
+def objective(P,pool):
+    tot=0.0
+    wts=np.array([0.19,1.0,2.5])
+    for f in pool:
+        q=est_q(P,f)
+        d=(q-f[4])
+        exc=np.where(d<0,TAUS*(-d),(1-TAUS)*d)
+        tot+=np.dot(exc,wts)
+    return tot/len(pool)
+P0=np.array([0.55,0.06,0.62,0.01,0.7,  3.0, 1.0,1.0,0.0])
+if __name__=="__main__":
+    import time,sys
+    pool=build_pool(42)
+    t0=time.time()
+    print("pool",len(pool),"P0 obj",round(objective(P0,pool),4),"t/eval",round((time.time()-t0),2))
+    res=minimize(objective,P0,args=(pool,),method='Nelder-Mead',
+                 options=dict(maxiter=2500,xatol=2e-3,fatol=2e-4))
+    print("opt",round(objective(res.x,pool),4),"nfev",res.nfev)
+    np.save('work/Popt.npy',res.x)
+    # per-tau summary at optimum
+    tot=np.zeros(3); cnt=0
+    for f in pool:
+        q=est_q(res.x,f); d=(q-f[4]); exc=np.where(d<0,TAUS*(-d),(1-TAUS)*d)
+        tot+=exc; cnt+=1
+    print("per-tau excess:",np.round(tot/cnt,4))
+EOF::placeholder
+sed -i 's/EOF::placeholder/EOF/' work/tuner.py
+timeout 2000 python work/tuner.py
 ```
 
 ## [69] tool
@@ -1545,7 +3120,28 @@ bash: line 89: warning: here-document at line 1 delimited by end-of-file (wanted
 **tool call: bash**
 
 ```
-
+python - << 'PYEOF'
+# fix the heredoc mishap by appending the main block properly
+main = '''
+if __name__=="__main__":
+    import time,sys
+    pool=build_pool(42)
+    t0=time.time()
+    print("pool",len(pool),"P0 obj",round(objective(P0,pool),4),"t/eval",round((time.time()-t0),2))
+    res=minimize(objective,P0,args=(pool,),method='Nelder-Mead',
+                 options=dict(maxiter=2500,xatol=2e-3,fatol=2e-4))
+    print("opt",round(objective(res.x,pool),4),"nfev",res.nfev)
+    np.save('work/Popt.npy',res.x)
+    tot=np.zeros(3); cnt=0
+    for f in pool:
+        q=est_q(res.x,f); d=(q-f[4]); exc=np.where(d<0,TAUS*(-d),(1-TAUS)*d)
+        tot+=exc; cnt+=1
+    print("per-tau excess:",np.round(tot/cnt,4))
+'''
+open('work/tuner.py','a').write(main)
+print("appended")
+PYEOF
+timeout 2500 python work/tuner.py
 ```
 
 ## [71] tool
@@ -1563,7 +3159,14 @@ appended
 **tool call: bash**
 
 ```
-
+python - << 'PYEOF'
+# remove the accidental placeholder line
+src=open('work/tuner.py').read().splitlines()
+src=[l for l in src if 'EOF::placeholder' not in l]
+open('work/tuner.py','w').write('\n'.join(src)+'\n')
+print('cleaned, lines:',len(src))
+PYEOF
+timeout 2500 python work/tuner.py
 ```
 
 ## [73] tool
@@ -1581,7 +3184,12 @@ cleaned, lines: 101
 **tool call: bash**
 
 ```
-
+grep -n "timeout\|EOF" work/tuner.py; python - << 'PYEOF'
+src=open('work/tuner.py').read().splitlines()
+src=[l for l in src if not l.strip().startswith('timeout 2000 python')]
+open('work/tuner.py','w').write('\n'.join(src)+'\n')
+PYEOF
+python -c "import ast; ast.parse(open('work/tuner.py').read()); print('syntax ok')"
 ```
 
 ## [75] tool
@@ -1595,7 +3203,7 @@ syntax ok
 **tool call: bash**
 
 ```
-
+timeout 2500 python work/tuner.py
 ```
 
 ## [77] tool
@@ -1611,7 +3219,14 @@ The `st_zq` τ≤lm is a per-record edge case, so failing there shouldn't slow t
 **tool call: bash**
 
 ```
-
+cat > work/dbg.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import time
+from tuner import build_pool, objective, P0
+t=time.time(); pool=build_pool(42,nsim=50); print("build50",time.time()-t)
+t=time.time(); print("obj",objective(P0,pool)); print("eval",time.time()-t)
+EOF
+timeout 300 python work/dbg.py
 ```
 
 ## [79] tool
@@ -1628,7 +3243,88 @@ The optimizer with full pool must be slow due to per-eval pool cost. Objective i
 **tool call: bash**
 
 ```
+cat > work/tunerV.py << 'EOF'
+import numpy as np
+from scipy import stats, special
+from scipy.optimize import minimize
 
+# vectorized precompute of t quantiles for nu grid
+NUV=np.linspace(2.4,80,96)
+TQ={t: stats.t.ppf(t,NUV) for t in [0.005,0.5,0.95,0.975,0.995]}
+def st_zq_vec(tau,fs_arr,nu_arr):
+    # fs>=0.667, nu in NUV via interpolation on log-nu
+    idx=np.clip(np.searchsorted(NUV,nu_arr)-1,0,len(NUV)-2)
+    def tv(p):
+        return TQ[p][idx]+(TQ[p][idx+1]-TQ[p][idx])*(nu_arr-NUV[idx])/(NUV[idx+1]-NUV[idx])
+    c=2.0/(fs_arr+1.0/fs_arr); lm=c/fs_arr*0.5; rm=c*fs_arr*0.5
+    left=tau<=lm
+    u=np.clip((tau-lm)/rm,0.0,1.0)
+    right=fs_arr*tv(1-0.5*(1-u))
+    out=np.where(left, tv(0.5*tau/np.maximum(lm,1e-9))/fs_arr, right)
+    return out
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("left",0,20,-0.7,np.inf),("strong_right",2,10,1.4,3.5),
+ ("very_heavy",0,60,2.2,2.8),("norm_lepto",0,30,0.3,5.0)]
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    return np.sort(su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1)))))
+def build_pool(seed,nsim=220):
+    r=np.random.default_rng(seed); rows=[]
+    for (name,mu,sd,sk,nu) in DGPS:
+        for rep in range(nsim):
+            m=int(r.integers(250,590)); F=F_grid(mu,sd,sk,nu,m)
+            s=r.choice(F,10,replace=False)
+            mean=s.mean(); sdv=max(s.std(ddof=1),1e-9)
+            g1=np.mean(((s-mean)/s.std())**3)*np.sqrt(90)/8
+            g2=np.mean(((s-mean)/s.std())**4)-3
+            ts=np.array([(F[int(np.ceil(t*m))-1]-mean)/sdv for t in [0.9,0.95,0.99]])
+            rows.append((mean,sdv,g1,g2,ts))
+    return rows
+TAUS=np.array([0.9,0.95,0.99]); WTS=np.array([0.19,1.0,2.5])
+def make_poolMat(pool):
+    A=np.array([[f[0],f[1],f[2],f[3]] for f in pool])
+    T=np.stack([f[4] for f in pool])
+    return A,T
+_poolmat=None
+def set_pool(P): 
+    global _poolmat; _poolmat=make_poolMat(P)
+def est_q_vec(P,A):
+    mean,sdv,g1,g2=A[:,0],A[:,1],A[:,2],A[:,3]
+    om=sdv*np.maximum(0.2,P[0]+P[1]*np.clip(g2,0,8))
+    sk=np.clip(P[2]*g1+P[3]*np.clip(g1,0,None)**2,-0.95,2.4)
+    fs=np.maximum(np.exp(sk),0.667)
+    kraw=0.6+0.16*g2
+    nu=np.exp(np.log(2.5)+(np.log(70.0)-np.log(2.5))*special.expit(1.4*(kraw-np.log(2.8)))*np.clip(P[4],0.1,2.0))
+    nu=np.clip(nu*P[5],2.4,80)
+    cal90,cal95,calg2=P[6],P[7],P[8]
+    qs=np.empty((len(A),3))
+    zmap={0:st_zq_vec(0.9,fs,nu),1:st_zq_vec(0.95,fs,nu),2:st_zq_vec(0.99,fs,nu)}
+    for j in range(3):
+        z=zmap[j]
+        ca=[cal90,cal95,cal95*(1.0+2.7*(1.0-cal90))][j]
+        qs[:,j]=mean+om*z*ca*(1.0+calg2*np.clip(g2,0,8))
+    return qs
+def objective(P):
+    A,T=_poolmat
+    qs=est_q_vec(P,A)
+    d=qs-T
+    exc=np.where(d<0,TAUS[None,:]*(-d),(1-TAUS)[None,:]*d)
+    return float(np.mean(exc@WTS))
+P0=np.array([0.55,0.06,0.62,0.01,0.7,3.0,1.0,1.0,0.0])
+if __name__=="__main__":
+    import time
+    pool=build_pool(42); set_pool(pool)
+    t=time.time(); print("P0 obj",round(objective(P0),4),"eval t",round(time.time()-t,3))
+    res=minimize(objective,P0,method='Nelder-Mead',options=dict(maxiter=1200,xatol=2e-3,fatol=2e-4))
+    print("opt",round(objective(res.x),4),"nfev",res.nfev,"params",np.round(res.x,4))
+    np.save('work/Popt.npy',res.x)
+    A,T=_poolmat; qs=est_q_vec(res.x,A); d=qs-T
+    exc=np.where(d<0,TAUS[None,:]*(-d),(1-TAUS)[None,:]*d)
+    print("per-tau excess:",np.round(exc.mean(0),4))
+EOF
+timeout 900 python work/tunerV.py
 ```
 
 ## [81] tool
@@ -1658,7 +3354,52 @@ TypeError: unhashable type: 'numpy.ndarray'
 **tool call: bash**
 
 ```
-
+python - << 'PYEOF'
+s=open('work/tunerV.py').read()
+s=s.replace(
+"""TM={}\n""","""""")
+# rewrite st_zq_vec correctly
+old='''def st_zq_vec(tau,fs_arr,nu_arr):
+    # fs>=0.667, nu in NUV via interpolation on log-nu
+    idx=np.clip(np.searchsorted(NUV,nu_arr)-1,0,len(NUV)-2)
+    def tv(p):
+        return TQ[p][idx]+(TQ[p][idx+1]-TQ[p][idx])*(nu_arr-NUV[idx])/(NUV[idx+1]-NUV[idx])
+    c=2.0/(fs_arr+1.0/fs_arr); lm=c/fs_arr*0.5; rm=c*fs_arr*0.5
+    left=tau<=lm
+    u=np.clip((tau-lm)/rm,0.0,1.0)
+    right=fs_arr*tv(1-0.5*(1-u))
+    out=np.where(left, tv(0.5*tau/np.maximum(lm,1e-9))/fs_arr, right)
+    return out'''
+new='''TQARR={p: stats.t.ppf(p, NUV) for p in [0.005,0.5,0.975,0.995]}
+def _tv(p, idx, nu_arr):
+    lo=TQARR[p][idx]; hi=TQARR[p][idx+1]
+    return lo+(hi-lo)*(nu_arr-NUV[idx])/(NUV[idx+1]-NUV[idx])
+def st_zq_vec(tau,fs_arr,nu_arr):
+    idx=np.clip(np.searchsorted(NUV,nu_arr)-1,0,len(NUV)-2)
+    c=2.0/(fs_arr+1.0/fs_arr); lm=c/fs_arr*0.5; rm=c*fs_arr*0.5
+    left=tau<=lm
+    u=np.clip((tau-lm)/rm,0.0,1.0)
+    pgrid=TQARR[tau-0.025 if tau==0.975 else tau-0.02 if tau==0.97 else round(0.5*(1.0-u),4)]'''
+# simpler: replace tv call with direct per-tau ppf using fixed p values
+new='''def _tv(p,idx,nu_arr):
+    lo=TQ[p][idx]; hi=TQ[p][idx+1]
+    return lo+(hi-lo)*(nu_arr-NUV[idx])/(NUV[idx+1]-NUV[idx])
+def st_zq_vec(tau,fs_arr,nu_arr):
+    idx=np.clip(np.searchsorted(NUV,nu_arr)-1,0,len(NUV)-2)
+    c=2.0/(fs_arr+1.0/fs_arr); lm=c/fs_arr*0.5; rm=c*fs_arr*0.5
+    left=tau<=lm
+    u=np.clip((tau-lm)/rm,0.0,1.0)
+    pright=1.0-0.5*(1.0-u)
+    pright=np.clip(pright,0.5,0.999999)
+    zright=fs_arr*np.array([stats.t.ppf(pv,nv) for pv,nv in zip(pright,nu_arr)])
+    zleft=np.array([stats.t.ppf(0.5*tau/max(lmv,1e-9),nv)/fv for lmv,nv,fv in zip(lm,nu_arr,fs_arr)])
+    return np.where(left,zleft,zright)'''
+s=s.replace(old,new)
+s=s.replace("TQ={t: stats.t.ppf(t,NUV) for t in [0.005,0.5,0.95,0.975,0.995]}","TQ={}")
+open('work/tunerV.py','w').write(s)
+print('patched')
+PYEOF
+timeout 900 python work/tunerV.py
 ```
 
 ## [83] tool
@@ -1673,7 +3414,27 @@ I've been risking the whole run on a fast-but-fiddly setup. Pivot to the tried-a
 **tool call: bash**
 
 ```
+cat > work/npest.py << 'EOF'
+import numpy as np, pandas as pd, re, time
 
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS)
+    X=[np.sort(df[df.block==b].x.values) for b in blocks]
+    M=np.array([MS[b] for b in blocks])
+    return blocks,X,M
+
+def tail_params(x):
+    x=np.sort(np.asarray(x,float)); sd=x.std(ddof=1)
+    exceed=np.diff(x[[5,6,7,8,9]])
+    M=max(x[-1]-x[-3],1e-6)
+    # Weibull tail fit on top-5 exceedance gaps: solve for k,c via mean/median ratio
+    e=np.diff(np.sort(x)[5:]); 
+    assert False
+EOF
+echo skip
 ```
 
 ## [85] tool
@@ -1688,7 +3449,79 @@ Let me write a clean, complete implementation with the exponential-1 tail and BB
 **tool call: bash**
 
 ```
+cat > work/npest.py << 'EOF'
+import numpy as np, pandas as pd, re, time
 
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS)
+    X=[np.sort(df[df.block==b].x.values) for b in blocks]
+    M=np.array([MS[b] for b in blocks])
+    return blocks,X,M
+
+# ---- fit a and U from data ----
+def fit_tail(x):
+    x=np.sort(np.asarray(x,float))
+    vs=np.diff(x[5:])              # 5 gaps
+    mean_g=vs.mean()
+    v_med=np.median(vs)
+    r=v_med/max(mean_g,1e-12)
+    r=float(np.clip(r,0.12,1.0))
+    # Weibull(k=1) star scale: S(g)=exp(-(g/c)); median/mean = ln2. Solve c then a=c
+    a3 = mean_g/1.0  # baseline exponential-1 fit (simple, robust)
+    # model-based scale: S0=exp(-(g/a3)) fitted through mean gap
+    # U: x_(9) quantile under tail model a3 with 10 draws => U = f(a3, x_(8))
+    # calibrate b via validation; store raw pieces
+    return a3, x[-2], x[-1]
+
+def bb_quantile(x, m, R=2000, b=1.0, a=None, lam=1.0, seed=0):
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a3,U,top=fit_tail(x)
+    if a is None: a=a3
+    U=top-b*a
+    Rr=rng.dirichlet(np.ones(11),size=R)      # probabilities for 11 Beta intervals
+    B_=rng.beta(1,9,size=R)                    # top-gap fraction
+    UL=U[:,None] if False else U
+    # z(10) tail: Beta(9,1) mass above x_(9), scaled by tail S0 fit
+    Wt=rng.beta(9.0,1.0,size=R)
+    z10=x[-1]-a*np.log(Wt)                     # since S0(g)=exp(-g/a), inversion: mass=1-Wt? Beta(9,1) is P(mass>..)
+    # correct: mass above x9 among tail model with S0=exp(-g/a): z10=x9 - a*ln(U) with U~Beta(9,1)=U^(... )
+    z10=x[-1]-a*np.log(rng.uniform(0,1,size=R)**(1.0/9.0))
+    qs=np.empty((R,3))
+    for i in [90,95,99]:
+        tau=i/100.0
+        kj=int(np.floor(tau*(m+1)))-1          # position j in 0..m
+        f=tau*(m+1)-1-kj
+        kj=int(np.clip(kj,0,m-1)); f=np.clip(f,0,1)
+        # V = sum_{l=1..kj} R_l / R_12-ish: tail fraction above x_(9) = z10 mass = Wt
+        # V uniform: for kj<=8: V=sum R_1..R_kj (use R intervals 1..9 map to x_(0)..x_(9)? define R_i for gaps i)
+        # gaps: G_1=(-inf? ) use 12 gaps: indices 0..10 for [below x0?]. Define G_k = x_(k) - x_(k-1), k=1..9 within, G_10 = x_(9)-> inf tail
+        # R length 11 covers gaps G_1..G_10 + below x_(0). 
+        Rprob=Rr[:,1:10]   # gaps between x_(k-1) and x_(k) for k=1..9  -> positions 1..9
+        tailm=Rr[:,10]     # gap above x_(9)
+        Vl=Rprob[:,:max(kj,1)].sum(axis=1) if kj>=1 else np.zeros(R)
+        fr=Rprob[:,kj] if kj<=8 else tailm
+        base=x[kj]
+        width=np.where(kj<=8, x[kj+1]-x[kj], z10-x[-1])
+        qs[:,[90,95,99].index(i)]=base+f*width
+    return qs,z10,U,a3,x
+
+def predict_blocks(b=1.0, a_mult=1.0, seed=7, R=3000):
+    blocks,X,MM=load()
+    out=[]
+    for bi,b in enumerate(blocks):
+        x=X[bi]; m=MM[bi]
+        a3,U,top=fit_tail(x)
+        qs,z10,Uu,a3,xs=bb_quantile(x,m,R=R,b=b,a=a3*a_mult,seed=seed+bi)
+        q=np.quantile(qs,[0.5,0.5,0.5],axis=0)[0]  # per tau median (cols align)
+        out.append((b, qs[:,0].mean(),qs[:,1].mean(),qs[:,2].mean(),
+                    np.quantile(qs[:,1],0.025),np.quantile(qs[:,1],0.975)))
+    return pd.DataFrame(out,columns=['block','q90','q95','q99','lo','hi'])
+EOF
+echo done
 ```
 
 ## [87] tool
@@ -1701,7 +3534,28 @@ done
 **tool call: bash**
 
 ```
+cat > work/npest2.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+# ---------- sampling corridors from tail, split of top-gap mass ----------
+def bb_draws(x, R, rng, a, b, kop=1.0):
+    """Return arrays: sample-width draws G_k (k=1..9) each (R,), U draws (R,), z10 draws (R,)."""
+    x=np.sort(np.asarray(x,float))
+    # corridor widths between consecutive order stats (fixed), tail width random
+    Gk=np.diff(x)                       # 9 fixed widths
+    Gtop_pre=x[-1]-x[-2]                # part above x_(8)
+    U=x[-1]-b*a                         # tail start
+    B_=rng.beta(kop,10.0-kop,R)         # mass of G10 that lies between x8 and x9 (kop=1 -> mean 1/10)
+    zm_above=x[-1]-a*np.log(rng.uniform(0,1,R)**(1.0/9.0))   # tail-mode location z10
+    return dict(x=x,Gk=Gk,U=U,B=B_,zm=zm_above,a=a,R=R)
+
+def q_draws(D, x, tau, W, rng, eps_above):
+    """W: (R,11) Dirichlet weights for gaps 1..9 and tail; returns one quantile draw per rep."""
+    R=D['R']; x=D['x']
+    kj=int(np.floor(tau*(0+0)))  # placeholder
+    return None
+EOF
+echo placeholder
 ```
 
 ## [89] tool
@@ -1716,7 +3570,106 @@ Let me write the final clean, correct BB implementation once:
 **tool call: bash**
 
 ```
+cat > work/bbmodel.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def sample_moments(x):
+    x=np.sort(np.asarray(x,float)); n=len(x)
+    mean=x.mean(); s=x.std(); 
+    g1=np.mean(((x-mean)/s)**3)*np.sqrt(n*(n-1))/(n-2)
+    g2=np.mean(((x-mean)/s)**4)-3
+    return mean,x.std(ddof=1),g1,g2
+
+def fit_tail_a(x):
+    """Fit tail scale a from top-5 gap structure using exponential-1 model."""
+    x=np.sort(np.asarray(x,float))
+    gaps=np.diff(x[5:])            # 5 gaps among top 6
+    g=gaps[gaps>0]
+    if len(g)==0: a=x[-1]-x[0]; a=max(a/2.0,1e-3)
+    else:
+        a=g.mean()/1.0             # E gap under Exp-1 = a, all 5 ordered gaps share scale a structure
+    return float(max(a,1e-6))
+
+class Ctx:
+    def __init__(self,x,m,b=1.0,R=3000,seed=0,rho=0.8,tail_mult=1.0):
+        self.x=np.sort(np.asarray(x,float)); self.m=int(m); self.R=R
+        self.rng=np.random.default_rng(seed)
+        self.a=fit_tail_a(self.x)*tail_mult
+        self.b=b
+        self.U=self.x[-1]-b*self.a
+        self.rho=rho
+        _,sd,g1,g2=sample_moments(self.x)
+        self.sd=sd; self.g1=g1; self.g2=g2
+        self.precompute()
+    def precompute(self):
+        R=self.R; rng=self.rng; x=self.x
+        # 11 Dirichlet weights for Beta gaps + tail mass at z10 (tail prob beyond x_(9))
+        W=rng.dirichlet(np.ones(11),size=R)         # cols: gaps1..9 (x..), tail-col10
+        self.W=W
+        # z10 tail anchor: mass above x_(9) among 9 "internal" only? Use Beta(9,1) for the
+        # unconditional x_(9) position in 10 sampled from tail model with S0=exp(-g/a):
+        u=rng.uniform(0,1,R)**(1.0/9.0)
+        self.z10b=x[-1]-self.a*np.log(u)            # ~ Beta(9,1) above x_(9): mass exp(-(z-x9)/a)
+    def inside_width(self):
+        # corridor width for gaps: total scale vs interval probability
+        pass
+    def q_tau(self,tau):
+        R=self.R; x=self.x; m=self.m
+        s=float(tau)*(m+1)-1.0                      # fractional index in [0, m-1]
+        j=int(np.clip(np.floor(s),0,m-1)); f=float(np.clip(s-j,0,1))
+        # probability mass V up to gap endpoint x_(j):
+        # mass(x_(k)) corresponds to cumulative Beta: use B_k = Beta(k, 11-k)
+        if j<=8:
+            t=k=j+1
+        else: t=10
+        # Vj = Beta(j+1, 10-j) mass fraction below x_(j) across population (approx in "gap space")
+        # scale corridor width G_j: for j in 1..8 fixed width; for j=9 corridor [x8,x9) split by rho
+        # map: with prob (1-rho) use inner corridor piece; exact beta split drawn per rep
+        out=np.empty(R)
+        rng=self.rng
+        if j<=7:
+            # entirely within interior: G_j exact width x_(j+1)-x_(j); rho interval via Beta split
+            # fraction of interval used: uniform-ish via Beta(1,?) approximation -> use uniform on [base,top]
+            lo=x[j]; hi=x[j+1]
+            out=lo+rng.uniform(0,1,R)*(hi-lo)*f  # placeholder
+        return out
+
+def beta_quantile_draws(ctx,taus=(0.90,0.95,0.99)):
+    """Vectorized prob-level Beta draws; conservative tail handling for top gaps."""
+    x=ctx.x; R=ctx.R; rng=ctx.rng; m=ctx.m; a=ctx.a; b=ctx.b; z10=ctx.z10b
+    U=x[-1]-b*a
+    puts=[]
+    for tau in taus:
+        s=tau*(m+1)-1.0; j=int(np.clip(np.floor(s),0,m-1)); f=float(np.clip(s-j,0,1))
+        # Beta mass below x_(j): Beta(j+1,10-j)
+        if j<=8:
+            V=rng.beta(j+1,10-j,size=R)
+            # scale cumulative corridor C_j = sum of beta-gap lengths up to x_(j)
+            # use prob-level corridor: L_j = max(U, x_(j)); assert monotone with V scaled
+            C=x[max(j,0)]
+            base=min(U,x[j])   # base at x_(j) if reachable
+            width=x[j+1]-x[j] if j<9 else (z10-x[-1])
+            q=base+f*width
+            # ensure V-consistent: scale by V/Beta mean -> adjust base downward when V small
+            Ev=(j+1)/11.0
+            adj=(V/ max(Ev,1e-9))
+            q=np.where(adj<min(U,x[j]), np.minimum(base, x[j]- (min(U,x[j])-adj)*(width)), q)
+            # simpler: q = base + f*width, but floor by U-mapped V
+            q=base+f*width
+            q=np.minimum(q, x[j+1] if j<9 else z10)
+            put=q
+        else:
+            # j>=9: tail beyond x_(9) via Dirichlet tail mass with exponential tail, floor at x_(9)
+            tailm=ctx.W[:,10]
+            zz=z10.copy()
+            zz=np.maximum(zz, x[-1]+0.2*a)     # modest floor ensuring some decay beyond max
+            if j==9: q=x[-1]+f*(zz-x[-1])
+            else: q=zz
+            put=q
+        puts.append(put)
+    return np.stack(puts,axis=1)   # R x 3
+EOF
+echo done
 ```
 
 ## [91] tool
@@ -1731,7 +3684,80 @@ I've been overthinking and burning time. Let me commit to the simple, correct de
 **tool call: bash**
 
 ```
+cat > work/final_bb.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS)
+    X=[np.sort(df[df.block==b].x.values) for b in blocks]
+    M=np.array([MS[b] for b in blocks])
+    return blocks,X,M
+
+def tail_scale(x, mult=1.0):
+    x=np.sort(np.asarray(x,float))
+    g=np.diff(x[5:]); g=g[g>0]
+    a=g.mean() if len(g) else max((x[-1]-x[0])/4,1e-3)
+    return float(max(a,1e-9))*mult
+
+def draws(x,m,R,seed,gap_mult=1.0,tail_mult=1.0):
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a=tail_scale(x,tail_mult)
+    # Prob-level draws: V_k ~ Beta(k,11-k) = P(pop < x_(k))
+    # corridor lengths: fixed interior widths; top corridor = z10 - x_(8),
+    # where z10 = x_(9) - a ln u, u~U(0,1)^{1/9}  (tail through x_(8),x_(9) with S0=exp(-g/a) EDF-matched)
+    u=rng.uniform(0,1,size=R)**(1.0/9.0)
+    z10=x[-1]-a*np.log(u)
+    z10=np.maximum(z10, x[-1]+0.5*a)          # conservative floor: at least some mass escapes beyond max
+    widths=np.concatenate([np.diff(x), [z10-x[-2]]]) if False else None
+    # vector of corridor widths per gap j=1..9: width_j = x_(j) - x_(j-1); top corridor j=10: x_(8)->z10
+    W=np.concatenate([np.diff(x), (z10-x[-2]).reshape(R,1)],axis=1) if False else None
+    Gam=rng.gamma(1.0,1.0,size=(R,10))         # gap probabilities in the 10 intervals
+    Pr=Gam/Gam.sum(axis=1,keepdims=True)       # Pr_k for gaps 1..9 and 10(tail mass prob)
+    # basis: x_(k) for k=1..8 fixed; x_(9) = z10
+    Xk=np.repeat(x[None,:],R,axis=0)=np.repeat(x[1:][None,:],R,axis=0)
+    Xk=np.concatenate([x[1:][None,:].repeat(R,0), z10.reshape(R,1)],axis=1)  # cols 0..8 = x_(1..9)? careful
+    # Build column positions: col k corresponds to x_(k), k=1..9 with last = z10
+    Xk=np.empty((R,9))
+    Xk[:,:8]=x[1:9]
+    Xk[:,8]=z10
+    Wd=np.empty((R,9)); Wd[:,:8]=np.diff(x[:9]); Wd[:,8]=z10-x[8]
+    out=np.empty((R,3))
+    for col,tau in enumerate([0.90,0.95,0.99]):
+        q=np.empty(R)
+        s=tau*(m+1)-1.0; j=int(np.floor(s)); f=float(s-j)
+        j=int(np.clip(j,0,9))
+        if j==0:
+            q=Pr[:,0]*0+ (x[0]+f*(x[1]-x[0]))*1  # near min; extrapolate modestly below
+            q=x[0]+f*(x[1]-x[0])
+        else:
+            base=Xk[:,j-1]
+            width=Wd[:,j-1]
+            q=base+f*width
+        out[:,col]=q
+    return out
+
+def block_preds(x,m,R=4000,seed=7):
+    D=draws(x,m,R,seed)
+    q=np.quantile(D,0.5,axis=0)
+    lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+    hi=max(hi, q[2]); lo=min(lo,q[0])
+    return q[0],q[1],q[2],lo,hi
+
+if __name__=="__main__":
+    blocks,X,MM=load()
+    rows=[]
+    for bi,b in enumerate(blocks):
+        q90,q95,q99,lo,hi=block_preds(X[bi],MM[bi],seed=1000+bi)
+        rows.append((b,q90,q95,q99,lo,hi))
+    res=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+    res.to_csv('predictions.csv',index=False)
+    print(res.head(8).round(3).to_string(index=False))
+EOF
+python work/final_bb.py
 ```
 
 ## [93] tool
@@ -1748,7 +3774,22 @@ SyntaxError: cannot assign to function call
 **tool call: bash**
 
 ```
-
+python - << 'PYEOF'
+# Remove broken lines from final_bb.py draws function and rewrite cleanly
+src=open('work/final_bb.py').read().splitlines()
+out=[]
+skip=False
+for l in src:
+    if 'Xk=np.repeat(x[None' in l: skip=True; continue
+    if skip and l.strip().startswith('Xk=') and 'repeat' in l: continue
+    if skip and ('Xk=np.concatenate' in l): 
+        skip=False
+        continue
+    out.append(l)
+open('work/final_bb.py','w').write('\n'.join(out)+'\n')
+print('ok')
+PYEOF
+python work/final_bb.py
 ```
 
 ## [95] tool
@@ -1772,7 +3813,78 @@ The draws are corrupted (non-monotone, zero-width intervals) — the column/gap 
 **tool call: bash**
 
 ```
+cat > work/final_bb2.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS)
+    X=[np.sort(df[df.block==b].x.values) for b in blocks]
+    M=np.array([MS[b] for b in blocks])
+    return blocks,X,M
+
+def tail_scale(x, mult=1.0):
+    x=np.sort(np.asarray(x,float))
+    g=np.diff(x[4:]); g=g[g>0]
+    a=g.mean() if len(g) else max((x[-1]-x[0])/4,1e-3)
+    return float(max(a,1e-9))*mult
+
+def draws(x,m,R,seed,tail_mult=1.0,floor_frac=0.5,monotone_q=True):
+    """Return R x 3 array of (Q90,Q95,Q99) draws. Per-rep monotone."""
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a=tail_scale(x,tail_mult)
+    # tail anchor z10: mass above x_(9), u~U^(1/9), z10 = x9 - a ln u
+    u=rng.uniform(0,1,size=R)**(1.0/9.0)
+    z10=x[-1]-a*np.log(u)
+    z10=np.maximum(z10, x[-1]+floor_frac*a)
+    # interior Gamma gap weights Pr_1..Pr_9 (probabilities); widths fixed Wd_1..Wd_9
+    Gam=rng.gamma(1.0,1.0,size=(R,9))
+    Pr=Gam/Gam.sum(axis=1,keepdims=True)
+    Wd=np.diff(x[:9])                       # widths for gaps 1..8 -> x_(1)..x_(9); plus gap9 = x_(8)->x_(9)
+    # basis points: x_(k) for k=1..9 ; use sorted sample values indices 1..9
+    basePoints=np.tile(x[1:],(R,1))         # cols 0..8 = x_(1)..x_(9)
+    widths=np.repeat(Wd[None,:],R,axis=0)   # cols 0..8, width into x_(k) = x_(k-1)->x_(k)
+    out=np.empty((R,3))
+    for col,tau in enumerate([0.90,0.95,0.99]):
+        s=tau*(m+1)-1.0
+        s=min(max(s,0.0),m-1.0)             # clamp to [0,m-1]
+        j=int(np.floor(s)); f=float(s-j)
+        j=int(np.clip(j,1,9))               # use gaps 1..9 (skip below-min corridor)
+        base=basePoints[:,j-1]; width=widths[:,j-1]
+        q=base+f*width
+        out[:,col]=q
+        if j==9:
+            # tail-sample at z10: use q = x_(9) + f * (z10 - x_(9))
+            out[:,col]=x[-1]+f*(z10-x[-1])
+    # enforce monotone across columns (Q90<=Q95<=Q99) per rep
+    out=np.maximum(np.maximum(out[:,0],out[:,1]),out[:,0]*0-1e18) if False else out
+    out=np.stack([np.minimum.reduce([out[:,0],out[:,1],out[:,2]]),
+                  np.median(out,axis=1),
+                  np.maximum.reduce([out[:,0],out[:,1],out[:,2]])],axis=1)
+    return out
+
+def block_preds(x,m,R=6000,seed=7):
+    D=draws(x,m,R,seed)
+    q=np.quantile(D,0.5,axis=0)
+    lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+    lo=min(lo,q[0]); hi=max(hi,q[2])
+    return float(q[0]),float(q[1]),float(q[2]),float(lo),float(hi)
+
+if __name__=="__main__":
+    blocks,X,MM=load()
+    rows=[]
+    for bi,b in enumerate(blocks):
+        rows.append((b,)+block_preds(X[bi],MM[bi],seed=1000+bi))
+    res=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+    res.to_csv('predictions.csv',index=False)
+    mono=(res.q90<=res.q95)&(res.q95<=res.q99)
+    print("monotone frac:",mono.mean(), "rows:",len(res))
+    print(res.head(8).round(3).to_string(index=False))
+EOF
+python work/final_bb2.py && head -4 predictions.csv && wc -l predictions.csv
 ```
 
 ## [97] tool
@@ -1798,7 +3910,14 @@ Off-by-one in the width array. Let me fix widths to 9 columns (one per gap into 
 **tool call: bash**
 
 ```
-
+python - << 'PYEOF'
+s=open('work/final_bb2.py').read()
+s=s.replace("    Wd=np.diff(x[:9])                       # widths for gaps 1..8 -> x_(1)..x_(9); plus gap9 = x_(8)->x_(9)",
+"    Wd=np.diff(x)                           # widths into x_(1)..x_(9): Wd[k-1]=x_(k)-x_(k-1), k=1..9")
+# widths is already 9 columns (np.diff over 10 points)
+open('work/final_bb2.py','w').write(s)
+PYEOF
+python work/final_bb2.py && head -4 predictions.csv && wc -l predictions.csv
 ```
 
 ## [99] tool
@@ -1827,7 +3946,35 @@ Now monotone and producing estimates, but Q95 is pinned near the sample max (801
 **tool call: bash**
 
 ```
-
+cat > work/sim_bb.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from scipy import stats
+from final_bb2 import draws, tail_scale
+rng=np.random.default_rng(123)
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    return np.sort(su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1)))))
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8)]
+TAUS=np.array([0.9,0.95,0.99])
+for tm in [1.0,1.5,2.0,3.0]:
+    tot={0.9:[],0.95:[],0.99:[]}
+    for name,mu,sd,sk,nu in dgps:
+        for rep in range(250):
+            m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sd=F.std()
+            s=np.sort(rng.choice(F,10,replace=False))
+            D=draws(s,m,R=1200,seed=int(rng.integers(1e9)),tail_mult=tm)
+            q=np.quantile(D,0.5,axis=0)
+            for i,t in enumerate(TAUS):
+                qt=F[int(np.ceil(t*m))-1]
+                d=(q[i]-qt)/sd
+                tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+    print("tail_mult=%.1f:"%tm, {t:round(float(np.mean(tot[t])),4) for t in TAUS})
+EOF
+timeout 900 python work/sim_bb.py
 ```
 
 ## [101] tool
@@ -1845,7 +3992,24 @@ Overflow — `a` becomes enormous when a bottom-ordered multiplicative gap is ti
 **tool call: bash**
 
 ```
-
+cat > work/dbg2.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from scipy import stats
+from final_bb2 import draws, tail_scale
+rng=np.random.default_rng(123)
+def F_grid(mu,sd,sk,nu,m):
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk); su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    g=stats.norm() if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu))
+    return np.sort(su.ppf(stats.norm.cdf(g.ppf(np.arange(1,m+1)/(m+1)))))
+F=F_grid(0,25,0.0,np.inf,300); s=np.sort(rng.choice(F,10,replace=False))
+print("sample:",np.round(s,2))
+print("tail_scale:",tail_scale(s))
+D=draws(s,300,R=500,seed=1,tail_mult=1.0)
+print("q draws mean:",np.round(np.quantile(D,0.5,axis=0),2), "true:", np.round([F[int(np.ceil(t*300))-1] for t in [.9,.95,.99]],2))
+print("D[:,2] range:",np.round(np.quantile(D[:,2],[0,.5,1]),1))
+EOF
+python work/dbg2.py
 ```
 
 ## [103] tool
@@ -1863,7 +4027,23 @@ Confused scales - the F_grid isn't returning sd≈25 (returns ~2). The DGP `su.p
 **tool call: bash**
 
 ```
-
+cat > work/dgp_check.py << 'EOF'
+import numpy as np
+from scipy import stats
+rng=np.random.default_rng(0)
+xi=0-25*0.0; cc=np.sqrt(25**2+3*0.0)
+su=stats.johnsonsu(0.0,cc,loc=0.0,scale=25)
+u=np.arange(1,300)/301
+g=stats.norm()
+F=su.ppf(stats.norm.cdf(g.ppf(u)))
+print("F sd:",F.std(), "range:",F.min(),F.max(), "mean",F.mean())
+# Johnsonsu with b=cc, a=-sk... check what variance we get for generic
+for (mu,sd,sk) in [(0,25,0.0),(0,40,1.5)]:
+    xi=mu-sd*sk; cc=np.sqrt(sd*sd+3*sk*sk)
+    su=stats.johnsonsu(-sk,cc,loc=xi,scale=sd)
+    print(sd,sk,"-> empirical sd of ppf-grid:",np.std(su.ppf(np.linspace(1e-4,1-1e-4,2000))))
+EOF
+python work/dgp_check.py
 ```
 
 ## [105] tool
@@ -1880,7 +4060,62 @@ Johnsonsu parameterization gives unit variance regardless of `scale` — I need 
 **tool call: bash**
 
 ```
-
+cat > work/dgp.py << 'EOF'
+import numpy as np
+from scipy import stats
+def F_grid(mu,sd,sk,nu,m):
+    """Population of m quantile-spaced values: location-scale t, then power-skew transform to target skewness."""
+    if nu==np.inf: base=stats.norm().ppf(np.arange(1,m+1)/(m+1))
+    else:
+        tdist=stats.t(nu,scale=np.sqrt((nu-2)/nu))
+        base=tdist.ppf(np.arange(1,m+1)/(m+1))
+    base=(base-base.mean())/base.std()
+    # power skew: z -> sign* |z|^p tuned for target sample skewness ~sk
+    def skew_of(p):
+        z=np.sign(base)*np.abs(base)**p
+        z=(z-z.mean())
+        return np.mean((z/z.std())**3)
+    if sk>1e-6:
+        from scipy.optimize import brentq
+        try: p=brentq(lambda pp: skew_of(pp)-sk,0.35,3.0)
+        except Exception: p=1.0
+    else: p=1.0
+    z=np.sign(base)*np.abs(base)**p
+    z=(z-z.mean())/z.std()
+    F=mu+sd*z
+    return np.sort(F)
+EOF
+cat > work/sim_bb2.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_bb2 import draws
+rng=np.random.default_rng(123)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8)]
+TAUS=np.array([0.9,0.95,0.99])
+# sanity check skew
+F=F_grid(0,30,0.8,np.inf,2000); print("check sd",F.std(),"skew",stats.skew(F) if False else np.mean(((F-F.mean())/F.std())**3))
+import numpy as np
+from scipy import stats as st2
+samp=rng.choice(F,2000,replace=False)
+print("skew",st2.skew(samp))
+for tm in [1.0,1.5,2.0,3.0]:
+    tot={0.9:[],0.95:[],0.99:[]}
+    for name,mu,sd,sk,nu in dgps:
+        for rep in range(200):
+            m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sd=F.std()
+            s=np.sort(rng.choice(F,10,replace=False))
+            D=draws(s,m,R=1200,seed=int(rng.integers(1e9)),tail_mult=tm)
+            q=np.quantile(D,0.5,axis=0)
+            for i,t in enumerate(TAUS):
+                qt=F[int(np.ceil(t*m))-1]
+                d=(q[i]-qt)/sd
+                tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+    print("tail_mult=%.1f:"%tm, {t:round(float(np.mean(tot[t])),4) for t in TAUS})
+EOF
+timeout 900 python work/sim_bb2.py
 ```
 
 ## [107] tool
@@ -1900,7 +4135,48 @@ The skew transform failed (power transform on symmetric base gives exactly 0 ske
 **tool call: bash**
 
 ```
-
+cat > work/dgp.py << 'EOF'
+import numpy as np
+from scipy import stats
+from scipy.optimize import brentq
+def F_grid(mu,sd,sk,nu,m,_cache={}):
+    """m quantile-spaced values of dist with target mean mu, sd, approximate skew sk, tail nu."""
+    key=(round(mu,6),round(sd,6),round(sk,6),nu,m)
+    if key in _cache: return _cache[key]
+    u=np.arange(1,m+1)/(m+1)
+    if nu==np.inf: base=stats.norm().ppf(u)
+    else:
+        base=stats.t(nu,scale=np.sqrt((nu-2)/nu)).ppf(u)
+    base=(base-base.mean())/base.std()
+    if sk>1e-6:
+        lam=sk*0.55  # expm1 skewness factor, monotone increasing in lam
+        vals=np.expm1(lam*np.clip(base,-4,None))
+        vals=(vals-vals.mean())
+        ssc=vals.std()
+        g1=np.mean((vals/ssc)**3)
+        def skew_at(l):
+            v=np.expm1(l*np.clip(base,-4,None)); v=(v-v.mean()); return np.mean((v/v.std())**3)
+        try:
+            lam=brentq(lambda l: skew_at(l)-sk,1e-6, 3.0)
+            vals=np.expm1(lam*np.clip(base,-4,None)); vals=(vals-vals.mean())/vals.std()
+        except Exception:
+            vals=np.expm1(lam*np.clip(base,-4,None)); vals=(vals-vals.mean())/vals.std()
+    else:
+        vals=base
+    F=mu+sd*vals
+    F=np.sort(F)
+    _cache[key]=F
+    return F
+EOF
+python - << 'EOF'
+import sys;sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from scipy import stats
+for sk in [0.0,0.5,0.8,1.5,2.2]:
+    F=F_grid(10,30,sk,4.0,500)
+    print("target sk",sk,"empirical:",round(stats.skew(F),2),"sd",round(F.std(),1))
+EOF
 ```
 
 ## [109] tool
@@ -1917,7 +4193,7 @@ target sk 2.2 empirical: 2.2 sd 30.0
 **tool call: bash**
 
 ```
-
+timeout 900 python work/sim_bb2.py
 ```
 
 ## [111] tool
@@ -1937,7 +4213,41 @@ My Q95 is actually well-estimated (excess 0.012σ earlier was wrong arithmetic �
 **tool call: bash**
 
 ```
-
+cat > work/tune_final.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_bb2 import draws
+rng=np.random.default_rng(2024)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TAUS=[0.9,0.95,0.99]
+# build fixed pool of (sample-s, F, m) once
+POOL=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(180):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        tru=[F[int(np.ceil(t*m))-1] for t in TAUS]
+        POOL.append((s,m,F,tru,sdv))
+print("pool size",len(POOL))
+def eval_cfg(tail_mult,floor_frac,use_mean_loc=False):
+    tot={t:[] for t in TAUS}
+    for s,m,F,tru,sdv in POOL:
+        D=draws(s,m,R=900,seed=hash((m,len(s)))%2**31,tail_mult=tail_mult,floor_frac=floor_frac)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv
+            tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+    return {t:float(np.mean(tot[t])) for t in TAUS}
+for tmm in [1.0,2.0,3.0,4.5]:
+    for ff in [0.3,0.6,1.0]:
+        r=eval_cfg(tmm,ff)
+        print(f"tm={tmm} ff={ff}: q90={r[0.9]:.4f} q95={r[0.95]:.4f} q99={r[0.99]:.4f} sum={r[0.9]+r[0.95]+r[0.99]:.4f}")
+EOF
+timeout 1200 python work/tune_final.py
 ```
 
 ## [113] tool
@@ -1962,7 +4272,13 @@ tm=4.5 ff=1.0: q90=0.1673 q95=0.2043 q99=0.6338 sum=1.0053
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/tune_final.py').read()
+s=s.replace("for tmm in [1.0,2.0,3.0,4.5]:\n    for ff in [0.3,0.6,1.0]:",
+"for tmm in [4.5,7.0,11.0,16.0]:\n    for ff in [1.0,1.5,2.2]:")
+open('work/tune_final.py','w').write(s)
+PYEO
+timeout 1500 python work/tune_final.py
 ```
 
 ## [115] tool
@@ -1989,7 +4305,25 @@ The optimum is around tm≈7-11, ff≈2.2. Let me understand what the floor and 
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/tune_final.py').read()
+s=s.replace("""    D=draws(s,m,R=900,seed=hash((m,len(s)))%2**31,tail_mult=tail_mult,floor_frac=floor_frac)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv
+            tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+    return {t:float(np.mean(tot[t])) for t in TAUS}""",
+"""    D=draws(s,m,R=900,seed=hash((m,len(s)))%2**31,tail_mult=tail_mult,floor_frac=floor_frac)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv
+            tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+    return {t:float(np.mean(tot[t])) for t in TAUS}""")
+s=s.replace("for tmm in [4.5,7.0,11.0,16.0]:\n    for ff in [1.0,1.5,2.2]:",
+"for tmm in [5.0,7.5,10.0]:\n    for ff in [1.8,2.3,2.8,3.4]:")
+open('work/tune_final.py','w').write(s)
+PYEO
+timeout 1500 python work/tune_final.py
 ```
 
 ## [117] tool
@@ -2016,7 +4350,30 @@ Plateau ~0.64σ total. The optimum is a broad ridge (tm,ff are colinear). Let me
 **tool call: bash**
 
 ```
-
+cat > work/cov_check.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_bb2 import draws
+rng=np.random.default_rng(9)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TM,FF=7.5,2.3
+allsd=[]
+for name,mu,sd,sk,nu in dgps:
+    cover=0; N=0; wid=[]
+    for rep in range(350):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        D=draws(s,m,R=3000,seed=(rep*7+1)%2**31,tail_mult=TM,floor_frac=FF)
+        lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+        qt=F[int(np.ceil(0.95*m))-1]
+        cover+= (lo<=qt<=hi); N+=1; wid.append((hi-lo)/sdv)
+    print(f"{name:14s} coverage={cover/N:.3f} medwidth/sd={np.median(wid):.2f}")
+EOF
+timeout 900 python work/cov_check.py
 ```
 
 ## [119] tool
@@ -2036,7 +4393,19 @@ nearzero       coverage=0.000 medwidth/sd=0.00
 **tool call: bash**
 
 ```
-
+cat > work/dbg3.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_bb2 import draws
+F=F_grid(0,25,0.0,np.inf,300); sdv=F.std()
+s=np.sort(np.random.default_rng(0).choice(F,10,replace=False))
+D=draws(s,300,R=3000,seed=1,tail_mult=7.5,floor_frac=2.3)
+print("sample:",np.round(s,1))
+print("D[:,1](q95) percentiles:",np.round(np.quantile(D[:,1],[0.025,0.5,0.975]),2))
+print("true q95:",round(F[int(np.ceil(0.95*300))-1],2))
+EOF
+python work/dbg3.py
 ```
 
 ## [121] tool
@@ -2053,7 +4422,118 @@ The intervals are degenerate: all draws give identical Q95 (deterministic). The 
 **tool call: bash**
 
 ```
+cat > work/final_bb3.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def tail_scale(x, mult=1.0):
+    x=np.sort(np.asarray(x,float))
+    g=np.diff(x[4:]); g=g[g>0]
+    a=g.mean() if len(g) else max((x[-1]-x[0])/4,1e-3)
+    return float(max(a,1e-9))*mult
+
+def draws(x,m,R,seed,tail_mult=7.5,floor_frac=2.3,kappa=4.0,gap_int=True):
+    """
+    Beta/Bayesian-bootstrap population quantile draws.
+    Corridor C_k = [x_(k-1), x_(k)) (k=1..9); top corridor C_10 = [x_(9), z10).
+    Corridor widths fixed; corridor probability-masses random.
+    Tail anchor z10 = x_(9) - a ln(u), u~U^{1/9}; floor ensures escape above max.
+    Small-sample upper width inflation: gap9'est uses kappa shrinkage.
+    """
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a=tail_scale(x,tail_mult)+1e-12
+    u=rng.uniform(0,1,size=R)**(1.0/9.0)
+    z10=x[-1]-a*np.log(u)
+    z10=np.maximum(z10, x[-1]+floor_frac*a)
+    # corridor widths for C_1..C_8 fixed; C_9 = [x_(8), x_(9)) width = x9-x8;
+    # C_10 = [x_(9), z10) width z10 - x9.
+    # probability masses of corridors: Dirichlet(1,...)*, but top corridor mass
+    # anchored at exh: mass above x_(9) in tail model = u (Beta(9,1)-like draw)
+    P=rng.gamma(1.0,1.0,size=(R,9)); P=P/P.sum(axis=1,keepdims=True)   # masses of C_1..C_9
+    mass_top=u                          # mass of C_10 (above x_(9))
+    # renormalize so mass_top + sum(P)=1: scale P by (1-mass_top)
+    P=P*(1.0-mass_top)[:,None]
+    # cumulative prob at corridor ENDPOINTS x_(1)..x_(9): cp_k = P_1+...+P_k
+    cp=np.cumsum(P,axis=1)              # col k-1 => mass below x_(k)  (k=1..9)
+    # interpolate: for given tau, find corridor containing tau, then uniform within corridor
+    out=np.empty((R,3))
+    lo_bound=np.concatenate([np.zeros((R,1)),cp[:,:8]],axis=1)  # mass below x_(k-1), k=1..9
+    hi_bound=cp[:,:9]
+    # add top corridor bounds: [x_(9) at cp[:,8]-? ] ; mass below x_(9)=cp[:,8]; above range [cp[:,8],1] with width z10-x9
+    for col,tau in enumerate([0.90,0.95,0.99]):
+        # index of corridor: k = smallest with hi_bound>=tau
+        q=np.empty(R)
+        # within top corridor
+        topStart=cp[:,8]               # mass below x_(9)
+        in_top=tau>=topStart
+        frac_top=np.clip((tau-topStart)/np.maximum(1.0-topStart,1e-12),0,1)
+        q_top=x[-1]+frac_top*(z10-x[-1])
+        # interior corridors 1..8
+        idx=np.clip(np.searchsorted(cp, tau, side='right'),1,9)  # corridor index k in 1..9 (vectorized per row needed)
+        # per-row: find k such that lo_bound[:,k-1] <= tau < hi_bound[:,k-1]
+        kArr=np.empty(R,dtype=int)
+        frac=np.empty(R)
+        # vectorize searchsorted per row
+        ks=np.array([np.searchsorted(cp[r],tau) for r in range(R)])  # corridor index = position
+        ks=np.clip(ks,0,8)
+        # corridor k corresponds to [x_(k), x_(k+1)) in 0-indexing of sample: sample index k -> k+1
+        xk=np.empty(R); xk1=np.empty(R)
+        # sample sorted x indices 0..9 = values. corridor c (0..8) is [x[c], x[c+1])
+        # cp[:,c] = mass below x[c+1]? Our cp col c => mass below x_(c+1). 
+        # We define corridor c between sample x[c] (lower) and x[c+1]; mass below x[c] = lo_bound col c.
+        for r in range(R):
+            c=ks[r]
+            lb=lo_bound[r,c]; hb=hi_bound[r,c]
+            fr=(tau-lb)/max(hb-lb,1e-12)
+            q[r]=x[c]+fr*(x[c+1]-x[c])
+        # apply top corridor where tau above topStart
+        q=np.where(in_top, q_top, q)
+        out[:,col]=q
+    # enforce monotonicity across taus
+    out.sort(axis=1)
+    return out
+
+def block_preds(x,m,R=6000,seed=7,**kw):
+    D=draws(x,m,R,seed,**kw)
+    q=np.quantile(D,0.5,axis=0)
+    lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+    lo=min(lo,q[0]); hi=max(hi,q[2])
+    return float(q[0]),float(q[1]),float(q[2]),float(lo),float(hi)
+EOF
+cat > work/sim_bb3.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_bb3 import draws
+rng=np.random.default_rng(123)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TAUS=[0.9,0.95,0.99]
+POOL=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(160):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        tru=[F[int(np.ceil(t*m))-1] for t in TAUS]
+        POOL.append((s,m,F,tru,sdv))
+def evalc(tm,ff):
+    tot={t:[] for t in TAUS}; cover=[]; widen=[]
+    for s,m,F,tru,sdv in POOL:
+        D=draws(s,m,R=700,seed=(m*3)%2**31,tail_mult=tm,floor_frac=ff)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv; tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+        lo=np.quantile(D[:,1],0.025);hi=np.quantile(D[:,1],0.975)
+        cover.append(lo<=tru[1]<=hi); widen.append((hi-lo)/sdv)
+    return {t:np.mean(tot[t]) for t in TAUS}, np.mean(cover), np.median(widen)
+for tm in [4.5,7.5]:
+    for ff in [1.6,2.4]:
+        r,cov,wd=evalc(tm,ff)
+        print(f"tm={tm} ff={ff}: "+ " ".join(f"t{t}={r[t]:.3f}" for t in TAUS)+f" sum={sum(r.values()):.3f} cov95={cov:.2f} w95={wd:.2f}")
+EOF
+timeout 1500 python work/sim_bb3.py
 ```
 
 ## [123] tool
@@ -2083,7 +4563,13 @@ ValueError: object too deep for desired array
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/final_bb3.py').read()
+# remove the broken vectorized searchsorted line
+s=s.replace("        idx=np.clip(np.searchsorted(cp, tau, side='right'),1,9)  # corridor index k in 1..9 (vectorized per row needed)\n","")
+open('work/final_bb3.py','w').write(s)
+PYEO
+timeout 1500 python work/sim_bb3.py
 ```
 
 ## [125] tool
@@ -2101,7 +4587,97 @@ The Dirichlet(1,...) per-corridor is wrong (each corridor width differs; masses 
 **tool call: bash**
 
 ```
+cat > work/final_bb4.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def tail_scale(x, mult=1.0):
+    x=np.sort(np.asarray(x,float))
+    g=np.diff(x[4:]); g=g[g>0]
+    a=g.mean() if len(g) else max((x[-1]-x[0])/4,1e-3)
+    return float(max(a,1e-9))*mult
+
+def draws(x,m,R,seed,tail_mult=7.5,floor_frac=2.3,wor=1.0):
+    """
+    Bayesian-bootstrap population quantile draws.
+    Population-weight reallocate: each of 10 sample points owns weight w_i (Dirichlet(1)*m).
+    Corridor for interpolation between x_(k-1) and x_(k) has width = x_(k)-x_(k-1).
+    For tau, cumulative weight determines corridor, then linear interpolation in x.
+    Top tail: weight above x_(9) reallocated to [x_(9), z10] with z10 = x9 - a ln u,
+    u ~ U(0,1)^{1/9} (per-rep tail escape).
+    """
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a=tail_scale(x,tail_mult)+1e-12
+    # tail z10 draws
+    u=rng.uniform(0,1,size=R)**(1.0/9.0)
+    z10=x[-1]-a*np.log(u)
+    z10=np.maximum(z10, x[-1]+floor_frac*a)
+    # weights per sample point via Dirichlet(1) * m  (counts in pop units)
+    w=rng.dirichlet(np.ones(10),size=R)*m
+    # collapse: weights of points 1..9 define "interior" cumulative counts; weight of point 10 -> tail
+    # cumulative count below each sample point: c_k = sum_{i<=k} w_i
+    cw=np.cumsum(w,axis=1)   # cw[:,k] = count below (incl) x_(k), k=0..9
+    # positions in "population index" space: use index p = tau*(m-1) choice -> target position
+    out=np.empty((R,3))
+    for col,tau in enumerate([0.90,0.95,0.99]):
+        target=tau*m                     # population count below quantile (use m*tau)
+        # find k = largest with cw[:,k] < target ; interpolate between x_(k) and x_(k+1)
+        # vectorize: for each row, index = searchsorted in cw row
+        # extend cw with tail position reaching m at z10
+        cw_ext=np.concatenate([cw, np.full((R,1),m)],axis=1)
+        xpts=np.concatenate([np.repeat(x[None,:],R,axis=0), z10[:,None]],axis=1)
+        # count below each xpts col: cw_ext[:,k] = count below xpts[:,k]
+        # for target, find col where count crosses
+        idx=np.array([np.searchsorted(cw_ext[r],target) for r in range(R)])  # 0..10
+        idx=np.clip(idx,1,10)
+        c0=cw_ext[np.arange(R),idx-1]; c1=cw_ext[np.arange(R),idx]
+        x0=xpts[np.arange(R),idx-1];   x1=xpts[np.arange(R),idx]
+        fr=np.clip((target-c0)/np.maximum(c1-c0,1e-9),0,1)
+        out[:,col]=x0+fr*(x1-x0)
+    out.sort(axis=1)
+    return out
+
+def block_preds(x,m,R=6000,seed=7,**kw):
+    D=draws(x,m,R,seed,**kw)
+    q=np.quantile(D,0.5,axis=0)
+    lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+    lo=min(lo,q[0]); hi=max(hi,q[2])
+    return float(q[0]),float(q[1]),float(q[2]),float(lo),float(hi)
+EOF
+cat > work/sim_bb4.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_bb4 import draws
+rng=np.random.default_rng(123)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TAUS=[0.9,0.95,0.99]
+POOL=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(160):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        tru=[F[int(np.ceil(t*m))-1] for t in TAUS]
+        POOL.append((s,m,F,tru,sdv))
+def evalc(tm,ff):
+    tot={t:[] for t in TAUS}; cover=[]; widen=[]
+    for s,m,F,tru,sdv in POOL:
+        D=draws(s,m,R=700,seed=(m*3)%2**31,tail_mult=tm,floor_frac=ff)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv; tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+        lo=np.quantile(D[:,1],0.025);hi=np.quantile(D[:,1],0.975)
+        cover.append(lo<=tru[1]<=hi); widen.append((hi-lo)/sdv)
+    return {t:np.mean(tot[t]) for t in TAUS}, np.mean(cover), np.median(widen)
+for tm in [1.0,2.0,4.0,7.0]:
+    for ff in [0.5,1.0,1.8]:
+        r,cov,wd=evalc(tm,ff)
+        print(f"tm={tm} ff={ff}: "+" ".join(f"t{t}={r[t]:.3f}" for t in TAUS)+f" sum={sum(r.values()):.3f} cov95={cov:.2f} w95={wd:.2f}")
+EOF
+timeout 2000 python work/sim_bb4.py
 ```
 
 ## [127] tool
@@ -2127,7 +4703,102 @@ Tail params have zero effect (bug) and results got worse. The Dirichlet(1)·m we
 **tool call: bash**
 
 ```
+cat > work/final_bb5.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def tail_scale(x, mult=1.0):
+    x=np.sort(np.asarray(x,float))
+    g=np.diff(x[4:]); g=g[g>0]
+    a=g.mean() if len(g) else max((x[-1]-x[0])/4,1e-3)
+    return float(max(a,1e-9))*mult
+
+def draws(x,m,R,seed,tail_mult=7.5,floor_frac=2.3,tail_w=1.0):
+    """EDF-based BB population draw with tail anchor at x9 + escape.
+    Fixed walls at x_(1)..x_(9); tail corridor to z10 (random). Population index
+    positions linear in (0,m). Tail corridor carries weight tail_w relative to one slot.
+    """
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a=tail_scale(x,tail_mult)+1e-12
+    u=rng.uniform(0,1,size=R)**(1.0/9.0)
+    z10=x[-1]-a*np.log(u)
+    z10=np.maximum(z10, x[-1]+floor_frac*a)
+    out=np.empty((R,3))
+    # effective m for interior mapping: population index p = tau*(m-1) approx; interior walls
+    # x_(k) at pop index (k-0.5)*(m-1-tail_mass)/9 ; add tail slot of tail_w equivalent pop size.
+    for col,tau in enumerate([0.90,0.95,0.99]):
+        # construct random population via mirror-extend EDF
+        zvec=np.empty(R)
+        # positions of walls in population index: p_k = (k)*slot for k=0..9 with slot=(m-tailpop)/10
+        tailpop=tail_w*m/10.0
+        slot=(m-tailpop)/10.0
+        p=tau*m
+        # wall k population & value
+        pwalls=np.array([k*slot for k in range(0,10)])      # count below x_(k) under EDF-ish center
+        xw=np.concatenate([[x[0]],x[1:]])
+        # tail wall position p= m-tailpop at x_(9); corridor to z10 spans p in [m-tailpop, m]
+        pw=np.concatenate([pwalls,[m-tailpop,m]])
+        xv=np.concatenate([x,[z10[0]]])  # placeholder, vectorize below
+        q=np.empty(R)
+        # interpolate piecewise per rep between (pwalls, x_(k)) and then (m-tailpop,x9)->(m,z10)
+        for r in range(R):
+            pts=np.concatenate([[0.0],pwalls,[m-tailpop],[m]])
+            vals=np.concatenate([[x[0]-a*0.0], x, [x[-1]],[z10[r]]])
+            pts=np.concatenate([[0.0],0*0 + np.arange(0,10)*slot,[m-tailpop],[m]])
+            vals=np.concatenate([[x[0]],x,[z10[r]]])
+            # pts and vals sizes mismatch; reset: positions indices 0..9-> values x[0..9], tail at z10
+            kk=np.clip(int(p//slot),0,8)  # interior corridor 0..8
+            if p>=m-tailpop:
+                fr=np.clip((p-(m-tailpop))/max(tailpop,1e-9),0,1)
+                q[r]=x[-1]+fr*(z10[r]-x[-1])
+            else:
+                fr=(p-kk*slot)/slot
+                q[r]=x[kk]+fr*(x[kk+1]-x[kk])
+        out[:,col]=q
+    out.sort(axis=1)
+    return out
+
+def block_preds(x,m,R=6000,seed=7,**kw):
+    D=draws(x,m,R,seed,**kw)
+    q=np.quantile(D,0.5,axis=0)
+    lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+    return float(q[0]),float(q[1]),float(q[2]),float(lo),float(hi)
+EOF
+cat > work/sim_bb5.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_bb5 import draws
+rng=np.random.default_rng(123)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TAUS=[0.9,0.95,0.99]
+POOL=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(150):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        tru=[F[int(np.ceil(t*m))-1] for t in TAUS]
+        POOL.append((s,m,F,tru,sdv))
+def evalc(tm,ff,tw):
+    tot={t:[] for t in TAUS}; cover=[]; widen=[]
+    for s,m,F,tru,sdv in POOL:
+        D=draws(s,m,R=500,seed=(m*5)%2**31,tail_mult=tm,floor_frac=ff,tail_w=tw)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv; tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+        lo=np.quantile(D[:,1],0.025);hi=np.quantile(D[:,1],0.975)
+        cover.append(lo<=tru[1]<=hi); widen.append((hi-lo)/sdv)
+    return {t:np.mean(tot[t]) for t in TAUS}, np.mean(cover), np.median(widen)
+for tm in [0.8,1.5,2.5]:
+    for ff in [0.4,0.8]:
+        for tw in [0.5,1.0,2.0,4.0]:
+            r,cov,wd=evalc(tm,ff,tw)
+            print(f"tm={tm} ff={ff} tw={tw}: "+" ".join(f"t{t}={r[t]:.3f}" for t in TAUS)+f" S={sum(r.values()):.3f} cov={cov:.2f} w={wd:.2f}")
+EOF
+timeout 2000 python work/sim_bb5.py
 ```
 
 ## [129] tool
@@ -2139,7 +4810,95 @@ The per-row Python loop is too slow. I need to vectorize `draws` completely. Let
 **tool call: bash**
 
 ```
+cat > work/final_model.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def tail_scale(x, mult=1.0):
+    x=np.sort(np.asarray(x,float))
+    g=np.diff(x[4:]); g=g[g>0]
+    a=g.mean() if len(g) else max((x[-1]-x[0])/4,1e-3)
+    return float(max(a,1e-9))*mult
+
+def draws(x,m,R,seed,tail_mult=7.5,floor_frac=2.3,slot_scale=1.0,tail_w=1.0):
+    """Vectorized. Population index positions: interior walls x_(k) at index (now) linear;
+    tail corridor [m - tailpop, m] maps to [x_(9), z10]."""
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a=tail_scale(x,tail_mult)+1e-12
+    u=rng.uniform(0,1,size=R)**(1.0/9.0)
+    z10=x[-1]-a*np.log(u)
+    z10=np.maximum(z10, x[-1]+floor_frac*a)
+    tailpop=tail_w*m/10.0
+    slot=(m-tailpop)/10.0
+    # wall positions: pw[k]=k*slot for k=0..9 => count below x_(k); then m-tailpop (=10*slot) wall at x_(9)?? need 10 walls
+    # EDF: use wall centers (k+0.5) mapping; better: piecewise with walls at x_(0)..x_(9) at counts c_k=(k+0.5)*slot.
+    cw=(np.arange(10)+0.5)*slot                     # counts below each sample value
+    # position targets
+    out=np.empty((R,3))
+    for col,tau in enumerate([0.90,0.95,0.99]):
+        p=tau*m
+        # interior: interpolate x via cw
+        # below first wall: floor at x0
+        q=np.empty(R)
+        # find segment: seg k in 0..9 where cw[k] <= p < cw[k+1]; cw has 10 entries; extend with m-tailpop & m for tail
+        cw_ext=np.concatenate([cw,[m-tailpop],[m]])
+        x_ext=np.concatenate([x,[x[-1]]])           # x index 10 = x_9 again for the tail start
+        # we interpolate between x_ext[k] and x_ext[k+1] for seg k=0..10
+        seg=np.array([np.searchsorted(cw_ext,p)-1 for _ in [0]])[0]  # scalar p same all rows
+        seg=int(np.clip(seg,0,10))
+        if seg>=10:
+            # in tail corridor [m-tailpop, m]: interpolate to z10
+            fr=np.clip((p-(m-tailpop))/max(tailpop,1e-9),0,1)
+            q=x[-1]+fr*(z10-x[-1])
+        else:
+            x0=x_ext[seg]; x1=x_ext[seg+1]
+            c0=cw_ext[seg]; c1=cw_ext[seg+1]
+            fr=np.clip((p-c0)/max(c1-c0,1e-9),0,1)
+            q=x0+fr*(x1-x0)
+        out[:,col]=q
+    out.sort(axis=1)
+    return out
+
+def block_preds(x,m,R=6000,seed=7,**kw):
+    D=draws(x,m,R,seed,**kw)
+    q=np.quantile(D,0.5,axis=0)
+    lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+    return float(q[0]),float(q[1]),float(q[2]),float(lo),float(hi)
+EOF
+cat > work/sim_fm.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_model import draws
+rng=np.random.default_rng(123)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TAUS=[0.9,0.95,0.99]
+POOL=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(150):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        tru=[F[int(np.ceil(t*m))-1] for t in TAUS]
+        POOL.append((s,m,F,tru,sdv))
+def evalc(tm,ff,tw):
+    tot={t:[] for t in TAUS}; cover=[]; widen=[]
+    for s,m,F,tru,sdv in POOL:
+        D=draws(s,m,R=400,seed=17,tail_mult=tm,floor_frac=ff,tail_w=tw)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv; tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+        lo=np.quantile(D[:,1],0.025);hi=np.quantile(D[:,1],0.975)
+        cover.append(lo<=tru[1]<=hi); widen.append((hi-lo)/sdv)
+    return {t:np.mean(tot[t]) for t in TAUS}, np.mean(cover), np.median(widen)
+for tm in [0.6,1.0,1.6,2.4]:
+    for tw in [0.5,1.0,1.8,3.0]:
+        r,cov,wd=evalc(tm,0.5,tw)
+        print(f"tm={tm} tw={tw}: "+" ".join(f"t{t}={r[t]:.3f}" for t in TAUS)+f" S={sum(r.values()):.3f} cov={cov:.2f} w={wd:.2f}")
+EOF
+timeout 1200 python work/sim_fm.py
 ```
 
 ## [131] tool
@@ -2169,7 +4928,89 @@ These EDF-based approaches are structurally failing — Q95/Q99 spread too narro
 **tool call: bash**
 
 ```
-
+cat > work/tab2.py << 'EOF'
+import numpy as np
+from scipy import stats, special
+from scipy.optimize import minimize_scalar, minimize
+rngm=np.random.default_rng(7)
+def Hinv(u,g1,g2):
+    return u+(u*u-1)*g1/6+(u**3-3*u)*g2/24-(2*u**3-5*u)*g1*g1/36
+def zs_from(g1,g2,tau):
+    z=float(stats.norm.ppf(tau)); d=1
+    for _ in range(80):
+        zc=np.clip(z,-3.05,3.05)
+        zw=float(Hinv(zc,g1,g2)) + (z-zc)
+        f=float(stats.norm.cdf(zc)-tau)
+        fp=float(max(stats.norm.pdf(zc),1e-6))
+        zn=zw-f/fp
+        if abs(zn-z)<1e-9: z=zn;break
+        if zn*fp-tau+f>0: pass
+        z=zn
+        z=float(np.clip(z,-3.05,3.05))
+    return z
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3) ,"very_heavy",0,60,2.2,np.inf),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+def F_of(mu,sd,c,nu,m):
+    u=np.arange(1,m+1)/(m+1)
+    b=stats.norm().ppf(u) if nu==np.inf else stats.t(nu,scale=np.sqrt((nu-2)/nu)).ppf(u)
+    b=(b-b.mean())/b.std()
+    if c>1e-6:
+        g=np.linspace(-6,6,2001); kern=np.exp(-0.5*g*g)
+        us=np.array([np.sum(kern[g<=x]) for x in b])/len(g)
+        v=np.exp(c*b)-1.0
+        v=(v-v.mean())/v.std()
+    else: v=b
+    return np.sort(mu+sd*v)
+# cache populations
+POPS={}
+def pop(mu,sd,c,nu,m):
+    key=(mu,sd,c,nu,m)
+    if key not in POPS: POPS[key]=F_of(mu,sd,c,nu,m)
+    return POPS[key]
+def pinball_excess(q,qt,tau,sd):
+    d=(q-qt)/sd
+    return np.where(d<0,tau*(-d),(1-tau)*d)
+def eval_rule(a1,a2,reps_seeds, list_of_dgp, n_sims=150):
+    tot={0.9:[],0.95:[],0.99:[]}
+    rr=0
+    for (name,mu,sd,sk,nu) in list_of_dgp:
+        c=sk*0.55; cv=c/np.sqrt(1+c*c)
+        # monotone c per sk map via brentq handled here
+        def _get(sk):
+            import numpy as _n
+            lo,hi=0,3.5
+            if abs(sk)<1e-4: return 0.0
+            sdref=1.0
+            for _ in range(25):
+                mid=(lo+hi)/2; v=sdref*(np.exp(mid*np.linspace(-3,3,601))-1)
+                v=(v-v.mean())/v.std(); s_=float(np.mean(v**3))
+                if s_<sk: lo=mid
+                else: hi=mid
+            return (lo+hi)/2
+        c=_get(sk)
+        for rep in range(n_sims):
+            m=int(rngm.integers(250,590)); F=pop(mu,sd,c,nu,m); sdv=F.std()
+            idx=reps_seeds[rr]; rr+=1
+            s=np.sort(F[idx])
+            mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+            g1=float(np.mean(((s-mean)/s.std())**3)*np.sqrt(90)/8)
+            g2=float(np.mean(((s-mean)/s.std())**4)-3)
+            g1p=float(np.clip(a1*g1,-1.6,3.2)); g2c=float(np.clip(a2*g2,-1.1,3.4))
+            for tau in [0.9,0.95,0.99]:
+                z=zs_from(g1p,g2c,tau)
+                q=mean+ss*z
+                qt=F[int(np.ceil(tau*m))-1]
+                tot[tau].append(pinball_excess(q,qt,tau,sdv))
+    return {t:float(np.mean(tot[t])) for t in tot}
+# build sample index draws
+maxm=600
+reps_seeds=[rngm.integers(0,maxm,10) for _ in range(8*150)]
+res=eval_rule(0.99,0.82,reps_seeds[:8*150],dgps,150)
+print("a1=0.99 a2=0.82:", {k:round(v,4) for k,v in res.items()}, "sum",round(sum(res.values()),4))
+EOF
+timeout 900 python work/tab2.py
 ```
 
 ## [133] tool
@@ -2186,7 +5027,12 @@ SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' on l
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/tab2.py').read()
+s=s.replace('''("strong_right",2,10,1.4,3) ,"very_heavy",0,60,2.2,np.inf),''','''("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),''')
+open('work/tab2.py','w').write(s)
+PYEO
+timeout 900 python work/tab2.py
 ```
 
 ## [135] tool
@@ -2207,7 +5053,12 @@ IndexError: index 566 is out of bounds for axis 0 with size 501
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/tab2.py').read()
+s=s.replace("s=np.sort(F[idx])","s=np.sort(F[np.mod(idx,len(F))])")
+open('work/tab2.py','w').write(s)
+PYEO
+timeout 900 python work/tab2.py
 ```
 
 ## [137] tool
@@ -2222,7 +5073,23 @@ My tuned `z` calibration has too much spread at Q95/Q99. Let me directly tune `(
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/tab2.py').read()
+s=s.replace("g1=float(np.mean(((s-mean)/s.std())**3)*np.sqrt(90)/8)",
+"g1=float(np.mean(((s-mean)/s.std())**3))")
+s=s.replace("res=eval_rule(0.99,0.82,reps_seeds[:8*150],dgps,150)\nprint(\"a1=0.99 a2=0.82:\", {k:round(v,4) for k,v in res.items()}, \"sum\",round(sum(res.values()),4))",
+"""import itertools
+best=None
+for a1 in [0.5,0.7,0.9,1.05]:
+  for a2 in [0.3,0.6,0.9,1.2]:
+    res=eval_rule(a1,a2,reps_seeds[:8*150],dgps,150)
+    v=sum(res.values())
+    print("a1=%.2f a2=%.2f:"%(a1,a2),{k:round(vv,3) for k,vv in res.items()},"sum",round(v,4))
+    if best is None or v<best[0]: best=(v,a1,a2)
+print("BEST",best)""")
+open('work/tab2.py','w').write(s)
+PYEO
+timeout 2000 python work/tab2.py
 ```
 
 ## [139] tool
@@ -2253,7 +5120,29 @@ Let me analyze the per-DGP per-τ bias of the promising BB approach to understan
 **tool call: bash**
 
 ```
-
+cat > work/anal.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_model import draws
+rng=np.random.default_rng(55)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+for name,mu,sd,sk,nu in dgps:
+    for t in [0.95,0.99]:
+        ds=[]
+        for rep in range(200):
+            m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+            s=np.sort(rng.choice(F,10,replace=False))
+            D=draws(s,m,R=300,seed=3,tail_mult=3.0,floor_frac=0.6,tail_w=3.6)
+            q=np.quantile(D,0.5,axis=0)[{0.95:1,0.99:2}[t]]
+            ds.append((q-F[int(np.ceil(t*m))-1])/sdv)
+        ds=np.array(ds)
+        print(f"{name:12s} t{t}: bias={ds.mean():+.3f} P_under={(ds<0).mean():.2f}")
+EOF
+timeout 600 python work/anal.py
 ```
 
 ## [141] tool
@@ -2283,7 +5172,99 @@ The pattern: BB Q95 overestimates (+0.4-0.8σ) while Q99 underestimates (-0.2 to
 **tool call: bash**
 
 ```
+cat > work/est_final.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def tail_scale(x, mult=1.0):
+    x=np.sort(np.asarray(x,float))
+    g=np.diff(x[4:]); g=g[g>0]
+    a=g.mean() if len(g) else max((x[-1]-x[0])/4,1e-3)
+    return float(max(a,1e-9))*mult
+
+def draws(x,m,R,seed,tail_mult=3.0,floor_frac=0.6,tail_w=3.6,w87=0.5,hi_off=0.0):
+    """
+    Per-rep population curve:
+      - Wall positions in pop-index: interior walls x_(k) at linearly-corrected count,
+      - tail corridor [x_(8), z10] width = (tail mass) with z10 random.
+      - hi_off shifts q95 draws upward (in sd units) -> widen honest intervals.
+    Key: wall placement uses cb positions = (k+f_tail_shift) so Q95 lands below max often.
+    """
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a=tail_scale(x,tail_mult)+1e-12
+    # tail anchor
+    u=rng.uniform(0,1,size=R)**(1.0/9.0)
+    z10=x[-1]-a*np.log(u)
+    z10=np.maximum(z10, x[-1]+(floor_frac+0.65)*a)
+    # Tail population mass W (in pop-index units) drawn around m/10 with Beta draw
+    wt=rng.beta(1,9,size=R)*m*10.0/9.0   # stochastic tail mass, mean m/10
+    wt=np.clip(wt, m*0.02, m*0.22)*0 + (m/10.0)*tail_w/ (tail_w)  # default fixed m/10*tail_w/... simplify
+    wt=np.full(R, m/10.0)*tail_w/3.6
+    wt=np.clip(wt, m*0.01, m*0.5)
+    # interior walls: x_(k) at pop index p_k. Spread interior over [0, m-wt]:
+    # p_k = (k+ w87? ) * slot for k=0..8 map to x_(0)..x_(8); the 9th wall x_(9) at m-wt.
+    out=np.empty((R,3))
+    for r in range(R):
+        slot=(m-wt[r])/9.0
+        pts=np.concatenate([(np.arange(0,9)+ w87)*slot, [m-wt[r]], [m]])
+        vals=np.concatenate([x,[z10[r]]])   # 11 values x_(0..9),z10
+        pts=np.concatenate([(np.arange(0,9))*slot, [m-wt[r]-slot],[m-wt[r]],[m]])
+        pts=np.array([0.0,slot,2*slot,3*slot,4*slot,5*slot,6*slot,7*slot,8*slot,9*slot, m-wt[r], m])
+        vals=np.array([x[0],x[0],x[1],x[2],x[3],x[4],x[5],x[6],x[7],x[8],x[9],z10[r]])
+        # enforce strictly increasing pts
+        # target pops
+        for col,tau in enumerate([0.90,0.95,0.99]):
+            p=tau*(m-1.0)
+            idx=np.searchsorted(pts,p,side='right')-1
+            idx=int(np.clip(idx,1,10))
+            p0,p1=pts[idx],pts[idx+1]; v0,v1=vals[idx],vals[idx+1]
+            fr=np.clip((p-p0)/max(p1-p0,1e-9),0,1)
+            out[r,col]=v0+fr*(v1-v0)
+    out.sort(axis=1)
+    # interval pathological widening for lo on q95: subtract
+    out[:,0]-=0.0
+    return out
+
+def block_preds(x,m,R=4000,seed=7,**kw):
+    D=draws(x,m,R,seed,**kw)
+    q=np.quantile(D,0.5,axis=0)
+    lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+    return float(q[0]),float(q[1]),float(q[2]),float(lo),float(hi)
+EOF
+cat > work/sim_ef.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from est_final import draws
+rng=np.random.default_rng(99)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TAUS=[0.9,0.95,0.99]
+POOL=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(150):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        tru=[F[int(np.ceil(t*m))-1] for t in TAUS]
+        POOL.append((s,m,F,tru,sdv))
+def evalc(tm,ff):
+    tot={t:[] for t in TAUS}; cover=[]; wid=[]
+    for s,m,F,tru,sdv in POOL:
+        D=draws(s,m,R=400,seed=(m*31)%2**31,tail_mult=tm,floor_frac=ff)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv; tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+        lo,hi=np.quantile(D[:,1],[0.025,0.975])
+        cover.append(lo<=tru[1]<=hi); wid.append((hi-lo)/sdv)
+    return {t:np.mean(tot[t]) for t in TAUS}, np.mean(cover), np.median(wid)
+for tm in [2.0,3.5]:
+    for ff in [0.3,0.8]:
+        r,cov,wd=evalc(tm,ff)
+        print(f"tm={tm} ff={ff}: "+" ".join(f"t{t}={r[t]:.3f}" for t in TAUS)+f" sum={sum(r.values()):.3f} cov={cov:.2f} w={wd:.2f}")
+EOF
+timeout 900 python work/sim_ef.py
 ```
 
 ## [143] tool
@@ -2301,7 +5282,19 @@ Q95 is now strong (0.16σ). The interval degenerates because randomness wasn't a
 **tool call: bash**
 
 ```
-
+cat > work/dbg4.py << 'EOF'
+import sys;sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from est_final import draws
+F=F_grid(0,25,0.8,4.0,300); s=np.sort(np.random.default_rng(0).choice(F,10,replace=False))
+D=draws(s,300,R=400,seed=1,tail_mult=3.5,floor_frac=0.8)
+print("sample:",np.round(s,1))
+print("true q95:",round(F[int(np.ceil(0.95*300))-1],1))
+for i,t in enumerate(['q90','q95','q99']):
+    print(t,"dispersion p025/p50/p975:",np.round(np.quantile(D[:,i],[0.025,0.5,0.975]),1))
+EOF
+python work/dbg4.py
 ```
 
 ## [145] tool
@@ -2320,7 +5313,25 @@ The dispersion is all degenerate: per-rep, all 3 quantiles are deterministic acr
 **tool call: bash**
 
 ```
-
+cat > work/dbg5.py << 'EOF'
+import sys;sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+import est_final as E
+F=F_grid(0,25,0.8,4.0,300); s=np.sort(np.random.default_rng(0).choice(F,10,replace=False))
+rng=np.random.default_rng(1)
+x=s; m=300
+a=E.tail_scale(x,3.5); u=rng.uniform(0,1,size=20)**(1.0/9.0)
+z10=x[-1]-a*np.log(u); z10=np.maximum(z10,x[-1]+1.45*a)
+print("x9",round(x[-1],1),"a",round(a,2),"z10 range",np.round(np.quantile(z10,[0,0.5,1]),1))
+# wall positions
+wt=np.full(20,m/10.0)
+slot=(m-wt[0])/9.0
+pts=np.array([0.0,slot,2*slot,3*slot,4*slot,5*slot,6*slot,7*slot,8*slot,9*slot, m-wt[0], m])
+print("pts:",np.round(pts,1), "m-wt=", round(m-wt[0],1))
+print("p for q95:",0.95*(m-1), "idx",np.searchsorted(pts,0.95*(m-1),side='right')-1)
+EOF
+python work/dbg5.py
 ```
 
 ## [147] tool
@@ -2337,7 +5348,102 @@ Two bugs: `u** (1/9)` makes z10 collapse to the floor, and there's a duplicate w
 **tool call: bash**
 
 ```
+cat > work/classical.py << 'EOF'
+"""
+Classical finite-population quantile estimate:
+ Model the unseen population quantile at tau via the exact distribution of the
+ number of population points above the j-th sample order statistic, with a
+ Weibull tail fitted to sample top order statistics, PLUS an anchor-shift
+ that matches E[Q95] to its Beta-chain mean under the tail model.
+"""
+import numpy as np
+from scipy import stats
+from scipy.optimize import brentq
 
+def fit_weibull_tail(x):
+    """Fit S0(u)=exp(-(u/lam)^k) through x_(8), x_(9), x_(10) using EDF tail masses.
+    Use the two gaps to solve lam,k by matching to (i/m)-style anchors via
+    tail-fraction model: anchor masses at top: m8=P(X>x8)=8/(n+1)? No -> use
+    consecutive spacing ratios under EDF: S(x_(i)) est = (n-i+1)/(n+1)."""
+    x=np.sort(np.asarray(x,float))
+    n=len(x)
+    # EDF masses above the top three order stats
+    for offs in [(8,9),(7,9),(8,10)]:
+        pass
+    # Use top-4: x7,x8,x9,x10 with EDF tail prob p_i=(n-i+1)/(n+1): p7=4/11,p8=3/11,p9=2/11,p10=1/11
+    xs=x[-4:]
+    ps=np.array([4,3,2,1])/11.0
+    y=-np.log(ps)
+    # y=( (x-loc)/lam )^k → estimate k,lam by regressing log y on log x locally with x-offset 0:
+    # Assume lam: solve k from ratio; use numeric least squares on model y=((x-loc)/lam)^k with loc from min
+    loc=xs[0]-1e-6
+    def nll(pr):
+        k,lm=pr
+        if k<=0.05 or lm<=1e-9: return 1e18
+        pred=((np.maximum(xs-loc,1e-9))/lm)**k
+        return np.sum((np.log(pred)-np.log(y))**2)
+    from scipy.optimize import minimize
+    r=minimize(nll,[1.0,(xs[-1]-loc)])
+    if r.fun>1e-2 or (not np.isfinite(r.fun)) or r.x[0]<=0.05 or r.x[0]>6:
+        # fallback exponential: mean exceedance above x_(8)
+        mean_exc=(xs[-1]-xs[1]+xs[-2]-xs[1])/2
+        lam=max(mean_exc,1e-3); return 1.0,lam,xs[1]
+    k,lm=r.x
+    return float(k),float(lm),float(loc)
+
+def pop_quantiles(x,m,tail_mult=1.0,hi=0.0):
+    x=np.sort(np.asarray(x,float)); n=len(x)
+    k,lm,loc=fit_weibull_tail(x)
+    lm*=tail_mult
+    out=[]
+    for tau in [0.9,0.95,0.99]:
+        theta=tau*(m+1)                     # fractional rank in 1..m
+        if theta<=n+1 and theta>=1 and int(np.floor(theta))>=1 and theta<m*0.98:
+            j=int(np.clip(np.floor(theta),1,n))
+            # position in population rank j, value = interpol of mapped sample order stat x_(i(j'))
+            # sample order stat i represents population rank ~ i*(m+1)/(n+1)
+            i_float=theta*(n+1)/(m+1)
+            i0=int(np.clip(np.floor(i_float),1,n)); fr=np.clip(i_float-i0,0,1)
+            q=x[i0-1]+fr*(x[min(i0,n-1)]-x[i0-1])
+        else:
+            # beyond sample max zone: exceedance probability above x_(10)
+            p_above=(1-tau)*m/1.0
+            theta_j=theta
+            # tail model beyond x_(10): mass decays as exp(-((g)/lm)^k), count of points beyond x9 = m*S(x9)
+            S9=m*np.exp(-((x[-1]-loc)/lm)**k)
+            target=S9-p_above
+            if target<=0:
+                q=x[-1]+hi
+            else:
+                g=lm*(-np.log(max(target,1e-9)/m))**(1.0/k)
+                q=loc+g
+        out.append(q)
+    return np.maximum.accumulate(out)
+EOF
+cat > work/sim_cl.py << 'EOF'
+import sys;sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from classical import pop_quantiles
+rng=np.random.default_rng(21)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TAUS=[0.9,0.95,0.99]
+for tmlt in [0.6,1.0,1.8,3.0]:
+    tot={t:[] for t in TAUS}
+    for name,mu,sd,sk,nu in dgps:
+        for rep in range(200):
+            m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+            s=np.sort(rng.choice(F,10,replace=False))
+            q=pop_quantiles(s,m,tail_mult=tmlt)
+            for i,t in enumerate(TAUS):
+                qt=F[int(np.ceil(t*m))-1]; d=(q[i]-qt)/sdv
+                tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+    print(f"tail_mult={tmlt}: "+" ".join(f"t{t}={np.mean(tot[t]):.3f}" for t in TAUS)+f" sum={sum(np.mean(tot[t]) for t in TAUS):.3f}")
+EOF
+timeout 600 python work/sim_cl.py
 ```
 
 ## [149] tool
@@ -2355,7 +5461,31 @@ Q99 is the bottleneck in every approach. Let me examine the conditional failure 
 **tool call: bash**
 
 ```
-
+cat > work/q99study.py << 'EOF'
+import sys;sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from classical import pop_quantiles
+rng=np.random.default_rng(21)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+recs=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(300):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        qt=F[int(np.ceil(0.99*m))-1]
+        recs.append((name,s[9]/sdv,s[7]/sdv,(s[9]-s[8])/sdv,max(F)/sdv,qt/sdv,sk))
+import pandas as pd
+df=pd.DataFrame(recs,columns=['dgp','x9sd','x7sd','gap1','maxt','qt','sk'])
+df['excess']=df['maxt']-df['qt']
+for name in df.dgp.unique():
+    d=df[df.dgp==name]
+    print(f"{name:13s} qt/sd med={d.qt.median():.2f} max/sd med={d.maxt.median():.2f} gap={d.excess.median():.2f} (q99 is {d.excess.median():.1f}sd below max)")
+EOF
+python work/q99study.py
 ```
 
 ## [151] tool
@@ -2377,7 +5507,49 @@ Critical insight: Q99's truth z99 ranges 1.8–4.7σ while the mean estimator us
 **tool call: bash**
 
 ```
-
+cat > work/joint.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from dgp import F_grid
+rng=np.random.default_rng(4242)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_normal",0,30,0.0,3.0),("mild_heavy",0,35,0.7,4.5)]
+TAUS=[0.9,0.95,0.99]
+P=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(200):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        mean=s.mean(); ssd=max(s.std(ddof=1),1e-9)
+        g1=float(np.mean(((s-mean)/s.std())**3))
+        g2=float(np.mean(((s-mean)/s.std())**4)-3)
+        feats=np.array([1.0, np.clip(g1,-2,3), np.clip(g2,-1.5,4)])
+        tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+        P.append((mean,ssd,feats,tru,sdv))
+P=np.array(P)
+MEAN=P[:,0].astype(float); SSD=P[:,1].astype(float)
+FE=np.stack(P[:,2]).astype(float); TRU=np.stack(P[:,3]).astype(float)
+SDv=P[:,4].astype(float)
+print("design:",FE.shape)
+# per-tau: qhat_z = z0_tau + h_tau . feats ; minimize weighted pinball in z-units
+from scipy.optimize import minimize
+TRA=np.vstack([MEAN,SSD]).T
+weights={0.9:1.0,0.95:1.0,0.99:1.0}
+for ti,t in enumerate(TAUS):
+    zt=(TRU[:,ti]-MEAN)/SSD
+    def obj(bb):
+        zhat=bb[0]+FE@bb[1:]
+        d=zhat-zt
+        return np.mean(np.where(d<0,t*(-d),(1-t)*d))
+    b0=np.array([stats.norm.ppf(t),0,0,0])
+    bb=minimize(obj,b0,method='Nelder-Mead',options=dict(maxiter=600)).x
+    print(f"tau={t}: z0={bb[0]:.3f} h={np.round(bb[1:],3)} obj={obj(bb):.4f}", "normonly", round(obj(np.array([stats.norm.ppf(t),0,0,0])),4))
+EOF
+timeout 600 python work/joint.py
 ```
 
 ## [153] tool
@@ -2395,7 +5567,21 @@ ValueError: setting an array element with a sequence. The requested array has an
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/joint.py').read()
+s=s.replace("""TRA=np.vstack([MEAN,SSD]).T
+weights={0.9:1.0,0.95:1.0,0.99:1.0}""","""""")
+s=s.replace("""P=np.array(P)
+MEAN=P[:,0].astype(float); SSD=P[:,1].astype(float)
+FE=np.stack(P[:,2]).astype(float); TRU=np.stack(P[:,3]).astype(float)
+SDv=P[:,4].astype(float)""",
+"""MEAN=np.array([r[0] for r in P],float); SSD=np.array([r[1] for r in P],float)
+FE=np.stack([np.asarray(r[2]) for r in P]).astype(float)
+TRU=np.stack([np.asarray(r[3]) for r in P]).astype(float)
+SDv=np.array([r[4] for r in P],float)""")
+open('work/joint.py','w').write(s)
+PYEO
+timeout 600 python work/joint.py
 ```
 
 ## [155] tool
@@ -2413,7 +5599,62 @@ Major progress (S ~0.31σ). But there's no de-meaning so these collapse at fixed
 **tool call: bash**
 
 ```
-
+cat > work/joint2.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from dgp import F_grid
+rng=np.random.default_rng(4242)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_normal",0,30,0.0,3.0),("mild_heavy",0,35,0.7,4.5)]
+TAUS=[0.9,0.95,0.99]
+def build(seed):
+    r2=np.random.default_rng(seed); rows=[]
+    for name,mu,sd,sk,nu in dgps:
+        for rep in range(200):
+            m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+            s=np.sort(r2.choice(F,10,replace=False))
+            mean=s.mean(); ssd=max(s.std(ddof=1),1e-9)
+            g1=float(np.mean(((s-mean)/s.std())**3))
+            g2=float(np.mean(((s-mean)/s.std())**4)-3)
+            feats=np.array([1.0, np.clip(g1,-2,3), np.clip(g2,-1.5,4)])
+            tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+            rows.append((mean,ssd,feats,tru,sdv))
+    MEAN=np.array([r[0] for r in rows]);SSD=np.array([r[1] for r in rows])
+    FE=np.stack([np.asarray(r[2]) for r in rows]).astype(float)
+    TRU=np.stack([np.asarray(r[3]) for r in rows]).astype(float)
+    SDv=np.array([r[4] for r in rows])
+    return MEAN,SSD,FE,TRU,SDv
+def opt_tau(FEm,ztt,t,lam=3.0):
+    z0=stats.norm.ppf(t)
+    h=np.linalg.solve(FEm.T@FEm+lam*np.eye(FEm.shape[1]), FEm.T@(ztt-z0))
+    def obj(hh): 
+        d=(z0+FEm@hh)-ztt
+        return np.mean(np.where(d<0,t*(-d),(1-t)*d))
+    return z0,h
+# fit on train pool
+MEAN,SSD,FE,TRU,SDv=build(4242)
+ztr=(TRU-MEAN[:,None])/SSD[:,None]
+params={}
+for ti,t in enumerate(TAUS):
+    z0,h=opt_tau(FE,ztr[:,ti],t); params[t]=(z0,h)
+    d=(z0+FE@h)-ztr[:,ti]
+    print(f"tau={t} train: z0={z0:.3f} h={np.round(h,3)} obj={np.mean(np.where(d<0,t*(-d),(1-t)*d)):.4f}")
+# held-out
+MEAN2,SSD2,FE2,TRU2,SDv2=build(777)
+z2=(TRU2-MEAN2[:,None])/SSD2[:,None]
+print("--- held-out ---")
+z0arr={0.9:1.2816,0.95:1.6449,0.99:2.3263}
+for ti,t in enumerate(TAUS):
+    z0,h=params[t]
+    d=(z0+FE2@h)-z2[:,ti]
+    d0=z0arr[t]-z2[:,ti]
+    print(f"tau={t} test: fitted={np.mean(np.where(d<0,t*(-d),(1-t)*d)):.4f}  normal_const={np.mean(np.where(d0<0,t*(-d0),(1-t)*d0)):.4f}")
+EOF
+timeout 600 python work/joint2.py
 ```
 
 ## [157] tool
@@ -2434,7 +5675,66 @@ Held-out at [0.245, 0.313, 0.584], sum=1.14σ — halved the naive. Sample top r
 **tool call: bash**
 
 ```
-
+cat > work/joint3.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from dgp import F_grid
+def build(seed,ndgp_rep=200):
+    dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+     ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+     ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+     ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+     ("kurt_normal",0,30,0.0,3.0),("mild_heavy",0,35,0.7,4.5)]
+    TAUS=[0.9,0.95,0.99]
+    r2=np.random.default_rng(seed); rows=[]
+    for name,mu,sd,sk,nu in dgps:
+        for rep in range(ndgp_rep):
+            m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+            s=np.sort(r2.choice(F,10,replace=False))
+            mean=s.mean(); ssd=max(s.std(ddof=1),1e-9)
+            g1=float(np.mean(((s-mean)/s.std())**3))
+            g2=float(np.mean(((s-mean)/s.std())**4)-3)
+            x9=(s[-1]-mean)/ssd; x8=(s[-2]-mean)/ssd; x7=(s[-3]-mean)/ssd
+            gap1=x9-x8; gap2=x8-x7
+            feats=np.array([1.0, np.clip(g1,-2,3), np.clip(g2,-1.5,4),
+                            np.clip(x9,-3,8), np.clip(x8,-3,6),
+                            np.clip(gap1,-0.1,4), np.clip(gap2,-0.1,3),
+                            np.clip(g1*g1,0,9), np.clip(g2,0,None)])
+            tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+            rows.append((mean,ssd,feats,tru,sdv))
+    MEAN=np.array([r[0] for r in rows]);SSD=np.array([r[1] for r in rows])
+    FE=np.stack([np.asarray(r[2]) for r in rows]).astype(float)
+    TRU=np.stack([np.asarray(r[3]) for r in rows]).astype(float)
+    SDv=np.array([r[4] for r in rows])
+    return MEAN,SSD,FE,TRU,SDv
+def fit_all(FE,ztr,TAUS,lam=3.0):
+    FEm=(FE-FE.mean(0)); out={}
+    for ti,t in enumerate(TAUS):
+        z0=stats.norm.ppf(t)
+        h=np.linalg.solve(FEm.T@FEm+lam*np.eye(FEm.shape[1]), FEm.T@(ztr[:,ti]-z0))
+        out[t]=(z0,h)
+    return out,FEm
+def score(params,FE,z,TAUS,FEm_mean=None):
+    FEm=(FE-FEm_mean) if FEm_mean is not None else (FE-FE.mean(0))
+    tot=0
+    for ti,t in enumerate(TAUS):
+        z0,h=params[t]; d=(z0+FEm@h)-z[:,ti]
+        tot+=np.mean(np.where(d<0,t*(-d),(1-t)*d))
+    return tot
+MEAN,SSD,FE,TRU,SDv=build(4242)
+ztr=(TRU-MEAN[:,None])/SSD[:,None]
+params,FEm=fit_all(FE,ztr,[0.9,0.95,0.99])
+print("train:",round(score(params,FE,ztr,[0.9,0.95,0.99]),4))
+MEAN2,SSD2,FE2,TRU2,SDv2=build(777)
+z2=(TRU2-MEAN2[:,None])/SSD2[:,None]
+print("test:",round(score(params,FE2,z2,[0.9,0.95,0.99],FE.mean(0)),4))
+for t in [0.9,0.95,0.99]:
+    z0,h=params[t]
+    print(f"tau={t}: z0={z0:.3f} h={np.round(h,3)}")
+np.savez('work/linearP.npz',allow_pickle=True,params=params, FEmean=FE.mean(0))
+EOF
+timeout 900 python work/joint3.py
 ```
 
 ## [159] tool
@@ -2453,7 +5753,38 @@ The added features overfit; fewer features generalize better (1.14 total). Corre
 **tool call: bash**
 
 ```
-
+cat > work/cv_sel.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from joint2 import build, TAUS
+import itertools
+def cv_eval(feat_idx, lam, seeds_fit=(4242,11,22), seeds_test=(777,88)):
+    test_tot=0
+    for sf in seeds_fit:
+        MEAN,SSD,FE,TRU,SDv=build(sf)
+        ztr=(TRU-MEAN[:,None])/SSD[:,None]
+        FTr=FE[:,feat_idx]; FEm=FTr-FTr.mean(0)
+        params={}
+        for ti,t in enumerate(TAUS):
+            z0=stats.norm.ppf(t)
+            h=np.linalg.solve(FEm.T@FEm+lam*np.eye(FEm.shape[1]),FEm.T@(ztr[:,ti]-z0))
+            params[t]=(z0,h)
+        for stt in seeds_test:
+            MEAN2,SSD2,FE2,TRU2,SDv2=build(stt)
+            z2=(TRU2-MEAN2[:,None])/SSD2[:,None]
+            FTe=FE2[:,feat_idx]; FTm=FTe-FTr.mean(0)
+            tot=0
+            for ti,t in enumerate(TAUS):
+                z0,h=params[t]; d=(z0+FTm@h)-z2[:,ti]
+                tot+=np.mean(np.where(d<0,t*(-d),(1-t)*d))
+            test_tot+=tot
+    return test_tot/(len(seeds_fit)*len(seeds_test))
+for idx,nm in [([0,1,2],"g1g2"),([0,3],"x9 only"),([0,1,2,3],"g1g2x9"),
+               ([0,1,2,3,4],"+x8"),([0,1,2,3,4,5],"+gap1")]:
+    print(nm, "CV:", round(cv_eval(idx,lam=3.0),4), "| lam1:", round(cv_eval(idx,lam=1.0),4))
+EOF
+timeout 1500 python work/cv_sel.py
 ```
 
 ## [161] tool
@@ -2484,7 +5815,43 @@ Fresh eyes: the missing piece in all my residuals is **millions with replacement
 **tool call: bash**
 
 ```
-
+cat > work/quick_lin.py << 'EOF'
+import numpy as np, pandas as pd, re, sys
+sys.path.insert(0,'work')
+from scipy import stats
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS); X=[np.sort(df[df.block==b].x.values) for b in blocks]
+    M=np.array([MS[b] for b in blocks]); return blocks,X,M
+blocks,X,M=load()
+# simple linear+nudge model: z = z0(tau) + h.g, fitted in simulation earlier:
+H={0.9: (1.282, np.array([0.156,-0.186,-0.085])),
+   0.95:(1.645, np.array([0.360,-0.229,-0.099])),
+   0.99:(2.326, np.array([1.191,-0.378,-0.062]))}
+rows=[]
+for b,x in zip(blocks,X):
+    mean=x.mean(); sdv=max(x.std(ddof=1),1e-9)
+    g1=float(np.mean(((x-mean)/x.std())**3)); g2=float(np.mean(((x-mean)/x.std())**4)-3)
+    f=np.array([np.clip(g1,-2,3), np.clip(1.0,-2,3)*0+np.clip(x[-1]/max(sdv,1e-9),0,4), np.clip(g2,-1.5,4)])
+    f=np.array([np.clip(g1,-2,3), np.clip(g2,-1.5,4)])  # last 2 features per coef? mismatch
+    # use g1,g2 with first/last coef; simpler: use g1,g2 only for h[0],h[2]
+    out=[]
+    for t in [0.9,0.95,0.99]:
+        z0,h=H[t]
+        z=z0+h[0]*np.clip(g1,-2,3)+h[2]*np.clip(g2,-1.5,4)
+        out.append(mean+sdv*z)
+    q90,q95,q99=out
+    # rough intervals: q95 spread from sim ~ +/- 1 sd
+    lo=min(q95-1.0*sdv, x[-1]); hi=q95+1.6*sdv
+    hi=max(hi,q99); rows.append((b,q90,q95,q99,lo,hi))
+res=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+res.to_csv('predictions.csv',index=False)
+print(res.head(6).round(2).to_string(index=False))
+print("rows",len(res))
+EOF
+python work/quick_lin.py
 ```
 
 ## [163] tool
@@ -2506,7 +5873,106 @@ Let me once and for all nail the Bayesian Bootstrap with the correct finite-popu
 **tool call: bash**
 
 ```
+cat > work/bb5.py << 'EOF'
+import numpy as np, pandas as pd, re
 
+def tail_scale(x):
+    x=np.sort(np.asarray(x,float))
+    g=np.diff(x[4:]); g=g[g>0]
+    a=g.mean() if len(g) else max((x[-1]-x[0])/4,1e-3)
+    return float(max(a,1e-9))
+
+def draws(x,m,R,seed,tail_STRETCH=1.8,floorE=0.35):
+    """
+    Correct BB population draws:
+      - W: Dirichlet(1,10)*m masses per sample point.
+      - Interior population curve: monotone step at wall x_(k) with mass W_k spread
+        over corridor [x_(k), x_(k+1)) (k=0..8); wall k position = sum W_0..W_{k-1}.
+      - Tail: x_(9) mass W_9 spread into corridor [x_(9), z10]; z10 = x9 + a*(E draw),
+        E = -ln(U_beta) capped, fatter via stretch. One tail-point bias handled by tail_W scale.
+    Returns R x 3 (Q90,Q95,Q99), per-rep monotone.
+    """
+    rng=np.random.default_rng(seed)
+    x=np.sort(np.asarray(x,float))
+    a=tail_scale(x)
+    W=rng.dirichlet(np.ones(10),size=R)*m
+    E=np.minimum(-np.log(np.maximum(rng.uniform(0,1,R)**(1.0/9.0),1e-9)), 6.0)
+    z10=x[-1]+a*tail_STRETCH*E
+    z10=np.maximum(z10, x[-1]+floorE*a)
+    # walls: wall k value for k=1..9:  x_(k) sitting at cumulative count below = sum_{i<k} W_i
+    cwt=np.cumsum(W,axis=1)                  # count below+incl each point; below x_(k) is cwt[:,k-1]-W[:,k]/2
+    # define interior interpolation over pop position p: x(p) piecewise linear through
+    # knots (pos_k, x_(k)) with pos_k = cwt[:,k-1] - W[:,k]/2 (center of point k's mass), k=1..9
+    # plus tail knot at (m, z10) beyond x_(9) center pos_9cum
+    pos=np.empty((R,10)); pos[:,0]=W[:,0]/2
+    pos[:,1:]=cwt[:,0]-W[:,1:]/2  # wrong; recompute
+    pos=np.empty((R,10))
+    pos[:,0]=W[:,0]/2.0
+    for k in range(1,10):
+        pos[:,k]=cwt[:,k-1]+W[:,k]/2.0
+    # values at knots: x_(0)..x_(9); and tail ring x_(9) -> z10 covering [pos9+W9/2, m]
+    # build piecewise pts matrix: pts[k] = pos[k]; values x_[k], tail: x9 at pos9, z10 at m
+    out=np.empty((R,3))
+    for c,tau in enumerate([0.9,0.95,0.99]):
+        p=tau*(m-1.0)
+        # per-row: interpolate x among knots pos (cols 0..9), then tail extrapolate
+        # vectorized searchsorted over rows:
+        # index j = last pos <= p
+        # handle rows where p>pos[:,9]
+        j=np.array([np.searchsorted(pos[r],p)-1 for r in range(0,R,1)])
+        j=np.clip(j,0,8)
+        rowsel=np.arange(R)
+        p0=pos[rowsel,j]; p1=pos[rowsel,j+1]
+        x0=x[j]; x1=x[j+1]
+        fr=np.clip((p-p0)/np.maximum(p1-p0,1e-9),0,1)
+        qint=x0+fr*(x1-x0)
+        # tail branch: p in (pos9+W9/2, m): interpolate x9 -> z10
+        tail_start=pos[:,9]+W[:,9]/2.0
+        frt=np.clip((p-tail_start)/np.maximum(m-tail_start,1e-9),0,1)
+        qtail=x[-1]+frt*(z10-x[-1])
+        q=np.where(p>tail_start, qtail, qint)
+        out[:,c]=q
+    out.sort(axis=1)
+    return out
+
+def block_preds(x,m,R=4000,seed=7,**kw):
+    D=draws(x,m,R,seed,**kw)
+    q=np.quantile(D,0.5,axis=0)
+    lo=np.quantile(D[:,1],0.025); hi=np.quantile(D[:,1],0.975)
+    return float(q[0]),float(q[1]),float(q[2]),float(lo),float(hi)
+EOF
+cat > work/sim_bb5x.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from bb5 import draws
+rng=np.random.default_rng(123)
+dgps=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+TAUS=[0.9,0.95,0.99]
+POOL=[]
+for name,mu,sd,sk,nu in dgps:
+    for rep in range(130):
+        m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(rng.choice(F,10,replace=False))
+        tru=[F[int(np.ceil(t*m))-1] for t in TAUS]
+        POOL.append((s,m,F,tru,sdv))
+def evalc(ts,fe):
+    tot={t:[] for t in TAUS}; cover=[]; wid=[]
+    for s,m,F,tru,sdv in POOL:
+        D=draws(s,m,R=400,seed=(m)%2**31,tail_STRETCH=ts,floorE=fe)
+        q=np.quantile(D,0.5,axis=0)
+        for i,t in enumerate(TAUS):
+            d=(q[i]-tru[i])/sdv; tot[t].append(np.where(d<0,t*(-d),(1-t)*d))
+        lo,hi=np.quantile(D[:,1],[0.025,0.975]); cover.append(lo<=tru[1]<=hi); wid.append((hi-lo)/sdv)
+    return {t:np.mean(tot[t]) for t in TAUS}, np.mean(cover), np.median(wid)
+for ts in [1.0,2.0,4.0]:
+    r,cov,wd=evalc(ts,0.3)
+    print(f"stretch={ts}: "+" ".join(f"t{t}={r[t]:.3f}" for t in TAUS)+f" S={sum(r.values()):.3f} cov={cov:.2f} w={wd:.2f}")
+EOF
+timeout 1200 python work/sim_bb5x.py
 ```
 
 ## [165] tool
@@ -2530,7 +5996,16 @@ ValueError: operands could not be broadcast together with shapes (400,) (400,9)
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/bb5.py').read()
+s=s.replace("""    pos=np.empty((R,10)); pos[:,0]=W[:,0]/2
+    pos[:,1:]=cwt[:,0]-W[:,1:]/2  # wrong; recompute
+    pos=np.empty((R,10))
+    pos[:,0]=W[:,0]/2.0""","""    pos=np.empty((R,10))
+    pos[:,0]=W[:,0]/2.0""")
+open('work/bb5.py','w').write(s)
+PYEO
+timeout 1200 python work/sim_bb5x.py
 ```
 
 ## [167] tool
@@ -2547,7 +6022,30 @@ The EDF-step systems all pin Q95 below the max, clustering under truth. Let me d
 **tool call: bash**
 
 ```
-
+cat > work/scale_study.py << 'EOF'
+import sys; sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+rng=np.random.default_rng(5)
+dgps=[("sym_norm",0,25,0.0,np.inf),("heavy_right",0,40,1.5,4.0),("very_heavy",0,60,2.2,2.8),
+ ("sym_right",5,30,0.8,np.inf),("mild_right",10,15,0.55,np.inf),("nearzero",0.5,0.6,0.3,np.inf)]
+for t in [0.9,0.95,0.99]:
+    res=[]
+    for name,mu,sd,sk,nu in dgps:
+        for rep in range(300):
+            m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+            s=np.sort(rng.choice(F,10,replace=False))
+            ms=s.mean(); ss=max(s.std(ddof=1),1e-9)
+            qt=F[int(np.ceil(t*m))-1]
+            res.append((qt-ms)/ss)
+    res=np.array(res)
+    # optimal constant z (minimizes pinball)
+    from scipy.optimize import minimize_scalar
+    obj=lambda z: np.mean(np.where(res<z,t*(z-res),(1-t)*(res-z)))
+    zopt=minimize_scalar(obj,bounds=(0.2,6),method='bounded').x
+    print(f"tau={t}: true z median={np.median(res):.2f} mean={res.mean():.2f} sd={res.std():.2f} p_opt_const={zopt:.2f} q97.5={np.quantile(res,0.975):.2f} q2.5={np.quantile(res,0.025):.2f}")
+EOF
+python work/scale_study.py
 ```
 
 ## [169] tool
@@ -2564,7 +6062,53 @@ The truth distribution shows wide spread (Q95: z_sd=0.82; Q99: sd=1.58) — henc
 **tool call: bash**
 
 ```
-
+cat > work/finalize.py << 'EOF'
+import numpy as np, pandas as pd, re, sys
+sys.path.insert(0,'work')
+from scipy import stats
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS); X=[np.sort(df[df.block==b].x.values) for b in blocks]
+    M=np.array([MS[b] for b in blocks]); return blocks,X,M
+blocks,X,M=load()
+# sample-stat features
+def feats(x):
+    x=np.sort(np.asarray(x,float)); n=len(x)
+    mean=x.mean(); ss=max(x.std(ddof=1),1e-9)
+    g1=float(np.mean(((x-mean)/x.std())**3)); g2=float(np.mean(((x-mean)/x.std())**4)-3)
+    x9=(x[-1]-mean)/ss; x8=(x[-2]-mean)/ss
+    gap=x9-x8
+    return mean,ss,g1,g2,x9,x8,gap
+# z-map: pinball-optimal constant shrunken toward normal, plus skew-load
+Z0={0.9:1.55, 0.95:2.15, 0.99:3.70}     # calibrated below by simulation; placeholders
+def est(x,ztune=None):
+    mean,ss,g1,g2,x9,x8,gap=feats(x)
+    g1c=np.clip(g1,-2,3); g2c=np.clip(g2,-1.5,4)
+    zs={}
+    for t,z0 in Z0.items():
+        # loadings from pinball fits (to be updated)
+        ld={0.9:(0.23,-0.12),0.95:(0.42,-0.10),0.99:(0.95,-0.05)}[t]
+        zs[t]=z0+ld[0]*g1c+ld[1]*g2c
+    out={t: mean+ss*zs[t] for t in Z0}
+    return out
+rows=[]
+for b,x in zip(blocks,X):
+    q=est(x)
+    mean,ss,*_=feats(x)
+    q90,q95,q99=q[0.9],q[0.95],q[0.99]
+    # pinball scale: small; honest interval: wide enough to cover z in [q2.5,q97.5]
+    lo=mean+ss*(Z0[0.95]-1.13)   # ~ z95 - ~1.1 sd
+    hi=mean+ss*(Z0[0.95]+2.05)
+    lo=min(lo,x[-1]); hi=max(hi,q99)
+    rows.append((b,q90,q95,q99,lo,hi))
+res=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+res.to_csv('predictions.csv',index=False)
+print(res.head(6).round(2).to_string(index=False))
+print("rows:",len(res),"monotone:",((res.q90<=res.q95)&(res.q95<=res.q99)).all())
+EOF
+python work/finalize.py
 ```
 
 ## [171] tool
@@ -2586,7 +6130,56 @@ Now I need to nail the z-map calibration and the interval via a careful simulati
 **tool call: bash**
 
 ```
-
+cat > work/unified.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from dgp import F_grid
+rng=np.random.default_rng(2025)
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0)]
+TAUS=[0.9,0.95,0.99]
+SIDER={}
+def sim_row(i):
+    name,mu,sd,sk,nu=DGPS[rng.integers(0,len(DGPS))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+    s=np.sort(rng.choice(F,10,replace=False))
+    mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+    g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+    tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+    return dict(mean=mean,ss=ss,g1=g1,g2=g2,ztru=(tru-mean)/ss, sdv=sdv,m=m,name=name)
+NREP=6000
+ROWS=[sim_row(i) for i in range(NREP)]
+ZTRU=np.stack([r['ztru'] for r in ROWS]); G1=np.array([r['g1'] for r in ROWS]); G2=np.array([r['g2'] for r in ROWS])
+print("rows",len(ROWS))
+for ti,t in enumerate(TAUS):
+    z=ZTRU[:,ti]
+    # pinball-optimal affine in [1,g1c,g2c]
+    Xd=np.stack([np.ones(len(z)),np.clip(G1,-2,3),np.clip(G2,-1.5,4)],axis=1)
+    def lossw(w):
+        # solve weighted quantile linear via check-loss via simple subgradient
+        bb=np.linalg.lstsq(Xd,z,rcond=None)[0]
+        for it in range(400):
+            d=z-Xd@bb
+            res=np.where(d>=0,-t*1.0,(1-t)*1.0)   # subgradient of pinball wrt residual d: d<0 -> -t ; per dd of -1
+            bb=bb - 0.05*(Xd.T@np.where(d>=0,-t,(1-t)))/len(z)*0
+            # proper: loss = sum rho(d); gradient wrt bb = Xd^T (tau*1[d>=0]-(1-tau)*1[d<0])*1 * (-1)? sign care
+            g=Xd.T@np.where(d>=0, t, -(1-t))/len(z)
+            bb=bb-0.03*g
+        return bb
+    bb=lossw(None)
+    pred=Xd@bb
+    d=z-pred
+    pin=np.mean(np.where(d>=0,t*d,(1-t)*(-d))) if False else np.mean(np.where(d<0,t*(-d),(1-t)*d))
+    d0=z-stats.norm.ppf(t); pin0=np.mean(np.where(d0<0,t*(-d0),(1-t)*d0))
+    # v-map: central 95% of conditional residual via quantiles of d
+    dlo,dhi=np.quantile(d,[0.025,0.975])
+    print(f"tau={t}: coef={np.round(bb,3)} pinball_z={pin:.4f} (const {pin0:.4f}) resid_sd={d.std():.2f} q95%=[{dlo:.2f},{dhi:.2f}]")
+EOF
+timeout 600 python work/unified.py
 ```
 
 ## [173] tool
@@ -2604,7 +6197,56 @@ The subgradient diverged. Let me implement a proper pinball regression with guar
 **tool call: bash**
 
 ```
-
+cat > work/unified2.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from scipy.optimize import minimize
+from dgp import F_grid
+rng=np.random.default_rng(2025)
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0)]
+TAUS=[0.9,0.95,0.99]
+def sim_rows(n, seed):
+    r2=np.random.default_rng(seed); out=[]
+    for i in range(n):
+        name,mu,sd,sk,nu=DGPS[int(r2.integers(0,len(DGPS)))]
+        m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(r2.choice(F,10,replace=False))
+        mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+        g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+        x9=(s[-1]-mean)/ss
+        tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+        out.append((mean,ss,g1,g2,x9,(tru-mean)/ss))
+    return out
+TRAIN=sim_rows(7000,7); TEST=sim_rows(2500,99)
+def arrs(R):
+    MEAN=np.array([r[0] for r in R]); SS=np.array([r[1] for r in R])
+    G1=np.array([r[2] for r in R]);G2=np.array([r[3] for r in R]);X9=np.array([r[4] for r in R])
+    Z=np.stack([np.asarray(r[5]) for r in R])
+    Xd=np.stack([np.ones(len(R)),np.clip(G1,-2,3),np.clip(G2,-1.5,4),np.clip(X9,-2,6)],axis=1)
+    return Xd,Z
+Xtr,Ztr=arrs(TRAIN); Xte,Zte=arrs(TEST)
+params={}
+for ti,t in enumerate(TAUS):
+    y=Ztr[:,ti]
+    def pin(bb):
+        r=y-Xtr@bb; return np.mean(np.where(r<0,-t*r,(1-t)*r))
+    bb0=np.linalg.lstsq(Xtr,y,rcond=None)[0]
+    res=minimize(pin,bb0,method='Nelder-Mead',options=dict(maxiter=2500,xatol=1e-5,fatol=1e-6))
+    params[t]=res.x
+    rte=y-np.dot(Xtr,res.x); rte0=y-stats.norm.ppf(t)
+    re_te=Zte[:,ti]-Xte@res.x; re_te0=Zte[:,ti]-stats.norm.ppf(t)
+    qz=np.quantile(rte,[0.025,0.975])
+    print(f"tau={t}: b={np.round(res.x,3)} train_pin={pin(res.x):.4f} (const {np.mean(np.where(rte0<0,-t*rte0,(1-t)*rte0)):.4f}) "
+          f"test_pin={np.mean(np.where(re_te<0,-t*re_te,(1-t)*re_te)):.4f} (test const {np.mean(np.where(re_te0<0,-t*re_te0,(1-t)*re_te0)):.4f}) "
+          f"resid95=[{qz[0]:.2f},{qz[1]:.2f}]")
+np.savez('work/affine.npz', **{f"b{int(t*100)}":params[t] for t in TAUS})
+EOF
+timeout 900 python work/unified2.py
 ```
 
 ## [175] tool
@@ -2621,7 +6263,57 @@ Major breakthrough: test pinball in z-units = [0.085, 0.06, 0.024]. Key insight:
 **tool call: bash**
 
 ```
-
+cat > work/unified3.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from scipy.optimize import minimize
+from dgp import F_grid
+rng=np.random.default_rng(1)
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6)]
+TAUS=[0.9,0.95,0.99]
+def sim_rows(n, seed):
+    r2=np.random.default_rng(seed); out=[]
+    cts=np.bincount(r2.integers(0,len(DGPS),n).astype(int),minlength=len(DGPS))
+    for i in range(n):
+        name,mu,sd,sk,nu=DGPS[int(r2.integers(0,len(DGPS)))]
+        m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(r2.choice(F,10,replace=False))
+        mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+        g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+        x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+        sk2=np.clip((s[-1]-np.median(s))/ss,-2,4)  # simple robust skew proxy
+        tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+        out.append((mean,ss,g1,g2,x9,gap,(tru-mean)/ss, s[-1], m))
+    return out
+TRAIN=sim_rows(12000,7); TEST=sim_rows(4000,99)
+def arrs(R):
+    G1=np.array([r[2] for r in R]);G2=np.array([r[3] for r in R]);X9=np.array([r[4] for r in R])
+    GAP=np.array([r[5] for r in R])
+    Z=np.stack([np.asarray(r[6]) for r in R]); MEAN=np.array([r[0] for r in R]);SS=np.array([r[1] for r in R])
+    Xd=np.stack([np.ones(len(R)), np.clip(G1,-2,3), np.clip(G2,-1.5,4),
+                 np.clip(X9,-2,6), np.clip(GAP,-0.2,4), np.clip(X9,None,0)],axis=1)
+    return Xd,Z,MEAN,SS
+Xtr,Ztr,Mm,Ss=arrs(TRAIN); Xte,Zte,_,_=arrs(TEST)
+params={}
+for ti,t in enumerate(TAUS):
+    y=Ztr[:,ti]
+    bb0=np.linalg.lstsq(Xtr,y,rcond=None)[0]
+    def pin(bb,X=Xtr,yy=y):
+        r=yy-X@bb; return np.mean(np.where(r<0,-t*r,(1-t)*r))
+    res=minimize(pin,bb0,method='Nelder-Mead',options=dict(maxiter=3500,xatol=2e-5,fatol=1e-7))
+    params[t]=res.x
+    rte=y-Xtr@res.x; re_te=Zte[:,ti]-Xte@res.x
+    print(f"tau={t}: b={np.round(res.x,3)} train={pin(res.x):.4f} test={np.mean(np.where(re_te<0,-t*re_te,(1-t)*re_te)):.4f} "
+          f"resid 2.5/97.5={np.round(np.quantile(rte,[0.025,0.975]),2)}")
+np.savez('work/affine2.npz', **{f"b{int(t*100)}":params[t] for t in TAUS})
+EOF
+timeout 1500 python work/unified3.py
 ```
 
 ## [177] tool
@@ -2638,7 +6330,45 @@ Stable at ~[0.085, 0.059, 0.023] with fixed σ. Now the practical pinned matter:
 **tool call: bash**
 
 ```
-
+cat > work/final_predict.py << 'EOF'
+import numpy as np, pandas as pd, re, sys
+sys.path.insert(0,'work')
+from scipy import stats
+def load():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+    blocks=sorted(MS); X=[np.sort(df[df.block==b].x.values) for b in blocks]
+    M=np.array([MS[b] for b in blocks]); return blocks,X,M
+blocks,X,M=load()
+P=np.load('work/affine2.npz')
+B90,B95,B99=P['b90'],P['b95'],P['b99']
+def preds(x):
+    x=np.sort(np.asarray(x,float)); n=len(x)
+    mean=x.mean(); ss=float(max(x.std(ddof=1),1e-9))
+    g1=float(np.mean(((x-mean)/x.std())**3)); g2=float(np.mean(((x-mean)/x.std())**4)-3)
+    x9=(x[-1]-mean)/ss; x8=(x[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+    z90=v@B90; z95=v@B95; z99=v@B99
+    z90,z95,z99=sorted([z90,z95,z99])
+    q90,q95,q99=mean+ss*z90, mean+ss*z95, mean+ss*z99
+    return mean,ss,q90,q95,q99,z95
+rows=[]
+for b,x,m in zip(blocks,X,M):
+    mean,ss,q90,q95,q99,z95=preds(x)
+    # interval for q95: residual quantiles from sim (train resid 95%: [-0.12,3.0] z-units)
+    lo=mean+ss*(z95-0.15)   # lower residual ~ -0.12
+    hi=mean+ss*(z95+3.10)   # upper ~ +3.0
+    lo=min(lo,q90); hi=max(hi,q99)
+    rows.append((b,q90,q95,q99,lo,hi))
+res=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+res.to_csv('predictions.csv',index=False)
+print(res.head().round(2).to_string(index=False))
+print("rows:",len(res))
+print("q95 within sample range frac:", np.mean([res.q95[i]<=X[i][-1] and res.q95[i]>=X[i][0] for i in range(100)]))
+print("widths/sd:", np.round(np.quantile([(res.hi[i]-res.lo[i])/max(X[i].std(ddof=1),1e-9) for i in range(100)],[0.1,0.5,0.9]),2))
+EOF
+python work/final_predict.py
 ```
 
 ## [179] tool
@@ -2661,7 +6391,32 @@ Wait — Q95 predictions like 49 for block 1 are now *below* the sample max (77.
 **tool call: bash**
 
 ```
-
+cat > work/reality.py << 'EOF'
+import sys;sys.path.insert(0,'work')
+import numpy as np
+from dgp import F_grid
+from final_predict import preds as _
+import importlib.util
+spec=importlib.util.spec_from_file_location("fp","work/final_predict.py")
+# manual: recompute preds for specific comparators without running whole script
+code=open('work/final_predict.py').read().split('rows=[]')[0]
+ns={}
+exec(code, ns)
+preds=ns['preds']; load=ns['load']
+from dgp import F_grid
+rng=np.random.default_rng(8)
+for sk,nu,nm in [(0.0,np.inf,'sym_norm'),(0.8,np.inf,'sym_right'),(1.5,4.0,'heavy_right')]:
+    errs=[]
+    for rep in range(120):
+        m=int(rng.integers(250,590));F=F_grid(10,30,sk,nu,m); sdv=F.std()
+        s=rng.choice(F,10,replace=False)
+        mean,ss,q90,q95,q99,z95=preds(s)
+        qt=F[int(np.ceil(0.95*m))-1]
+        errs.append((q95-qt)/sdv)
+    e=np.array(errs)
+    print(f"{nm}: q95 bias={e.mean():+.2f} Punder={(e<0).mean():.2f} rmse={np.sqrt((e**2).mean()):.2f}")
+EOF
+python work/reality.py
 ```
 
 ## [181] tool
@@ -2687,7 +6442,26 @@ Huge mistake discovered: the affine model fit `ẑ_true ≈ mean_z ≈ 1.4-2.0` 
 **tool call: bash**
 
 ```
-
+cat > work/single.py << 'EOF'
+import sys;sys.path.insert(0,'work')
+import numpy as np
+from scipy.optimize import minimize_scalar
+from dgp import F_grid
+rng=np.random.default_rng(8)
+for sk,nu,nm in [(0.0,np.inf,'sym_norm'),(0.8,np.inf,'sym_right'),(1.5,4.0,'heavy_right'),(2.2,2.8,'very_heavy')]:
+    ztru=[]
+    for rep in range(400):
+        m=int(rng.integers(250,590));F=F_grid(10,30,sk,nu,m); sdv=F.std()
+        s=rng.choice(F,10,replace=False)
+        ms=s.mean(); ss=max(s.std(ddof=1),1e-9)
+        qt=F[int(np.ceil(0.95*m))-1]
+        ztru.append((qt-ms)/ss)
+    ztru=np.array(ztru)
+    def pin(z): d=ztru-z; return np.mean(np.where(d<0,0.95*(-d),0.05*d))
+    zopt=minimize_scalar(pin,bounds=(0.3,4),method='bounded').x
+    print(f"{nm}: q95-z median={np.median(ztru):.2f} q05={np.quantile(ztru,0.05):.2f} q95={np.quantile(ztru,0.95):.2f} pinball-optimal-const={zopt:.2f}")
+EOF
+python work/single.py
 ```
 
 ## [183] tool
@@ -2705,7 +6479,61 @@ Now I understand the asymmetry deeply: pinball pushes Q95 down (median-based, no
 **tool call: bash**
 
 ```
-
+cat > work/cal_final.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from scipy.optimize import minimize
+from dgp import F_grid
+rng=np.random.default_rng(2025)
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6)]
+TAUS=[0.9,0.95,0.99]
+def sim_rows(n, seed):
+    r2=np.random.default_rng(seed); out=[]
+    for i in range(n):
+        name,mu,sd,sk,nu=DGPS[int(r2.integers(0,len(DGPS)))]
+        m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(r2.choice(F,10,replace=False))
+        mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+        g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+        x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+        tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+        out.append((mean,ss,g1,g2,x9,gap,(tru-mean)/ss))
+    return out
+def arrs(R):
+    G1=np.array([r[2] for r in R]);G2=np.array([r[3] for r in R]);X9=np.array([r[4] for r in R]);GAP=np.array([r[5] for r in R])
+    Z=np.stack([np.asarray(r[6]) for r in R])
+    Xd=np.stack([np.ones(len(R)), np.clip(G1,-2,3), np.clip(G2,-1.5,4), np.clip(X9,-2,6), np.clip(GAP,-0.2,4), np.clip(X9,None,0)],axis=1)
+    return Xd,Z
+Xtr,Ztr=arrs(sim_rows(15000,77)); Xte,Zte=arrs(sim_rows(5000,88))
+params={}
+resid_q95=[]
+for ti,t in enumerate(TAUS):
+    y=Ztr[:,ti]
+    bb0=np.linalg.lstsq(Xtr,y,rcond=None)[0]
+    def pin(bb):
+        r=y-Xtr@bb; return np.mean(np.where(r<0,-t*r,(1-t)*r))
+    res=minimize(pin,bb0,method='Nelder-Mead',options=dict(maxiter=5000,xatol=1e-6,fatol=1e-8))
+    params[t]=res.x
+    rtr=y-Xtr@res.x; rte=Zte[:,ti]-Xte@res.x
+    if t==0.95:
+        resid_q95=rtr.copy()
+        print(f"tau={t}: b={np.round(res.x,3)} testpin={np.mean(np.where(rte<0,-t*rte,(1-t)*rte)):.4f} resid_q95 2.5/97.5={np.round(np.quantile(rtr,[0.025,0.975]),3)}")
+        np.savez('work/affineF.npz',b90=params[0.9],b95=params[0.95],b99=params[0.99],resid95=rtr)
+    else:
+        print(f"tau={t}: b={np.round(res.x,3)} testpin={np.mean(np.where(rte<0,-t*rte,(1-t)*rte)):.4f} resid 2.5/97.5={np.round(np.quantile(rtr,[0.025,0.975]),3)}")
+# validation of coverage under interval = q95 + [q2.5,q97.5] of resid95 (z-units)
+b95=params[0.95]; mu95=Xte@b95; r_lo,r_hi=np.quantile(resid_q95,[0.025,0.975])
+ztrue=Zte[:,1]
+cover=np.mean((ztrue>=mu95+r_lo)&(ztrue<=mu95+r_hi))
+print("Q95 interval coverage (in z-space):",round(cover,3))
+EOF
+timeout 1500 python work/cal_final.py
 ```
 
 ## [185] tool
@@ -2725,7 +6553,13 @@ tau=0.95: b=[ 0.826 -0.251 -0.165 -0.007  0.232  0.002] testpin=0.0601 resid_q95
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/cal_final.py').read()
+s=s.replace("np.savez('work/affineF.npz',b90=params[0.9],b95=params[0.95],b99=params[0.99],resid95=rtr)\n","")
+s=s.replace("# validation of coverage","np.savez('work/affineF.npz',b90=params[0.9],b95=params[0.95],b99=params[0.99],resid95=np.array(resid_q95))\n# validation of coverage")
+open('work/cal_final.py','w').write(s)
+PYEO
+timeout 1500 python work/cal_final.py
 ```
 
 ## [187] tool
@@ -2741,7 +6575,23 @@ IndentationError: unexpected indent
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+src=open('work/cal_final.py').read()
+src=src.replace("""        np.savez('work/affineF.npz',b90=params[0,9,None] if False else None)\n""","""""")
+lines=src.splitlines()
+out=[]
+for i,l in enumerate(lines):
+    if "resid_q95=rtr.copy()" in l:
+        out.append(l)
+        out.append(l.replace("resid_q95=rtr.copy()","np.savez('work/affineF.npz',**{})") if False else l)
+        continue
+    out.append(l)
+src='\n'.join(out)
+# place savez after loop
+src=src.replace("# validation of coverage","np.savez('work/affineF.npz',b90=params[0.9],b95=params[0.95],b99=params[0.99],resid95=np.array(resid_q95))\n# validation of coverage")
+open('work/cal_final.py','w').write(src)
+PYEO
+timeout 1500 python work/cal_final.py
 ```
 
 ## [189] tool
@@ -2763,7 +6613,55 @@ Let me stop patching and rewrite the calibration cleanly:
 **tool call: bash**
 
 ```
-
+cat > work/cal_final2.py << 'EOF'
+import numpy as np
+from scipy import stats
+from scipy.optimize import minimize
+from dgp import F_grid
+import sys; sys.path.insert(0,'work')
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6)]
+TAUS=[0.9,0.95,0.99]
+def sim_rows(n, seed):
+    r2=np.random.default_rng(seed); out=[]
+    for i in range(n):
+        name,mu,sd,sk,nu=DGPS[int(r2.integers(0,len(DGPS)))]
+        m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(r2.choice(F,10,replace=False))
+        mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+        g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+        x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+        tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+        out.append((mean,ss,g1,g2,x9,gap,(tru-mean)/ss))
+    return out
+def arrs(R):
+    G1=np.array([r[2] for r in R]);G2=np.array([r[3] for r in R]);X9=np.array([r[4] for r in R]);GAP=np.array([r[5] for r in R])
+    Z=np.stack([np.asarray(r[6]) for r in R])
+    Xd=np.stack([np.ones(len(R)), np.clip(G1,-2,3), np.clip(G2,-1.5,4), np.clip(X9,-2,6), np.clip(GAP,-0.2,4), np.clip(X9,None,0)],axis=1)
+    return Xd,Z
+Xtr,Ztr=arrs(sim_rows(16000,77)); Xte,Zte=arrs(sim_rows(5000,88))
+params={}; resid={}
+for ti,t in enumerate(TAUS):
+    y=Ztr[:,ti]
+    bb0=np.linalg.lstsq(Xtr,y,rcond=None)[0]
+    def pin(bb):
+        r=y-Xtr@bb; return np.mean(np.where(r<0,-t*r,(1-t)*r))
+    res=minimize(pin,bb0,method='Nelder-Mead',options=dict(maxiter=5000,xatol=1e-6,fatol=1e-8))
+    params[t]=res.x; resid[t]=y-Xtr@res.x
+    rte=Zte[:,ti]-Xte@res.x
+    print(f"tau={t}: b={np.round(res.x,3)} testpin={np.mean(np.where(rte<0,-t*rte,(1-t)*rte)):.4f} resid95=[{np.quantile(resid[t],0.025):.3f}, {np.quantile(resid[t],0.975):.3f}] resid_sd={np.std(resid[t]):.2f}")
+np.savez('work/affineF.npz',b90=params[0.9],b95=params[0.95],b99=params[0.99],
+         rl95=np.quantile(resid[0.95],0.025), rh95=np.quantile(resid[0.95],0.975))
+# q95 interval coverage
+mu95=Xte@params[0.95]; ztrue=Zte[:,1]
+lo=mu95+np.quantile(resid[0.95],0.025); hi=mu95+np.quantile(resid[0.95],0.975)
+print("Q95 cov:",round(np.mean((ztrue>=lo)&(ztrue<=hi)),3))
+EOF
+timeout 1800 python work/cal_final2.py
 ```
 
 ## [191] tool
@@ -2781,7 +6679,39 @@ Good, but let me double-check these coefficients are correct by verifying the fi
 **tool call: bash**
 
 ```
-
+cat > work/final_preds.py << 'EOF'
+import numpy as np, pandas as pd, re
+from scipy import stats
+A=np.load('work/affineF.npz')
+B90,B95,B99=A['b90'],A['b95'],A['b99']
+RL,RH=float(A['rl95']),float(A['rh95'])
+df=pd.read_csv('data/blocks.csv')
+txt=open('data/task.txt').read()
+MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+blocks=sorted(MS); M=np.array([MS[b] for b in blocks])
+X=[np.sort(df[df.block==b].x.values) for b in blocks]
+def vecs(x):
+    x=np.sort(np.asarray(x,float))
+    mean=x.mean(); ss=float(max(x.std(ddof=1),1e-9))
+    g1=float(np.mean(((x-mean)/x.std())**3)); g2=float(np.mean(((x-mean)/x.std())**4)-3)
+    x9=(x[-1]-mean)/ss; x8=(x[-2]-mean)/ss; gap=x9-x8
+    return np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+rows=[]
+for b,x,m in zip(blocks,X,M):
+    v=vecs(x); mean=x.mean(); ss=max(x.std(ddof=1),1e-9)
+    z90,z95,z99=sorted([v@B90, v@B95, v@B99])
+    q90,q95,q99=mean+ss*z90, mean+ss*z95, mean+ss*z99
+    lo=mean+ss*(z95+RL); hi=mean+ss*(z95+RH)
+    lo=min(lo,x[-1]); hi=max(hi,q99, x[-1]+0.25*ss)
+    rows.append((b,q90,q95,q99,lo,hi))
+res=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+res.to_csv('predictions.csv',index=False)
+print("rows:",len(res))
+print(res.head(8).round(2).to_string(index=False))
+print("monotone ok:", bool(((res.q90<=res.q95)&(res.q95<=res.q99)).all()))
+print("widths/sd:", [round((res.hi[i]-res.lo[i])/max(X[i].std(ddof=1),1e-9),2) for i in range(6)])
+EOF
+python work/final_preds.py && wc -l predictions.csv && head -2 predictions.csv
 ```
 
 ## [193] tool
@@ -2810,7 +6740,49 @@ Critical issue: my "test pinball" numbers were computed in z-units, but the scor
 **tool call: bash**
 
 ```
-
+cat > work/final_eval.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+from scipy import stats
+from scipy.optimize import minimize
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6)]
+TAUS=[0.9,0.95,0.99]
+A=np.load('work/affineF.npz')
+B90,B95,B99=A['b90'],A['b95'],A['b99']; RL,RH=float(A['rl95']),float(A['rh95'])
+def predict(s):
+    mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+    g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+    x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+    z90,z95,z99=sorted([v@B90,v@B95,v@B99])
+    return mean,ss,mean+ss*z90,mean+ss*z95,mean+ss*z99,mean+ss*(z95+RL),mean+ss*(z95+RH)
+rng=np.random.default_rng(3131)
+tot={t:0.0 for t in TAUS}; base={t:0.0 for t in TAUS}; cover=[]; nsim=0
+for rep in range(3500):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    mean,ss,q90,q95,q99,lo,hi=predict(s)
+    tru=[F[int(np.ceil(t*m))-1] for t in [0.9,0.95,0.99]]
+    for i,t in enumerate([0.9,0.95,0.99]):
+        q=[q90,q95,q99][i]
+        # absolute pinball loss on the population
+        d=F-q; loss=np.mean(np.where(d>=0,t*d,(t-1)*d))
+        db=F-tru[i]; base_loss=np.mean(np.where(db>=0,t*db,(t-1)*db))
+        tot[t]+=(loss-base_loss); base[t]+=0.0
+    cover.append(lo<=tru[1]<=hi); nsim+=1
+print("absolute pinball excess (avg loss units):")
+for t in TAUS: print(f"  tau={t}: {tot[t]/nsim:.4f}")
+print("sum:",round(sum(tot[t]/nsim for t in TAUS),4))
+print("coverage:",round(np.mean(cover),3))
+EOF
+timeout 900 python work/final_eval.py
 ```
 
 ## [195] tool
@@ -2844,7 +6816,18 @@ Coverage is honest (0.953) and absolute pinball ≈4.4 loss-units summed. Let me
 **tool call: bash**
 
 ```
-
+cat > work/check_data.py << 'EOF'
+import numpy as np, pandas as pd, re
+df=pd.read_csv('data/blocks.csv'); txt=open('data/task.txt').read()
+MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+res=pd.read_csv('predictions.csv').set_index('block')
+for b in [48,92,23,1,47,27]:
+    x=np.sort(df[df.block==b].x.values)
+    sd=x.std(ddof=1); rngx=x[-1]-x[0]
+    r=res.loc[b]
+    print(f"b{b} m={MS[b]} sd={sd:.3g} range=[{x[0]:.3g},{x[-1]:.3g}] x9_x8={x[-1]-x[-2]:.3g} -> q90={r.q90:.4g} q95={r.q95:.4g} q99={r.q99:.4g} [{r.lo:.4g},{r.hi:.4g}]")
+EOF
+python work/check_data.py
 ```
 
 ## [197] tool
@@ -2864,7 +6847,17 @@ Critical bug found: Q95 < sample_max in many blocks (e.g. b1: Q95=52.6 < max 77.
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/final_preds.py').read()
+s=s.replace("""    lo=min(lo,x[-1]); hi=max(hi,q99, x[-1]+0.25*ss)""",
+"""    a=max(np.diff(x[4:]).mean(), ss*0.05)
+    q99=max(q99, x[-1]+0.35*a)   # Q99 must exceed max with margin
+    q95=max(q95, min(x[-1]-0.25*a, q99-0.1*a))
+    q90=max(q90, min(x[-1]-0.6*a, q95-0.1*a))
+    lo=min(lo,x[-1]-0.5*a); hi=max(hi,q99, x[-1]+0.4*ss)""")
+open('work/final_preds.py','w').write(s)
+PYEO
+python work/final_preds.py && python work/check_data.py
 ```
 
 ## [199] tool
@@ -2896,7 +6889,41 @@ The anchor forcing thinks Q95 must be near max always, but simulation pins Q95 n
 **tool call: bash**
 
 ```
-
+cat > work/final_preds3.py << 'EOF'
+import numpy as np, pandas as pd, re
+from scipy import stats
+A=np.load('work/affineF.npz')
+B90,B95,B99=A['b90'],A['b95'],A['b99']
+RL,RH=float(A['rl95']),float(A['rh95'])
+df=pd.read_csv('data/blocks.csv')
+txt=open('data/task.txt').read()
+MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+blocks=sorted(MS); M=np.array([MS[b] for b in blocks])
+X=[np.sort(df[df.block==b].x.values) for b in blocks]
+def vecs(x):
+    x=np.sort(np.asarray(x,float))
+    mean=x.mean(); ss=float(max(x.std(ddof=1),1e-9))
+    g1=float(np.mean(((x-mean)/x.std())**3)); g2=float(np.mean(((x-mean)/x.std())**4)-3)
+    x9=(x[-1]-mean)/ss; x8=(x[-2]-mean)/ss; gap=x9-x8
+    return mean,ss,np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+rows=[]
+for b,x,m in zip(blocks,X,M):
+    mean,ss,v=vecs(x)
+    z90,z95,z99=sorted([v@B90, v@B95, v@B99])
+    q90,q95,q99=mean+ss*z90, mean+ss*z95, mean+ss*z99
+    a=max(np.diff(x[4:]).mean(), 0.05*ss)
+    q99=max(q99, x[-1]+0.35*a)                       # logical floor
+    # Q95 floor from Beta-chain anchor: Q95 = 0.9*max + 0.1*(below-max residual)
+    q95=max(q95, x[-1]-0.55*a)                       # soft relative-to-top-gap floor
+    q90=max(q90, x[-1]-1.4*a)
+    lo=mean+ss*(z95+RL); hi=mean+ss*(z95+RH)
+    lo=min(lo, x[-1]-0.5*a); hi=max(hi, q99, x[-1]+0.4*ss)
+    rows.append((b,q90,q95,q99,lo,hi))
+res=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+res.to_csv('predictions.csv',index=False)
+print("rows:",len(res),"q95<max frac:",np.mean([res.q95[i]<X[i][-1] for i in range(100)]))
+EOF
+python work/final_preds3.py && python work/final_eval.py 2>&1 | tail -7
 ```
 
 ## [201] tool
@@ -2922,7 +6949,56 @@ Final production run:
 **tool call: bash**
 
 ```
-
+cat > work/final_production.py << 'EOF'
+import numpy as np, pandas as pd, re
+from scipy import stats
+from scipy.optimize import minimize
+# ---------------- train pinball-affine z-maps on simulation ----------------
+import sys; sys.path.insert(0,'work')
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6)]
+TAUS=[0.9,0.95,0.99]
+def sim_rows(n, seed):
+    r2=np.random.default_rng(seed); out=[]
+    for i in range(n):
+        name,mu,sd,sk,nu=DGPS[int(r2.integers(0,len(DGPS)))]
+        m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(r2.choice(F,10,replace=False))
+        mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+        g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+        x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+        tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+        out.append((mean,ss,g1,g2,x9,gap,(tru-mean)/ss, s[-1]))
+    return out
+def arrs(R):
+    G1=np.array([r[2] for r in R]);G2=np.array([r[3] for r in R]);X9=np.array([r[4] for r in R]);GAP=np.array([r[5] for r in R])
+    Z=np.stack([np.asarray(r[6]) for r in R]); MEAN=np.array([r[0] for r in R]);SS=np.array([r[1] for r in R]);XMAX=np.array([r[7] for r in R])
+    Xd=np.stack([np.ones(len(R)), np.clip(G1,-2,3), np.clip(G2,-1.5,4), np.clip(X9,-2,6), np.clip(GAP,-0.2,4), np.clip(X9,None,0)],axis=1)
+    return Xd,Z,MEAN,SS,XMAX
+Xtr,Ztr,Mm,Ss,Xm=arrs(sim_rows(18000,777))
+Xte,Zte,_,_,_=arrs(sim_rows(6000,888))
+params={}; resid={}
+for ti,t in enumerate(TAUS):
+    y=Ztr[:,ti]
+    bb0=np.linalg.lstsq(Xtr,y,rcond=None)[0]
+    def pin(bb):
+        r=y-Xtr@bb; return np.mean(np.where(r<0,-t*r,(1-t)*r))
+    res=minimize(pin,bb0,method='Nelder-Mead',options=dict(maxiter=5000,xatol=1e-6,fatol=1e-8))
+    params[t]=res.x; resid[t]=y-Xtr@res.x
+    rte=Zte[:,ti]-Xte@res.x
+    print(f"tau={t}: b={np.round(res.x,3)} testpin={np.mean(np.where(rte<0,-t*rte,(1-t)*rte)):.4f} resid95=[{np.quantile(resid[t],0.025):.3f},{np.quantile(resid[t],0.975):.3f}]")
+# apply logical floors in z-units
+A=np.load('work/affineF.npz'); RL=float(A['rl95']); RH=float(A['rh95'])
+np.savez('work/affineFINAL.npz',b90=params[0.9],b95=params[0.95],b99=params[0.99],rl95=RL,rh95=RH)
+np.save('work/resid95.npy',resid[0.95])
+print("REtrained final params saved")
+EOF
+timeout 2000 python work/final_production.py
 ```
 
 ## [203] tool
@@ -2938,7 +7014,47 @@ REtrained final params saved
 **tool call: bash**
 
 ```
-
+cat > work/produce.py << 'EOF'
+import numpy as np, pandas as pd, re
+from scipy import stats
+A=np.load('work/affineFINAL.npz')
+B90,B95,B99=A['b90'],A['b95'],A['b99']
+RL,RH=float(A['rl95']),float(A['rh95'])
+resid95=np.load('work/resid95.npy')
+df=pd.read_csv('data/blocks.csv')
+txt=open('data/task.txt').read()
+MS={int(b):int(v) for b,v in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt)}
+blocks=sorted(MS); M=np.array([MS[b] for b in blocks])
+X=[np.sort(df[df.block==b].x.values) for b in blocks]
+def vecs(x):
+    x=np.sort(np.asarray(x,float))
+    mean=x.mean(); ss=float(max(x.std(ddof=1),1e-9))
+    g1=float(np.mean(((x-mean)/x.std())**3)); g2=float(np.mean(((x-mean)/x.std())**4)-3)
+    x9=(x[-1]-mean)/ss; x8=(x[-2]-mean)/ss; gap=x9-x8
+    return mean,ss,np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+rows=[]
+for b,x,m in zip(blocks,X,M):
+    mean,ss,v=vecs(x)
+    z_raw=sorted([v@B90,v@B95,v@B99])
+    a=max(np.diff(x[4:]).mean(),0.05*ss)
+    # logical floors in z-units
+    z9=(x[-1]-mean)/ss; z8=(x[-2]-mean)/ss; z7=(x[-3]-mean)/ss
+    ga=z8-z7; 
+    z99=max(z_raw[2], z9+0.35*max(ga,0.3))      # Q99 above max with margin
+    z95=max(z_raw[1], z9-0.5*max(ga,0.4))       # Q95 near max but possibly below
+    z90=max(z_raw[0], z8-0.3*max(z9-z8,0.3))    # Q90 < Q95, near x_(8)
+    q90,q95,q99=mean+ss*z90,mean+ss*z95,mean+ss*z99
+    # interval: pinball-optimal z95 + residual quantiles
+    rlo,rhi=np.quantile(resid95,[0.025,0.975])
+    lo=mean+ss*(z95+rlo); hi=mean+ss*(z95+rhi)
+    hi=max(hi,q99+0.1*a); lo=min(lo, x[-1]-0.2*a)
+    rows.append((b,q90,q95,q99,lo,hi))
+res=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+res.to_csv('predictions.csv',index=False)
+print("rows:",len(res),"monotone:",bool(((res.q90<=res.q95)&(res.q95<=res.q99)).all()))
+print(res.head(5).round(3).to_string(index=False))
+EOF
+python work/produce.py && python work/final_eval.py 2>&1 | tail -6 && wc -l predictions.csv
 ```
 
 ## [205] tool
@@ -2966,7 +7082,62 @@ coverage: 0.953
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/produce.py').read()
+s=s.replace("""    q90,q95,q99=mean+ss*z90,mean+ss*z95,mean+ss*z99""",
+"""    # ensure monotonicity AFTER floors
+    z90=min(z90,z95); z95=min(z95,z99); z90=min(z90,z95)
+    q90,q95,q99=mean+ss*z90,mean+ss*z95,mean+ss*z99""")
+open('work/produce.py','w').write(s)
+PYEO
+python work/produce.py
+# aligned evaluator: reimplement the same prediction path
+cat > work/eval_produce.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+A=np.load('work/affineFINAL.npz')
+B90,B95,B99=A['b90'],A['b95'],A['b99']
+resid95=np.load('work/resid95.npy')
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6)]
+def predict(x):
+    mean=x.mean(); ss=float(max(x.std(ddof=1),1e-9))
+    g1=float(np.mean(((x-mean)/x.std())**3)); g2=float(np.mean(((x-mean)/x.std())**4)-3)
+    x9=(x[-1]-mean)/ss; x8=(x[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+    z_raw=sorted([v@B90,v@B95,v@B99])
+    a=max(np.diff(x[4:]).mean(),0.05*ss)
+    z8v=x8; z7=(x[-3]-mean)/ss; gdb=z8v-z7
+    z99=max(z_raw[2], x9+0.35*max(gdb,0.3))
+    z95=max(z_raw[1], x9-0.5*max(gdb,0.4))
+    z90=max(z_raw[0], x8-0.3*max(x9-x8,0.3))
+    z90=min(z90,z95);z95=min(z95,z99);z90=min(z90,z95)
+    q90,q95,q99=mean+ss*z90,mean+ss*z95,mean+ss*z99
+    rlo,rhi=np.quantile(resid95,[0.025,0.975])
+    lo=mean+ss*(z95+rlo); hi=mean+ss*(z95+rhi)
+    hi=max(hi,q99+0.1*a); lo=min(lo,x[-1]-0.2*a)
+    return q90,q95,q99,lo,hi
+rng=np.random.default_rng(3131)
+tot={0.9:0.0,0.95:0.0,0.99:0.0};cover=[];n_sim=0
+for rep in range(4000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    q90,q95,q99,lo,hi=predict(s)
+    tru=[F[int(np.ceil(t*m))-1] for t in [0.9,0.95,0.99]]
+    for i,t in enumerate([0.9,0.95,0.99]):
+        q=[q90,q95,q99][i]; d=F-q; db=F-tru[i]
+        tot[t]+=np.mean(np.where(d>=0,t*d,(t-1)*d))-np.mean(np.where(db>=0,t*db,(t-1)*db))
+    cover.append(lo<=tru[1]<=hi); n_sim+=1
+print("absolute pinball excess sum:",{t:round(tot[t]/n_sim,4) for t in tot},"TOTAL",round(sum(tot[t]/n_sim for t in tot),4))
+print("coverage:",round(np.mean(cover),3))
+EOF
+timeout 900 python work/eval_produce.py
 ```
 
 ## [207] tool
@@ -2989,7 +7160,54 @@ Improved to 3.0 total but coverage dropped to 0.74 (residual bootstrap residuals
 **tool call: bash**
 
 ```
-
+cat > work/recal_interval.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+A=np.load('work/affineFINAL.npz')
+B90,B95,B99=A['b90'],A['b95'],A['b99']
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6)]
+def predict_point(x):
+    mean=x.mean(); ss=float(max(x.std(ddof=1),1e-9))
+    g1=float(np.mean(((x-mean)/x.std())**3)); g2=float(np.mean(((x-mean)/x.std())**4)-3)
+    x9=(x[-1]-mean)/ss; x8=(x[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+    z_raw=sorted([v@B90,v@B95,v@B99])
+    z7=(x[-3]-mean)/ss; gdb=x8-z7
+    z99=max(z_raw[2], x9+0.35*max(gdb,0.3))
+    z95=max(z_raw[1], x9-0.5*max(gdb,0.4))
+    z90=max(z_raw[0], x8-0.3*max(x9-x8,0.3))
+    z90=min(z90,z95);z95=min(z95,z99);z90=min(z90,z95)
+    return mean,ss,z90,z95,z99
+rng=np.random.default_rng(17); resid=[]
+for rep in range(9000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    mean,ss,z90,z95,z99=predict_point(s)
+    qt=F[int(np.ceil(0.95*m))-1]; resid.append((qt/ss-mean/ss)-z95)
+resid=np.array(resid)
+rlo,rhi=np.quantile(resid,[0.025,0.975])
+print("resid95 percentiles (z-units around floored q95-z):",round(rlo,3),round(rhi,3), "sd",round(resid.std(),2))
+np.save('work/resid95_floor.npy',resid)
+# coverage check on separate sim
+resid=[]
+for rep in range(5000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    mean,ss,z90,z95,z99=predict_point(s)
+    qt=F[int(np.ceil(0.95*m))-1]; resid.append((qt-mean)/ss-z95)
+resid=np.array(resid)
+cover=np.mean((resid>=rlo)&(resid<=rhi))
+print("coverage on held-out:",round(cover,3))
+EOF
+timeout 600 python work/recal_interval.py
 ```
 
 ## [209] tool
@@ -3005,7 +7223,31 @@ Coverage is 0.951 with proper residual calibration around the floored rule. Let 
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/produce.py').read()
+s=s.replace("""    rlo,rhi=np.quantile(resid95,[0.025,0.975])
+    lo=mean+ss*(z95+rlo); hi=mean+ss*(z95+rhi)
+    hi=max(hi,q99+0.1*a); lo=min(lo, x[-1]-0.2*a)""",
+"""    r95f=np.load('work/resid95_floor.npy')
+    rlo,rhi=np.quantile(r95f,[0.025,0.975])
+    lo=mean+ss*(z95-1.47); hi=mean+ss*(z95+2.67)
+    hi=max(hi,q99+0.1*a); lo=min(lo, min(q95-0.05*ss, x[-1]-0.2*a))""")
+open('work/produce.py','w').write(s)
+PYEO
+python work/produce.py
+# evaluator with the same interval rule
+python - << 'PYEO'
+s=open('work/eval_produce.py').read()
+s=s.replace("""    rlo,rhi=np.quantile(resid95,[0.025,0.975])
+    lo=mean+ss*(z95+rlo); hi=mean+ss*(z95+rhi)
+    hi=max(hi,q99+0.1*a); lo=min(lo,x[-1]-0.2*a)
+    return q90,q95,q99,lo,hi""",
+"""    lo=mean+ss*(z95-1.47); hi=mean+ss*(z95+2.67)
+    hi=max(hi,q99+0.1*a); lo=min(lo, min(q95-0.05*ss, x[-1]-0.2*a))
+    return q90,q95,q99,lo,hi""")
+open('work/eval_produce.py','w').write(s)
+PYEO
+timeout 900 python work/eval_produce.py
 ```
 
 ## [211] tool
@@ -3028,7 +7270,26 @@ Solid state: total absolute pinball excess ≈ 3.0, coverage 0.951, monotone, va
 **tool call: bash**
 
 ```
-
+cat > work/perdgp.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+from eval_produce import predict, DGPS
+from dgp import F_grid
+rng=np.random.default_rng(3131)
+res={n:{0.9:[],0.95:[],0.99:[]} for n,*_ in DGPS}
+for rep in range(5000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+    s=np.sort(rng.choice(F,10,replace=False))
+    q90,q95,q99,lo,hi=predict(s)
+    for i,t in enumerate([0.9,0.95,0.99]):
+        q=[q90,q95,q99][i]; qt=F[int(np.ceil(t*m))-1]; d=(q-qt)/sdv
+        res[name][t].append(np.where(d<0,t*(-d),(1-t)*d))
+for n,*_ in DGPS:
+    ln=" ".join(f"t{t}={np.mean(res[n][t]):.3f}" for t in [0.9,0.95,0.99])
+    print(f"{n:13s} {ln}")
+EOF
+timeout 600 python work/perdgp.py
 ```
 
 ## [213] tool
@@ -3056,7 +7317,53 @@ Q99 is the weakest (heavy blocks hit 1.6-1.9). The issue: Q99's pinball-optimal 
 **tool call: bash**
 
 ```
-
+cat > work/train4.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from scipy.optimize import minimize
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6),
+ ("extreme_skew",0,70,3.0,3.0),("weak_heavy",0,28,0.4,4.5)]
+TAUS=[0.9,0.95,0.99]
+def sim_rows(n, seed):
+    r2=np.random.default_rng(seed); out=[]
+    for i in range(n):
+        name,mu,sd,sk,nu=DGPS[int(r2.integers(0,len(DGPS)))]
+        m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(r2.choice(F,10,replace=False))
+        mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+        g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+        x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+        tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+        out.append((mean,ss,g1,g2,x9,gap,(tru-mean)/ss))
+    return out
+def arrs(R):
+    G1=np.array([r[2] for r in R]);G2=np.array([r[3] for r in R]);X9=np.array([r[4] for r in R]);GAP=np.array([r[5] for r in R])
+    Z=np.stack([np.asarray(r[6]) for r in R]); MEAN=np.array([r[0] for r in R]);SS=np.array([r[1] for r in R])
+    G1c=np.clip(G1,-2,3); G2c=np.clip(G2,-1.5,4); X9c=np.clip(X9,-2,6); GAPc=np.clip(GAP,-0.2,4)
+    Xd=np.stack([np.ones(len(R)), G1c, G2c, X9c, GAPc, np.clip(X9,None,0),
+                 np.clip(G1c,0,None)**2, np.clip(G2c,0,None), GAPc*np.clip(X9c,0.5,None)],axis=1)
+    return Xd,Z,MEAN,SS
+Xtr,Ztr,Mm,Ss=arrs(sim_rows(22000,777)); Xte,Zte,_,_=arrs(sim_rows(7000,888))
+params={}; resid={}
+for ti,t in enumerate(TAUS):
+    y=Ztr[:,ti]
+    bb0=np.linalg.lstsq(Xtr,y,rcond=None)[0]
+    def pin(bb):
+        r=y-Xtr@bb; return np.mean(np.where(r<0,-t*r,(1-t)*r))
+    res=minimize(pin,bb0,method='Nelder-Mead',options=dict(maxiter=8000,xatol=1e-6,fatol=1e-8))
+    params[t]=res.x; resid[t]=y-Xtr@res.x
+    rte=Zte[:,ti]-Xte@res.x
+    print(f"tau={t}: b={np.round(res.x,3)} testpin={np.mean(np.where(rte<0,-t*rte,(1-t)*rte)):.4f}")
+np.savez('work/affineV4.npz',b90=params[0.9],b95=params[0.95],b99=params[0.99])
+EOF
+timeout 2500 python work/train4.py
 ```
 
 ## [215] tool
@@ -3073,7 +7380,28 @@ testpin barely moved — the problem isn't the z-map flexibility but that in **a
 **tool call: bash**
 
 ```
-
+cat > work/sig_study.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+from eval_produce import predict, DGPS
+from dgp import F_grid
+rng=np.random.default_rng(3131)
+buckets={0.9:[],0.95:[],0.99:[]}
+for rep in range(6000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+    s=np.sort(rng.choice(F,10,replace=False))
+    ss=max(s.std(ddof=1),1e-9)
+    q90,q95,q99,lo,hi=predict(s)
+    for i,t in enumerate([0.9,0.95,0.99]):
+        q=[q90,q95,q99][i]; qt=F[int(np.ceil(t*m))-1]; d=(q-qt)
+        buckets[t].append((ss, np.where(d<0,t*(-d),(1-t)*d)))
+for t in [0.9,0.95,0.99]:
+    arr=np.array(buckets[t]); sd_=arr[:,0]; loss=arr[:,1]
+    hi=sd_>np.median(sd_)
+    print(f"tau={t}: hi-sd mean abs loss={loss[hi].mean():.3f} (n={hi.sum()}), lo-sd={loss[~hi].mean():.3f}")
+EOF
+timeout 600 python work/sig_study.py
 ```
 
 ## [217] tool
@@ -3092,7 +7420,57 @@ Not dramatically scale-split. Given diminishing returns and that my method is so
 **tool call: bash**
 
 ```
-
+cat > work/tune_final2.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+A=np.load('work/affineFINAL.npz'); B90,B95,B99=A['b90'],A['b95'],A['b99']
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6),
+ ("extreme_skew",0,70,3.0,3.0),("weak_heavy",0,28,0.4,4.5)]
+# cache simulations
+rng=np.random.default_rng(9)
+SIM=[]
+for rep in range(7000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    SIM.append((s,F,m))
+def predict_cfg(s,f99,f95,f90,g99mult,g95mult):
+    mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+    g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+    x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+    z_raw=sorted([v@B90,v@B95,v@B99])
+    z7=(s[-3]-mean)/ss; gdb=x8-z7; a=max(np.diff(s[4:]).mean(),0.05*ss)/ss
+    z99=max(z_raw[2], x9+f99*max(gdb,g99mult))
+    z95=max(z_raw[1], x9-f95*max(gdb,g95mult))
+    z90=max(z_raw[0], x8-f90*max(x9-x8,0.3))
+    z90=min(z90,z95);z95=min(z95,z99);z90=min(z90,z95)
+    return mean+ss*z90,mean+ss*z95,mean+ss*z99
+def evalc(f99,f95,f90,g99m,g95m):
+    tot={0.9:0.0,0.95:0.0,0.99:0.0}
+    for s,F,m in SIM:
+        q90,q95,q99=predict_cfg(s,f99,f95,f90,g99m,g95m)
+        for i,t in enumerate([0.9,0.95,0.99]):
+            q=[q90,q95,q99][i]; qt=F[int(np.ceil(t*m))-1]
+            d=F-q; db=F-qt
+            tot[t]+=np.mean(np.where(d>=0,t*d,(t-1)*d))-np.mean(np.where(db>=0,t*db,(t-1)*db))
+    return sum(tot[t]/len(SIM) for t in tot)
+best=None
+for f99 in [0.2,0.35,0.5,0.75]:
+    for f95 in [0.2,0.4,0.6]:
+        for f90 in [0.0,0.3,0.6]:
+            v=evalc(f99,f95,f90,0.3,0.4)
+            if best is None or v<best[0]: best=(v,(f99,f95,f90))
+            print(f"f99={f99} f95={f95} f90={f90}: {v:.4f}")
+print("BEST:",best)
+EOF
+timeout 1800 python work/tune_final2.py
 ```
 
 ## [219] tool
@@ -3143,7 +7521,27 @@ The best is f90=0 (no Q90 floor — floors on Q90 hurt), f95=0.2, f99=0.75 (stro
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/tune_final2.py').read()
+s=s.replace("""best=None
+for f99 in [0.2,0.35,0.5,0.75]:
+    for f95 in [0.2,0.4,0.6]:
+        for f90 in [0.0,0.3,0.6]:
+            v=evalc(f99,f95,f90,0.3,0.4)
+            if best is None or v<best[0]: best=(v,(f99,f95,f90))
+            print(f"f99={f99} f95={f95} f90={f90}: {v:.4f}")
+print("BEST:",best)""",
+"""best=None
+for f99 in [0.5,0.8,1.1,1.5]:
+    for g99m in [0.1,0.3,0.5]:
+        for f95 in [0.0,0.2]:
+            v=evalc(f99,f95,0.0,g99m,0.4)
+            if best is None or v<best[0]: best=(v,(f99,g99m,f95))
+            print(f"f99={f99} g99m={g99m} f95={f95}: {v:.4f}")
+print("BEST:",best)""")
+open('work/tune_final2.py','w').write(s)
+PYEO
+timeout 1800 python work/tune_final2.py
 ```
 
 ## [221] tool
@@ -3182,7 +7580,14 @@ Still improving. The optimal floor is `z99 = max(affine, x9_z + f99·max(gdb, 0.
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/tune_final2.py').read()
+s=s.replace("for f99 in [0.5,0.8,1.1,1.5]:","for f99 in [1.5,2.0,2.6,3.4]:")
+s=s.replace("for g99m in [0.1,0.3,0.5]:","for g99m in [0.5,0.8,1.2]:")
+s=s.replace("for f95 in [0.0,0.2]:","for f95 in [0.0]:")
+open('work/tune_final2.py','w').write(s)
+PYEO
+timeout 1800 python work/tune_final2.py
 ```
 
 ## [223] tool
@@ -3209,7 +7614,14 @@ Now converging at 2.18 with `z99 = max(affine, x9_z + 2·max(gdb, 1.2))`. The ga
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/tune_final2.py').read()
+s=s.replace("for f99 in [1.5,2.0,2.6,3.4]:","for f99 in [1.6,2.0,2.4]:")
+s=s.replace("for g99m in [0.5,0.8,1.2]:","for g99m in [0.9,1.2,1.5]:")
+s=s.replace("for f95 in [0.0]:","for f95 in [-0.2,0.0,0.2]:")
+open('work/tune_final2.py','w').write(s)
+PYEO
+timeout 2000 python work/tune_final2.py
 ```
 
 ## [225] tool
@@ -3251,7 +7663,29 @@ Observable minimum near f99≈1.6-2.0, g99m≈1.2, f95≈-0.2, total ≈2.15. Wa
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/produce.py').read()
+# replace floors with tuned ones
+old="""    z_raw=sorted([v@B90,v@B95,v@B99])
+    a=max(np.diff(x[4:]).mean(),0.05*ss)
+    # logical floors in z-units
+    z9=(x[-1]-mean)/ss; z8=(x[-2]-mean)/ss; z7=(x[-3]-mean)/ss
+    ga=z8-z7; 
+    z99=max(z_raw[2], z9+0.35*max(ga,0.3))      # Q99 above max with margin
+    z95=max(z_raw[1], z9-0.5*max(ga,0.4))       # Q95 near max but possibly below
+    z90=max(z_raw[0], z8-0.3*max(z9-z8,0.3))    # Q90 < Q95, near x_(8)"""
+new="""    z_raw=sorted([v@B90,v@B95,v@B99])
+    a=max(np.diff(x[4:]).mean(),0.05*ss)
+    z9=(x[-1]-mean)/ss; z8=(x[-2]-mean)/ss; z7=(x[-3]-mean)/ss
+    gdb=z8-z7
+    z99=max(z_raw[2], z9+1.6*max(gdb,1.2/ss if False else 1.2))   # g99m is in z units (standaridized) -> 1.2 z
+    z95=max(z_raw[1], z9-(-0.2)*max(gdb,0.4))
+    z90=max(z_raw[0], z8-0.0*max(z9-z8,0.3))"""
+s=s.replace(old,new)
+open('work/produce.py','w').write(s)
+print('patched produce')
+PYEO
+python work/produce.py 2>&1 | head -6
 ```
 
 ## [227] tool
@@ -3274,7 +7708,17 @@ But these floors push Q95/Q99 way above the max. Let me validate with the aligne
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/eval_produce.py').read()
+s=s.replace("""    z99=max(z_raw[2], x9+0.35*max(gdb,0.3))
+    z95=max(z_raw[1], x9-0.5*max(gdb,0.4))
+    z90=max(z_raw[0], x8-0.3*max(x9-x8,0.3))""",
+"""    z99=max(z_raw[2], x9+1.6*max(gdb,1.2))
+    z95=max(z_raw[1], x9-(-0.2)*max(gdb,0.4))
+    z90=max(z_raw[0], x8-0.0*max(x9-x8,0.3))""")
+open('work/eval_produce.py','w').write(s)
+PYEO
+timeout 900 python work/eval_produce.py
 ```
 
 ## [229] tool
@@ -3290,7 +7734,13 @@ Excellent — total dropped from 3.0 to 1.96, with Q99 collapsed (floors + affin
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/recal_interval.py').read()
+s=s.replace("    z99=max(z_raw[2], x9+0.35*max(gdb,0.3))\n    z95=max(z_raw[1], x9-0.5*max(gdb,0.4))\n    z90=max(z_raw[0], x8-0.3*max(x9-x8,0.3))",
+"    z99=max(z_raw[2], x9+1.6*max(gdb,1.2))\n    z95=max(z_raw[1], x9-(-0.2)*max(gdb,0.4))\n    z90=max(z_raw[0], x8-0.0*max(x9-x8,0.3))")
+open('work/recal_interval.py','w').write(s)
+PYEO
+timeout 600 python work/recal_interval.py
 ```
 
 ## [231] tool
@@ -3304,7 +7754,19 @@ coverage on held-out: 0.952
 **tool call: bash**
 
 ```
-
+python - << 'PYEO'
+s=open('work/produce.py').read()
+s=s.replace("    lo=mean+ss*(z95-1.47); hi=mean+ss*(z95+2.67)","    lo=mean+ss*(z95-1.84); hi=mean+ss*(z95+2.40)")
+open('work/produce.py','w').write(s)
+PYEO
+python work/produce.py && python - << 'PYEO'
+import pandas as pd, numpy as np
+r=pd.read_csv('predictions.csv')
+print(r.head(6).round(3).to_string(index=False))
+print("rows:",len(r),"monotone:",bool(((r.q90<=r.q95)&(r.q95<=r.q99)).all()))
+print("any q99<max check:", "n/a")
+PYEO
+wc -l predictions.csv
 ```
 
 ## [233] tool
@@ -3335,7 +7797,57 @@ Solid: total ≈1.96, coverage 0.952, monotone, valid. Let me lock in this state
 **tool call: bash**
 
 ```
-
+cat > work/tr_with_floor.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+from scipy import stats
+from scipy.optimize import minimize
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6),
+ ("extreme_skew",0,70,3.0,3.0),("weak_heavy",0,28,0.4,4.5)]
+TAUS=[0.9,0.95,0.99]
+def sim_rows(n, seed):
+    r2=np.random.default_rng(seed); out=[]
+    for i in range(n):
+        name,mu,sd,sk,nu=DGPS[int(r2.integers(0,len(DGPS)))]
+        m=int(r2.integers(250,590));F=F_grid(mu,sd,sk,nu,m); sdv=F.std()
+        s=np.sort(r2.choice(F,10,replace=False))
+        mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+        g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+        x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+        gdb=x8-(s[-3]-mean)/ss
+        tru=np.array([F[int(np.ceil(t*m))-1] for t in TAUS])
+        out.append((mean,ss,g1,g2,x9,gap,gdb,(tru-mean)/ss))
+    return out
+def arrs(R):
+    G1=np.array([r[2] for r in R]);G2=np.array([r[3] for r in R]);X9=np.array([r[4] for r in R]);GAP=np.array([r[5] for r in R]);GDB=np.array([r[6] for r in R])
+    Z=np.stack([np.asarray(r[7]) for r in R]); MEAN=np.array([r[0] for r in R]);SS=np.array([r[1] for r in R])
+    Xd=np.stack([np.ones(len(R)), np.clip(G1,-2,3), np.clip(G2,-1.5,4), np.clip(X9,-2,6), np.clip(GAP,-0.2,4), np.clip(X9,None,0), GDB],axis=1)
+    return Xd,Z,MEAN,SS,X9,GDB
+Xtr,Ztr,Mm,Ss,X9tr,GDBtr=arrs(sim_rows(22000,777))
+Xte,Zte,_,_,X9te,GDBte=arrs(sim_rows(7000,888))
+params={}; floored_test={}
+for ti,t in enumerate(TAUS):
+    y=Ztr[:,ti]
+    bb0=np.linalg.lstsq(Xtr,y,rcond=None)[0]
+    def pin(bb):
+        r=y-Xtr@bb; return np.mean(np.where(r<0,-t*r,(1-t)*r))
+    res=minimize(pin,bb0,method='Nelder-Mead',options=dict(maxiter=7000,xatol=1e-6,fatol=1e-8))
+    params[t]=res.x
+    # apply final floors
+    zte=Xte@res.x
+    if t==0.99: zte=np.maximum(zte, X9te+1.6*np.maximum(GDBte,1.2))
+    if t==0.95: zte=np.maximum(zte, X9te+0.2*np.maximum(GDBte,0.4))
+    rte=Zte[:,ti]-zte
+    print(f"tau={t}: b={np.round(res.x,3)} floored testpin={np.mean(np.where(rte<0,-t*rte,(1-t)*rte)):.4f}")
+np.savez('work/affineFINAL2.npz',b90=params[0.9],b95=params[0.95],b99=params[0.99])
+EOF
+timeout 2400 python work/tr_with_floor.py
 ```
 
 ## [235] tool
@@ -3352,7 +7864,21 @@ The `gdb` feature is collinear, so the raw fit ignores the floors. Current resul
 **tool call: bash**
 
 ```
-
+cat > work/final_check.py << 'EOF'
+import pandas as pd, numpy as np, re
+r=pd.read_csv('predictions.csv')
+print("shape:",r.shape, "cols:",list(r.columns))
+print("rows==100:", len(r)==100, "nulls:", r.isnull().sum().sum())
+print("monotone violations:", int((r.q90>r.q95).sum()+(r.q95>r.q99).sum()))
+print("lo<q95<hi violations:", int((r.lo>r.q95).sum()+(r.hi<r.q95).sum()))
+df=pd.read_csv('data/blocks.csv')
+mx=df.groupby('block').x.max()
+bad=(r.set_index('block').q99 < mx).sum()
+print("q99 < sample max count:", int(bad))
+print("\nsummary stats:")
+print(r[['q90','q95','q99','lo','hi']].describe().round(3).to_string())
+EOF
+python work/final_check.py
 ```
 
 ## [237] tool
@@ -3382,7 +7908,40 @@ All sanity checks pass. Let me try one more improvement: use the richer 9-featur
 **tool call: bash**
 
 ```
-
+cat > work/cmpV4.py << 'EOF'
+import numpy as np, sys
+sys.path.insert(0,'work')
+A=np.load('work/affineV4.npz'); B90,B95,B99=A['b90'],A['b95'],A['b99']
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6),
+ ("extreme_skew",0,70,3.0,3.0),("weak_heavy",0,28,0.4,4.5)]
+def predict(s):
+    mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+    g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+    x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0),
+                np.clip(max(g1,0),0,None)**2, max(g2,0), np.clip(gap,-0.2,4)*np.clip(x9,0.5,None)])
+    z=sorted([v@B90,v@B95,v@B99])
+    return mean+ss*z[0],mean+ss*z[1],mean+ss*z[2]
+rng=np.random.default_rng(9)
+tot={0.9:0.0,0.95:0.0,0.99:0.0}
+for rep in range(7000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    q90,q95,q99=predict(s)
+    for i,t in enumerate([0.9,0.95,0.99]):
+        q=[q90,q95,q99][i]; qt=F[int(np.ceil(t*m))-1]
+        d=F-q; db=F-qt
+        tot[t]+=np.mean(np.where(d>=0,t*d,(t-1)*d))-np.mean(np.where(db>=0,t*db,(t-1)*db))
+print({t:round(tot[t]/7000,4) for t in tot}, "TOTAL",round(sum(tot.values())/7000,4))
+EOF
+timeout 900 python work/cmpV4.py
 ```
 
 ## [239] tool
@@ -3397,7 +7956,54 @@ The rich fit fails on absolute units. Current approach (1.96) with floors wins. 
 **tool call: bash**
 
 ```
-
+cat > work/tune_penult.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+A=np.load('work/affineFINAL.npz'); B90,B95,B99=A['b90'],A['b95'],A['b99']
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6),
+ ("extreme_skew",0,70,3.0,3.0),("weak_heavy",0,28,0.4,4.5)]
+rng=np.random.default_rng(9); SIM=[]
+for rep in range(9000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    SIM.append((s,F,m))
+def predict(s,C99,F99,F95,F90,C95):
+    mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+    g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+    x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+    z_raw=sorted([v@B90,v@B95,v@B99])
+    gdb=x8-(s[-3]-mean)/ss
+    z99=max(z_raw[2], x9+F99*max(gdb,C99))
+    z95=max(z_raw[1], x9+F95*max(gdb,C95))
+    z90=max(z_raw[0], x8-F90*max(x9-x8,0.3))
+    z90=min(z90,z95);z95=min(z95,z99);z90=min(z90,z95)
+    return mean+ss*z90,mean+ss*z95,mean+ss*z99
+def evalc(*p):
+    tot=0.0
+    for s,F,m in SIM:
+        q=predict(s,*p)
+        for i,t in enumerate([0.9,0.95,0.99]):
+            qt=F[int(np.ceil(t*m))-1]; d=F-q[i]; db=F-qt
+            tot+=np.mean(np.where(d>=0,t*d,(t-1)*d))-np.mean(np.where(db>=0,t*db,(t-1)*db))
+    return tot/len(SIM)
+best=None
+for C99 in [0.9,1.3]:
+  for F99 in [1.2,1.7,2.2]:
+    for F95 in [0.0,0.3]:
+        v=evalc(C99,F99,F95,0.0,0.4)
+        if best is None or v<best[0]: best=(v,(C99,F99,F95,0.0,0.4))
+        print(f"C99={C99} F99={F99} F95={F95}: {v:.4f}")
+print("BEST:",best)
+EOF
+timeout 2000 python work/tune_penult.py
 ```
 
 ## [241] tool
@@ -3424,7 +8030,42 @@ There's a discrepancy (2.19 vs 2.18 with C99=1.2 — wait, the old parameterizat
 **tool call: bash**
 
 ```
-
+cat > work/check_cur.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+A=np.load('work/affineFINAL.npz'); B90,B95,B99=A['b90'],A['b95'],A['b99']
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6),
+ ("extreme_skew",0,70,3.0,3.0),("weak_heavy",0,28,0.4,4.5)]
+def predict(s):
+    mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+    g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+    x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+    z_raw=sorted([v@B90,v@B95,v@B99])
+    gdb=x8-(s[-3]-mean)/ss
+    z99=max(z_raw[2], x9+1.6*max(gdb,1.2))
+    z95=max(z_raw[1], x9+0.2*max(gdb,0.4))
+    z90=max(z_raw[0], x8-0.0*max(x9-x8,0.3))
+    z90=min(z90,z95);z95=min(z95,z99);z90=min(z90,z95)
+    return mean+ss*z90,mean+ss*z95,mean+ss*z99
+rng=np.random.default_rng(31); tot={0.9:0.0,0.95:0.0,0.99:0.0}
+for rep in range(9000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    q=predict(s)
+    for i,t in enumerate([0.9,0.95,0.99]):
+        qt=F[int(np.ceil(t*m))-1]; d=F-q[i]; db=F-qt
+        tot[t]+=np.mean(np.where(d>=0,t*d,(t-1)*d))-np.mean(np.where(db>=0,t*db,(t-1)*db))
+print("current config:",{t:round(tot[t]/9000,4) for t in tot},"TOTAL",round(sum(tot.values())/9000,4))
+EOF
+timeout 900 python work/check_cur.py
 ```
 
 ## [243] tool
@@ -3439,7 +8080,51 @@ Current best config: TOTAL ≈ 2.17 (seed variance ~0.2, consistent). The Q95 go
 **tool call: bash**
 
 ```
-
+python work/produce.py
+cat > work/final_validate.py << 'EOF'
+import numpy as np,sys
+sys.path.insert(0,'work')
+A=np.load('work/affineFINAL.npz'); B90,B95,B99=A['b90'],A['b95'],A['b99']
+from dgp import F_grid
+DGPS=[("sym_norm",0,25,0.0,np.inf),("sym_right",5,30,0.8,np.inf),
+ ("heavy_right",0,40,1.5,4.0),("mild_right",10,15,0.55,np.inf),
+ ("strong_right",2,10,1.4,3.5),("very_heavy",0,60,2.2,2.8),
+ ("left_light",0,20,-0.5,np.inf),("nearzero",0.5,0.6,0.3,np.inf),
+ ("kurt_norm",0,30,0.0,3.0),("huge_skew",0,50,2.0,4.0),
+ ("neg_heavy",0,45,-1.2,4.0),("flat_top",0,20,0.0,2.6),
+ ("extreme_skew",0,70,3.0,3.0),("weak_heavy",0,28,0.4,4.5)]
+def predict_full(s):
+    mean=s.mean(); ss=float(max(s.std(ddof=1),1e-9))
+    g1=float(np.mean(((s-mean)/s.std())**3)); g2=float(np.mean(((s-mean)/s.std())**4)-3)
+    x9=(s[-1]-mean)/ss; x8=(s[-2]-mean)/ss; gap=x9-x8
+    v=np.array([1.0,np.clip(g1,-2,3),np.clip(g2,-1.5,4),np.clip(x9,-2,6),np.clip(gap,-0.2,4),min(x9,0.0)])
+    z_raw=sorted([v@B90,v@B95,v@B99])
+    gdb=x8-(s[-3]-mean)/ss
+    z99=max(z_raw[2], x9+1.6*max(gdb,1.2))
+    z95=max(z_raw[1], x9+0.2*max(gdb,0.4))
+    z90=max(z_raw[0], x8-0.0*max(x9-x8,0.3))
+    z90=min(z90,z95);z95=min(z95,z99);z90=min(z90,z95)
+    q90,q95,q99=mean+ss*z90,mean+ss*z95,mean+ss*z99
+    lo=mean+ss*(z95-1.84); hi=mean+ss*(z95+2.40)
+    a=max(np.diff(s[4:]).mean(),0.05*ss)
+    hi=max(hi,q99+0.1*a); lo=min(lo, min(q95-0.05*ss, s[-1]-0.2*a))
+    return q90,q95,q99,lo,hi
+rng=np.random.default_rng(90210)
+tot={0.9:0.0,0.95:0.0,0.99:0.0}; cover=[]
+for rep in range(8000):
+    name,mu,sd,sk,nu=DGPS[int(rng.integers(0,len(DGPS)))]
+    m=int(rng.integers(250,590));F=F_grid(mu,sd,sk,nu,m)
+    s=np.sort(rng.choice(F,10,replace=False))
+    q90,q95,q99,lo,hi=predict_full(s)
+    tru=[F[int(np.ceil(t*m))-1] for t in [0.9,0.95,0.99]]
+    for i,t in enumerate([0.9,0.95,0.99]):
+        q=[q90,q95,q99][i]; d=F-q; db=F-tru[i]
+        tot[t]+=np.mean(np.where(d>=0,t*d,(t-1)*d))-np.mean(np.where(db>=0,t*db,(t-1)*db))
+    cover.append(lo<=tru[1]<=hi)
+print({t:round(tot[t]/8000,4) for t in tot},"TOTAL",round(sum(tot.values())/8000,3))
+print("coverage:",round(np.mean(cover),3))
+EOF
+timeout 900 python work/final_validate.py && python work/final_check.py
 ```
 
 ## [245] tool
@@ -3478,7 +8163,20 @@ Final state: TOTAL pinball excess ≈2.18, coverage 0.948, all sanity checks pas
 **tool call: bash**
 
 ```
-
+echo "=== head ==="; head -6 predictions.csv
+echo "=== tail ==="; tail -3 predictions.csv
+echo "=== verify parse ==="; python -c "
+import pandas as pd
+r=pd.read_csv('predictions.csv')
+assert list(r.columns)==['block','q90','q95','q99','lo','hi'], r.columns
+assert len(r)==100
+assert r.block.tolist()==list(range(1,101))
+assert not r.isnull().any().any()
+assert (r.q90<=r.q95).all() and (r.q95<=r.q99).all()
+assert (r.lo<=r.q95).all() and (r.hi>=r.q95).all()
+print('ALL CHECKS PASS')
+print(r.head(3).to_string(index=False))
+"
 ```
 
 ## [247] tool

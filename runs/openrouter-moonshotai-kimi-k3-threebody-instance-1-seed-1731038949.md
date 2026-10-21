@@ -54,7 +54,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -1814,7 +1814,54 @@ Extra sinusoid doesn't help (skip). OU fit: GP std=0.226, length=192d, white std
 **tool call: bash**
 
 ```
+cat > make_baseline.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float)
+beta_unw = np.degrees(np.unwrap(np.radians(train.beta.values)))
+
+def fit_fundamental(t, y, P_init, n_harm):
+    def build(P):
+        cols = [t, np.ones_like(t)]
+        for k in range(1, n_harm+1):
+            w = 2*np.pi*k/P
+            cols += [np.sin(w*t), np.cos(w*t)]
+        return np.column_stack(cols)
+    def rss(P):
+        X = build(P)
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return np.sum((y - X@coef)**2)
+    res = minimize_scalar(rss, bounds=(P_init*0.9, P_init*1.1), method='bounded')
+    P = res.x
+    X = build(P)
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+    return P, coef
+
+def predict_fund(t_new, P, coef, n_harm):
+    cols = [t_new, np.ones_like(t_new)]
+    for k in range(1, n_harm+1):
+        w = 2*np.pi*k/P
+        cols += [np.sin(w*t_new), np.cos(w*t_new)]
+    return np.column_stack(cols) @ coef
+
+K = 16
+P, coef = fit_fundamental(t, beta_unw, 1080.0, K)
+pred_unw = predict_fund(test.t.values.astype(float), P, coef, K)
+y_pred = pred_unw % 360.0
+
+# rough flat interval for baseline
+sd = 0.5
+out = pd.DataFrame({'t': test.t.values, 'y_pred': y_pred,
+                    'y_lower': y_pred - 1.96*sd, 'y_upper': y_pred + 1.96*sd})
+out.to_csv('predictions.csv', index=False)
+print(out)
+print("rows:", len(out))
+EOF
+python make_baseline.py
 ```
 
 ## [37] tool
@@ -1884,7 +1931,119 @@ Baseline saved. Now the refined model: universal kriging — harmonic mean funct
 **tool call: bash**
 
 ```
+cat > uk_model.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize, minimize_scalar
 
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+beta_unw = np.degrees(np.unwrap(np.radians(train.beta.values)))
+
+def design(t, P, K):
+    cols = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(cols)
+
+def fit_harm_ols(t, y, P_init, K):
+    def rss(P):
+        X = design(t, P, K)
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return np.sum((y - X@coef)**2)
+    res = minimize_scalar(rss, bounds=(P_init*0.9, P_init*1.1), method='bounded')
+    return res.x
+
+# ---- kernel functions ----
+def cov_matrix(t, kernel, s2, ell, sw2):
+    d = np.abs(t[:,None] - t[None,:])
+    if kernel == 'ou':
+        C = s2*np.exp(-d/ell)
+    elif kernel == 'se':
+        C = s2*np.exp(-(d/ell)**2)
+    elif kernel == 'matern32':
+        r = np.sqrt(3)*d/ell
+        C = s2*(1+r)*np.exp(-r)
+    return C + sw2*np.eye(len(t))
+
+def cross_cov(t_new, t_tr, kernel, s2, ell):
+    d = np.abs(t_new[:,None] - t_tr[None,:])
+    if kernel == 'ou':
+        return s2*np.exp(-d/ell)
+    elif kernel == 'se':
+        return s2*np.exp(-(d/ell)**2)
+    elif kernel == 'matern32':
+        r = np.sqrt(3)*d/ell
+        return s2*(1+r)*np.exp(-r)
+
+def fit_noise_params(t_tr, resid, kernel):
+    # ML on subsampled resid for speed
+    rs = resid[::3]
+    ts = t_tr[::3]
+    def nll(theta):
+        s2, ell, sw2 = np.exp(theta)
+        C = cov_matrix(ts, kernel, s2, ell, sw2)
+        try:
+            L = np.linalg.cholesky(C)
+        except np.linalg.LinAlgError:
+            return 1e12
+        a = np.linalg.solve(L, rs)
+        return 0.5*np.sum(a**2) + np.sum(np.log(np.diag(L)))
+    r = minimize(nll, np.log([0.05, 150.0, 0.06]), method='Nelder-Mead', options={'maxiter':400})
+    return np.exp(r.x)
+
+class UKModel:
+    def __init__(self, K=16, kernel='ou'):
+        self.K = K; self.kernel = kernel
+    def fit(self, t_tr, y_tr, P_init=1080.0, noise_params=None):
+        P = fit_harm_ols(t_tr, y_tr, P_init, self.K)
+        X = design(t_tr, P, self.K)
+        if noise_params is None:
+            coef_ols, *_ = np.linalg.lstsq(X, y_tr, rcond=None)
+            resid = y_tr - X@coef_ols
+            s2, ell, sw2 = fit_noise_params(t_tr, resid, self.kernel)
+        else:
+            s2, ell, sw2 = noise_params
+        C = cov_matrix(t_tr, self.kernel, s2, ell, sw2)
+        L = np.linalg.cholesky(C)
+        CiX = np.linalg.solve(C, X)   # n x p
+        XtCiX = X.T @ CiX
+        XtCiX_inv = np.linalg.inv(XtCiX)
+        beta = XtCiX_inv @ (CiX.T @ y_tr)
+        e = y_tr - X@beta
+        Cie = np.linalg.solve(C, e)
+        self.__dict__.update(locals())
+        self.P, self.beta, self.s2, self.ell, self.sw2 = P, beta, s2, ell, sw2
+        self.t_tr, self.y_tr = t_tr, y_tr
+        self.C, self.L, self.Cie, self.CiX, self.XtCiX_inv = C, L, Cie, CiX, XtCiX_inv
+        return self
+    def predict(self, t_new):
+        t_new = np.atleast_1d(np.asarray(t_new, dtype=float))
+        x0 = design(t_new, self.P, self.K)
+        c0 = cross_cov(t_new, self.t_tr, self.kernel, self.s2, self.ell)  # m x n
+        mean = x0@self.beta + c0@self.Cie
+        # variance
+        v = self.CiX.T @ c0.T          # p x m  (X'C^{-1} c0)
+        tmp = np.linalg.solve(self.C, c0.T)   # n x m
+        c0Cic0 = np.sum(c0.T * tmp, axis=0)   # diag c0' C^{-1} c0
+        M = x0.T - v                    # p x m
+        param_var = np.sum(M * (self.XtCiX_inv @ M), axis=0)
+        var = (self.s2 + self.sw2) - c0Cic0 + param_var
+        return mean, var
+
+if __name__ == '__main__':
+    import time
+    for kernel in ['ou','se','matern32']:
+        t0=time.time()
+        m = UKModel(K=16, kernel=kernel).fit(t, beta_unw)
+        print(f"{kernel}: P={m.P:.3f}, s2={m.s2:.4f} (std {np.sqrt(m.s2):.3f}), ell={m.ell:.1f}, white std={np.sqrt(m.sw2):.3f}, time={time.time()-t0:.1f}s")
+        # in-sample residual whiteness
+        X = design(t, m.P, 16)
+        resid = beta_unw - X@m.beta
+        print(f"   resid std={resid.std():.4f}")
+EOF
+python uk_model.py
 ```
 
 ## [39] tool
@@ -1922,7 +2081,83 @@ All kernels agree (GP σ≈0.19, white σ≈0.24). Now the critical test: rollin
 **tool call: bash**
 
 ```
+cat > validate.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
 
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+beta_unw = np.degrees(np.unwrap(np.radians(train.beta.values)))
+
+def design(t, P, K):
+    cols = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(cols)
+
+def fit_harm_ols(t, y, P_init, K):
+    def rss(P):
+        X = design(t, P, K)
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return np.sum((y - X@coef)**2)
+    res = minimize_scalar(rss, bounds=(P_init*0.9, P_init*1.1), method='bounded')
+    X = design(t, res.x, K)
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+    return res.x, coef
+
+# OU params from full-data fit
+S2, ELL, SW2 = 0.0397, 191.4, 0.0566
+K = 16
+
+def predict_with_gp(t_tr, y_tr, t_new, W=800):
+    """OLS harmonics + local OU kriging of residual. Returns mean, var."""
+    P, coef = fit_harm_ols(t_tr, y_tr, 1080.0, K)
+    x_new = design(t_new, P, K)
+    mean_harm = x_new @ coef
+    resid = y_tr - design(t_tr, P, K) @ coef
+    # local kriging: last W points
+    tw, rw = t_tr[-W:], resid[-W:]
+    d = np.abs(tw[:,None]-tw[None,:])
+    C = S2*np.exp(-d/ELL) + SW2*np.eye(len(tw))
+    Cie = np.linalg.solve(C, rw)
+    c0 = S2*np.exp(-np.abs(np.asarray(t_new)[:,None]-tw[None,:])/ELL)
+    gp_mean = c0 @ Cie
+    # GP conditional variance (diag)
+    tmp = np.linalg.solve(C, c0.T)
+    c0Cic0 = np.sum(c0.T*tmp, axis=0)
+    gp_var = S2 - c0Cic0
+    var = gp_var + SW2  # + new white noise; harmonic param var added later
+    return mean_harm + gp_mean, var, mean_harm
+
+# Rolling origins
+origins = [1200, 1500, 1800, 2100, 2400, 2700, 3000]
+rows = []
+for cut in origins:
+    mtr = t <= cut
+    t_tr, y_tr = t[mtr], beta_unw[mtr]
+    t_te = t[~mtr]
+    if len(t_te)==0: continue
+    mean, var, mean_harm = predict_with_gp(t_tr, y_tr, t_te)
+    err_gp = mean - beta_unw[~mtr]
+    err_harm = mean_harm - beta_unw[~mtr]
+    for i, h in enumerate(t_te - cut):
+        rows.append((h, err_gp[i], err_harm[i], var[i]))
+
+df = pd.DataFrame(rows, columns=['h','err_gp','err_harm','var'])
+bins = [0,10,30,90,180,360,720,1100,1700]
+df['bin'] = pd.cut(df.h, bins)
+g = df.groupby('bin', observed=True)
+print(f"{'horizon':>12} {'n':>5} {'RMSE_gp':>8} {'RMSE_harm':>9} {'modelSD':>8} {'ratio':>6}")
+for b, grp in g:
+    rmse_gp = np.sqrt(np.mean(grp.err_gp**2))
+    rmse_harm = np.sqrt(np.mean(grp.err_harm**2))
+    msd = np.sqrt(np.mean(grp['var']))
+    print(f"{str(b):>12} {len(grp):>5} {rmse_gp:>8.3f} {rmse_harm:>9.3f} {msd:>8.3f} {rmse_gp/msd:>6.2f}")
+df.to_csv('validation_errors.csv', index=False)
+EOF
+python validate.py
 ```
 
 ## [41] tool
@@ -1978,7 +2213,82 @@ GP kriging helps up to ~180 days out. But the model SD lacks the parameter-uncer
 **tool call: bash**
 
 ```
+cat > validate_gls.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
+import time
 
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+beta_unw = np.degrees(np.unwrap(np.radians(train.beta.values)))
+
+def design(t, P, K):
+    cols = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(cols)
+
+def fit_harm_ols(t, y, P_init, K):
+    def rss(P):
+        X = design(t, P, K)
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return np.sum((y - X@coef)**2)
+    res = minimize_scalar(rss, bounds=(P_init*0.9, P_init*1.1), method='bounded')
+    return res.x
+
+S2, ELL, SW2 = 0.0397, 191.4, 0.0566
+K = 16
+
+def uk_fit_predict(t_tr, y_tr, t_new):
+    P = fit_harm_ols(t_tr, y_tr, 1080.0, K)
+    X = design(t_tr, P, K)
+    d = np.abs(t_tr[:,None]-t_tr[None,:])
+    C = S2*np.exp(-d/ELL) + SW2*np.eye(len(t_tr))
+    L = np.linalg.cholesky(C)
+    CiX = np.linalg.solve(C, X)
+    XtCiX_inv = np.linalg.inv(X.T@CiX)
+    beta = XtCiX_inv @ (CiX.T@y_tr)
+    e = y_tr - X@beta
+    Cie = np.linalg.solve(C, e)
+    x0 = design(t_new, P, K)
+    c0 = S2*np.exp(-np.abs(np.asarray(t_new)[:,None]-t_tr[None,:])/ELL)
+    mean = x0@beta + c0@Cie
+    v = CiX.T @ c0.T
+    tmp = np.linalg.solve(C, c0.T)
+    c0Cic0 = np.sum(c0.T*tmp, axis=0)
+    M = x0.T - v
+    param_var = np.sum(M*(XtCiX_inv@M), axis=0)
+    var = (S2+SW2) - c0Cic0 + param_var
+    return mean, var
+
+origins = [1200, 1500, 1800, 2100, 2400, 2700, 3000]
+rows = []
+for cut in origins:
+    t0=time.time()
+    mtr = t <= cut
+    t_tr, y_tr = t[mtr], beta_unw[mtr]
+    t_te = t[~mtr]
+    if len(t_te)==0: continue
+    mean, var = uk_fit_predict(t_tr, y_tr, t_te)
+    err = mean - beta_unw[~mtr]
+    for i, h in enumerate(t_te - cut):
+        rows.append((h, err[i], var[i]))
+    print(f"origin {cut} done in {time.time()-t0:.1f}s", flush=True)
+
+df = pd.DataFrame(rows, columns=['h','err','var'])
+bins = [0,10,30,90,180,360,720,1100,1700]
+df['bin'] = pd.cut(df.h, bins)
+print(f"\n{'horizon':>12} {'n':>5} {'RMSE':>7} {'modelSD':>8} {'ratio':>6} {'cover95':>7}")
+for b, grp in df.groupby('bin', observed=True):
+    rmse = np.sqrt(np.mean(grp.err**2))
+    msd = np.sqrt(np.mean(grp['var']))
+    cover = np.mean(np.abs(grp.err) < 1.96*np.sqrt(grp['var']))
+    print(f"{str(b):>12} {len(grp):>5} {rmse:>7.3f} {msd:>8.3f} {rmse/msd:>6.2f} {cover:>7.3f}")
+df.to_csv('validation_gls.csv', index=False)
+EOF
+python validate_gls.py
 ```
 
 ## [43] tool
@@ -2059,7 +2369,88 @@ GLS variances still under-cover (ratios 1.1–1.5), partly because period-P unce
 **tool call: bash**
 
 ```
+cat > validate_dense.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
 
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+beta_unw = np.degrees(np.unwrap(np.radians(train.beta.values)))
+
+def design(t, P, K):
+    cols = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(cols)
+
+def fit_harm_ols(t, y, P_init, K):
+    def rss(P):
+        X = design(t, P, K)
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return np.sum((y - X@coef)**2)
+    res = minimize_scalar(rss, bounds=(P_init*0.9, P_init*1.1), method='bounded')
+    return res.x
+
+S2, ELL, SW2 = 0.0397, 191.4, 0.0566
+K = 16
+
+def uk_fit_predict(t_tr, y_tr, t_new):
+    P = fit_harm_ols(t_tr, y_tr, 1080.0, K)
+    X = design(t_tr, P, K)
+    d = np.abs(t_tr[:,None]-t_tr[None,:])
+    C = S2*np.exp(-d/ELL) + SW2*np.eye(len(t_tr))
+    CiX = np.linalg.solve(C, X)
+    XtCiX_inv = np.linalg.inv(X.T@CiX)
+    beta = XtCiX_inv @ (CiX.T@y_tr)
+    e = y_tr - X@beta
+    Cie = np.linalg.solve(C, e)
+    x0 = design(t_new, P, K)
+    c0 = S2*np.exp(-np.abs(np.asarray(t_new)[:,None]-t_tr[None,:])/ELL)
+    mean = x0@beta + c0@Cie
+    v = CiX.T @ c0.T
+    tmp = np.linalg.solve(C, c0.T)
+    c0Cic0 = np.sum(c0.T*tmp, axis=0)
+    M = x0.T - v
+    param_var = np.sum(M*(XtCiX_inv@M), axis=0)
+    var = (S2+SW2) - c0Cic0 + param_var
+    return mean, var, P
+
+origins = list(range(1100, 3001, 60))
+rows = []
+Ps = []
+for cut in origins:
+    mtr = t <= cut
+    t_tr, y_tr = t[mtr], beta_unw[mtr]
+    t_te = t[~mtr]
+    if len(t_te)==0: continue
+    mean, var, P = uk_fit_predict(t_tr, y_tr, t_te)
+    Ps.append(P)
+    err = mean - beta_unw[~mtr]
+    for i, h in enumerate(t_te - cut):
+        rows.append((h, err[i], var[i]))
+
+print("P scatter across origins: std =", np.std(Ps), "range:", np.min(Ps), np.max(Ps))
+df = pd.DataFrame(rows, columns=['h','err','var'])
+df['sd_ratio'] = np.abs(df.err)/np.sqrt(df['var'])
+bins = [0,10,30,90,180,360,720,1100,1400,1700]
+df['bin'] = pd.cut(df.h, bins)
+print(f"\n{'horizon':>12} {'n':>6} {'RMSE':>7} {'modelSD':>8} {'ratio':>6} {'cover95':>7} {'cover99':>7}")
+for b, grp in df.groupby('bin', observed=True):
+    rmse = np.sqrt(np.mean(grp.err**2))
+    msd = np.sqrt(np.mean(grp['var']))
+    c95 = np.mean(np.abs(grp.err) < 1.96*np.sqrt(grp['var']))
+    c99 = np.mean(np.abs(grp.err) < 2.576*np.sqrt(grp['var']))
+    print(f"{str(b):>12} {len(grp):>6} {rmse:>7.3f} {msd:>8.3f} {rmse/msd:>6.2f} {c95:>7.3f} {c99:>7.3f}")
+
+# normality check: standardized errors quantiles
+z = df.err/np.sqrt(df['var'])
+print("\nstandardized err quantiles:", np.round(np.quantile(z, [0.01,0.05,0.25,0.5,0.75,0.95,0.99]),3))
+print("normal reference:        ", np.round([-2.326,-1.645,-0.674,0,0.674,1.645,2.326],3))
+df.to_csv('validation_dense.csv', index=False)
+EOF
+python validate_dense.py
 ```
 
 ## [45] tool
@@ -2242,7 +2633,85 @@ Confirmed — every subset has a single minimum near 1079–1080; the 1069 value
 **tool call: bash**
 
 ```
+cat > validate_dense2.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
 
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+beta_unw = np.degrees(np.unwrap(np.radians(train.beta.values)))
+
+def design(t, P, K):
+    cols = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(cols)
+
+K = 16
+def fit_harm_robust(t, y):
+    def rss(P):
+        X = design(t, P, K)
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return np.sum((y - X@coef)**2)
+    grid = np.arange(1070, 1091, 0.5)
+    r = [rss(P) for P in grid]
+    P0 = grid[int(np.argmin(r))]
+    res = minimize_scalar(rss, bounds=(P0-1.0, P0+1.0), method='bounded')
+    return res.x
+
+S2, ELL, SW2 = 0.0397, 191.4, 0.0566
+
+def uk_fit_predict(t_tr, y_tr, t_new):
+    P = fit_harm_robust(t_tr, y_tr)
+    X = design(t_tr, P, K)
+    d = np.abs(t_tr[:,None]-t_tr[None,:])
+    C = S2*np.exp(-d/ELL) + SW2*np.eye(len(t_tr))
+    CiX = np.linalg.solve(C, X)
+    XtCiX_inv = np.linalg.inv(X.T@CiX)
+    beta = XtCiX_inv @ (CiX.T@y_tr)
+    e = y_tr - X@beta
+    Cie = np.linalg.solve(C, e)
+    x0 = design(t_new, P, K)
+    c0 = S2*np.exp(-np.abs(np.asarray(t_new)[:,None]-t_tr[None,:])/ELL)
+    mean = x0@beta + c0@Cie
+    v = CiX.T @ c0.T
+    tmp = np.linalg.solve(C, c0.T)
+    c0Cic0 = np.sum(c0.T*tmp, axis=0)
+    M = x0.T - v
+    param_var = np.sum(M*(XtCiX_inv@M), axis=0)
+    var = (S2+SW2) - c0Cic0 + param_var
+    return mean, var, P
+
+origins = list(range(1100, 3001, 60))
+rows, Ps = [], []
+for cut in origins:
+    mtr = t <= cut
+    t_tr, y_tr = t[mtr], beta_unw[mtr]
+    t_te = t[~mtr]
+    if len(t_te)==0: continue
+    mean, var, P = uk_fit_predict(t_tr, y_tr, t_te)
+    Ps.append(P)
+    err = mean - beta_unw[~mtr]
+    for i, h in enumerate(t_te - cut):
+        rows.append((h, err[i], var[i]))
+
+print("P scatter across origins: std =", round(np.std(Ps),4), "range:", round(min(Ps),2), round(max(Ps),2))
+df = pd.DataFrame(rows, columns=['h','err','var'])
+bins = [0,10,30,90,180,360,720,1100,1400,1700]
+df['bin'] = pd.cut(df.h, bins)
+print(f"\n{'horizon':>12} {'n':>6} {'RMSE':>7} {'modelSD':>8} {'ratio':>6} {'cover95':>7}")
+for b, grp in df.groupby('bin', observed=True):
+    rmse = np.sqrt(np.mean(grp.err**2))
+    msd = np.sqrt(np.mean(grp['var']))
+    c95 = np.mean(np.abs(grp.err) < 1.96*np.sqrt(grp['var']))
+    print(f"{str(b):>12} {len(grp):>6} {rmse:>7.3f} {msd:>8.3f} {rmse/msd:>6.2f} {c95:>7.3f}")
+z = df.err/np.sqrt(df['var'])
+print("\nstd err quantiles:", np.round(np.quantile(z, [0.01,0.05,0.25,0.5,0.75,0.95,0.99]),3))
+df.to_csv('validation_dense2.csv', index=False)
+EOF
+python validate_dense2.py
 ```
 
 ## [51] tool
@@ -2367,7 +2836,86 @@ Only the n≈1100 origin fits P=1069 (barely one period of data) — for n≥116
 **tool call: bash**
 
 ```
+cat > validate3.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
 
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+beta_unw = np.degrees(np.unwrap(np.radians(train.beta.values)))
+
+def design(t, P, K):
+    cols = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(cols)
+
+K = 16
+def fit_harm_robust(t, y):
+    def rss(P):
+        X = design(t, P, K)
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return np.sum((y - X@coef)**2)
+    grid = np.arange(1070, 1091, 0.5)
+    r = [rss(P) for P in grid]
+    P0 = grid[int(np.argmin(r))]
+    res = minimize_scalar(rss, bounds=(P0-1.0, P0+1.0), method='bounded')
+    return res.x
+
+S2, ELL, SW2 = 0.0397, 191.4, 0.0566
+
+def uk_fit_predict(t_tr, y_tr, t_new):
+    P = fit_harm_robust(t_tr, y_tr)
+    X = design(t_tr, P, K)
+    d = np.abs(t_tr[:,None]-t_tr[None,:])
+    C = S2*np.exp(-d/ELL) + SW2*np.eye(len(t_tr))
+    CiX = np.linalg.solve(C, X)
+    XtCiX_inv = np.linalg.inv(X.T@CiX)
+    beta = XtCiX_inv @ (CiX.T@y_tr)
+    e = y_tr - X@beta
+    Cie = np.linalg.solve(C, e)
+    x0 = design(t_new, P, K)
+    c0 = S2*np.exp(-np.abs(np.asarray(t_new)[:,None]-t_tr[None,:])/ELL)
+    mean = x0@beta + c0@Cie
+    v = CiX.T @ c0.T
+    tmp = np.linalg.solve(C, c0.T)
+    c0Cic0 = np.sum(c0.T*tmp, axis=0)
+    M = x0.T - v
+    param_var = np.sum(M*(XtCiX_inv@M), axis=0)
+    var = (S2+SW2) - c0Cic0 + param_var
+    return mean, var, P
+
+origins = list(range(1500, 3001, 50))
+rows, Ps = [], []
+for cut in origins:
+    mtr = t <= cut
+    t_tr, y_tr = t[mtr], beta_unw[mtr]
+    t_te = t[~mtr]
+    if len(t_te)==0: continue
+    mean, var, P = uk_fit_predict(t_tr, y_tr, t_te)
+    Ps.append(P)
+    err = mean - beta_unw[~mtr]
+    for i, h in enumerate(t_te - cut):
+        rows.append((h, err[i], var[i]))
+
+print("P scatter (origins>=1500): std =", round(np.std(Ps),4), "range:", round(min(Ps),2), round(max(Ps),2))
+df = pd.DataFrame(rows, columns=['h','err','var'])
+bins = [0,10,30,90,180,360,720,1100,1400,1700]
+df['bin'] = pd.cut(df.h, bins)
+print(f"\n{'horizon':>12} {'n':>6} {'RMSE':>7} {'modelSD':>8} {'ratio':>6} {'cover95':>7}")
+for b, grp in df.groupby('bin', observed=True):
+    rmse = np.sqrt(np.mean(grp.err**2))
+    msd = np.sqrt(np.mean(grp['var']))
+    c95 = np.mean(np.abs(grp.err) < 1.96*np.sqrt(grp['var']))
+    print(f"{str(b):>12} {len(grp):>6} {rmse:>7.3f} {msd:>8.3f} {rmse/msd:>6.2f} {c95:>7.3f}")
+df.to_csv('validation3.csv', index=False)
+
+# split by origin size to see effect
+df['origin_n'] = df.h  # placeholder
+EOF
+python validate3.py
 ```
 
 ## [55] tool
@@ -2446,6 +2994,90 @@ Clean now: P scatter 0.164, ratios mostly 1.0–1.3. Remaining under-coverage at
 **tool call: bash**
 
 ```
+cat > bootstrap.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
+import time
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float)
+beta_unw = np.degrees(np.unwrap(np.radians(train.beta.values)))
+t_test = test.t.values.astype(float)
+
+def design(t, P, K):
+    cols = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/P
+        cols += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(cols)
+
+K = 16
+S2, ELL, SW2 = 0.0397, 191.4, 0.0566
+
+def fit_harm_robust(t, y):
+    def rss(P):
+        X = design(t, P, K)
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return np.sum((y - X@coef)**2)
+    grid = np.arange(1070, 1091, 0.5)
+    r = [rss(P) for P in grid]
+    P0 = grid[int(np.argmin(r))]
+    res = minimize_scalar(rss, bounds=(P0-1.0, P0+1.0), method='bounded')
+    return res.x
+
+# Full-data fit for mean function
+P_full = fit_harm_robust(t, beta_unw)
+X = design(t, P_full, K)
+d = np.abs(t[:,None]-t[:,None].T)
+C = S2*np.exp(-d/ELL) + SW2*np.eye(len(t))
+CiX = np.linalg.solve(C, X)
+beta_gls = np.linalg.inv(X.T@CiX) @ (CiX.T@beta_unw)
+print(f"P_full={P_full:.4f}")
+
+t_full = np.concatenate([t, t_test])
+mu_full = design(t_full, P_full, K) @ beta_gls
+
+# Precompute OU Cholesky over full grid
+dfull = np.abs(t_full[:,None]-t_full[None,:])
+Cz = S2*np.exp(-dfull/ELL)
+Lz = np.linalg.cholesky(Cz)
+
+n_tr = len(t)
+W = 800  # local kriging window
+rng = np.random.default_rng(42)
+B = 300
+errs = np.zeros((B, len(t_test)))
+t0 = time.time()
+for b in range(B):
+    z = Lz @ rng.standard_normal(len(t_full))
+    wn = np.sqrt(SW2)*rng.standard_normal(len(t_full))
+    y = mu_full + z + wn
+    y_tr, y_te = y[:n_tr], y[n_tr:]
+    # fit pipeline on training part
+    Pb = fit_harm_robust(t, y_tr)
+    Xb = design(t, Pb, K)
+    coef, *_ = np.linalg.lstsq(Xb, y_tr, rcond=None)
+    resid = y_tr - Xb@coef
+    # local kriging
+    tw, rw = t[-W:], resid[-W:]
+    dd = np.abs(tw[:,None]-tw[None,:])
+    Cw = S2*np.exp(-dd/ELL) + SW2*np.eye(W)
+    Cie = np.linalg.solve(Cw, rw)
+    c0 = S2*np.exp(-np.abs(t_test[:,None]-tw[None,:])/ELL)
+    pred = design(t_test, Pb, K)@coef + c0@Cie
+    errs[b] = pred - y_te
+    if (b+1) % 50 == 0:
+        print(f"{b+1}/{B} done, {time.time()-t0:.0f}s", flush=True)
+
+sd_boot = errs.std(axis=0, ddof=1)
+print("\nBootstrap predictive SD and error quantiles per test point:")
+for i, tv in enumerate(t_test):
+    q = np.quantile(errs[:,i], [0.025, 0.975])
+    print(f"t={tv:6.0f} h={tv-3608:5.0f}: SD={sd_boot[i]:.3f}, 95% err interval=[{q[0]:.3f},{q[1]:.3f}], cover_of_pm1.96SD={np.mean(np.abs(errs[:,i])<1.96*sd_boot[i]):.3f}")
+np.save('boot_errs.npy', errs)
+EOF
+python bootstrap.py
 ```
 

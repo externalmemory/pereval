@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/test.csv && echo "---" && tail -5 data/train.csv
 ```
 
 ## [3] tool
@@ -119,6 +119,31 @@ t
 **tool call: bash**
 
 ```
+python3 -c "
+import numpy as np
+import pandas as pd
+
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+print('Train shape:', train.shape)
+print('Test shape:', test.shape)
+print('Train t range:', train['t'].min(), 'to', train['t'].max())
+print('Test t:', test['t'].tolist())
+print()
+print('Train stats:')
+print(train[['alpha','beta']].describe())
+print()
+print('First 50 rows beta:')
+print(train['beta'].head(50).tolist())
+print()
+print('Last 50 rows beta:')
+print(train['beta'].tail(50).tolist())
+print()
+# Check for periodic patterns
+print('Beta range:', train['beta'].min(), 'to', train['beta'].max())
+print('Alpha range:', train['alpha'].min(), 'to', train['alpha'].max())
+"
 
 ```
 
@@ -161,6 +186,50 @@ Alpha range: 0.8378 to 359.6768
 **tool call: bash**
 
 ```
+python3 -c "
+import numpy as np
+import pandas as pd
+
+train = pd.read_csv('data/train.csv')
+
+# Beta appears to go from ~353 at t=0 to ~55 at t=3608
+# That's about (353 -> 360 -> 55) = 62 degrees over 3608 days... no that's slow
+# Actually from 353 to 55 with wrapping: (55-353) mod 360 = 62 degrees over ~3608 days
+
+# But wait, looking at the range, it goes from 0 to 360 degrees, so maybe it's rotating
+
+# Let me check the rate
+from scipy.stats import circmean, circstd
+import math
+
+# Unwrap beta
+beta = train['beta'].values
+t = train['t'].values
+
+# Use numpy unwrap
+beta_rad = np.deg2rad(beta)
+beta_unwrapped = np.unwrap(beta_rad)
+beta_unwrapped_deg = np.rad2deg(beta_unwrapped)
+
+print('Unwrapped beta range:', beta_unwrapped_deg[0], 'to', beta_unwrapped_deg[-1])
+print('Change:', beta_unwrapped_deg[-1] - beta_unwrapped_deg[0])
+print('Over', t[-1] - t[0], 'days')
+print('Rate:', (beta_unwrapped_deg[-1] - beta_unwrapped_deg[0]) / (t[-1] - t[0]), 'deg/day')
+
+# Fit linear model
+coeffs = np.polyfit(t, beta_unwrapped_deg, 1)
+print('Linear fit:', coeffs)
+print('Residuals std:', np.std(beta_unwrapped_deg - np.polyval(coeffs, t)))
+
+# Also look at alpha
+alpha = train['alpha'].values
+alpha_rad = np.deg2rad(alpha)
+alpha_unwrapped = np.unwrap(alpha_rad)
+alpha_unwrapped_deg = np.rad2deg(alpha_unwrapped)
+coeffs_a = np.polyfit(t, alpha_unwrapped_deg, 1)
+print('Alpha linear fit:', coeffs_a)
+print('Alpha residuals std:', np.std(alpha_unwrapped_deg - np.polyval(coeffs_a, t)))
+"
 
 ```
 
@@ -187,6 +256,50 @@ Alpha residuals std: 27.695078276631396
 **tool call: bash**
 
 ```
+python3 -c "
+import numpy as np
+import pandas as pd
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+beta = train['beta'].values
+alpha = train['alpha'].values
+
+# Unwrap
+beta_unwrapped = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_unwrapped = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Linear fit for beta
+coeffs_b = np.polyfit(t, beta_unwrapped, 1)
+beta_trend = np.polyval(coeffs_b, t)
+beta_resid = beta_unwrapped - beta_trend
+
+# Linear fit for alpha
+coeffs_a = np.polyfit(t, alpha_unwrapped, 1)
+alpha_trend = np.polyval(coeffs_a, t)
+alpha_resid = alpha_unwrapped - alpha_trend
+
+# Check correlation of residuals
+corr = np.corrcoef(alpha_resid, beta_resid)[0,1]
+print('Correlation of alpha and beta residuals:', corr)
+
+# Also check beta-alpha relationship
+# Since alpha is ~1 deg/day and beta is ~0.33 deg/day, maybe beta depends on alpha
+corr2 = np.corrcoef(alpha_unwrapped, beta_unwrapped)[0,1]
+print('Correlation of unwrapped alpha and beta:', corr2)
+
+# Plot some stats
+print()
+print('Beta residuals stats:')
+print('  mean:', np.mean(beta_resid), 'std:', np.std(beta_resid))
+
+# Let's look at chunks
+chunk = 500
+for i in range(0, len(t), chunk):
+    end = min(i+chunk, len(t))
+    c = np.corrcoef(alpha_resid[i:end], beta_resid[i:end])[0,1]
+    print(f'  chunk {i}-{end}: alpha-beta resid corr = {c:.4f}, beta resid std = {np.std(beta_resid[i:end]):.4f}')
+"
 
 ```
 
@@ -222,6 +335,43 @@ Beta residuals stats:
 **tool call: bash**
 
 ```
+python3 -c "
+import numpy as np
+import pandas as pd
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+beta = train['beta'].values
+alpha = train['alpha'].values
+
+# Unwrap
+beta_unwrapped = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_unwrapped = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Maybe there's a periodic component - let me check
+# Try FFT on residuals
+coeffs_b = np.polyfit(t, beta_unwrapped, 1)
+beta_trend = np.polyval(coeffs_b, t)
+beta_resid = beta_unwrapped - beta_trend
+
+# Look at autocorrelation
+from numpy.fft import fft
+resid_fft = np.abs(fft(beta_resid))
+# Find dominant frequencies
+freqs = np.fft.fftfreq(len(t))
+top_idx = np.argsort(resid_fft[1:len(t)//2])[::-1][:10]
+for i in top_idx:
+    freq = freqs[i+1]
+    if freq > 0:
+        print(f'freq: {freq:.6f}, period: {1/freq:.1f} days, amplitude: {resid_fft[i+1]/len(t):.4f}')
+
+# Also check if there's a quadratic term or other structure
+# Try higher-order polynomial
+for deg in [2, 3, 4, 5]:
+    coeffs = np.polyfit(t, beta_unwrapped, deg)
+    resid = beta_unwrapped - np.polyval(coeffs, t)
+    print(f'Polynomial degree {deg}: residual std = {np.std(resid):.4f}')
+"
 
 ```
 
@@ -254,6 +404,66 @@ Polynomial degree 5: residual std = 30.6547
 **tool call: bash**
 
 ```
+python3 -c "
+import numpy as np
+import pandas as pd
+from scipy.optimize import minimize
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+beta = train['beta'].values
+alpha = train['alpha'].values
+
+# Unwrap
+beta_unwrapped = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_unwrapped = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Try a model with top Fourier components + alpha
+# Let's build a feature matrix
+def build_features(t, periods=None, include_alpha=True):
+    if periods is None:
+        periods = [1203, 902, 601.5, 515.6, 451, 401, 361, 212]
+    features = [np.ones(len(t))]  # intercept
+    for p in periods:
+        features.append(np.sin(2*np.pi*t/p))
+        features.append(np.cos(2*np.pi*t/p))
+    if include_alpha:
+        features.append(alpha_unwrapped)
+    return np.column_stack(features)
+
+# Fit with linear regression
+from numpy.linalg import lstsq
+
+X = build_features(t)
+y = beta_unwrapped
+result = lstsq(X, y, rcond=None)
+coeffs = result[0]
+pred = X @ coeffs
+resid = y - pred
+print('Residual std with alpha:', np.std(resid))
+
+X_no_alpha = build_features(t, include_alpha=False)
+result2 = lstsq(X_no_alpha, y, rcond=None)
+pred2 = X_no_alpha @ result2[0]
+resid2 = y - pred2
+print('Residual std without alpha:', np.std(resid2))
+
+# Check autocorrelation of residuals - is there structure left?
+from numpy import correlate
+r = resid - np.mean(resid)
+acf = np.correlate(r, r, 'full') / (np.var(r) * len(r))
+mid = len(acf)//2
+print('ACF at lags 1-5:', [acf[mid+i].round(4) for i in range(1,6)])
+print('ACF at lags 10-50 (every 10):', [acf[mid+i].round(4) for i in range(10, 51, 10)])
+
+# Maybe try with more Fourier terms
+periods_fine = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 212]
+X_fine = build_features(t, periods=periods_fine)
+result3 = lstsq(X_fine, y, rcond=None)
+pred3 = X_fine @ result3[0]
+resid3 = y - pred3
+print('Residual std with alpha and more periods:', np.std(resid3))
+"
 
 ```
 
@@ -299,6 +509,66 @@ Actually, wait. Without alpha the residual std is 318 - that's terrible. But wit
 **tool call: bash**
 
 ```
+python3 -c "
+import numpy as np
+import pandas as pd
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+beta = train['beta'].values
+alpha = train['alpha'].values
+
+beta_unwrapped = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_unwrapped = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Simple linear regression with just alpha
+from numpy.linalg import lstsq
+X = np.column_stack([np.ones(len(t)), alpha_unwrapped])
+result = lstsq(X, beta_unwrapped, rcond=None)
+coeffs = result[0]
+pred = X @ coeffs
+resid = beta_unwrapped - pred
+print('Alpha-only model:')
+print('  coefficients:', coeffs)
+print('  residual std:', np.std(resid))
+print()
+
+# Add t
+X2 = np.column_stack([np.ones(len(t)), alpha_unwrapped, t])
+result2 = lstsq(X2, beta_unwrapped, rcond=None)
+pred2 = X2 @ result2[0]
+resid2 = beta_unwrapped - pred2
+print('Alpha + t model:')
+print('  coefficients:', result2[0])
+print('  residual std:', np.std(resid2))
+print()
+
+# Add Fourier terms to alpha model
+periods = [1203, 721, 515.6, 361]
+features = [np.ones(len(t)), alpha_unwrapped, t]
+for p in periods:
+    features.append(np.sin(2*np.pi*t/p))
+    features.append(np.cos(2*np.pi*t/p))
+X3 = np.column_stack(features)
+result3 = lstsq(X3, beta_unwrapped, rcond=None)
+pred3 = X3 @ result3[0]
+resid3 = beta_unwrapped - pred3
+print('Alpha + t + Fourier model:')
+print('  residual std:', np.std(resid3))
+print()
+
+# Check what the relationship looks like between alpha and beta
+# Maybe it's nonlinear
+print('Alpha-beta scatter at various points:')
+for t_val in [0, 500, 1000, 2000, 3000, 3500]:
+    mask = (t >= t_val) & (t < t_val + 100)
+    if np.sum(mask) > 10:
+        c = np.corrcoef(alpha_unwrapped[mask], beta_unwrapped[mask])[0,1]
+        # Simple linear fit in this window
+        Xw = np.column_stack([np.ones(np.sum(mask)), alpha_unwrapped[mask]])
+        cw = lstsq(Xw, beta_unwrapped[mask], rcond=None)[0]
+        print(f'  t={t_val}: corr={c:.4f}, slope={cw[1]:.4f}, intercept={cw[0]:.4f}')
+"
 
 ```
 
@@ -522,6 +792,54 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
+python3 -c "
+import numpy as np
+import pandas as pd
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+beta = train['beta'].values
+alpha = train['alpha'].values
+
+# Let me look at the raw data more carefully
+# Check if there's a relationship like beta = f(alpha, t) where f involves some orbital mechanics
+
+# Let me check: is the difference alpha - beta significant?
+diff = (alpha - beta) % 360
+print('Alpha - Beta (mod 360) stats:')
+print('  mean:', np.mean(diff))
+print('  std:', np.std(diff))
+
+# What about looking at it in terms of circular statistics
+# Let me see the 'velocity' of beta
+beta_deg = beta.copy()
+dbeta = np.diff(beta_deg)
+# Handle wrapping
+dbeta[dbeta > 180] -= 360
+dbeta[dbeta < -180] += 360
+print()
+print('Beta velocity (deg/day):')
+print('  mean:', np.mean(dbeta))
+print('  std:', np.std(dbeta))
+print('  min:', np.min(dbeta))
+print('  max:', np.max(dbeta))
+
+# Same for alpha
+dalpha = np.diff(alpha)
+dalpha[dalpha > 180] -= 360
+dalpha[dalpha < -180] += 360
+print()
+print('Alpha velocity (deg/day):')
+print('  mean:', np.mean(dalpha))
+print('  std:', np.std(dalpha))
+
+# Look at velocity patterns
+print()
+print('Beta velocity in chunks of 500:')
+for i in range(0, len(dbeta), 500):
+    end = min(i+500, len(dbeta))
+    print(f'  t={i}-{i+500}: mean={np.mean(dbeta[i:end]):.4f}, std={np.std(dbeta[i:end]):.4f}')
+"
 
 ```
 
@@ -565,6 +883,77 @@ The beta velocity seems to have a periodic pattern - oscillating between ~0.22 a
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+# Unwrap angles
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Let me try a comprehensive model
+# Features: intercept, t, alpha_uw, t*alpha_uw, Fourier terms of t
+# And maybe polynomial terms
+
+periods = [361, 180, 120, 90]  # yearly and harmonics
+features = []
+
+# Intercept
+features.append(np.ones(len(t)))
+# Linear terms
+features.append(t)
+features.append(alpha_uw)
+# Interaction
+features.append(t * alpha_uw)
+# Polynomial
+features.append(t**2)
+features.append(alpha_uw**2)
+# Fourier
+for p in periods:
+    features.append(np.sin(2*np.pi*t/p))
+    features.append(np.cos(2*np.pi*t/p))
+
+X = np.column_stack(features)
+coeffs, res, rank, sv = lstsq(X, beta_uw, rcond=None)
+pred = X @ coeffs
+resid = beta_uw - pred
+print(f'Model residual std: {np.std(resid):.4f}')
+print(f'Model residual mean: {np.mean(resid):.4f}')
+
+# Try adding alpha Fourier terms
+periods_a = [900, 600, 450, 300]
+for p in periods_a:
+    features.append(np.sin(2*np.pi*alpha_uw/p))
+    features.append(np.cos(2*np.pi*alpha_uw/p))
+
+X2 = np.column_stack(features)
+coeffs2, _, _, _ = lstsq(X2, beta_uw, rcond=None)
+pred2 = X2 @ coeffs2
+resid2 = beta_uw - pred2
+print(f'Extended model residual std: {np.std(resid2):.4f}')
+
+# Check ACF of residuals
+r = resid2 - np.mean(resid2)
+acf = np.correlate(r, r, 'full') / (np.var(r) * len(r))
+mid = len(acf)//2
+print(f'ACF lag 1: {acf[mid+1]:.4f}')
+print(f'ACF lag 5: {acf[mid+5]:.4f}')
+print(f'ACF lag 10: {acf[mid+10]:.4f}')
+
+# Try even more features - polynomials of alpha_uw
+for deg in [3, 4]:
+    features.append(alpha_uw**deg)
+X3 = np.column_stack(features)
+coeffs3, _, _, _ = lstsq(X3, beta_uw, rcond=None)
+resid3 = beta_uw - X3 @ coeffs3
+print(f'Deg {deg} alpha model residual std: {np.std(resid3):.4f}')
+EOF
 
 ```
 
@@ -617,6 +1006,60 @@ Let me try to understand the relationship between alpha and beta more carefully 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+# Unwrap angles
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Build a clean model
+def make_features(t_arr, alpha_arr, periods_t=None, periods_a=None):
+    if periods_t is None:
+        periods_t = [360.9, 180.5, 120.3]
+    if periods_a is None:
+        periods_a = []
+    feats = [np.ones(len(t_arr)), t_arr, alpha_arr]
+    for p in periods_t:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    for p in periods_a:
+        feats.append(np.sin(2*np.pi*alpha_arr/p))
+        feats.append(np.cos(2*np.pi*alpha_arr/p))
+    return np.column_stack(feets)
+
+X = make_features(t, alpha_uw, periods_t=[360.9, 180.5, 120.3], periods_a=[900, 600, 450, 360.9, 300])
+coeffs, _, _, _ = lstsq(X, beta_uw, rcond=None)
+pred = X @ coeffs
+resid = beta_uw - pred
+print(f'Full model residual std: {np.std(resid):.4f}')
+
+# Check ACF
+r = resid - np.mean(resid)
+acf_full = np.correlate(r, r, 'full') / (np.var(r) * len(r))
+mid = len(acf_full)//2
+print(f'ACF lags 1-10: {[round(acf_full[mid+i], 4) for i in range(1,11)]}')
+
+# The high ACF suggests there's a low-frequency component we're missing
+# Let me try adding lower-frequency Fourier terms of t
+periods_t2 = [3600, 1800, 1200, 900, 720, 600, 500, 360.9, 300, 240, 180, 120]
+X2 = make_features(t, alpha_uw, periods_t=periods_t2, periods_a=[900, 600, 450, 360.9, 300])
+coeffs2, _, _, _ = lstsq(X2, beta_uw, rcond=None)
+resid2 = beta_uw - X2 @ coeffs2
+print(f'Extended periods model residual std: {np.std(resid2):.4f}')
+
+r2 = resid2 - np.mean(resid2)
+acf2 = np.correlate(r2, r2, 'full') / (np.var(r2) * len(r2))
+mid2 = len(acf2)//2
+print(f'ACF lags 1-10: {[round(acf2[mid2+i], 4) for i in range(1,11)]}')
+EOF
 
 ```
 
@@ -640,6 +1083,81 @@ NameError: name 'feets' is not defined. Did you mean: 'feats'?
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+def make_features(t_arr, alpha_arr, periods_t=None, periods_a=None):
+    if periods_t is None:
+        periods_t = [360.9, 180.5, 120.3]
+    if periods_a is None:
+        periods_a = []
+    feats = [np.ones(len(t_arr)), t_arr, alpha_arr]
+    for p in periods_t:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    for p in periods_a:
+        feats.append(np.sin(2*np.pi*alpha_arr/p))
+        feats.append(np.cos(2*np.pi*alpha_arr/p))
+    return np.column_stack(feats)
+
+# Model 1: just alpha + t
+X0 = np.column_stack([np.ones(len(t)), t, alpha_uw])
+c0, _, _, _ = lstsq(X0, beta_uw, rcond=None)
+print(f'alpha+t model residual std: {np.std(beta_uw - X0@c0):.4f}')
+
+# Model 2: alpha + t + Fourier of t
+periods_t = [360.9, 180.5, 120.3]
+X1 = make_features(t, alpha_uw, periods_t=periods_t, periods_a=[])
+c1, _, _, _ = lstsq(X1, beta_uw, rcond=None)
+resid1 = beta_uw - X1@c1
+print(f'alpha+t+Fourier(t) model residual std: {np.std(resid1):.4f}')
+
+r1 = resid1 - np.mean(resid1)
+acf1 = np.correlate(r1, r1, 'full') / (np.var(r1) * len(r1))
+mid1 = len(acf1)//2
+print(f'ACF lags 1,5,10,20: {[round(acf1[mid1+i], 4) for i in [1,5,10,20]]}')
+
+# Model 3: add Fourier of alpha 
+periods_a = [900, 600, 450, 360.9, 300]
+X2 = make_features(t, alpha_uw, periods_t=periods_t, periods_a=periods_a)
+c2, _, _, _ = lstsq(X2, beta_uw, rcond=None)
+resid2 = beta_uw - X2@c2
+print(f'alpha+t+Fourier(t)+Fourier(alpha) model residual std: {np.std(resid2):.4f}')
+
+r2 = resid2 - np.mean(resid2)
+acf2 = np.correlate(r2, r2, 'full') / (np.var(r2) * len(r2))
+mid2 = len(acf2)//2
+print(f'ACF lags 1,5,10,20: {[round(acf2[mid2+i], 4) for i in [1,5,10,20]]}')
+
+# Model 4: add interactions between alpha and sin/cos of t
+feats4 = [np.ones(len(t)), t, alpha_uw]
+for p in periods_t:
+    s = np.sin(2*np.pi*t/p)
+    c = np.cos(2*np.pi*t/p)
+    feats4.extend([s, c, s*alpha_uw, c*alpha_uw, s*t, c*t])
+for p in periods_a:
+    feats4.append(np.sin(2*np.pi*alpha_uw/p))
+    feats4.append(np.cos(2*np.pi*alpha_uw/p))
+X4 = np.column_stack(feats4)
+c4, _, _, _ = lstsq(X4, beta_uw, rcond=None)
+resid4 = beta_uw - X4@c4
+print(f'Interaction model residual std: {np.std(resid4):.4f}')
+
+r4 = resid4 - np.mean(resid4)
+acf4 = np.correlate(r4, r4, 'full') / (np.var(r4) * len(r4))
+mid4 = len(acf4)//2
+print(f'ACF lags 1,5,10,20: {[round(acf4[mid4+i], 4) for i in [1,5,10,20]]}')
+EOF
 
 ```
 
@@ -675,6 +1193,60 @@ Let me go back and check that earlier model more carefully.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Reproduce the earlier model that gave residual std of 9.9
+periods = [1203, 902, 601.5, 515.6, 451, 401, 361, 212]
+features = [np.ones(len(t))]
+for p in periods:
+    features.append(np.sin(2*np.pi*t/p))
+    features.append(np.cos(2*np.pi*t/p))
+features.append(alpha_uw)
+X = np.column_stack(features)
+y = beta_uw
+coeffs = lstsq(X, y, rcond=None)[0]
+pred = X @ coeffs
+resid = y - pred
+print(f'Earlier model residual std: {np.std(resid):.4f}')
+
+r = resid - np.mean(resid)
+acf = np.correlate(r, r, 'full') / (np.var(r) * len(r))
+mid = len(acf)//2
+print(f'ACF lags 1,5,10,20,50,100: {[round(acf[mid+i], 4) for i in [1,5,10,20,50,100]]}')
+
+# Now check: what does the residual look like?
+# Is it smooth or noisy?
+print(f'\nResidual first 30 values: {np.round(resid[:30], 2)}')
+print(f'Residual last 30 values: {np.round(resid[-30:], 2)}')
+
+# Check if there's a low-frequency component in residuals
+# Try fitting a polynomial to the residuals
+for deg in [1,2,3,4,5]:
+    c = np.polyfit(t, resid, deg)
+    fitted = np.polyval(c, t)
+    print(f'Poly deg {deg} on resid: R^2 = {1 - np.var(resid-fitted)/np.var(resid):.4f}')
+
+# Let's try fitting a long-period Fourier to the residuals
+long_feats = [np.ones(len(t))]
+for p in [3600, 2400, 1800]:
+    long_feats.append(np.sin(2*np.pi*t/p))
+    long_feats.append(np.cos(2*np.pi*t/p))
+X_long = np.column_stack(long_feats)
+c_long = lstsq(X_long, resid, rcond=None)[0]
+resid2 = resid - X_long @ c_long
+print(f'After removing long-period: residual std = {np.std(resid2):.4f}')
+EOF
 
 ```
 
@@ -776,6 +1348,98 @@ Let me try this approach.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Step 1: Use alpha to estimate the "true" beta signal
+# The model: beta_true = f(alpha) + g(t)  (additive)
+# Or: beta_true is a function of both alpha and t
+# 
+# Approach: fit a flexible model beta_unwrapped = h(alpha_unwrapped, t) to get de-noised signal
+# Then model the de-noised signal as function of t only for extrapolation
+
+# First, let's see what the alpha-beta relationship looks like in terms of polynomial
+# Since alpha ~ 1 deg/day and beta ~ 0.33 deg/day, beta/alpha ~ 1/3
+# Maybe beta = a*alpha + b + periodic terms
+
+# Let me fit a flexible model and extract the "true" signal
+periods_t = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats = [np.ones(len(t)), alpha_uw]
+for p in periods_t:
+    feats.append(np.sin(2*np.pi*t/p))
+    feats.append(np.cos(2*np.pi*t/p))
+# Add alpha interactions with some Fourier terms
+for p in [361, 601.5]:
+    s = np.sin(2*np.pi*t/p)
+    c = np.cos(2*np.pi*t/p)
+    feats.append(s * alpha_uw)
+    feats.append(c * alpha_uw)
+
+X_ab = np.column_stack(feats)
+c_ab = lstsq(X_ab, beta_uw, rcond=None)[0]
+beta_fitted = X_ab @ c_ab  # This is our estimate of the true beta signal
+
+# The residuals from this model give us the noise level
+noise_resid = beta_uw - beta_fitted
+print(f'Noise residual std: {np.std(noise_resid):.4f}')
+# The observation noise std estimate
+obs_noise_std = np.std(noise_resid)
+print(f'Estimated observation noise std: {obs_noise_std:.4f}')
+
+# Step 2: Model beta_fitted as a function of t only
+# This is the "true signal" we need to extrapolate
+# Let's try various Fourier models
+best_std = 999
+for n_periods in range(2, 20):
+    # Use top n_periods periods from the data length
+    max_period = len(t)  # ~3608
+    periods = []
+    for i in range(1, n_periods+1):
+        p = max_period / i
+        if p > 50:  # skip very short periods
+            periods.append(p)
+    
+    feats_t = [np.ones(len(t)), t]
+    for p in periods:
+        feats_t.append(np.sin(2*np.pi*t/p))
+        feats_t.append(np.cos(2*np.pi*t/p))
+    X_t = np.column_stack(feats_t)
+    c_t = lstsq(X_t, beta_fitted, rcond=None)[0]
+    resid_t = beta_fitted - X_t @ c_t
+    std_t = np.std(resid_t)
+    if std_t < best_std:
+        best_std = std_t
+        best_n = n_periods
+        best_periods = periods
+
+print(f'Best Fourier model: n_periods={best_n}, residual std={best_std:.4f}')
+print(f'Periods: {best_periods}')
+
+# Actually, let me try a different approach: use a Gaussian Process or spline
+# For now, let me use the Fourier model with many periods
+periods_final = [3600, 1800, 1200, 900, 720, 600, 515, 450, 400, 361, 300, 240, 180, 120]
+feats_final = [np.ones(len(t)), t]
+for p in periods_final:
+    feats_final.append(np.sin(2*np.pi*t/p))
+    feats_final.append(np.cos(2*np.pi*t/p))
+X_final = np.column_stack(feats_final)
+c_final, residuals, rank, sv = lstsq(X_final, beta_fitted, rcond=None)
+beta_model_pred = X_final @ c_final
+print(f'\nFinal Fourier model fit to de-noised beta:')
+print(f'  Residual std: {np.std(beta_fitted - beta_model_pred):.4f}')
+
+# Now for test time, we extrapolate this model
+EOF
 
 ```
 
@@ -892,6 +1556,68 @@ Let me try this approach.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Step 1: De-noise using alpha relationship
+# Fit a flexible model of beta_uw = f(alpha_uw, t)
+periods_t = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats = [np.ones(len(t)), alpha_uw]
+for p in periods_t:
+    feats.append(np.sin(2*np.pi*t/p))
+    feats.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    s = np.sin(2*np.pi*t/p)
+    c = np.cos(2*np.pi*t/p)
+    feats.append(s * alpha_uw)
+    feats.append(c * alpha_uw)
+
+X_ab = np.column_stack(feats)
+c_ab = lstsq(X_ab, beta_uw, rcond=None)[0]
+beta_true_est = X_ab @ c_ab  # de-noised beta
+
+# Step 2: Model beta_true_est as function of t
+# Try polynomial + Fourier
+# Use cross-validation to pick the right model complexity
+from numpy.linalg import lstsq
+
+# Try different numbers of Fourier terms
+results = []
+for n_harm in range(1, 30):
+    period = 3608 * 2 / n_harm  # fundamental period
+    feats_t = [np.ones(len(t)), t]
+    for i in range(1, n_harm+1):
+        p = 3608 * 2 / i
+        if p < 100:
+            break
+        feats_t.append(np.sin(2*np.pi*t/p))
+        feats_t.append(np.cos(2*np.pi*t/p))
+    X_t = np.column_stack(feats_t)
+    c_t, res, rank, sv = lstsq(X_t, beta_true_est, rcond=None)
+    fitted = X_t @ c_t
+    # Use residual to estimate fit quality
+    # But for extrapolation, we want parsimonious model
+    resid = beta_true_est - fitted
+    n_params = len(feats_t)
+    bic = len(t) * np.log(np.var(resid)) + n_params * np.log(len(t))
+    results.append((n_harm, np.std(resid), bic, n_params))
+    if n_harm <= 10 or n_harm % 5 == 0:
+        print(f'n_harm={n_harm:2d}: resid_std={np.std(resid):.4f}, BIC={bic:.1f}, n_params={n_params}')
+
+# Pick best by BIC
+best = min(results, key=lambda x: x[2])
+print(f'\nBest by BIC: n_harm={best[0]}, resid_std={best[1]:.4f}, BIC={best[2]:.1f}')
+EOF
 
 ```
 
@@ -1033,6 +1759,86 @@ Let me try several approaches and compare.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise: fit flexible model using alpha
+periods_t = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats = [np.ones(len(t)), alpha_uw]
+for p in periods_t:
+    feats.append(np.sin(2*np.pi*t/p))
+    feats.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    s = np.sin(2*np.pi*t/p)
+    c = np.cos(2*np.pi*t/p)
+    feats.append(s * alpha_uw)
+    feats.append(c * alpha_uw)
+
+X_ab = np.column_stack(feats)
+c_ab = lstsq(X_ab, beta_uw, rcond=None)[0]
+beta_true_est = X_ab @ c_ab  # de-noised beta
+
+# Now model beta_true_est as function of t for extrapolation
+# Strategy: use Fourier series on [0, T] where T = 2 * training length
+# This ensures all terms complete at least one cycle in training data
+T = 7216  # 2 * 3608
+
+# For extrapolation safety, limit to terms that repeat enough times
+# Test extends up to ~1625 days beyond training
+# Safe terms: periods << 1625 → at least 2-3 full cycles in extrapolation range
+# So periods < 800 or so are safe
+
+# Let's try: polynomial + safe Fourier terms
+results = []
+for max_period in [400, 500, 600, 800, 1000, 1200, 1500]:
+    for poly_deg in [0, 1, 2, 3]:
+        feats_t = [np.ones(len(t))]
+        # Polynomial trend
+        for d in range(1, poly_deg+1):
+            feats_t.append(t**d)
+        # Fourier terms
+        n = 1
+        while True:
+            p = T / n
+            if p > max_period or p < 50:
+                break
+            feats_t.append(np.sin(2*np.pi*t/p))
+            feats_t.append(np.cos(2*np.pi*t/p))
+            n += 1
+        if len(feats_t) <= 1:
+            continue
+        X_t = np.column_stack(feats_t)
+        c_t = lstsq(X_t, beta_true_est, rcond=None)[0]
+        fitted = X_t @ c_t
+        resid = beta_true_est - fitted
+        n_params = len(feats_t)
+        bic = len(t) * np.log(np.var(resid)) + n_params * np.log(len(t))
+        # Penalize extrapolation risk: fewer params is better
+        results.append((max_period, poly_deg, np.std(resid), bic, n_params))
+
+# Sort by BIC
+results.sort(key=lambda x: x[3])
+print("Top 10 models by BIC:")
+for r in results[:10]:
+    print(f"  max_period={r[0]}, poly={r[1]}, resid_std={r[2]:.4f}, BIC={r[3]:.1f}, n_params={r[4]}")
+
+# Also look at moderate-complexity models
+print("\nModels with moderate complexity (n_params < 25):")
+moderate = [r for r in results if r[4] < 25]
+for r in moderate[:10]:
+    print(f"  max_period={r[0]}, poly={r[1]}, resid_std={r[2]:.4f}, BIC={r[3]:.1f}, n_params={r[4]}")
+EOF
 
 ```
 
@@ -1089,6 +1895,72 @@ I need to skip terms with p > max_period instead of breaking. Or better, iterate
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn  # de-noised
+
+# Now model beta_true_est as function of t
+# Use Fourier basis with fundamental period = 2*training_length = 7216
+T = 7216.0
+
+results = []
+for max_n in range(1, 50):
+    # Include harmonics n=1..max_n, periods = T/n
+    feats_t = [np.ones(len(t)), t]
+    for n in range(1, max_n+1):
+        p = T / n
+        feats_t.append(np.sin(2*np.pi*t/p))
+        feats_t.append(np.cos(2*np.pi*t/p))
+    X_t = np.column_stack(feats_t)
+    c_t = lstsq(X_t, beta_true_est, rcond=None)[0]
+    fitted = X_t @ c_t
+    resid = beta_true_est - fitted
+    n_params = len(feats_t)
+    bic = len(t) * np.log(np.var(resid) + 1e-10) + n_params * np.log(len(t))
+    aic = len(t) * np.log(np.var(resid) + 1e-10) + 2 * n_params
+    results.append((max_n, np.std(resid), bic, aic, n_params, T/max_n))
+    if max_n <= 15 or max_n % 5 == 0:
+        print(f"max_n={max_n:2d}: period={T/max_n:.0f}d, resid_std={np.std(resid):.4f}, BIC={bic:.1f}, AIC={aic:.1f}, n_params={n_params}")
+
+# Also try with polynomial trend + Fourier
+print("\n--- With quadratic trend + Fourier ---")
+for max_n in range(1, 50):
+    feats_t = [np.ones(len(t)), t, t**2]
+    for n in range(1, max_n+1):
+        p = T / n
+        feats_t.append(np.sin(2*np.pi*t/p))
+        feats_t.append(np.cos(2*np.pi*t/p))
+    X_t = np.column_stack(feats_t)
+    c_t = lstsq(X_t, beta_true_est, rcond=None)[0]
+    resid = beta_true_est - X_t @ c_t
+    n_params = len(feats_t)
+    bic = len(t) * np.log(np.var(resid) + 1e-10) + n_params * np.log(len(t))
+    if max_n <= 15 or max_n % 5 == 0:
+        print(f"max_n={max_n:2d}: period={T/max_n:.0f}d, resid_std={np.std(resid):.4f}, BIC={bic:.1f}, n_params={n_params}")
+EOF
 
 ```
 
@@ -1255,6 +2127,65 @@ Let me try the GP approach.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, Matern, WhiteKernel, ConstantKernel, ExpSineSquared, RationalQuadratic
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float).reshape(-1,1)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise using alpha
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t.ravel()/p))
+    feats_dn.append(np.cos(2*np.pi*t.ravel()/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t.ravel()/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t.ravel()/p) * alpha_uw)
+
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+
+# GP approach on a subsample for speed
+# Subsample to every 10th point
+idx = np.arange(0, len(t), 10)
+t_sub = t[idx]
+beta_sub = beta_true_est[idx]
+
+# Use periodic + RBF kernel for the oscillation + long-term trend
+# Kernel: Constant * (Periodic + RBF) + WhiteKernel
+periodic_kernel = ExpSineSquared(length_scale=100, periodicity=360)
+rbf_kernel = RBF(length_scale=500)
+kernel = ConstantKernel(1.0) * (periodic_kernel + rbf_kernel) + WhiteKernel(noise_level=0.1)
+
+print("Fitting GP (this may take a moment)...")
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, alpha=1.0)
+gp.fit(t_sub, beta_sub)
+print(f"Log-marginal-likelihood: {gp.log_marginal_likelihood_value_:.2f}")
+print(f"Kernel: {gp.kernel_}")
+
+# Predict on training set
+pred_train, std_train = gp.predict(t_sub, return_std=True)
+print(f"Train RMSE: {np.sqrt(np.mean((beta_sub - pred_train)**2)):.4f}")
+print(f"Mean predicted std: {np.mean(std_train):.4f}")
+
+# Predict on test set
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float).reshape(-1,1)
+pred_test, std_test = gp.predict(test_t, return_std=True)
+print(f"\nTest predictions:")
+for i, pt in enumerate(test_t.ravel()):
+    print(f"  t={pt:.0f}: pred={pred_test[i]:.2f}, std={std_test[i]:.2f}")
+EOF
 
 ```
 
@@ -1390,6 +2321,72 @@ The model uncertainty for extrapolation is hard to quantify precisely, so let me
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise using alpha
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+
+# Check the signal: is it approximately linear + periodic?
+# Let's look at the beta_true_est signal
+print("De-noised beta signal characteristics:")
+print(f"  Range: {np.min(beta_true_est):.2f} to {np.max(beta_true_est):.2f}")
+print(f"  Total change: {beta_true_est[-1] - beta_true_est[0]:.2f} degrees")
+print(f"  Rate: {(beta_true_est[-1] - beta_true_est[0]) / (t[-1] - t[0]):.4f} deg/day")
+
+# Try a different approach: model the signal as a Fourier series
+# with fundamental period equal to the beta rotation period (1080 days)
+# This captures the basic rotation plus harmonics for deviations
+
+# First, let's try just fitting to the LAST portion of the training data
+# and see if a simple extrapolation works
+# Take last 1000 points
+n_last = 1000
+t_last = t[-n_last:]
+beta_last = beta_true_est[-n_last:]
+
+# Fit polynomial to last 1000 points
+for deg in [1, 2, 3, 4]:
+    c = np.polyfit(t_last, beta_last, deg)
+    pred = np.polyval(c, t_last)
+    resid = beta_last - pred
+    print(f"Poly deg {deg} on last {n_last} pts: resid std = {np.std(resid):.4f}")
+
+# The de-noised signal is nearly linear in the last portion
+# Let's check the trend more carefully
+from numpy.polynomial import polynomial as P
+for w in [500, 1000, 1500, 2000, 3609]:
+    tw = t[-w:]
+    bw = beta_true_est[-w:]
+    c1 = np.polyfit(tw, bw, 1)
+    c2 = np.polyfit(tw, bw, 2)
+    print(f"\nLast {w} points:")
+    print(f"  Linear: slope={c1[0]:.6f}, intercept={c1[1]:.2f}")
+    print(f"  Quadratic: a={c2[0]:.8f}, b={c2[1]:.6f}, c={c2[2]:.2f}")
+    print(f"  Linear resid std: {np.std(bw - np.polyval(c1, tw)):.4f}")
+    print(f"  Quadratic resid std: {np.std(bw - np.polyval(c2, tw)):.4f}")
+EOF
 
 ```
 
@@ -1492,6 +2489,83 @@ This should give a much better model that extrapolates well because we're using 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise using alpha
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+
+# Now let's find the key periods in the de-noised signal
+# FFT of the de-noised signal (after removing linear trend)
+dt = np.diff(t[:2])[0]  # should be 1 day
+signal = beta_true_est - np.polyval(np.polyfit(t, beta_true_est, 1), t)
+
+n = len(t)
+fft_vals = np.fft.rfft(signal)
+fft_freqs = np.fft.rfftfreq(n, d=1)
+fft_power = np.abs(fft_vals)**2
+
+# Find top peaks
+top_idx = np.argsort(fft_power[1:n//2])[::-1][:20]
+print("Top frequencies in de-noised signal (after removing linear trend):")
+for i in top_idx:
+    freq = fft_freqs[i+1]
+    period = 1/freq if freq > 0 else float('inf')
+    print(f"  freq={freq:.6f} (/day), period={period:.1f} days, power={fft_power[i+1]:.0f}")
+
+# Now build the model: linear trend + key sinusoids
+# Key periods: 1080 (beta rotation), 360 (alpha rotation), 540, etc.
+key_periods = [1080, 540, 360, 270, 216, 180, 154.3, 120, 108]
+feats_model = [np.ones(len(t)), t]
+for p in key_periods:
+    feats_model.append(np.sin(2*np.pi*t/p))
+    feats_model.append(np.cos(2*np.pi*t/p))
+
+X_model = np.column_stack(feats_model)
+c_model, res, rank, sv = lstsq(X_model, beta_true_est, rcond=None)
+fitted = X_model @ c_model
+resid = beta_true_est - fitted
+print(f"\nKey periods model: resid_std = {np.std(resid):.4f}")
+print(f"Coefficients: {c_model[:3]} (intercept, slope, ...)")
+for i, p in enumerate(key_periods):
+    print(f"  Period {p:.1f}d: sin={c_model[2+2*i]:.4f}, cos={c_model[3+2*i]:.4f}, amp={np.sqrt(c_model[2+2*i]**2 + c_model[3+2*i]**2):.4f}")
+
+# Check what the model predicts for the test period
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+test_feats = [np.ones(len(test_t)), test_t]
+for p in key_periods:
+    test_feats.append(np.sin(2*np.pi*test_t/p))
+    test_feats.append(np.cos(2*np.pi*test_t/p))
+X_test = np.column_stack(test_feats)
+pred_test = X_test @ c_model
+print(f"\nTest predictions (de-noised):")
+for i, tt in enumerate(test_t):
+    print(f"  t={tt:.0f}: {pred_test[i]:.2f} deg (unwrapped)")
+    # Wrap to [0, 360)
+    wrapped = pred_test[i] % 360
+    print(f"    wrapped: {wrapped:.2f} deg")
+EOF
 
 ```
 
@@ -1593,6 +2667,131 @@ Let me try using the actual dominant FFT periods in the model.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise using alpha
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+
+# Use the actual dominant periods from FFT
+# 1203, 515.6, 902, 601.5, 721.8, 360.9, 451.1, 1804.5, 401
+# 225.6, 328.1, 240.6, 277.6, 257.8, 300.7, 212.3, 200.5, 189.9, 180.4
+
+# Model 1: Use top 9 FFT periods + linear trend
+fft_periods = [1804.5, 1203, 902, 721.8, 601.5, 515.6, 451.1, 401, 360.9]
+feats_m1 = [np.ones(len(t)), t]
+for p in fft_periods:
+    feats_m1.append(np.sin(2*np.pi*t/p))
+    feats_m1.append(np.cos(2*np.pi*t/p))
+X_m1 = np.column_stack(feats_m1)
+c_m1 = lstsq(X_m1, beta_true_est, rcond=None)[0]
+print(f"Model 1 (9 FFT periods): resid_std = {np.std(beta_true_est - X_m1 @ c_m1):.4f}")
+
+# Model 2: Use top 15 FFT periods
+fft_periods_15 = [1804.5, 1203, 902, 721.8, 601.5, 515.6, 451.1, 401, 360.9,
+                  328.1, 300.7, 277.6, 257.8, 240.6, 225.6]
+feats_m2 = [np.ones(len(t)), t]
+for p in fft_periods_15:
+    feats_m2.append(np.sin(2*np.pi*t/p))
+    feats_m2.append(np.cos(2*np.pi*t/p))
+X_m2 = np.column_stack(feats_m2)
+c_m2 = lstsq(X_m2, beta_true_est, rcond=None)[0]
+print(f"Model 2 (15 FFT periods): resid_std = {np.std(beta_true_est - X_m2 @ c_m1):.4f}")
+resid_m2 = beta_true_est - X_m2 @ c_m2
+print(f"Model 2 (15 FFT periods): resid_std = {np.std(resid_m2):.4f}")
+
+# Model 3: Add more periods
+fft_periods_20 = fft_periods_15 + [212.3, 200.5, 189.9, 180.4, 171.6]
+feats_m3 = [np.ones(len(t)), t]
+for p in fft_periods_20:
+    feats_m3.append(np.sin(2*np.pi*t/p))
+    feats_m3.append(np.cos(2*np.pi*t/p))
+X_m3 = np.column_stack(feats_m3)
+c_m3 = lstsq(X_m3, beta_true_est, rcond=None)[0]
+resid_m3 = beta_true_est - X_m3 @ c_m3
+print(f"Model 3 (20 FFT periods): resid_std = {np.std(resid_m3):.4f}")
+
+# Now predict for test set
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+def predict_with_model(t_arr, c, fft_periods):
+    feats = [np.ones(len(t_arr)), t_arr]
+    for p in fft_periods:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    X = np.column_stack(feats)
+    return X @ c
+
+# Use model 2 (15 periods) - good balance
+pred_test = predict_with_model(test_t, c_m2, fft_periods_15)
+
+# Now estimate uncertainties
+# 1. Observation noise: from de-noising step
+# 2. Model uncertainty: from residuals of the Fourier model
+
+# Observation noise estimate
+obs_noise_var = np.var(beta_uw - beta_true_est)
+print(f"\nObservation noise variance: {obs_noise_var:.4f}")
+print(f"Observation noise std: {np.sqrt(obs_noise_var):.4f}")
+
+# Model fit residual
+model_resid_std = np.std(resid_m2)
+print(f"Model residual std: {model_resid_std:.4f}")
+
+# For prediction interval, we need:
+# Total variance = obs_noise_var + model_uncertainty_var
+# For extrapolation, model uncertainty grows with distance from training data
+
+# Simple approach: 
+# - For t close to training range: model uncertainty ≈ model_resid_std
+# - For t far from training range: model uncertainty grows linearly
+
+# More sophisticated: use the coefficient uncertainty
+# c_m2 has variance from the least-squares fit
+n_params = len(c_m2)
+rss = np.sum(resid_m2**2)
+sigma2 = rss / (len(t) - n_params)
+Cov_c = sigma2 * np.linalg.inv(X_m2.T @ X_m2)
+
+# For each test point, prediction variance
+X_test_m2 = np.column_stack([np.ones(len(test_t)), test_t])
+for p in fft_periods_15:
+    X_test_m2 = np.hstack([X_test_m2, 
+                           np.sin(2*np.pi*test_t/p).reshape(-1,1),
+                           np.cos(2*np.pi*test_t/p).reshape(-1,1)])
+
+pred_vars = np.diag(X_test_m2 @ Cov_c @ X_test_m2.T)
+pred_stds = np.sqrt(pred_vars)
+
+print(f"\nTest predictions with uncertainty:")
+for i, tt in enumerate(test_t):
+    wrapped = pred_test[i] % 360
+    total_std = np.sqrt(pred_vars[i] + obs_noise_var)
+    lower = (pred_test[i] - 1.96 * total_std) % 360
+    upper = (pred_test[i] + 1.96 * total_std) % 360
+    print(f"  t={tt:.0f}: pred={wrapped:.2f}, model_std={pred_stds[i]:.2f}, total_std={total_std:.2f}, [{lower:.2f}, {upper:.2f}]")
+EOF
 
 ```
 
@@ -1616,6 +2815,93 @@ Model 1 (9 FFT periods): resid_std = 5.4987
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise using alpha
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+
+obs_noise_var = np.var(beta_uw - beta_true_est)
+print(f"Observation noise std: {np.sqrt(obs_noise_var):.4f}")
+
+def build_fourier_features(t_arr, periods):
+    feats = [np.ones(len(t_arr)), t_arr.copy()]
+    for p in periods:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    return np.column_stack(feats)
+
+# Use top FFT periods
+fft_periods = [1804.5, 1203, 902, 721.8, 601.5, 515.6, 451.1, 401, 360.9,
+               328.1, 300.7, 277.6, 257.8, 240.6, 225.6, 212.3, 200.5, 189.9, 180.4]
+
+X_train = build_fourier_features(t, fft_periods)
+c_train = lstsq(X_train, beta_true_est, rcond=None)[0]
+resid_train = beta_true_est - X_train @ c_train
+model_resid_std = np.std(resid_train)
+print(f"Model residual std (19 periods): {model_resid_std:.4f}")
+
+# Prediction with uncertainty
+n_params = len(c_train)
+n_obs = len(t)
+rss = np.sum(resid_train**2)
+sigma2 = rss / (n_obs - n_params)
+print(f"sigma2 = {sigma2:.4f}, n_obs-n_params = {n_obs - n_params}")
+
+X_test = build_fourier_features(test_t, fft_periods)
+pred_test = X_test @ c_train
+
+# Coefficient covariance
+XtX_inv = np.linalg.inv(X_train.T @ X_train)
+pred_var_model = np.array([X_test[i] @ XtX_inv @ X_test[i] for i in range(len(test_t))]) * sigma2
+
+# Total prediction variance = model uncertainty + observation noise
+total_var = pred_var_model + obs_noise_var
+total_std = np.sqrt(total_var)
+
+print(f"\nTest predictions:")
+for i, tt in enumerate(test_t):
+    wrapped = pred_test[i] % 360
+    # Prediction interval for a new observation
+    lower_uw = pred_test[i] - 1.96 * total_std[i]
+    upper_uw = pred_test[i] + 1.96 * total_std[i]
+    print(f"  t={tt:.0f}: pred={wrapped:.2f}, model_std={np.sqrt(pred_var_model[i]):.2f}, obs_std={np.sqrt(obs_noise_var):.2f}, total_std={total_std[i]:.2f}")
+
+# Save predictions
+results = []
+for i, tt in enumerate(test_t):
+    pred = pred_test[i] % 360
+    lower = (pred_test[i] - 1.96 * total_std[i]) % 360
+    upper = (pred_test[i] + 1.96 * total_std[i]) % 360
+    results.append({'t': int(tt), 'y_pred': round(pred, 4), 
+                    'y_lower': round(lower, 4), 'y_upper': round(upper, 4)})
+
+df = pd.DataFrame(results)
+print(f"\nPredictions:")
+print(df)
+print(f"\nRows: {len(df)}")
+EOF
 
 ```
 
@@ -1818,6 +3104,83 @@ Let me estimate extrapolation error empirically.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+def de_noise(t_arr, beta_arr, alpha_arr):
+    periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+    feats = [np.ones(len(t_arr)), alpha_arr]
+    for p in periods_t_dn:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    for p in [361, 601.5]:
+        feats.append(np.sin(2*np.pi*t_arr/p) * alpha_arr)
+        feats.append(np.cos(2*np.pi*t_arr/p) * alpha_arr)
+    X = np.column_stack(feats)
+    c = lstsq(X, beta_arr, rcond=None)[0]
+    return X @ c
+
+beta_true_est = de_noise(t, beta_uw, alpha_uw)
+
+# Empirical extrapolation test: fit on first N points, predict next M points
+fft_periods = [1804.5, 1203, 902, 721.8, 601.5, 515.6, 451.1, 401, 360.9,
+               328.1, 300.7, 277.6, 257.8, 240.6, 225.6]
+
+def build_features(t_arr, periods):
+    feats = [np.ones(len(t_arr)), t_arr.copy()]
+    for p in periods:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    return np.column_stack(feats)
+
+# Test extrapolation at various horizons
+holdout_sizes = [100, 200, 500, 800, 1000, 1200, 1500]
+for h in holdout_sizes:
+    train_end = len(t) - h
+    if train_end < 500:
+        continue
+    t_tr = t[:train_end]
+    beta_tr = beta_true_est[:train_end]
+    t_ho = t[train_end:]
+    beta_ho = beta_true_est[train_end:]
+    
+    X_tr = build_features(t_tr, fft_periods)
+    c_tr = lstsq(X_tr, beta_tr, rcond=None)[0]
+    
+    X_ho = build_features(t_ho, fft_periods)
+    pred_ho = X_ho @ c_tr
+    
+    # Mean error and std of error
+    err = beta_ho - pred_ho
+    print(f"Holdout {h:4d} pts (t={t[train_end]:.0f}-{t[-1]:.0f}): "
+          f"MAE={np.mean(np.abs(err)):.2f}, RMSE={np.sqrt(np.mean(err**2)):.2f}, "
+          f"MEAN={np.mean(err):.2f}, MAX_ERR={np.max(np.abs(err)):.2f}")
+
+# Now let's also check: what if we fit on different amounts of data?
+# Fit on last 2000 vs last 3609 points, predict test
+for n_fit in [1000, 1500, 2000, 2500, 3000, 3609]:
+    t_fit = t[-n_fit:]
+    beta_fit = beta_true_est[-n_fit:]
+    
+    X_fit = build_features(t_fit, fft_periods)
+    c_fit = lstsq(X_fit, beta_fit, rcond=None)[0]
+    
+    test_t = np.array([3610.0])
+    X_test = build_features(test_t, fft_periods)
+    pred = (X_test @ c_fit)[0] % 360
+    print(f"Fit on last {n_fit:4d} pts: t=3610 prediction = {pred:.2f}")
+
+EOF
 
 ```
 
@@ -1918,6 +3281,105 @@ Actually, let me reconsider the entire approach. Let me look at the de-noised si
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+def de_noise(t_arr, beta_arr, alpha_arr):
+    periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+    feats = [np.ones(len(t_arr)), alpha_arr]
+    for p in periods_t_dn:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    for p in [361, 601.5]:
+        feats.append(np.sin(2*np.pi*t_arr/p) * alpha_arr)
+        feats.append(np.cos(2*np.pi*t_arr/p) * alpha_arr)
+    X = np.column_stack(feats)
+    c = lstsq(X, beta_arr, rcond=None)[0]
+    return X @ c
+
+beta_true_est = de_noise(t, beta_uw, alpha_uw)
+
+# Let's look at the de-noised signal carefully
+# and understand what it looks like
+# It's beta_unwrapped - smooth function of t
+
+# Key insight: let me model this as alpha being a proxy for time
+# Since alpha ≈ t + constant, maybe I should model:
+# beta_true(t) = f(t) where f captures the orbit dynamics
+
+# Let me try a much simpler approach: 
+# 1. The de-noised signal is a smooth curve
+# 2. Use a local polynomial fit near the end of training and extrapolate
+
+# But first, let me see how many test points are beyond training
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+max_train_t = t[-1]
+print(f"Max training t: {max_train_t}")
+print(f"Test t range: {test_t[0]} to {test_t[-1]}")
+print(f"Max extrapolation: {test_t[-1] - max_train_t} days")
+
+# Let me try the approach of using shorter periods only
+# Periods ≤ 500 days → these repeat at least 7 times in training data
+# This should be more stable for extrapolation
+short_periods = [515.6, 451.1, 401, 360.9, 328.1, 300.7, 277.6, 257.8, 240.6, 225.6, 212.3, 200.5, 189.9, 180.4]
+
+# But we also need the fundamental trend - linear + medium periods
+medium_periods = [902, 721.8, 601.5]
+all_periods = medium_periods + short_periods
+
+# Model with linear + medium + short periods
+def build_features(t_arr, periods):
+    feats = [np.ones(len(t_arr)), t_arr.copy()]
+    for p in periods:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    return np.column_stack(feats)
+
+X_train = build_features(t, all_periods)
+c_train = lstsq(X_train, beta_true_est, rcond=None)[0]
+resid = beta_true_est - X_train @ c_train
+print(f"\nModel (902+722+602+short): resid_std = {np.std(resid):.4f}")
+
+# Check stability by fitting on subsets
+for n_fit in [1000, 1500, 2000, 2500, 3000, 3609]:
+    t_fit = t[-n_fit:]
+    beta_fit = beta_true_est[-n_fit:]
+    X_fit = build_features(t_fit, all_periods)
+    c_fit = lstsq(X_fit, beta_fit, rcond=None)[0]
+    
+    X_test = build_features(test_t, all_periods)
+    preds = (X_test @ c_fit) % 360
+    print(f"Fit last {n_fit:4d} pts: preds = {[f'{p:.1f}' for p in preds[:3]]}...")
+
+# Now try even more conservative: only periods ≤ 500
+print("\n--- Short periods only (<=500) ---")
+short_only = [515.6, 451.1, 401, 360.9, 328.1, 300.7, 277.6, 257.8, 240.6, 225.6]
+X_train_s = build_features(t, short_only)
+c_train_s = lstsq(X_train_s, beta_true_est, rcond=None)[0]
+resid_s = beta_true_est - X_train_s @ c_train_s
+print(f"Resid std: {np.std(resid_s):.4f}")
+
+for n_fit in [1000, 1500, 2000, 2500, 3000, 3609]:
+    t_fit = t[-n_fit:]
+    beta_fit = beta_true_est[-n_fit:]
+    X_fit = build_features(t_fit, short_only)
+    c_fit = lstsq(X_fit, beta_fit, rcond=None)[0]
+    
+    X_test = build_features(test_t, short_only)
+    preds = (X_test @ c_fit) % 360
+    print(f"Fit last {n_fit:4d} pts: preds = {[f'{p:.1f}' for p in preds[:3]]}...")
+    
+EOF
 
 ```
 
@@ -2019,6 +3481,92 @@ The key question is whether the beta(alpha) function is stable enough to extrapo
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Since alpha ≈ 1.001*t + 149, let's predict alpha at test times
+alpha_coeffs = np.polyfit(t, alpha_uw, 1)
+print(f"Alpha model: alpha = {alpha_coeffs[0]:.6f}*t + {alpha_coeffs[1]:.2f}")
+print(f"Alpha residual std: {np.std(alpha_uw - np.polyval(alpha_coeffs, t)):.4f}")
+
+# Now model beta_uw as a function of alpha_uw
+# This is essentially beta as a function of alpha, eliminating the time variable
+# The relationship beta(alpha) should be smoother
+
+# Check: is there a clean relationship?
+# beta = a*alpha + b + periodic terms in alpha
+# Since beta increases at 0.33 deg/day and alpha at 1.0 deg/day,
+# beta_unwrapped ≈ 0.334/1.001 * alpha_unwrapped + constant
+
+ratio = 0.334197 / 1.001441
+print(f"beta/alpha slope ratio: {ratio:.6f}")
+
+# Model: beta = slope * alpha + periodic(alpha)
+# Let's try this
+feats_ab = [np.ones(len(t)), alpha_uw]
+# Fourier terms in alpha (not t!)
+alpha_periods = [360/ratio, 180/ratio, 120/ratio, 90/ratio]  # periods in alpha-units
+# Actually, let's think in terms of alpha cycles
+# alpha goes through 0 to 360 in 360 days (approximately)
+# beta goes through 0 to 360 in 1080 days (approximately)
+# So beta ≈ alpha/3 + periodic correction
+
+# Let's try: beta = c0 + c1*alpha + periodic(alpha)
+# The periodic terms in alpha with period 360 (one alpha cycle)
+for p in [360, 180, 120, 90, 72]:
+    feats_ab.append(np.sin(2*np.pi*alpha_uw/p))
+    feats_ab.append(np.cos(2*np.pi*alpha_uw/p))
+
+X_ab = np.column_stack(feats_ab)
+c_ab = lstsq(X_ab, beta_uw, rcond=None)[0]
+pred_ab = X_ab @ c_ab
+resid_ab = beta_uw - pred_ab
+print(f"\nBeta(alpha) model: resid_std = {np.std(resid_ab):.4f}")
+
+# The resid is still large. Let me add more alpha-periodic terms
+feats_ab2 = [np.ones(len(t)), alpha_uw]
+for p in [360, 180, 120, 90, 72, 60, 51.4, 45, 40, 36]:
+    feats_ab2.append(np.sin(2*np.pi*alpha_uw/p))
+    feats_ab2.append(np.cos(2*np.pi*alpha_uw/p))
+
+X_ab2 = np.column_stack(feats_ab2)
+c_ab2 = lstsq(X_ab2, beta_uw, rcond=None)[0]
+resid_ab2 = beta_uw - X_ab2 @ c_ab2
+print(f"Beta(alpha) model with more terms: resid_std = {np.std(resid_ab2):.4f}")
+
+# Now the key question: is beta(alpha) STABLE over time?
+# Let me check by fitting on different windows
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+test_alpha = np.polyval(alpha_coeffs, test_t)
+print(f"\nTest alpha predictions: {test_alpha[:3]}...")
+
+for n_fit in [500, 1000, 1500, 2000, 2500, 3000, 3609]:
+    t_fit = t[-n_fit:]
+    alpha_fit = alpha_uw[-n_fit:]
+    beta_fit = beta_uw[-n_fit:]
+    
+    X_fit = np.column_stack([np.ones(len(t_fit)), alpha_fit] + 
+                             [np.sin(2*np.pi*alpha_fit/p) for p in [360,180,120,90,72,60]] +
+                             [np.cos(2*np.pi*alpha_fit/p) for p in [360,180,120,90,72,60]])
+    c_fit = lstsq(X_fit, beta_fit, rcond=None)[0]
+    
+    X_test = np.column_stack([np.ones(len(test_t)), test_alpha] +
+                              [np.sin(2*np.pi*test_alpha/p) for p in [360,180,120,90,72,60]] +
+                              [np.cos(2*np.pi*test_alpha/p) for p in [360,180,120,90,72,60]])
+    preds = (X_test @ c_fit) % 360
+    print(f"Fit last {n_fit:4d} pts: preds at t=3610 = {preds[0]:.1f}, at t=5233 = {preds[-1]:.1f}")
+
+EOF
 
 ```
 
@@ -2212,6 +3760,101 @@ Let me try a different approach: use a small number of well-determined Fourier t
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+from scipy.optimize import minimize
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise using alpha
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+
+# New approach: Use Bayesian model averaging over different numbers of Fourier terms
+# For each model (different # of harmonics), fit to training data, predict on test,
+# and weight by model evidence
+
+# Use periods: T/n for n=1,...,max_n where T = 2*3608 = 7216
+T = 7216.0
+
+# Actually let me try something much simpler and more robust:
+# 1. Use the de-noised signal
+# 2. Fit ONLY the dominant period terms that are well-determined
+# 3. Use the residual as a measure of model uncertainty
+# 4. Scale the uncertainty based on extrapolation distance
+
+# The dominant periods from FFT are:
+# 1203, 515.6, 902, 601.5, 721.8, 360.9, 451.1, 1804.5, 401
+# These are NOT harmonics of a single fundamental period
+# They look like beat frequencies: if we have two underlying oscillations 
+# at frequencies f1 and f2, we get peaks at f1, f2, f1+f2, f1-f2, etc.
+
+# Let me try fitting the de-noised signal with a specific model:
+# beta_true(t) = a*t + b + A1*sin(2pi*t/P1 + phi1) + A2*sin(2pi*t/P2 + phi2) + noise
+
+# From the FFT, the two strongest peaks are at periods 1203 and 515.6
+# Let me try a 2-sinusoid model + linear trend
+
+def fit_sinusoid_model(t_arr, y_arr, periods):
+    """Fit y = a*t + b + sum(Ai*sin(2pi*t/Pi + phii))"""
+    feats = [np.ones(len(t_arr)), t_arr]
+    for p in periods:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    X = np.column_stack(feats)
+    c = lstsq(X, y_arr, rcond=None)[0]
+    return c, np.std(y_arr - X @ c)
+
+# Try different combinations of periods
+top_periods = [1203, 902, 721.8, 601.5, 515.6, 451.1, 401, 360.9]
+for n_periods in range(1, 9):
+    periods = top_periods[:n_periods]
+    c, resid_std = fit_sinusoid_model(t, beta_true_est, periods)
+    
+    # Test stability: fit on last 2500 pts and predict
+    t_2500 = t[-2500:]
+    beta_2500 = beta_true_est[-2500:]
+    c_2500, _ = fit_sinusoid_model(t_2500, beta_2500, periods)
+    
+    feats_test = [np.ones(len(test_t)), test_t]
+    for p in periods:
+        feats_test.append(np.sin(2*np.pi*test_t/p))
+        feats_test.append(np.cos(2*np.pi*test_t/p))
+    X_test = np.column_stack(feats_test)
+    
+    pred_full = (X_test @ c) % 360
+    pred_2500 = (X_test @ c_2500) % 360
+    
+    # Check prediction difference
+    diffs = [abs(pred_full[i] - pred_2500[i]) for i in range(len(test_t))]
+    # Handle wrapping
+    for i in range(len(diffs)):
+        if diffs[i] > 180:
+            diffs[i] = 360 - diffs[i]
+    
+    print(f"n_periods={n_periods}: resid_std={resid_std:.2f}, "
+          f"max_pred_diff={max(diffs):.1f}, "
+          f"pred@3610: full={pred_full[0]:.1f}, 2500={pred_2500[0]:.1f}")
+
+EOF
 
 ```
 
@@ -2287,6 +3930,66 @@ The model is still not stable enough. Let me try a completely different approach
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Try SARIMAX on the unwrapped beta
+# The data has a clear trend + seasonal pattern
+# Seasonal period is approximately 361 days (from FFT peak at 360.9)
+
+# First, detrend the data
+from numpy.linalg import lstsq
+lin_coeffs = np.polyfit(t, beta_uw, 1)
+beta_detrended = beta_uw - np.polyval(lin_coeffs, t)
+
+# Try ARIMA on the detrended data
+# Use a small model to be safe
+print("Fitting ARIMA(2,0,2) on detrended data...")
+model = SARIMAX(beta_detrended, order=(2,0,2), 
+                seasonal_order=(1,0,1,361),
+                enforce_stationarity=False, 
+                enforce_invertibility=False)
+results = model.fit(disp=False, maxiter=200)
+print(f"AIC: {results.aic:.1f}")
+print(f"BIC: {results.bic:.1f}")
+
+# Forecast
+n_test = len(test_t)
+# Need to forecast n_test steps beyond the training data
+# The last training index is len(t)-1 = 3608
+# Test indices are 3610, 3790, ..., 5233
+# But SARIMAX expects consecutive steps
+
+# Since test times are not consecutive, I need to forecast from 3609 to 5233
+max_test = int(test_t[-1])
+forecast = results.get_forecast(steps=max_test - len(t) + 10)
+forecast_mean = forecast.predicted_mean
+forecast_se = forecast.se_mean
+
+print(f"\nForecast length: {len(forecast_mean)}")
+
+# Extract predictions at test times
+for tt in test_t.astype(int):
+    idx = tt - len(t) + 1  # index into forecast
+    if 0 <= idx < len(forecast_mean):
+        trend_val = np.polyval(lin_coeffs, tt)
+        pred = trend_val + forecast_mean.iloc[idx]
+        se = forecast_se.iloc[idx]
+        total_se = np.sqrt(se**2 + 0)  # observation noise added later
+        print(f"t={tt}: detrended_pred={forecast_mean.iloc[idx]:.2f}, trend={trend_val:.2f}, total={pred:.2f}")
+
+EOF
 
 ```
 
@@ -2350,6 +4053,154 @@ Let me just build the final model and generate predictions.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise using alpha
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+
+# Estimate observation noise
+obs_noise_var = np.var(beta_uw - beta_true_est)
+obs_noise_std = np.sqrt(obs_noise_var)
+print(f"Observation noise std: {obs_noise_std:.4f}")
+
+# Use bootstrap to estimate prediction uncertainty
+# Strategy:
+# 1. De-noise with alpha (gives us the true signal estimate)
+# 2. Fit Fourier model to de-noised signal 
+# 3. Bootstrap the entire pipeline (de-noise + fit) to get uncertainty
+
+# For the Fourier model, use top periods from FFT
+# But let me also try: just use the 3 dominant periods that are most stable
+# From earlier stability analysis:
+# n_periods=1 (period 1203): resid_std=24.56, max_pred_diff=15.8
+# n_periods=2 (1203, 515.6): resid_std=21.21, max_pred_diff=13.4
+
+# Let me try a different strategy: 
+# Fit the model on the FULL training data
+# Then use the residual structure to estimate extrapolation uncertainty
+
+# Key periods from FFT (these are NOT harmonics, they seem to be beat frequencies)
+key_periods = [1203, 902, 721.8, 601.5, 515.6, 451.1, 401, 360.9]
+
+def build_fourier_features(t_arr, periods):
+    feats = [np.ones(len(t_arr)), t_arr.copy()]
+    for p in periods:
+        feats.append(np.sin(2*np.pi*t_arr/p))
+        feats.append(np.cos(2*np.pi*t_arr/p))
+    return np.column_stack(feats)
+
+# Fit model on full data
+n_use = 5  # Use top 5 periods for stability
+periods_use = key_periods[:n_use]
+X_train = build_fourier_features(t, periods_use)
+c_train = lstsq(X_train, beta_true_est, rcond=None)[0]
+resid = beta_true_est - X_train @ c_train
+print(f"Model resid std ({n_use} periods): {np.std(resid):.4f}")
+
+# Bootstrap approach: 
+# Resample the data with replacement, refit the entire pipeline, and see how predictions vary
+n_bootstrap = 200
+bootstrap_preds = np.zeros((n_bootstrap, len(test_t)))
+
+np.random.seed(42)
+for b in range(n_bootstrap):
+    # Resample indices
+    idx = np.random.choice(len(t), size=len(t), replace=True)
+    idx = np.sort(idx)
+    t_b = t[idx]
+    beta_b = beta[idx]
+    alpha_b = alpha[idx]
+    
+    # Re-sort by time
+    sort_idx = np.argsort(t_b)
+    t_b = t_b[sort_idx]
+    beta_b = beta_b[sort_idx]
+    alpha_b = alpha_b[sort_idx]
+    beta_uw_b = np.rad2deg(np.unwrap(np.deg2rad(beta_b)))
+    alpha_uw_b = np.rad2deg(np.unwrap(np.deg2rad(alpha_b)))
+    
+    # De-noise
+    feats_dn_b = [np.ones(len(t_b)), alpha_uw_b]
+    for p in periods_t_dn:
+        feats_dn_b.append(np.sin(2*np.pi*t_b/p))
+        feats_dn_b.append(np.cos(2*np.pi*t_b/p))
+    for p in [361, 601.5]:
+        feats_dn_b.append(np.sin(2*np.pi*t_b/p) * alpha_uw_b)
+        feats_dn_b.append(np.cos(2*np.pi*t_b/p) * alpha_uw_b)
+    X_dn_b = np.column_stack(feats_dn_b)
+    c_dn_b = lstsq(X_dn_b, beta_uw_b, rcond=None)[0]
+    beta_true_b = X_dn_b @ c_dn_b
+    
+    # Fit Fourier model
+    X_train_b = build_fourier_features(t_b, periods_use)
+    c_train_b = lstsq(X_train_b, beta_true_b, rcond=None)[0]
+    
+    # Predict
+    X_test_b = build_fourier_features(test_t, periods_use)
+    bootstrap_preds[b] = X_test_b @ c_train_b
+
+# Analyze bootstrap results
+pred_mean = np.mean(bootstrap_preds, axis=0)
+pred_std = np.std(bootstrap_preds, axis=0)
+pred_25 = np.percentile(bootstrap_preds, 2.5, axis=0)
+pred_975 = np.percentile(bootstrap_preds, 97.5, axis=0)
+
+print("\nBootstrap results:")
+for i, tt in enumerate(test_t):
+    # For the prediction interval, we need:
+    # 1. Model uncertainty (from bootstrap)
+    # 2. Observation noise (4.8 deg std)
+    total_std = np.sqrt(pred_std[i]**2 + obs_noise_std**2)
+    lower = (pred_mean[i] - 1.96 * total_std) % 360
+    upper = (pred_mean[i] + 1.96 * total_std) % 360
+    pred_wrapped = pred_mean[i] % 360
+    print(f"  t={tt:.0f}: pred={pred_wrapped:.1f}, "
+          f"model_std={pred_std[i]:.1f}, total_std={total_std:.1f}")
+
+# Generate final predictions
+print("\nFinal predictions:")
+results = []
+for i, tt in enumerate(test_t):
+    total_std = np.sqrt(pred_std[i]**2 + obs_noise_std**2)
+    pred = pred_mean[i] % 360
+    lower = (pred_mean[i] - 1.96 * total_std) % 360
+    upper = (pred_mean[i] + 1.96 * total_std) % 360
+    
+    # Handle angle wrapping for the interval
+    # If lower > upper, the interval wraps around
+    if lower > upper:
+        # Swap and note wrapping
+        pass  # keep as is, the wrapping is handled by mod 360
+    
+    results.append({'t': int(tt), 'y_pred': round(pred, 4), 
+                    'y_lower': round(lower, 4), 'y_upper': round(upper, 4)})
+
+df = pd.DataFrame(results)
+print(df)
+print(f"\nRows: {len(df)}")
+EOF
 
 ```
 
@@ -2566,6 +4417,133 @@ Let me try a much more thorough approach. Let me understand the signal structure
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+obs_noise_std = np.std(beta_uw - beta_true_est)
+
+# Key insight: the dominant periods are not random
+# 1203, 902, 721.8, 601.5, 515.6, 451.1, 401, 360.9
+# These look like they follow a pattern: 
+# If we have a signal with TWO fundamental periods P1 and P2,
+# the FFT will show peaks at P1, P2, P1*P2/(P1+P2), P1*P2/(P1-P2), etc.
+# Or they could be harmonics of some base period
+
+# Let me check: are these related to 360.9?
+# 360.9 * 1 = 360.9
+# 360.9 * 2 = 721.8 (yes!)
+# 360.9 * 3 = 1082.7 (close to 1203? no)
+# 360.9 * 3.33 = 1203 (close!)
+
+# Or: 360.9, 401, 451.1, 515.6, 601.5, 721.8, 902, 1203
+# Differences: 40.1, 50.1, 64.5, 85.9, 120.3, 180.2, 301
+# These are increasing - not harmonics
+
+# Let me check beat frequencies
+# If f1 = 1/361 and f2 = 1/1083, then:
+# f1-f2 = 1/361 - 1/1083 = (1083-361)/(361*1083) = 722/(361*1083)
+# period = 361*1083/722 = 542 (not in our list)
+
+# Let me try: f1 = 1/361, f2 = 1/516
+# f1+f2 = 1/361 + 1/516 = (516+361)/(361*516) = 877/(361*516)
+# period = 361*516/877 = 212.5 (not dominant)
+
+# Actually, let me just look at the frequencies:
+freqs = [1/1203, 1/902, 1/721.8, 1/601.5, 1/515.6, 1/451.1, 1/401, 1/360.9]
+print("Frequencies (per day):", [f'{f:.6f}' for f in freqs])
+print("Ratios to f(360.9):", [f'{f/freqs[-1]:.4f}' for f in freqs])
+
+# Let me check if these are f = n*f0 for some base frequency
+# or f = f1 +/- n*delta
+# The frequencies are approximately: 0.000831, 0.001108, 0.001385, 0.001663, 0.001940, 0.002217, 0.002494, 0.002771
+# Differences: 0.000277, 0.000277, 0.000277, 0.000277, 0.000277, 0.000277, 0.000277
+# WOW! They're equally spaced with delta = 0.000277 = 1/3609!
+
+# So the frequencies are: f = n/3609 for n=1,2,...,8
+# Periods = 3609/n: 3609, 1804.5, 1203, 902.25, 721.8, 601.5, 515.57, 451.125, 401, 360.9
+# These are the Fourier harmonics of the training length!
+
+print("\nHarmonics of training length 3609:")
+for n in range(1, 10):
+    p = 3609/n
+    print(f"  n={n}: period={p:.1f} days")
+
+# So the signal IS a Fourier series on [0, 3609]!
+# The de-noised signal has significant power at harmonics 1-8 of the training length
+# This means the signal is approximately periodic with period 3609 days
+# And we have about 1 cycle of this fundamental period
+
+# For extrapolation: the signal repeats every 3609 days
+# So at t=3610, the signal should be approximately the same as at t=1
+# At t=3790, it should be approximately the same as at t=181
+# etc.
+
+# Let me verify this
+print("\nVerification: comparing de-noised signal at t and t+3609")
+for test_t_val in test_t:
+    offset_t = test_t_val - 3609
+    if offset_t >= 0 and offset_t < len(t):
+        idx = int(offset_t)
+        print(f"  t={test_t_val:.0f}: signal_at_t={beta_true_est[idx]:.2f}")
+
+# Actually, the fundamental period is 3609, so:
+# beta_true(t) ≈ beta_true(t mod 3609)
+# But we need to account for the linear trend
+# The linear trend means beta_true is NOT periodic with period 3609
+
+# However, we can model: beta_true(t) = linear(t) + periodic(t, period=3609)
+# Where linear(t) = a*t + b, and periodic repeats every 3609
+
+# Let's check: after removing the linear trend, is the residual periodic?
+lin_coeffs = np.polyfit(t, beta_true_est, 1)
+beta_detrended = beta_true_est - np.polyval(lin_coeffs, t)
+
+# Check periodicity: compare beta_detrended at t and t+3609
+print("\nDetrended signal periodicity check:")
+for i in range(min(100, len(t))):
+    t2 = t[i] + 3609
+    if t2 <= t[-1]:
+        idx2 = np.searchsorted(t, t2)
+        if idx2 < len(t):
+            diff = beta_detrended[i] - beta_detrended[idx2]
+            if i < 10:
+                print(f"  t={t[i]:.0f}: diff={diff:.4f}")
+
+# Check correlation
+n_overlap = sum(1 for ti in t if ti + 3609 <= t[-1])
+print(f"\nNumber of overlapping points: {n_overlap}")
+if n_overlap > 10:
+    vals1 = beta_detrended[:n_overlap]
+    # Find corresponding indices for t+3609
+    vals2 = np.array([beta_detrended[np.searchsorted(t, ti + 3609)] for ti in t[:n_overlap]])
+    corr = np.corrcoef(vals1, vals2)[0,1]
+    print(f"Correlation between detrended signal at t and t+3609: {corr:.4f}")
+    print(f"RMSE: {np.sqrt(np.mean((vals1-vals2)**2)):.4f}")
+
+EOF
 
 ```
 
@@ -2646,6 +4624,133 @@ This is a crucial discovery! The dominant frequencies are EXACTLY the harmonics 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+obs_noise_std = np.std(beta_uw - beta_true_est)
+
+# The signal structure:
+# beta_true(t) = linear(t) + periodic(t, period=P)
+# where P ≈ 3609 (the training length)
+
+# Step 1: Fit linear trend
+lin_coeffs = np.polyfit(t, beta_true_est, 1)
+beta_detrended = beta_true_est - np.polyval(lin_coeffs, t)
+
+# Step 2: Model the detrended signal as periodic with period P=3609
+# The periodic component is represented as a Fourier series on [0, 3609]
+P = 3609.0
+
+# For the periodic component, use harmonics 1 through n_max
+# The FFT showed significant power up to at least harmonic 8-9
+n_harmonics = 12  # Use enough to capture the signal well
+
+feats_per = [np.ones(len(t))]
+for n in range(1, n_harmonics+1):
+    feats_per.append(np.sin(2*np.pi*n*t/P))
+    feats_per.append(np.cos(2*np.pi*n*t/P))
+X_per = np.column_stack(feats_per)
+c_per = lstsq(X_per, beta_detrended, rcond=None)[0]
+beta_periodic_est = X_per @ c_per
+resid_per = beta_detrended - beta_periodic_est
+print(f"Periodic model residual std: {np.std(resid_per):.4f}")
+
+# Step 3: Predict for test times
+# The linear trend is straightforward
+test_trend = np.polyval(lin_coeffs, test_t)
+
+# The periodic component wraps: periodic(t) = periodic(t mod P)
+# But we need to be careful: the Fourier representation on [0, P] means
+# we evaluate sin/cos at (t mod P) ... but actually, since sin(2*pi*n*t/P) 
+# is already periodic with period P, we can just evaluate at t directly!
+
+test_per_feats = [np.ones(len(test_t))]
+for n in range(1, n_harmonics+1):
+    test_per_feats.append(np.sin(2*np.pi*n*test_t/P))
+    test_per_feats.append(np.cos(2*np.pi*n*test_t/P))
+X_test_per = np.column_stack(test_per_feats)
+test_periodic = X_test_per @ c_per
+
+# Total prediction
+test_pred_uw = test_trend + test_periodic
+test_pred_wrapped = test_pred_uw % 360
+
+# Step 4: Uncertainty estimation
+# The model has two sources of error:
+# 1. Observation noise: obs_noise_std ≈ 4.8 deg
+# 2. Model misspecification: residual from the periodic model ≈ 2.5 deg
+
+# For prediction intervals, we need to estimate the total uncertainty
+# Use the residual from the combined model (linear + periodic) as model uncertainty
+
+# Check: what's the residual of the full model?
+full_pred = np.polyval(lin_coeffs, t) + beta_periodic_est
+full_resid = beta_true_est - full_pred
+print(f"Full model residual std: {np.std(full_resid):.4f}")
+
+# Now, the periodic model fits ONE cycle. For extrapolation, the prediction
+# is equivalent to looking up the value at (t mod P) in the training period.
+# The uncertainty is:
+# - How well the Fourier model fits the one cycle we have (full_resid std)
+# - The assumption that the pattern repeats (unknown, but reasonable)
+# - Observation noise
+
+# For prediction intervals, use:
+# total_std = sqrt(obs_noise_std^2 + full_resid_std^2 + extrapolation_penalty^2)
+
+# The extrapolation penalty grows with how far we are from training data
+# But since the pattern is periodic, the penalty should be small
+# (we're just "looking up" the value at t mod P)
+
+# Conservative approach: just use obs_noise_std + full_resid_std
+total_std = np.sqrt(obs_noise_std**2 + np.std(full_resid)**2)
+print(f"Total prediction std: {total_std:.4f}")
+
+# Generate predictions
+print("\nPredictions:")
+results = []
+for i, tt in enumerate(test_t):
+    pred = test_pred_wrapped[i]
+    lower_uw = test_pred_uw[i] - 1.96 * total_std
+    upper_uw = test_pred_uw[i] + 1.96 * total_std
+    lower = lower_uw % 360
+    upper = upper_uw % 360
+    
+    results.append({'t': int(tt), 'y_pred': round(pred, 4), 
+                    'y_lower': round(lower, 4), 'y_upper': round(upper, 4)})
+    print(f"  t={tt:.0f}: pred={pred:.2f}, [{lower:.2f}, {upper:.2f}]")
+
+df = pd.DataFrame(results)
+print(f"\n{df}")
+print(f"Rows: {len(df)}")
+
+# Save
+df.to_csv('predictions.csv', index=False)
+print("\nSaved to predictions.csv")
+EOF
 
 ```
 
@@ -2847,6 +4952,170 @@ Now let me verify the model and check if I need to adjust the uncertainty.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+
+# De-noising residuals = observation noise estimate
+obs_resid = beta_uw - beta_true_est
+obs_noise_std = np.std(obs_resid)
+print(f"Observation noise std: {obs_noise_std:.4f}")
+
+# Linear + periodic model
+lin_coeffs = np.polyfit(t, beta_true_est, 1)
+beta_detrended = beta_true_est - np.polyval(lin_coeffs, t)
+
+P = 3609.0
+n_harmonics = 12
+feats_per = [np.ones(len(t))]
+for n in range(1, n_harmonics+1):
+    feats_per.append(np.sin(2*np.pi*n*t/P))
+    feats_per.append(np.cos(2*np.pi*n*t/P))
+X_per = np.column_stack(feats_per)
+c_per = lstsq(X_per, beta_detrended, rcond=None)[0]
+beta_periodic_est = X_per @ c_per
+resid_per = beta_detrended - beta_periodic_est
+model_resid_std = np.std(resid_per)
+print(f"Periodic model residual std: {model_resid_std:.4f}")
+
+# Check: is the model residual consistent with being pure observation noise?
+# If so, model_resid_std should be close to obs_noise_std * sqrt(1 - R²_de_noising)
+# Actually, the model residual includes both the observation noise AND any unmodeled signal
+# If model_resid_std ≈ obs_noise_std, the model captures all the signal
+
+# Let me check by looking at the ACF of the residuals
+r = resid_per - np.mean(resid_per)
+acf = np.correlate(r, r, 'full') / (np.var(r) * len(r))
+mid = len(acf)//2
+print(f"ACF of periodic model residuals at lags 1-5: {[round(acf[mid+i], 4) for i in range(1,6)]}")
+
+# If residuals are white noise (just observation noise), ACF at lag 1 should be ~0
+# If there's still signal, ACF will be positive
+
+# Now, for prediction intervals:
+# The total prediction std = sqrt(model_fitting_uncertainty² + observation_noise²)
+# 
+# For the periodic model:
+# - The model is fit to the de-noised signal
+# - The de-noising introduces some error (the de-noising model has its own residual)
+# - The periodic model has its own residual on the de-noised signal
+#
+# Let me estimate the total prediction error differently:
+# Use the RAW beta data and compute the residual of the full model (linear + periodic)
+# This gives the total prediction error including de-noising error
+
+full_model_pred = np.polyval(lin_coeffs, t) + beta_periodic_est
+raw_resid = beta_uw - full_model_pred
+total_resid_std = np.std(raw_resid)
+print(f"Total residual std (raw beta - full model): {total_resid_std:.4f}")
+
+# This total_resid_std includes:
+# 1. Observation noise
+# 2. De-noising error
+# 3. Periodic model approximation error
+
+# For prediction, use this total as the model uncertainty
+# Plus additional observation noise for the fresh measurement
+# So: total_pred_std = sqrt(total_resid_std² + obs_noise_std²)
+# Wait, no. The total_resid already includes the observation noise.
+# For a fresh measurement:
+# - The true beta at time t is: linear(t) + periodic(t) + error_from_de_noising
+# - A fresh measurement adds: observation noise
+# So: prediction_std = sqrt(total_resid_std² + obs_noise_std²)
+# But total_resid_std already includes obs_noise_std...
+# 
+# Let me think more carefully:
+# beta_raw(t) = beta_true(t) + eps_noise(t)
+# beta_true(t) = linear(t) + periodic(t) + model_error(t)
+# 
+# Our model predicts: linear(t) + periodic(t)
+# The error is: model_error(t) + eps_noise(t) for training data
+# For a fresh measurement: model_error(t) + eps_noise_new(t)
+# 
+# Since model_error and eps_noise are independent:
+# Var(fresh prediction error) = Var(model_error) + Var(eps_noise)
+# 
+# From the raw residual: total_resid² = Var(model_error) + Var(eps_noise)
+# So Var(model_error) = total_resid² - obs_noise²
+# And Var(fresh prediction error) = Var(model_error) + obs_noise² = total_resid²
+# 
+# Wait, that means the total residual std IS the prediction std!
+# Because: raw_resid = beta_raw - model_pred = (beta_true + noise) - model_pred
+#                     = model_error + noise
+# And fresh prediction: (beta_true_new + noise_new) - model_pred = model_error + noise_new
+# Since model_error and noise are i.i.d.: std(fresh) = std(raw_resid)
+
+print(f"\nPrediction std for fresh measurement: {total_resid_std:.4f}")
+
+# But wait, I should also account for model fitting uncertainty
+# The linear + periodic model coefficients have uncertainty
+# This adds to the prediction uncertainty
+
+# Let me compute the coefficient uncertainty
+n_params = len(lin_coeffs) + len(c_per)
+X_full = np.column_stack([np.ones(len(t)), t] + 
+                          [np.sin(2*np.pi*n*t/P) for n in range(1, n_harmonics+1)] +
+                          [np.cos(2*np.pi*n*t/P) for n in range(1, n_harmonics+1)])
+c_full = np.concatenate([[lin_coeffs[1]], [lin_coeffs[0]], c_per[1:]])  # intercept first
+# Actually, let me refit properly
+X_full2 = np.column_stack([np.ones(len(t)), t] + 
+                           [np.sin(2*np.pi*n*t/P) for n in range(1, n_harmonics+1)] +
+                           [np.cos(2*np.pi*n*t/P) for n in range(1, n_harmonics+1)])
+y_full = beta_uw  # Use raw data
+c_full2 = lstsq(X_full2, y_full, rcond=None)[0]
+resid_full2 = y_full - X_full2 @ c_full2
+sigma2_full = np.sum(resid_full2**2) / (len(t) - len(c_full2))
+
+# Predict for test
+X_test_full = np.column_stack([np.ones(len(test_t)), test_t] +
+                               [np.sin(2*np.pi*n*test_t/P) for n in range(1, n_harmonics+1)] +
+                               [np.cos(2*np.pi*n*test_t/P) for n in range(1, n_harmonics+1)])
+
+pred_test = X_test_full @ c_full2
+
+# Coefficient uncertainty
+XtX_inv = np.linalg.inv(X_full2.T @ X_full2)
+pred_var_coeff = np.array([X_test_full[i] @ XtX_inv @ X_test_full[i] for i in range(len(test_t))]) * sigma2_full
+
+# Total prediction variance
+total_pred_var = pred_var_coeff + sigma2_full  # coefficient uncertainty + residual noise
+total_pred_std = np.sqrt(total_pred_var)
+
+print(f"\nDirect fit to raw beta (no de-noising step):")
+print(f"Residual std: {np.std(resid_full2):.4f}")
+for i, tt in enumerate(test_t):
+    pred_wrapped = pred_test[i] % 360
+    lower = (pred_test[i] - 1.96 * total_pred_std[i]) % 360
+    upper = (pred_test[i] + 1.96 * total_pred_std[i]) % 360
+    print(f"  t={tt:.0f}: pred={pred_wrapped:.2f}, "
+          f"coeff_std={np.sqrt(pred_var_coeff[i]):.2f}, "
+          f"total_std={total_pred_std[i]:.2f}, "
+          f"[{lower:.2f}, {upper:.2f}]")
+
+EOF
 
 ```
 
@@ -3028,6 +5297,48 @@ Let me build the final model with enough harmonics and proper uncertainty.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+# Fit linear + periodic model directly to raw beta
+P = 3609.0  # Fundamental period = training length
+
+# Try different numbers of harmonics
+for n_harm in [5, 10, 15, 20, 30, 50, 100]:
+    feats = [np.ones(len(t)), t]
+    for n in range(1, n_harm+1):
+        feats.append(np.sin(2*np.pi*n*t/P))
+        feats.append(np.cos(2*np.pi*n*t/P))
+    X = np.column_stack(feats)
+    c = lstsq(X, beta, rcond=None)[0]
+    resid = beta - X @ c
+    n_params = len(c)
+    
+    # Check ACF
+    r = resid - np.mean(resid)
+    acf_val = np.correlate(r, r, 'full') / (np.var(r) * len(r))
+    mid = len(acf_val)//2
+    
+    # Prediction at t=3610
+    test_feats = [np.ones(len(test_t)), test_t]
+    for n in range(1, n_harm+1):
+        test_feats.append(np.sin(2*np.pi*n*test_t/P))
+        test_feats.append(np.cos(2*np.pi*n*test_t/P))
+    X_test = np.column_stack(test_feats)
+    pred_3610 = (X_test @ c)[0] % 360
+    
+    print(f"n_harm={n_harm:3d}: resid_std={np.std(resid):.4f}, "
+          f"ACF(1)={acf_val[mid+1]:.4f}, n_params={n_params}, "
+          f"pred@3610={pred_3610:.1f}")
+
+EOF
 
 ```
 
@@ -3246,6 +5557,110 @@ Let me fix this and use unwrapped beta.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+P = 3609.0
+
+# Fit linear + periodic to UNWRAPPED beta directly
+# Try different numbers of harmonics
+best_n = None
+best_bic = np.inf
+
+for n_harm in [5, 10, 15, 20, 25, 30]:
+    feats = [np.ones(len(t)), t]
+    for n in range(1, n_harm+1):
+        feats.append(np.sin(2*np.pi*n*t/P))
+        feats.append(np.cos(2*np.pi*n*t/P))
+    X = np.column_stack(feats)
+    c = lstsq(X, beta_uw, rcond=None)[0]
+    resid = beta_uw - X @ c
+    n_params = len(c)
+    rss = np.sum(resid**2)
+    bic = len(t) * np.log(rss/len(t)) + n_params * np.log(len(t))
+    
+    # Check ACF
+    r = resid - np.mean(resid)
+    acf_arr = np.correlate(r, r, 'full') / (np.var(r) * len(r))
+    mid = len(acf_arr)//2
+    
+    print(f"n_harm={n_harm:3d}: resid_std={np.std(resid):.4f}, "
+          f"ACF(1)={acf_arr[mid+1]:.4f}, BIC={bic:.1f}, n_params={n_params}")
+    
+    if bic < best_bic:
+        best_bic = bic
+        best_n = n_harm
+
+print(f"\nBest n_harm by BIC: {best_n}")
+
+# Now use the best model
+n_harm = best_n
+feats = [np.ones(len(t)), t]
+for n in range(1, n_harm+1):
+    feats.append(np.sin(2*np.pi*n*t/P))
+    feats.append(np.cos(2*np.pi*n*t/P))
+X = np.column_stack(feats)
+c = lstsq(X, beta_uw, rcond=None)[0]
+resid = beta_uw - X @ c
+resid_std = np.std(resid)
+
+# Observation noise estimate (from de-noising step)
+# Use the residual of the linear + periodic model as the total noise
+# This includes both observation noise and any unmodeled signal
+
+# For prediction:
+test_feats = [np.ones(len(test_t)), test_t]
+for n in range(1, n_harm+1):
+    test_feats.append(np.sin(2*np.pi*n*test_t/P))
+    test_feats.append(np.cos(2*np.pi*n*test_t/P))
+X_test = np.column_stack(test_feats)
+pred_uw = X_test @ c
+
+# Uncertainty estimation
+n_params = len(c)
+sigma2 = np.sum(resid**2) / (len(t) - n_params)
+XtX_inv = np.linalg.inv(X.T @ X)
+pred_var_coeff = np.array([X_test[i] @ XtX_inv @ X_test[i] for i in range(len(test_t))]) * sigma2
+
+# Total prediction variance = coefficient uncertainty + residual variance
+# The residual variance includes both observation noise and unmodeled signal
+total_pred_var = pred_var_coeff + sigma2
+total_pred_std = np.sqrt(total_pred_var)
+
+print(f"\nModel: linear + {n_harm} harmonics of period {P}")
+print(f"Residual std: {resid_std:.4f}")
+print(f"Sigma (for prediction): {np.sqrt(sigma2):.4f}")
+
+print(f"\nPredictions:")
+results = []
+for i, tt in enumerate(test_t):
+    pred = pred_uw[i] % 360
+    lower = (pred_uw[i] - 1.96 * total_pred_std[i]) % 360
+    upper = (pred_uw[i] + 1.96 * total_pred_std[i]) % 360
+    
+    results.append({'t': int(tt), 'y_pred': round(pred, 4), 
+                    'y_lower': round(lower, 4), 'y_upper': round(upper, 4)})
+    print(f"  t={tt:.0f}: pred={pred:.2f}, total_std={total_pred_std[i]:.2f}, [{lower:.2f}, {upper:.2f}]")
+
+df = pd.DataFrame(results)
+print(f"\n{df}")
+print(f"Rows: {len(df)}")
+
+# Save
+df.to_csv('predictions.csv', index=False)
+print("\nSaved to predictions.csv")
+EOF
 
 ```
 
@@ -3392,6 +5807,109 @@ Let me use n_harm=10 and compute proper prediction intervals that include observ
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# Step 1: Estimate observation noise using alpha-based de-noising
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+obs_noise_std = np.std(beta_uw - beta_true_est)
+print(f"Estimated observation noise std: {obs_noise_std:.4f}")
+
+# Step 2: Fit linear + periodic model to unwrapped beta
+P = 3609.0
+n_harm = 10  # This gives residual close to observation noise
+
+feats = [np.ones(len(t)), t]
+for n in range(1, n_harm+1):
+    feats.append(np.sin(2*np.pi*n*t/P))
+    feats.append(np.cos(2*np.pi*n*t/P))
+X = np.column_stack(feats)
+c = lstsq(X, beta_uw, rcond=None)[0]
+resid = beta_uw - X @ c
+model_resid_std = np.std(resid)
+print(f"Model residual std: {model_resid_std:.4f}")
+
+# Step 3: Compute prediction uncertainty
+# Use observation noise variance for sigma2 (not the residual variance, 
+# because the residual includes signal that the model captures)
+# Actually, the right approach is:
+# - The model fits the signal well
+# - The residual is observation noise
+# - For prediction: uncertainty = coefficient uncertainty + observation noise
+
+# Use the residual variance as sigma2 for coefficient uncertainty
+# This is appropriate because the model has the right complexity
+n_params = len(c)
+sigma2 = np.sum(resid**2) / (len(t) - n_params)
+XtX_inv = np.linalg.inv(X.T @ X)
+
+# Predict for test
+test_feats = [np.ones(len(test_t)), test_t]
+for n in range(1, n_harm+1):
+    test_feats.append(np.sin(2*np.pi*n*test_t/P))
+    test_feats.append(np.cos(2*np.pi*n*test_t/P))
+X_test = np.column_stack(test_feats)
+pred_uw = X_test @ c
+
+# Coefficient uncertainty
+pred_var_coeff = np.array([X_test[i] @ XtX_inv @ X_test[i] for i in range(len(test_t))]) * sigma2
+
+# Total prediction variance for a NEW observation:
+# = coefficient uncertainty + observation noise variance
+# (The model predicts the true signal; a new observation adds noise)
+total_pred_var = pred_var_coeff + obs_noise_std**2
+total_pred_std = np.sqrt(total_pred_var)
+
+print(f"\nModel: linear + {n_harm} harmonics of period {P}")
+print(f"Observation noise std: {obs_noise_std:.4f}")
+print(f"Model residual std: {model_resid_std:.4f}")
+print(f"Sigma for coefficient uncertainty: {np.sqrt(sigma2):.4f}")
+
+# Step 4: Generate predictions
+print(f"\nPredictions:")
+results = []
+for i, tt in enumerate(test_t):
+    pred = pred_uw[i] % 360
+    lower = (pred_uw[i] - 1.96 * total_pred_std[i]) % 360
+    upper = (pred_uw[i] + 1.96 * total_pred_std[i]) % 360
+    
+    results.append({'t': int(tt), 'y_pred': round(pred, 4), 
+                    'y_lower': round(lower, 4), 'y_upper': round(upper, 4)})
+    print(f"  t={tt:.0f}: pred={pred:.2f}, "
+          f"coeff_std={np.sqrt(pred_var_coeff[i]):.2f}, "
+          f"obs_std={obs_noise_std:.2f}, "
+          f"total_std={total_pred_std[i]:.2f}, "
+          f"[{lower:.2f}, {upper:.2f}]")
+
+df = pd.DataFrame(results)
+print(f"\n{df}")
+print(f"Rows: {len(df)}")
+
+# Save
+df.to_csv('predictions.csv', index=False)
+print("\nSaved to predictions.csv")
+EOF
 
 ```
 
@@ -3521,6 +6039,105 @@ Let me verify the model and also check if we need more harmonics by examining th
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np
+import pandas as pd
+from numpy.linalg import lstsq
+
+train = pd.read_csv('data/train.csv')
+t = train['t'].values.astype(float)
+beta = train['beta'].values.astype(float)
+alpha = train['alpha'].values.astype(float)
+test_t = pd.read_csv('data/test.csv')['t'].values.astype(float)
+
+beta_uw = np.rad2deg(np.unwrap(np.deg2rad(beta)))
+alpha_uw = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+# De-noise to get observation noise estimate
+periods_t_dn = [1203, 902, 721, 601.5, 515.6, 451, 401, 361, 300, 240, 180, 120]
+feats_dn = [np.ones(len(t)), alpha_uw]
+for p in periods_t_dn:
+    feats_dn.append(np.sin(2*np.pi*t/p))
+    feats_dn.append(np.cos(2*np.pi*t/p))
+for p in [361, 601.5]:
+    feats_dn.append(np.sin(2*np.pi*t/p) * alpha_uw)
+    feats_dn.append(np.cos(2*np.pi*t/p) * alpha_uw)
+X_dn = np.column_stack(feats_dn)
+c_dn = lstsq(X_dn, beta_uw, rcond=None)[0]
+beta_true_est = X_dn @ c_dn
+obs_noise_std = np.std(beta_uw - beta_true_est)
+
+P = 3609.0
+
+# Try different harmonics and check residuals
+for n_harm in [5, 8, 10, 15, 20]:
+    feats = [np.ones(len(t)), t]
+    for n in range(1, n_harm+1):
+        feats.append(np.sin(2*np.pi*n*t/P))
+        feats.append(np.cos(2*np.pi*n*t/P))
+    X = np.column_stack(feats)
+    c = lstsq(X, beta_uw, rcond=None)[0]
+    resid = beta_uw - X @ c
+    
+    # ACF
+    r = resid - np.mean(resid)
+    acf = np.correlate(r, r, 'full') / (np.var(r) * len(r))
+    mid = len(acf)//2
+    
+    print(f"n_harm={n_harm:2d}: resid_std={np.std(resid):.4f}, "
+          f"ACF(1)={acf[mid+1]:.4f}, ACF(5)={acf[mid+5]:.4f}")
+
+# The key question: is there remaining structure in the residuals?
+# Use n_harm=15 as a reasonable choice
+n_harm = 15
+feats = [np.ones(len(t)), t]
+for n in range(1, n_harm+1):
+    feats.append(np.sin(2*np.pi*n*t/P))
+    feats.append(np.cos(2*np.pi*n*t/P))
+X = np.column_stack(feats)
+c = lstsq(X, beta_uw, rcond=None)[0]
+resid = beta_uw - X @ c
+
+# Check if residuals have structure by looking at chunks
+chunk_size = 200
+for i in range(0, len(t), chunk_size):
+    end = min(i+chunk_size, len(t))
+    chunk_resid = resid[i:end]
+    print(f"  t={t[i]:.0f}-{t[end-1]:.0f}: mean={np.mean(chunk_resid):.2f}, std={np.std(chunk_resid):.2f}")
+
+# The prediction with n_harm=15
+test_feats = [np.ones(len(test_t)), test_t]
+for n in range(1, n_harm+1):
+    test_feats.append(np.sin(2*np.pi*n*test_t/P))
+    test_feats.append(np.cos(2*np.pi*n*test_t/P))
+X_test = np.column_stack(test_feats)
+pred_uw = X_test @ c
+
+# Uncertainty
+n_params = len(c)
+sigma2 = np.sum(resid**2) / (len(t) - n_params)
+XtX_inv = np.linalg.inv(X.T @ X)
+pred_var_coeff = np.array([X_test[i] @ XtX_inv @ X_test[i] for i in range(len(test_t))]) * sigma2
+total_pred_var = pred_var_coeff + obs_noise_std**2
+total_pred_std = np.sqrt(total_pred_var)
+
+print(f"\nFinal model (n_harm={n_harm}):")
+print(f"Observation noise std: {obs_noise_std:.4f}")
+print(f"Model residual std: {np.std(resid):.4f}")
+
+results = []
+for i, tt in enumerate(test_t):
+    pred = pred_uw[i] % 360
+    lower = (pred_uw[i] - 1.96 * total_pred_std[i]) % 360
+    upper = (pred_uw[i] + 1.96 * total_pred_std[i]) % 360
+    results.append({'t': int(tt), 'y_pred': round(pred, 4), 
+                    'y_lower': round(lower, 4), 'y_upper': round(upper, 4)})
+
+df = pd.DataFrame(results)
+print(f"\n{df}")
+df.to_csv('predictions.csv', index=False)
+print(f"\nSaved to predictions.csv ({len(df)} rows)")
+EOF
 
 ```
 
@@ -3591,7 +6208,7 @@ Let me verify the file.
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && wc -l predictions.csv && head -1 data/test.csv && echo "---" && wc -l data/test.csv
 ```
 
 ## [73] tool
@@ -3631,6 +6248,19 @@ The file looks correct - 10 predictions matching 10 test inputs. Let me verify t
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+test = pd.read_csv('data/test.csv')
+pred = pd.read_csv('predictions.csv')
+print('Test t values:', test['t'].tolist())
+print('Pred t values:', pred['t'].tolist())
+print('Match:', (test['t'].values == pred['t'].values).all())
+print()
+# Also verify angles are in [0,360)
+print('All y_pred in [0,360):', all(0 <= v < 360 for v in pred['y_pred']))
+print('All y_lower in [0,360):', all(0 <= v < 360 for v in pred['y_lower']))
+print('All y_upper in [0,360):', all(0 <= v < 360 for v in pred['y_upper']))
+"
 
 ```
 
@@ -3678,6 +6308,18 @@ Let me verify the final predictions are reasonable by looking at them in context
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+pred = pd.read_csv('predictions.csv')
+print('Final predictions:')
+for _, row in pred.iterrows():
+    # Check if interval wraps around 0/360
+    lower = row['y_lower']
+    upper = row['y_upper']
+    pred_val = row['y_pred']
+    interval_width = (upper - lower) % 360
+    print(f't={int(row[\"t\"]):5d}: pred={pred_val:7.2f}, [{lower:7.2f}, {upper:7.2f}], width={interval_width:.2f}')
+"
 
 ```
 

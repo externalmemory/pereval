@@ -86,7 +86,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -111,7 +111,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 22:19 ..
 **tool call: bash**
 
 ```
-
+cat data/history.csv
 ```
 
 ## [5] tool
@@ -347,7 +347,7 @@ C,80,5.63287071912171,0.06146920855161298,0.0277,0.23293421759855892,0.0924
 **tool call: bash**
 
 ```
-
+cat data/forecast.csv
 ```
 
 ## [7] tool
@@ -374,7 +374,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+cat data/pools.csv
 ```
 
 ## [9] tool
@@ -405,7 +405,7 @@ C4,C,1143925.0,40
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [11] tool
@@ -2005,7 +2005,7 @@ Portfolio loss rate: 0.121959
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [37] tool

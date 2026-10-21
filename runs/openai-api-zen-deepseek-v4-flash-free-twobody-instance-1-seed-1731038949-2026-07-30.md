@@ -66,19 +66,19 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd /home/user && cat data/train.csv | head -20
 ```
 
 **tool call: bash**
 
 ```
-
+cd /home/user && cat data/test.csv | head -20
 ```
 
 **tool call: bash**
 
 ```
-
+cd /home/user && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -110,7 +110,7 @@ bash: line 1: cd: /home/user: No such file or directory
 **tool call: bash**
 
 ```
-
+pwd && ls -la
 ```
 
 ## [7] tool
@@ -133,7 +133,7 @@ drwxr-xr-x 2 root root 4096 Jul 30 17:17 data
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -la data/
 ```
 
 ## [9] tool
@@ -156,13 +156,13 @@ drwxr-xr-x 1 root root  4096 Jul 30 17:17 ..
 **tool call: bash**
 
 ```
-
+cd /workspace && head -10 data/train.csv && echo "---" && tail -10 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+cd /workspace && cat data/test.csv
 ```
 
 ## [11] tool
@@ -258,7 +258,7 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "import pandas; import numpy; import sklearn; import statsmodels; import scipy; print('ok')"
 ```
 
 ## [16] tool
@@ -3502,7 +3502,84 @@ Point 9: pred=201.11, interval=[31.27,10.96], coverage=0.9497
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from scipy.stats import norm
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+alpha = train['alpha'].values
+t_train = train['t'].values
+
+# Unwrap
+diffs = np.diff(alpha)
+diffs_corrected = diffs.copy()
+diffs_corrected[diffs_corrected < -180] += 360
+alpha_unwrapped = np.zeros_like(alpha)
+alpha_unwrapped[0] = alpha[0]
+for i in range(1, len(alpha)):
+    alpha_unwrapped[i] = alpha_unwrapped[i-1] + diffs_corrected[i-1]
+
+# Fit ARIMA(1,1,1) with drift
+model = ARIMA(alpha_unwrapped, order=(1,1,1), trend='t')
+fit = model.fit()
+
+last_t = t_train[-1]
+test_t = test['t'].values
+max_step = int(test_t[-1] - last_t)
+forecast = fit.get_forecast(steps=max_step)
+pred_mean_all = forecast.predicted_mean
+pred_se_all = forecast.se_mean
+
+steps_needed = test_t - last_t
+indices = steps_needed - 1
+pred_mean = pred_mean_all[indices]
+pred_se = pred_se_all[indices]
+
+# Function to compute shortest interval
+def prob_within_r(r, sigma, K=20):
+    total = 0.0
+    for k in range(-K, K+1):
+        total += norm.cdf((k*360 + r) / sigma) - norm.cdf((k*360 - r) / sigma)
+    return total
+
+def find_r(sigma, coverage=0.95, K=20):
+    lo = 0.0
+    hi = 180.0
+    for _ in range(50):
+        mid = (lo + hi) / 2
+        p = prob_within_r(mid, sigma, K)
+        if p < coverage:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+def wrapped_interval(mu, sigma):
+    r = find_r(sigma)
+    center = mu % 360
+    lower = (center - r) % 360
+    upper = (center + r) % 360
+    return lower, upper
+
+# Compute intervals
+y_pred = pred_mean % 360
+y_lower = np.zeros(len(pred_mean))
+y_upper = np.zeros(len(pred_mean))
+for i in range(len(pred_mean)):
+    lo, hi = wrapped_interval(pred_mean[i], pred_se[i])
+    y_lower[i] = lo
+    y_upper[i] = hi
+
+# Write predictions.csv
+out = pd.DataFrame({'t': test_t, 'y_pred': y_pred, 'y_lower': y_lower, 'y_upper': y_upper})
+out.to_csv('predictions.csv', index=False)
+print('predictions.csv written')
+print(out)
+"
 ```
 
 ## [116] tool
@@ -3553,7 +3630,88 @@ predictions.csv written
 **tool call: bash**
 
 ```
+cd /workspace && cat > generate_predictions.py << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from scipy.stats import norm
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+alpha = train['alpha'].values
+t_train = train['t'].values
+
+# Unwrap alpha by detecting large negative jumps (wrapping)
+diffs = np.diff(alpha)
+diffs_corrected = diffs.copy()
+diffs_corrected[diffs_corrected < -180] += 360  # unwrap by adding 360 where angle drops >180
+alpha_unwrapped = np.zeros_like(alpha)
+alpha_unwrapped[0] = alpha[0]
+for i in range(1, len(alpha)):
+    alpha_unwrapped[i] = alpha_unwrapped[i-1] + diffs_corrected[i-1]
+
+# Fit ARIMA(1,1,1) with a linear trend (which becomes drift after differencing)
+model = ARIMA(alpha_unwrapped, order=(1,1,1), trend='t')
+fit = model.fit()
+
+# Determine forecast steps needed for test points
+last_t = t_train[-1]                     # 2266
+test_t = test['t'].values
+max_step = int(test_t[-1] - last_t)      # furthest step ahead
+forecast = fit.get_forecast(steps=max_step)
+pred_mean_all = forecast.predicted_mean
+pred_se_all = forecast.se_mean
+
+# Map test times to forecast indices (step 1 -> t=2267, index 0)
+steps_needed = test_t - last_t
+indices = steps_needed - 1
+pred_mean = pred_mean_all[indices]
+pred_se = pred_se_all[indices]
+
+# ---------- Build 95% prediction interval on the circle ----------
+def prob_within_r(r, sigma, K=20):
+    """Probability that circular distance from mean is ≤ r (degrees)."""
+    total = 0.0
+    for k in range(-K, K+1):
+        total += norm.cdf((k*360 + r) / sigma) - norm.cdf((k*360 - r) / sigma)
+    return total
+
+def find_r(sigma, coverage=0.95, K=20):
+    """Bisection to find r such that prob_within_r(r, sigma) = coverage."""
+    lo, hi = 0.0, 180.0
+    for _ in range(50):
+        mid = (lo + hi) / 2.0
+        if prob_within_r(mid, sigma, K) < coverage:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+def wrapped_interval(mu, sigma):
+    """Return (lower, upper) of the shortest 95% arc centred at mu mod 360."""
+    r = find_r(sigma)
+    centre = mu % 360.0
+    lower = (centre - r) % 360.0
+    upper = (centre + r) % 360.0
+    return lower, upper
+
+# Compute point estimates and intervals
+y_pred = pred_mean % 360.0
+y_lower = np.empty(len(pred_mean))
+y_upper = np.empty(len(pred_mean))
+for i in range(len(pred_mean)):
+    lo, hi = wrapped_interval(pred_mean[i], pred_se[i])
+    y_lower[i] = lo
+    y_upper[i] = hi
+
+# Write output
+out = pd.DataFrame({'t': test_t, 'y_pred': y_pred, 'y_lower': y_lower, 'y_upper': y_upper})
+out.to_csv('predictions.csv', index=False)
+print('predictions.csv created successfully')
+print(out)
+EOF
+python generate_predictions.py
 ```
 
 ## [118] tool
@@ -3626,7 +3784,13 @@ predictions.csv created successfully
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print(df.shape)
+print(df.head())
+print(df.dtypes)
+"
 ```
 
 ## [120] tool
@@ -4165,7 +4329,88 @@ Order (4, 1, 4): AIC=1707.56, BIC=1764.82
 **tool call: bash**
 
 ```
+cd /workspace && cat > generate_predictions.py << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from scipy.stats import norm
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+alpha = train['alpha'].values
+t_train = train['t'].values
+
+# Unwrap alpha by detecting large negative jumps (wrapping)
+diffs = np.diff(alpha)
+diffs_corrected = diffs.copy()
+diffs_corrected[diffs_corrected < -180] += 360  # unwrap by adding 360 where angle drops >180
+alpha_unwrapped = np.zeros_like(alpha)
+alpha_unwrapped[0] = alpha[0]
+for i in range(1, len(alpha)):
+    alpha_unwrapped[i] = alpha_unwrapped[i-1] + diffs_corrected[i-1]
+
+# Fit ARIMA(2,1,2) with a linear trend (which becomes drift after differencing)
+model = ARIMA(alpha_unwrapped, order=(2,1,2), trend='t')
+fit = model.fit()
+
+# Determine forecast steps needed for test points
+last_t = t_train[-1]                     # 2266
+test_t = test['t'].values
+max_step = int(test_t[-1] - last_t)      # furthest step ahead
+forecast = fit.get_forecast(steps=max_step)
+pred_mean_all = forecast.predicted_mean
+pred_se_all = forecast.se_mean
+
+# Map test times to forecast indices (step 1 -> t=2267, index 0)
+steps_needed = test_t - last_t
+indices = steps_needed - 1
+pred_mean = pred_mean_all[indices]
+pred_se = pred_se_all[indices]
+
+# ---------- Build 95% prediction interval on the circle ----------
+def prob_within_r(r, sigma, K=20):
+    """Probability that circular distance from mean is ≤ r (degrees)."""
+    total = 0.0
+    for k in range(-K, K+1):
+        total += norm.cdf((k*360 + r) / sigma) - norm.cdf((k*360 - r) / sigma)
+    return total
+
+def find_r(sigma, coverage=0.95, K=20):
+    """Bisection to find r such that prob_within_r(r, sigma) = coverage."""
+    lo, hi = 0.0, 180.0
+    for _ in range(50):
+        mid = (lo + hi) / 2.0
+        if prob_within_r(mid, sigma, K) < coverage:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+def wrapped_interval(mu, sigma):
+    """Return (lower, upper) of the shortest 95% arc centred at mu mod 360."""
+    r = find_r(sigma)
+    centre = mu % 360.0
+    lower = (centre - r) % 360.0
+    upper = (centre + r) % 360.0
+    return lower, upper
+
+# Compute point estimates and intervals
+y_pred = pred_mean % 360.0
+y_lower = np.empty(len(pred_mean))
+y_upper = np.empty(len(pred_mean))
+for i in range(len(pred_mean)):
+    lo, hi = wrapped_interval(pred_mean[i], pred_se[i])
+    y_lower[i] = lo
+    y_upper[i] = hi
+
+# Write output
+out = pd.DataFrame({'t': test_t, 'y_pred': y_pred, 'y_lower': y_lower, 'y_upper': y_upper})
+out.to_csv('predictions.csv', index=False)
+print('predictions.csv created successfully')
+print(out)
+EOF
+python generate_predictions.py
 ```
 
 ## [136] tool
@@ -4200,6 +4445,18 @@ predictions.csv created successfully
 **tool call: bash**
 
 ```
+cd /workspace && python -c "
+import pandas as pd
+import numpy as np
+from scipy.stats import norm
+
+# Read the predictions
+out = pd.read_csv('predictions.csv')
+print(out)
+
+# Need to recompute pred_mean and pred_se using the same model to check coverage
+# Let's just quickly check coverage using a separate script
+"
 
 ```
 
@@ -4325,7 +4582,7 @@ interval length: 339.41162943273565
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv
 ```
 
 ## [142] tool
@@ -4368,7 +4625,7 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
-
+cd /workspace && python generate_predictions.py && md5sum predictions.csv
 ```
 
 ## [144] tool
@@ -4404,7 +4661,7 @@ predictions.csv created successfully
 **tool call: bash**
 
 ```
-
+cd /workspace && python generate_predictions.py 2>/dev/null && md5sum predictions.csv
 ```
 
 ## [146] tool

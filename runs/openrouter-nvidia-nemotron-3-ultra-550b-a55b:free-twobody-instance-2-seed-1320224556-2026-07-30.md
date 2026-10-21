@@ -52,7 +52,7 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && head -20 data/test.csv
 ```
 
 ## [3] tool
@@ -5081,7 +5081,7 @@ Columns: ['t', 'y_pred', 'y_lower', 'y_upper']
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [57] tool
@@ -5388,7 +5388,7 @@ Verification:
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [63] tool

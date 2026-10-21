@@ -55,7 +55,7 @@ Let me start by examining the data files to understand their structure and
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv && echo "---" && head -10 data/test.csv && echo "---" && wc -l data/test.csv
 ```
 
 ## [3] tool
@@ -110,7 +110,17 @@ t
 **tool call: bash**
 
 ```
-
+tail -5 data/train.csv && echo "---" && cat data/test.csv && echo "---" && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print('t range:', df['t'].min(), '-', df['t'].max())
+print('alpha range:', df['alpha'].min(), '-', df['alpha'].max())
+print('beta range:', df['beta'].min(), '-', df['beta'].max())
+print('alpha diff std:', df['alpha'].diff().std())
+print('beta diff std:', df['beta'].diff().std())
+print('alpha mean diff:', df['alpha'].diff().mean())
+print('beta mean diff:', df['beta'].diff().mean())
+"
 ```
 
 ## [5] tool
@@ -158,7 +168,50 @@ beta mean diff: 0.017289594398841115
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+# Look at the relationship between alpha and beta
+# Compute the difference beta - alpha (handling wrap-around)
+diff = df['beta'] - df['alpha']
+# Normalize to [-180, 180]
+diff = (diff + 180) % 360 - 180
+print('beta - alpha (wrapped) stats:')
+print('mean:', diff.mean())
+print('std:', diff.std())
+print('min:', diff.min())
+print('max:', diff.max())
 
+# Check if alpha and beta are correlated
+from scipy import stats
+r, p = stats.pearsonr(df['alpha'], df['beta'])
+print(f'Pearson r: {r:.4f}, p: {p:.2e}')
+
+# Look at alpha values over time - is there a periodic pattern?
+# Compute alpha differences
+alpha_diff = df['alpha'].diff().dropna()
+print(f'Alpha diff: mean={alpha_diff.mean():.4f}, std={alpha_diff.std():.4f}')
+
+# Check for periodicity in alpha
+from scipy.fft import fft
+alpha_vals = df['alpha'].values
+n = len(alpha_vals)
+# Remove linear trend first
+from numpy.polynomial import polynomial as P
+coeffs = np.polyfit(df['t'].values, alpha_vals, 1)
+trend = np.polyval(coeffs, df['t'].values)
+alpha_detrended = alpha_vals - trend
+fft_vals = np.abs(fft(alpha_detrended))
+# Find dominant frequencies
+freqs = np.fft.fftfreq(n, d=1)
+# Only look at positive frequencies
+pos_mask = freqs > 0
+top_idx = np.argsort(fft_vals[pos_mask])[-10:]
+print('Top 10 frequencies (cycles/day):')
+for i in top_idx:
+    print(f'  freq={freqs[pos_mask][i]:.6f}, power={fft_vals[pos_mask][i]:.2f}')
+"
 ```
 
 ## [7] tool
@@ -203,7 +256,56 @@ Top 10 frequencies (cycles/day):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
 
+# Let's look at the relationship between alpha and beta more carefully
+# Maybe beta = alpha + some function of time, or they're both functions of some underlying state
+
+# Check if beta - alpha has a pattern
+diff = df['beta'] - df['alpha']
+diff_wrapped = (diff + 180) % 360 - 180
+
+# Plot-like analysis: look at diff over time
+# Split into segments
+for start in range(0, 4143, 500):
+    end = min(start + 500, 4143)
+    seg = df.iloc[start:end]
+    d = (seg['beta'] - seg['alpha'] + 180) % 360 - 180
+    print(f't={start}-{end}: diff mean={d.mean():.2f}, std={d.std():.2f}')
+
+# Also check: maybe alpha and beta are both sinusoidal functions of time with different phases
+# Let's try fitting alpha as a function of t
+from scipy.optimize import curve_fit
+
+# Try a simple sinusoidal model for alpha
+def alpha_model(t, A, omega, phi, offset):
+    return offset + A * np.sin(omega * t + phi)
+
+try:
+    popt, pcov = curve_fit(alpha_model, df['t'].values, df['alpha'].values, 
+                           p0=[100, 0.01, 0, 180], maxfev=10000)
+    print(f'Alpha model: A={popt[0]:.2f}, omega={popt[1]:.6f}, phi={popt[2]:.4f}, offset={popt[3]:.2f}')
+    alpha_pred = alpha_model(df['t'].values, *popt)
+    print(f'Alpha fit residual std: {np.std(df[\"alpha\"].values - alpha_pred):.4f}')
+except Exception as e:
+    print(f'Alpha fit failed: {e}')
+
+# Try same for beta
+def beta_model(t, A, omega, phi, offset):
+    return offset + A * np.sin(omega * t + phi)
+
+try:
+    popt, pcov = curve_fit(beta_model, df['t'].values, df['beta'].values, 
+                           p0=[100, 0.01, 0, 180], maxfev=10000)
+    print(f'Beta model: A={popt[0]:.2f}, omega={popt[1]:.6f}, phi={popt[2]:.4f}, offset={popt[3]:.2f}')
+    beta_pred = beta_model(df['t'].values, *popt)
+    print(f'Beta fit residual std: {np.std(df[\"beta\"].values - beta_pred):.4f}')
+except Exception as e:
+    print(f'Beta fit failed: {e}')
+"
 ```
 
 ## [9] tool
@@ -241,7 +343,73 @@ Beta fit residual std: 119.6549
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
 
+# Let's look at the raw data more carefully
+# Maybe alpha and beta are both following some smooth trajectory with noise
+# Let's check if they're smooth (small day-to-day changes mostly)
+
+# Day-to-day changes
+alpha_diffs = df['alpha'].diff().dropna()
+beta_diffs = df['beta'].diff().dropna()
+
+print('Alpha daily diff stats:')
+print(f'  mean: {alpha_diffs.mean():.4f}, std: {alpha_diffs.std():.4f}')
+print(f'  median: {alpha_diffs.median():.4f}')
+print(f'  abs mean: {alpha_diffs.abs().mean():.4f}')
+
+print('Beta daily diff stats:')
+print(f'  mean: {beta_diffs.mean():.4f}, std: {beta_diffs.std():.4f}')
+print(f'  median: {beta_diffs.median():.4f}')
+print(f'  abs mean: {beta_diffs.abs().mean():.4f}')
+
+# Check if the angles wrap - look for large jumps
+alpha_large_jumps = alpha_diffs[alpha_diffs.abs() > 180]
+beta_large_jumps = beta_diffs[beta_diffs.abs() > 180]
+print(f'Alpha large jumps (>180): {len(alpha_large_jumps)}')
+print(f'Beta large jumps (>180): {len(beta_large_jumps)}')
+
+# Let's try to understand the structure better
+# Maybe both angles follow a random walk on the circle with some drift
+# Or maybe they're both sinusoidal with different frequencies
+
+# Let's try fitting with multiple sinusoids
+from scipy.optimize import curve_fit
+
+def multi_sin(t, *params):
+    n_harmonics = (len(params) - 1) // 3
+    offset = params[0]
+    result = np.full_like(t, offset, dtype=float)
+    for i in range(n_harmonics):
+        A = params[1 + 3*i]
+        omega = params[2 + 3*i]
+        phi = params[3 + 3*i]
+        result += A * np.sin(omega * t + phi)
+    return result
+
+# Try fitting alpha with 3 harmonics
+p0 = [180, 50, 0.01, 0, 30, 0.005, 0, 20, 0.002, 0]
+try:
+    popt, pcov = curve_fit(multi_sin, df['t'].values, df['alpha'].values, p0=p0, maxfev=50000)
+    alpha_pred = multi_sin(df['t'].values, *popt)
+    print(f'Alpha multi-sin fit residual std: {np.std(df[\"alpha\"].values - alpha_pred):.4f}')
+    print(f'  Params: {popt}')
+except Exception as e:
+    print(f'Alpha multi-sin fit failed: {e}')
+
+# Try fitting beta with 3 harmonics
+p0 = [180, 50, 0.01, 0, 30, 0.005, 0, 20, 0.002, 0]
+try:
+    popt, pcov = curve_fit(multi_sin, df['t'].values, df['beta'].values, p0=p0, maxfev=50000)
+    beta_pred = multi_sin(df['t'].values, *popt)
+    print(f'Beta multi-sin fit residual std: {np.std(df[\"beta\"].values - beta_pred):.4f}')
+    print(f'  Params: {popt}')
+except Exception as e:
+    print(f'Beta multi-sin fit failed: {e}')
+"
 ```
 
 ## [11] tool
@@ -301,7 +469,13 @@ Beta multi-sin fit residual std: 52.0020
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+test = pd.read_csv('data/test.csv')
+print(test)
+print('Columns:', test.columns.tolist())
+print('Shape:', test.shape)
+"
 ```
 
 ## [13] tool
@@ -358,7 +532,43 @@ Shape: (10, 1)
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
 
+# Let's look at beta as a function of time more carefully
+# Check for periodicity using FFT on beta
+from scipy.fft import fft, fftfreq
+beta_vals = df['beta'].values
+t_vals = df['t'].values
+n = len(beta_vals)
+
+# Remove trend
+coeffs = np.polyfit(t_vals, beta_vals, 1)
+trend = np.polyval(coeffs, t_vals)
+beta_detrended = beta_vals - trend
+
+fft_vals = np.abs(fft(beta_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(fft_vals[pos_mask])[-15:]
+print('Top 15 frequencies for beta (cycles/day):')
+for i in top_idx:
+    print(f'  freq={freqs[pos_mask][i]:.6f}, period={1/freqs[pos_mask][i]:.1f} days, power={fft_vals[pos_mask][i]:.1f}')
+
+# Same for alpha
+alpha_vals = df['alpha'].values
+coeffs_a = np.polyfit(t_vals, alpha_vals, 1)
+trend_a = np.polyval(coeffs_a, t_vals)
+alpha_detrended = alpha_vals - trend_a
+
+fft_vals_a = np.abs(fft(alpha_detrended))
+top_idx_a = np.argsort(fft_vals_a[pos_mask])[-15:]
+print('Top 15 frequencies for alpha (cycles/day):')
+for i in top_idx_a:
+    print(f'  freq={freqs[pos_mask][i]:.6f}, period={1/freqs[pos_mask][i]:.1f} days, power={fft_vals_a[pos_mask][i]:.1f}')
+"
 ```
 
 ## [15] tool
@@ -421,7 +631,43 @@ Top 15 frequencies for alpha (cycles/day):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
 
+# Let's try to model beta as a function of alpha and t
+# First, let's see if there's a simple relationship
+# Convert to unit circle coordinates
+alpha_rad = np.radians(df['alpha'])
+beta_rad = np.radians(df['beta'])
+
+# Compute sin and cos of both
+sin_alpha = np.sin(alpha_rad)
+cos_alpha = np.cos(alpha_rad)
+sin_beta = np.sin(beta_rad)
+cos_beta = np.cos(beta_rad)
+
+# Check correlation between sin/cos of alpha and sin/cos of beta
+from scipy import stats
+for name_a, val_a in [('sin_alpha', sin_alpha), ('cos_alpha', cos_alpha)]:
+    for name_b, val_b in [('sin_beta', sin_beta), ('cos_beta', cos_beta)]:
+        r, p = stats.pearsonr(val_a, val_b)
+        print(f'{name_a} vs {name_b}: r={r:.4f}, p={p:.2e}')
+
+# Also check: maybe beta = alpha + some function of t
+# Let's compute the 'offset' = beta - alpha (wrapped)
+offset = (df['beta'] - df['alpha'] + 180) % 360 - 180
+print(f'\\nOffset (beta - alpha) stats: mean={offset.mean():.2f}, std={offset.std():.2f}')
+
+# Check if offset has a relationship with alpha
+r, p = stats.pearsonr(df['alpha'], offset)
+print(f'Offset vs alpha: r={r:.4f}, p={p:.2e}')
+
+# Check if offset has a relationship with t
+r, p = stats.pearsonr(df['t'], offset)
+print(f'Offset vs t: r={r:.4f}, p={p:.2e}')
+"
 ```
 
 ## [17] tool
@@ -471,7 +717,52 @@ Offset vs t: r=-0.0054, p=7.28e-01
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Approach 1: GP on beta vs t (direct)
+# Normalize t
+t_train = df['t'].values.reshape(-1, 1)
+t_test = test['t'].values.reshape(-1, 1)
+beta_train = df['beta'].values
+
+# Try GP with RBF kernel
+kernel = C(1.0, (1e-3, 1e3)) * RBF(100.0, (1e1, 1e4)) + WhiteKernel(noise_level=100, noise_level_bounds=(1, 1000))
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, alpha=1e-6)
+gp.fit(t_train, beta_train)
+
+beta_pred, beta_std = gp.predict(t_test, return_std=True)
+print('GP on beta vs t:')
+for i in range(len(test)):
+    print(f'  t={test[\"t\"].iloc[i]}: beta_pred={beta_pred[i]:.2f} +/- {1.96*beta_std[i]:.2f}')
+print(f'  Kernel: {gp.kernel_}')
+
+# Approach 2: GP on sin(beta) and cos(beta) vs t
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+kernel2 = C(1.0, (1e-3, 1e3)) * RBF(100.0, (1e1, 1e4)) + WhiteKernel(noise_level=0.01, noise_level_bounds=(1e-4, 1))
+gp_sin = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=5, alpha=1e-6)
+gp_cos = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=5, alpha=1e-6)
+
+gp_sin.fit(t_train, sin_beta)
+gp_cos.fit(t_train, cos_beta)
+
+sin_pred, sin_std = gp_sin.predict(t_test, return_std=True)
+cos_pred, cos_std = gp_cos.predict(t_test, return_std=True)
+
+# Convert back to angle
+beta_pred_circ = np.degrees(np.arctan2(sin_pred, cos_pred)) % 360
+print('\\nGP on sin/cos(beta) vs t:')
+for i in range(len(test)):
+    print(f'  t={test[\"t\"].iloc[i]}: beta_pred={beta_pred_circ[i]:.2f}')
+"
 ```
 
 ## [19] tool
@@ -502,7 +793,132 @@ Let me try a more efficient approach.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+alpha_train = df['alpha'].values
+t_test = test['t'].values
+
+# Try fitting beta as a sum of sinusoids with fixed frequencies
+# Based on FFT analysis, key frequencies are around 0.0007-0.0025 cycles/day
+# Let's try a model with a few harmonics
+
+def beta_model(t, offset, *params):
+    # params: [A1, omega1, phi1, A2, omega2, phi2, ...]
+    result = np.full_like(t, offset, dtype=float)
+    n_harmonics = len(params) // 3
+    for i in range(n_harmonics):
+        A = params[3*i]
+        omega = params[3*i + 1]
+        phi = params[3*i + 2]
+        result += A * np.sin(omega * t + phi)
+    return result
+
+# Try different numbers of harmonics
+best_residual = float('inf')
+best_params = None
+
+# Use FFT to identify dominant frequencies
+from scipy.fft import fft, fftfreq
+n = len(t_train)
+coeffs = np.polyfit(t_train, beta_train, 1)
+trend = np.polyval(coeffs, t_train)
+beta_detrended = beta_train - trend
+fft_vals = np.abs(fft(beta_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_freq_indices = np.argsort(fft_vals[pos_mask])[-20:]
+top_freqs = freqs[pos_mask][top_freq_indices]
+top_powers = fft_vals[pos_mask][top_freq_indices]
+
+print("Top frequencies for beta:")
+for i in range(min(10, len(top_freqs))):
+    print(f"  freq={top_freqs[i]:.6f}, period={1/top_freqs[i]:.1f} days, power={top_powers[i]:.1f}")
+
+# Use the top frequencies as starting points
+# Try model with 5 harmonics using top frequencies
+n_harm = 5
+p0 = [np.mean(beta_train)]
+for i in range(n_harm):
+    A = np.sqrt(top_powers[i]) * 2 / n
+    omega = 2 * np.pi * top_freqs[i]
+    phi = 0.0
+    p0.extend([A, omega, phi])
+
+try:
+    popt, pcov = curve_fit(beta_model, t_train, beta_train, p0=p0, maxfev=50000)
+    beta_pred_train = beta_model(t_train, *popt)
+    residual_std = np.std(beta_train - beta_pred_train)
+    print(f'\nBeta model with {n_harm} harmonics:')
+    print(f'  Residual std: {residual_std:.4f}')
+    print(f'  Params: {popt}')
+    best_residual = residual_std
+    best_params = popt
+except Exception as e:
+    print(f'Fit failed: {e}')
+
+# Also try with more harmonics
+for n_harm in [8, 12, 15]:
+    p0 = [np.mean(beta_train)]
+    for i in range(n_harm):
+        if i < len(top_freqs):
+            A = np.sqrt(top_powers[i]) * 2 / n
+            omega = 2 * np.pi * top_freqs[i]
+        else:
+            A = 1.0
+            omega = 2 * np.pi * (0.001 + i * 0.001)
+        phi = 0.0
+        p0.extend([A, omega, phi])
+    
+    try:
+        popt, pcov = curve_fit(beta_model, t_train, beta_train, p0=p0, maxfev=50000)
+        beta_pred_train = beta_model(t_train, *popt)
+        residual_std = np.std(beta_train - beta_pred_train)
+        print(f'\nBeta model with {n_harm} harmonics:')
+        print(f'  Residual std: {residual_std:.4f}')
+        if residual_std < best_residual:
+            best_residual = residual_std
+            best_params = popt
+    except Exception as e:
+        print(f'Fit with {n_harm} harmonics failed: {e}')
+
+print(f'\nBest residual std: {best_residual:.4f}')
+
+# Now predict for test set
+beta_pred_test = beta_model(t_test, *best_params)
+print('\nPredictions for test set:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}')
+
+# Estimate noise level
+# The residual std from the fit should capture the observation noise
+# But we need to be careful - the fit might overfit
+# Let's use cross-validation to estimate the noise
+from sklearn.model_selection import KFold
+
+# Simple approach: use the residual std as the noise estimate
+noise_std = best_residual
+print(f'\nEstimated observation noise std: {noise_std:.4f}')
+print(f'95% prediction interval half-width: {1.96 * noise_std:.4f}')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': (beta_pred_test - 1.96 * noise_std) % 360,
+    'y_upper': (beta_pred_test + 1.96 * noise_std) % 360
+})
+results.to_csv('predictions.csv', index=False)
+print('\nPredictions written to predictions.csv')
+print(results)
+EOF
 ```
 
 ## [21] tool
@@ -589,7 +1005,122 @@ Predictions written to predictions.csv
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+alpha_train = df['alpha'].values
+t_test = test['t'].values
+
+# Approach: Model sin(beta) and cos(beta) as functions of t
+# This handles the circular nature properly
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+# Try a Fourier series model for sin(beta) and cos(beta)
+def sin_model(t, offset, *params):
+    result = np.full_like(t, offset, dtype=float)
+    n_harm = len(params) // 3
+    for i in range(n_harm):
+        A = params[3*i]
+        omega = params[3*i + 1]
+        phi = params[3*i + 2]
+        result += A * np.sin(omega * t + phi)
+    return result
+
+def cos_model(t, offset, *params):
+    result = np.full_like(t, offset, dtype=float)
+    n_harm = len(params) // 3
+    for i in range(n_harm):
+        A = params[3*i]
+        omega = params[3*i + 1]
+        phi = params[3*i + 2]
+        result += A * np.sin(omega * t + phi)
+    return result
+
+# Use FFT to identify frequencies for sin(beta) and cos(beta)
+n = len(t_train)
+
+# For sin(beta)
+coeffs = np.polyfit(t_train, sin_beta, 1)
+trend = np.polyval(coeffs, t_train)
+sin_detrended = sin_beta - trend
+fft_sin = np.abs(np.fft.fft(sin_detrended))
+freqs = np.fft.fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx_sin = np.argsort(fft_sin[pos_mask])[-10:]
+print("Top frequencies for sin(beta):")
+for i in top_idx_sin:
+    print(f"  freq={freqs[pos_mask][i]:.6f}, period={1/freqs[pos_mask][i]:.1f} days")
+
+# For cos(beta)
+coeffs = np.polyfit(t_train, cos_beta, 1)
+trend = np.polyval(coeffs, t_train)
+cos_detrended = cos_beta - trend
+fft_cos = np.abs(np.fft.fft(cos_detrended))
+top_idx_cos = np.argsort(fft_cos[pos_mask])[-10:]
+print("\nTop frequencies for cos(beta):")
+for i in top_idx_cos:
+    print(f"  freq={freqs[pos_mask][i]:.6f}, period={1/freqs[pos_mask][i]:.1f} days")
+
+# Try fitting with shared frequencies
+# Use the top frequencies from both sin and cos
+all_top_freqs = set()
+for idx in top_idx_sin:
+    all_top_freqs.add(freqs[pos_mask][idx])
+for idx in top_idx_cos:
+    all_top_freqs.add(freqs[pos_mask][idx])
+all_top_freqs = sorted(all_top_freqs, reverse=True)
+print(f"\nShared top frequencies: {[f'{f:.6f}' for f in all_top_freqs[:10]]}")
+
+# Fit model with shared frequencies
+n_harm = 8
+p0_sin = [np.mean(sin_beta)]
+p0_cos = [np.mean(cos_beta)]
+for i in range(n_harm):
+    if i < len(all_top_freqs):
+        omega = 2 * np.pi * all_top_freqs[i]
+    else:
+        omega = 2 * np.pi * (0.001 + i * 0.001)
+    A = 0.1
+    phi = 0.0
+    p0_sin.extend([A, omega, phi])
+    p0_cos.extend([A, omega, phi])
+
+try:
+    popt_sin, pcov_sin = curve_fit(sin_model, t_train, sin_beta, p0=p0_sin, maxfev=50000)
+    popt_cos, pcov_cos = curve_fit(cos_model, t_train, cos_beta, p0=p0_cos, maxfev=50000)
+    
+    sin_pred_train = sin_model(t_train, *popt_sin)
+    cos_pred_train = cos_model(t_train, *popt_cos)
+    
+    # Compute residual
+    resid_sin = sin_beta - sin_pred_train
+    resid_cos = cos_beta - cos_pred_train
+    print(f'\nsin(beta) model residual std: {np.std(resid_sin):.4f}')
+    print(f'cos(beta) model residual std: {np.std(resid_cos):.4f}')
+    
+    # Predict for test set
+    sin_pred_test = sin_model(t_test, *popt_sin)
+    cos_pred_test = cos_model(t_test, *popt_cos)
+    
+    beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+    print('\nPredictions for test set:')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}')
+    
+except Exception as e:
+    print(f'Fit failed: {e}')
+    import traceback
+    traceback.print_exc()
+EOF
 ```
 
 ## [23] tool
@@ -666,7 +1197,85 @@ Predictions for test set:
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+
+# Let's look at the data more carefully
+# Check if there's a smooth underlying signal
+# Compute rolling statistics
+window = 30
+beta_rolling_mean = df['beta'].rolling(window, center=True).mean()
+beta_rolling_std = df['beta'].rolling(window, center=True).std()
+
+print(f'Rolling beta std (window={window}): mean={beta_rolling_std.mean():.2f}, std={beta_rolling_std.std():.2f}')
+
+# The rolling std should capture the observation noise
+# Let's also check the overall variance
+print(f'Overall beta std: {df["beta"].std():.2f}')
+
+# Let's look at the autocorrelation of beta
+from statsmodels.tsa.stattools import acf
+acf_vals = acf(df['beta'].values, nlags=100)
+print(f'ACF at lag 1: {acf_vals[1]:.4f}')
+print(f'ACF at lag 7: {acf_vals[7]:.4f}')
+print(f'ACF at lag 30: {acf_vals[30]:.4f}')
+print(f'ACF at lag 100: {acf_vals[100]:.4f}')
+
+# Also check alpha
+acf_alpha = acf(df['alpha'].values, nlags=100)
+print(f'\nACF alpha at lag 1: {acf_alpha[1]:.4f}')
+print(f'ACF alpha at lag 7: {acf_alpha[7]:.4f}')
+
+# Let's try a different approach: model beta as a function of alpha and t
+# Use a neural network or random forest
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.neural_network import MLPRegressor
+
+# Features: t, alpha
+X = df[['t', 'alpha']].values
+y = df['beta'].values
+
+# Normalize features
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Try random forest
+rf = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42)
+rf.fit(X_scaled, y)
+y_pred_train = rf.predict(X_scaled)
+resid = y - y_pred_train
+print(f'\nRandom Forest residual std: {np.std(resid):.4f}')
+
+# Try neural network
+nn = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=1000, random_state=42)
+nn.fit(X_scaled, y)
+y_pred_train_nn = nn.predict(X_scaled)
+resid_nn = y - y_pred_train_nn
+print(f'Neural Network residual std: {np.std(resid_nn):.4f}')
+
+# But we can't use alpha in test since it's not available!
+# So let's focus on modeling beta as a function of t only
+
+# Let's try a smoother approach: LOWESS or similar
+from statsmodels.nonparametric.smoothers_lowess import lowess
+
+# LOWESS smoothing
+lowess_result = lowess(df['beta'].values, df['t'].values, frac=0.1)
+beta_smooth = lowess_result[:, 1]
+resid_lowess = df['beta'].values - beta_smooth
+print(f'\nLOWESS residual std (frac=0.1): {np.std(resid_lowess):.4f}')
+
+# Try different frac values
+for frac in [0.05, 0.1, 0.15, 0.2]:
+    result = lowess(df['beta'].values, df['t'].values, frac=frac)
+    smooth = result[:, 1]
+    resid = df['beta'].values - smooth
+    print(f'LOWESS frac={frac}: residual std={np.std(resid):.4f}')
+EOF
 ```
 
 ## [25] tool
@@ -765,7 +1374,67 @@ LOWESS frac=0.2: residual std=66.5513
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel, PeriodicKernel
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values.reshape(-1, 1)
+beta_train = df['beta'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Approach: Use GP with RBF + White kernel on beta vs t
+# But GP with RBF can be slow for large datasets. Let's subsample.
+# Actually, let's try with a subset
+
+# Subsample for speed
+np.random.seed(42)
+idx = np.random.choice(len(t_train), size=2000, replace=False)
+idx = np.sort(idx)
+t_sub = t_train[idx]
+beta_sub = beta_train[idx]
+
+# Try GP with RBF kernel
+kernel = C(1.0, (1e-3, 1e3)) * RBF(100.0, (1e1, 1e4)) + WhiteKernel(noise_level=100, noise_level_bounds=(1, 10000))
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=3, alpha=1e-6)
+gp.fit(t_sub, beta_sub)
+print(f'GP kernel: {gp.kernel_}')
+
+beta_pred, beta_std = gp.predict(t_test, return_std=True)
+print('\nGP predictions (subsampled):')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i][0]}: beta_pred={beta_pred[i]:.2f}, 95% interval: [{beta_pred[i]-1.96*beta_std[i]:.2f}, {beta_pred[i]+1.96*beta_std[i]:.2f}]')
+
+# Now let's also try: model beta as a function of t using a state-space model
+# Use statsmodels for a local level model
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+
+# Fit a local level model (random walk + noise)
+model = UnobservedComponents(beta_train, 'local level')
+try:
+    res = model.fit(disp=False)
+    print(f'\nState-space model: {res.params}')
+    
+    # Predict for test periods
+    # We need to predict forward from the end of training
+    pred = res.get_prediction(start=len(beta_train), end=len(beta_train)+len(t_test)-1)
+    pred_mean = pred.predicted_mean
+    pred_ci = pred.conf_int(alpha=0.05)
+    
+    print('\nState-space predictions:')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i][0]}: beta_pred={pred_mean[i]:.2f}, 95% CI: [{pred_ci.iloc[i,0]:.2f}, {pred_ci.iloc[i,1]:.2f}]')
+except Exception as e:
+    print(f'State-space model failed: {e}')
+    import traceback
+    traceback.print_exc()
+EOF
 ```
 
 ## [27] tool
@@ -787,7 +1456,59 @@ ImportError: cannot import name 'PeriodicKernel' from 'sklearn.gaussian_process.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values.reshape(-1, 1)
+beta_train = df['beta'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Subsample for speed
+np.random.seed(42)
+idx = np.random.choice(len(t_train), size=2000, replace=False)
+idx = np.sort(idx)
+t_sub = t_train[idx]
+beta_sub = beta_train[idx]
+
+# Try GP with RBF kernel
+kernel = C(1.0, (1e-3, 1e3)) * RBF(100.0, (1e1, 1e4)) + WhiteKernel(noise_level=100, noise_level_bounds=(1, 10000))
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=3, alpha=1e-6)
+gp.fit(t_sub, beta_sub)
+print(f'GP kernel: {gp.kernel_}')
+
+beta_pred, beta_std = gp.predict(t_test, return_std=True)
+print('\nGP predictions (subsampled):')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i][0]}: beta_pred={beta_pred[i]:.2f}, 95% interval: [{beta_pred[i]-1.96*beta_std[i]:.2f}, {beta_pred[i]+1.96*beta_std[i]:.2f}]')
+
+# State-space model
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+
+model = UnobservedComponents(beta_train, 'local level')
+try:
+    res = model.fit(disp=False)
+    print(f'\nState-space model params: {res.params}')
+    
+    pred = res.get_prediction(start=len(beta_train), end=len(beta_train)+len(t_test)-1)
+    pred_mean = pred.predicted_mean
+    pred_ci = pred.conf_int(alpha=0.05)
+    
+    print('\nState-space predictions:')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i][0]}: beta_pred={pred_mean[i]:.2f}, 95% CI: [{pred_ci.iloc[i,0]:.2f}, {pred_ci.iloc[i,1]:.2f}]')
+except Exception as e:
+    print(f'State-space model failed: {e}')
+    import traceback
+    traceback.print_exc()
+EOF
 ```
 
 ## [29] tool
@@ -843,7 +1564,110 @@ State-space model failed: 'numpy.ndarray' object has no attribute 'iloc'
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# State-space model - local level (random walk + observation noise)
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+print(f'State-space params: {res.params}')
+
+# The local level model is:
+# y_t = mu_t + epsilon_t  (observation equation)
+# mu_t = mu_{t-1} + eta_t  (state equation)
+# where epsilon_t ~ N(0, sigma_obs^2), eta_t ~ N(0, sigma_state^2)
+
+# Get the estimated parameters
+sigma_obs = np.sqrt(res.params['sigma2.irregular'])  # observation noise
+sigma_state = np.sqrt(res.params['sigma2.level'])     # state noise
+print(f'Observation noise std: {sigma_obs:.4f}')
+print(f'State noise std: {sigma_state:.4f}')
+
+# Predict forward
+# For a local level model, the prediction is just the last estimated state
+# with increasing uncertainty
+pred = res.get_prediction(start=len(beta_train), end=len(beta_train)+len(t_test)-1)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+print('\nState-space predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={pred_mean[i]:.2f}, 95% CI: [{pred_ci[i,0]:.2f}, {pred_ci[i,1]:.2f}]')
+
+# The state-space model assumes equally spaced time points (t=0,1,2,...)
+# But our test points are NOT equally spaced from the training end
+# The model predicts one step ahead at a time, so we need to handle the gaps
+
+# Actually, the model treats time as index 0,1,2,...,4142
+# So predicting at index 4143, 4144, etc. corresponds to t=4143, 4144, etc.
+# But our test t values are 4144, 4346, etc. - they skip some indices
+
+# For a random walk, the uncertainty grows with the number of steps
+# So for a gap of N steps, the variance increases by N * sigma_state^2
+
+# Let me redo this properly
+# The last state estimate is at index 4142 (t=4142)
+# For t=4144, that's 2 steps ahead
+# For t=4346, that's 204 steps ahead
+# etc.
+
+# Get the filtered state estimates
+filtered_state = res.filtered_state[0]  # mu_t estimates
+last_state = filtered_state[-1]
+last_state_var = res.filtered_state_cov[0, 0, -1]  # Var(mu_{4142})
+
+print(f'\nLast state estimate: {last_state:.2f}')
+print(f'Last state variance: {last_state_var:.4f}')
+print(f'Observation noise variance: {sigma_obs**2:.4f}')
+
+# For a random walk, the prediction at h steps ahead is:
+# E[y_{T+h}] = last_state
+# Var(y_{T+h}) = last_state_var + h * sigma_state^2 + sigma_obs^2
+
+# But wait, the get_prediction should handle this correctly
+# Let me check what get_prediction gives us
+print(f'\nget_prediction mean: {pred_mean[:3]}')
+print(f'get_prediction CI lower: {pred_ci[:3, 0]}')
+print(f'get_prediction CI upper: {pred_ci[:3, 1]}')
+
+# The get_prediction assumes consecutive time steps starting from len(beta_train)
+# So index 0 in pred corresponds to t=4143, index 1 to t=4144, etc.
+# But our test t values are 4144, 4346, etc.
+# So we need to map test t values to prediction indices
+
+# t=4144 corresponds to prediction index 1 (since training ends at t=4142)
+# t=4346 corresponds to prediction index 204
+# etc.
+
+# Let me compute predictions manually for the correct time points
+print('\nManual predictions for test t values:')
+for i, t in enumerate(t_test):
+    steps_ahead = t - t_train[-1]  # number of steps from end of training
+    pred_mean_val = last_state
+    pred_var = last_state_var + steps_ahead * sigma_state**2 + sigma_obs**2
+    pred_std = np.sqrt(pred_var)
+    
+    y_lower = pred_mean_val - 1.96 * pred_std
+    y_upper = pred_mean_val + 1.96 * pred_std
+    
+    # Wrap to [0, 360)
+    y_pred_wrapped = pred_mean_val % 360
+    y_lower_wrapped = y_lower % 360
+    y_upper_wrapped = y_upper % 360
+    
+    print(f'  t={t}: steps={steps_ahead}, beta_pred={y_pred_wrapped:.2f}, 95% CI: [{y_lower_wrapped:.2f}, {y_upper_wrapped:.2f}]')
+EOF
 ```
 
 ## [31] tool
@@ -888,7 +1712,73 @@ Let me fix the state-space approach and also try a more robust method
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# State-space model - local level
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+sigma_obs = np.sqrt(res.params['sigma2.irregular'])
+sigma_state = np.sqrt(res.params['sigma2.level'])
+print(f'Observation noise std: {sigma_obs:.4f}')
+print(f'State noise std: {sigma_state:.4f}')
+
+# Get filtered state and covariance
+filtered_state = res.filtered_state[0]
+filtered_state_cov = res.filtered_state_cov
+
+last_state = filtered_state[-1]
+last_state_var = filtered_state_cov[0, 0, -1]
+
+print(f'Last state estimate: {last_state:.2f}')
+print(f'Last state variance: {last_state_var:.4f}')
+
+# For a random walk, prediction h steps ahead:
+# E[y_{T+h}] = last_state
+# Var(y_{T+h}) = last_state_var + h * sigma_state^2 + sigma_obs^2
+
+print('\nManual predictions for test t values:')
+results = []
+for i, t in enumerate(t_test):
+    steps_ahead = t - t_train[-1]
+    pred_mean_val = last_state
+    pred_var = last_state_var + steps_ahead * sigma_state**2 + sigma_obs**2
+    pred_std = np.sqrt(pred_var)
+    
+    y_lower = pred_mean_val - 1.96 * pred_std
+    y_upper = pred_mean_val + 1.96 * pred_std
+    
+    # Wrap to [0, 360)
+    y_pred_wrapped = pred_mean_val % 360
+    y_lower_wrapped = y_lower % 360
+    y_upper_wrapped = y_upper % 360
+    
+    print(f'  t={t}: steps={steps_ahead}, beta_pred={y_pred_wrapped:.2f}, 95% CI: [{y_lower_wrapped:.2f}, {y_upper_wrapped:.2f}]')
+    results.append({
+        't': t,
+        'y_pred': y_pred_wrapped,
+        'y_lower': y_lower_wrapped,
+        'y_upper': y_upper_wrapped
+    })
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [33] tool
@@ -910,7 +1800,57 @@ IndexError: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# State-space model - local level
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+sigma_obs = np.sqrt(res.params['sigma2.irregular'])
+sigma_state = np.sqrt(res.params['sigma2.level'])
+print(f'Observation noise std: {sigma_obs:.4f}')
+print(f'State noise std: {sigma_state:.4f')
+
+# Get the prediction
+pred = res.get_prediction(start=len(beta_train), end=len(beta_train)+len(t_test)-1)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+print(f'\nPrediction mean shape: {pred_mean.shape}')
+print(f'Prediction CI shape: {pred_ci.shape}')
+print(f'Prediction mean (first 3): {pred_mean[:3]}')
+print(f'Prediction CI (first 3):\n{pred_ci[:3]}')
+
+# The get_prediction gives predictions for consecutive steps starting from len(beta_train)
+# So index 0 = t=4143, index 1 = t=4144, etc.
+# Our test t values are: 4144, 4346, 4548, 4751, 4953, 5155, 5357, 5560, 5762, 5964
+# These correspond to indices: 1, 204, 406, 609, 811, 1013, 1215, 1418, 1620, 1822
+
+# Map test t values to prediction indices
+last_train_t = t_train[-1]
+print(f'\nLast training t: {last_train_t}')
+
+for i, t in enumerate(t_test):
+    idx = t - last_train_t - 1  # index in prediction array
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        print(f'  t={t}: idx={idx}, beta_pred={mean_val:.2f}, 95% CI: [{ci[0]:.2f}, {ci[1]:.2f}]')
+    else:
+        print(f'  t={t}: idx={idx} OUT OF RANGE')
+EOF
 ```
 
 ## [35] tool
@@ -936,7 +1876,60 @@ Fixing the syntax error and continuing the analysis.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# State-space model - local level
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+sigma_obs = np.sqrt(res.params['sigma2.irregular'])
+sigma_state = np.sqrt(res.params['sigma2.level'])
+print(f'Observation noise std: {sigma_obs:.4f}')
+print(f'State noise std: {sigma_state:.4f}')
+
+# Get the prediction
+pred = res.get_prediction(start=len(beta_train), end=len(beta_train)+len(t_test)-1)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+print(f'Prediction mean shape: {pred_mean.shape}')
+print(f'Prediction CI shape: {pred_ci.shape}')
+
+# Map test t values to prediction indices
+last_train_t = t_train[-1]
+print(f'Last training t: {last_train_t}')
+
+results = []
+for i, t in enumerate(t_test):
+    idx = t - last_train_t - 1  # index in prediction array
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        y_lower = ci_row[0]
+        y_upper = ci_row[1]
+        print(f'  t={t}: idx={idx}, beta_pred={mean_val:.2f}, 95% CI: [{y_lower:.2f}, {y_upper:.2f}]')
+        results.append({'t': t, 'y_pred': mean_val, 'y_lower': y_lower, 'y_upper': y_upper})
+    else:
+        print(f'  t={t}: idx={idx} OUT OF RANGE (max idx={len(pred_mean)-1})')
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [37] tool
@@ -960,7 +1953,29 @@ Let me debug the state-space model more carefully.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+beta_train = df['beta'].values
+
+# State-space model - local level
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+print(f'Params: {res.params}')
+print(f'Params index: {res.params.index.tolist()}')
+
+# Try accessing the prediction
+pred = res.get_prediction(start=len(beta_train), end=len(beta_train)+20)
+print(f'Pred mean shape: {pred.predicted_mean.shape}')
+print(f'Pred mean: {pred.predicted_mean[:5]}')
+print(f'Pred CI: {pred.conf_int(alpha=0.05).head()}')
+EOF
 ```
 
 ## [39] tool
@@ -983,7 +1998,57 @@ Params: [195.45777159  95.30728692]
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = pd.read_csv('data/test.csv')['t'].values
+
+# State-space model - local level
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+print(f'Params: {res.params}')
+
+# Get the prediction
+pred = res.get_prediction(start=len(beta_train), end=len(beta_train)+len(t_test)-1)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+print(f'Pred mean shape: {pred_mean.shape}')
+print(f'Pred CI shape: {pred_ci.shape}')
+print(f'First few pred means: {pred_mean[:5]}')
+print(f'First few pred CI:\n{pred_ci[:5]}')
+
+# Map test t values to prediction indices
+last_train_t = t_train[-1]
+print(f'\nLast training t: {last_train_t}')
+
+results = []
+for i, t in enumerate(t_test):
+    idx = t - last_train_t - 1  # index in prediction array
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        y_lower = ci_row[0]
+        y_upper = ci_row[1]
+        print(f'  t={t}: idx={idx}, beta_pred={mean_val:.2f}, 95% CI: [{y_lower:.2f}, {y_upper:.2f}]')
+        results.append({'t': t, 'y_pred': mean_val, 'y_lower': y_lower, 'y_upper': y_upper})
+    else:
+        print(f'  t={t}: idx={idx} OUT OF RANGE (max idx={len(pred_mean)-1})')
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [41] tool
@@ -1038,7 +2103,54 @@ The state-space model needs to predict for the full range. Let me fix this and a
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# State-space model - local level
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+# Predict for the full range from end of training to max test t
+last_train_idx = len(beta_train) - 1  # index of last training point
+max_test_t = t_test.max()
+n_pred = max_test_t - t_train[-1]  # number of steps to predict
+
+print(f'Predicting {n_pred} steps ahead...')
+pred = res.get_prediction(start=last_train_idx + 1, end=last_train_idx + n_pred)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+print(f'Prediction shape: {pred_mean.shape}')
+
+# Map test t values to prediction indices
+# t=4143 is index 0 in pred, t=4144 is index 1, etc.
+results = []
+for i, t in enumerate(t_test):
+    idx = t - t_train[-1] - 1  # index in prediction array
+    mean_val = pred_mean[idx]
+    ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+    y_lower = ci_row[0]
+    y_upper = ci_row[1]
+    print(f'  t={t}: idx={idx}, beta_pred={mean_val:.2f}, 95% CI: [{y_lower:.2f}, {y_upper:.2f}]')
+    results.append({'t': t, 'y_pred': mean_val, 'y_lower': y_lower, 'y_upper': y_upper})
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [43] tool
@@ -1103,7 +2215,124 @@ The state-space model gives constant predictions which isn't ideal. Let me try a
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+from scipy.fft import fft, fftfreq
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+t_test = test['t'].values
+
+# Model sin(beta) and cos(beta) as Fourier series
+# This handles the circular nature properly
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+# Determine optimal frequencies from FFT
+n = len(t_train)
+
+# For sin(beta)
+coeffs = np.polyfit(t_train, sin_beta, 1)
+trend_sin = np.polyval(coeffs, t_train)
+sin_detrended = sin_beta - trend_sin
+fft_sin = np.abs(fft(sin_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+
+# For cos(beta)
+coeffs = np.polyfit(t_train, cos_beta, 1)
+trend_cos = np.polyval(coeffs, t_train)
+cos_detrended = cos_beta - trend_cos
+fft_cos = np.abs(fft(cos_detrended))
+
+# Get top frequencies from both
+all_fft = fft_sin[pos_mask] + fft_cos[pos_mask]
+top_idx = np.argsort(all_fft)[-20:]
+top_freqs = freqs[pos_mask][top_idx]
+top_freqs = np.sort(top_freqs)[::-1]  # sort by frequency descending
+
+print("Top 20 combined frequencies:")
+for i, f in enumerate(top_freqs):
+    print(f"  {i}: freq={f:.6f}, period={1/f:.1f} days, power={all_fft[top_idx[np.argsort(top_freqs)[::-1]][i]]:.1f}")
+
+# Use top 10 frequencies
+n_harm = 10
+selected_freqs = top_freqs[:n_harm]
+
+# Build design matrix
+def build_design_matrix(t, freqs, offset=True):
+    cols = []
+    if offset:
+        cols.append(np.ones_like(t))
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+X_train = build_design_matrix(t_train, selected_freqs)
+X_test = build_design_matrix(t_test, selected_freqs)
+
+# Fit sin(beta) model
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import cross_val_score
+
+# Use Ridge regression for stability
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train, sin_beta)
+sin_pred_train = ridge_sin.predict(X_train)
+sin_resid = sin_beta - sin_pred_train
+sin_resid_std = np.std(sin_resid)
+print(f'\nsin(beta) model residual std: {sin_resid_std:.4f}')
+
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train, cos_beta)
+cos_pred_train = ridge_cos.predict(X_train)
+cos_resid = cos_beta - cos_pred_train
+cos_resid_std = np.std(cos_resid)
+print(f'cos(beta) model residual std: {cos_resid_std:.4f}')
+
+# Predict for test set
+sin_pred_test = ridge_sin.predict(X_test)
+cos_pred_test = ridge_cos.predict(X_test)
+
+# Convert back to angle
+beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+
+print('\nPredictions for test set:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}')
+
+# Estimate noise level
+# The residual std from the sin/cos models gives us the observation noise
+# But we need to be careful about the circular nature
+# The angular error is approximately sqrt(sin_resid_std^2 + cos_resid_std^2) for small errors
+# But for larger errors, we need to be more careful
+
+# Simple approach: use the average residual std as the noise estimate
+noise_std = (sin_resid_std + cos_resid_std) / 2
+print(f'\nEstimated observation noise std (angular): {noise_std:.4f}')
+print(f'95% prediction interval half-width: {1.96 * noise_std:.4f}')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': (beta_pred_test - 1.96 * noise_std) % 360,
+    'y_upper': (beta_pred_test + 1.96 * noise_std) % 360
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+print(results)
+EOF
 ```
 
 ## [45] tool
@@ -1207,7 +2436,115 @@ Let me refine the noise estimation and prediction intervals properly.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+t_test = test['t'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+n = len(t_train)
+
+# Determine optimal frequencies from FFT
+coeffs_sin = np.polyfit(t_train, sin_beta, 1)
+trend_sin = np.polyval(coeffs_sin, t_train)
+sin_detrended = sin_beta - trend_sin
+fft_sin = np.abs(fft(sin_detrended))
+
+coeffs_cos = np.polyfit(t_train, cos_beta, 1)
+trend_cos = np.polyval(coeffs_cos, t_train)
+cos_detrended = cos_beta - trend_cos
+fft_cos = np.abs(fft(cos_detrended))
+
+# Get top frequencies from both
+all_fft = fft_sin + fft_cos
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(all_fft[pos_mask])[-20:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+# Use top 10 frequencies
+n_harm = 10
+selected_freqs = top_freqs[:n_harm]
+
+# Build design matrix
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+X_train = build_design_matrix(t_train, selected_freqs)
+X_test = build_design_matrix(t_test, selected_freqs)
+
+# Fit models
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train, sin_beta)
+
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train, cos_beta)
+
+# Compute angular residuals on training data
+sin_pred_train = ridge_sin.predict(X_train)
+cos_pred_train = ridge_cos.predict(X_train)
+beta_pred_train = np.degrees(np.arctan2(sin_pred_train, cos_pred_train)) % 360
+
+# Angular residuals (handling wrap-around)
+angular_resid = (beta_train - beta_pred_train + 180) % 360 - 180
+noise_std = np.std(angular_resid)
+print(f'Angular residual std: {noise_std:.4f} degrees')
+print(f'Mean absolute angular error: {np.mean(np.abs(angular_resid)):.4f} degrees')
+
+# Also compute the noise in sin/cos space
+sin_resid = sin_beta - sin_pred_train
+cos_resid = cos_beta - cos_pred_train
+print(f'Sin residual std: {np.std(sin_resid):.4f}')
+print(f'Cos residual std: {np.std(cos_resid):.4f}')
+
+# Predict for test set
+sin_pred_test = ridge_sin.predict(X_test)
+cos_pred_test = ridge_cos.predict(X_test)
+beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+
+# 95% prediction interval for a NEW observation
+# The prediction interval should account for observation noise
+# For a new noisy measurement, beta_new = beta_true + epsilon
+# where epsilon ~ N(0, noise_std^2)
+# So the 95% interval is [beta_pred - 1.96*noise_std, beta_pred + 1.96*noise_std]
+# wrapped to [0, 360)
+
+y_lower = (beta_pred_test - 1.96 * noise_std) % 360
+y_upper = (beta_pred_test + 1.96 * noise_std) % 360
+
+print(f'\n95% prediction interval half-width: {1.96 * noise_std:.4f} degrees')
+
+print('\nPredictions for test set:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [47] tool
@@ -1255,7 +2592,95 @@ Let me investigate the large angular errors more carefully.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+t_train = df['t'].values
+beta_train = df['beta'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+n = len(t_train)
+
+# Determine optimal frequencies from FFT
+coeffs_sin = np.polyfit(t_train, sin_beta, 1)
+trend_sin = np.polyval(coeffs_sin, t_train)
+sin_detrended = sin_beta - trend_sin
+fft_sin = np.abs(fft(sin_detrended))
+
+coeffs_cos = np.polyfit(t_train, cos_beta, 1)
+trend_cos = np.polyval(coeffs_cos, t_train)
+cos_detrended = cos_beta - trend_cos
+fft_cos = np.abs(fft(cos_detrended))
+
+all_fft = fft_sin + fft_cos
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(all_fft[pos_mask])[-20:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+# Try different numbers of harmonics
+for n_harm in [5, 10, 15, 20, 30]:
+    selected_freqs = top_freqs[:n_harm]
+    
+    def build_design_matrix(t, freqs):
+        cols = [np.ones_like(t)]
+        for f in freqs:
+            omega = 2 * np.pi * f
+            cols.append(np.sin(omega * t))
+            cols.append(np.cos(omega * t))
+        return np.column_stack(cols)
+    
+    X_train = build_design_matrix(t_train, selected_freqs)
+    
+    ridge_sin = Ridge(alpha=0.01)
+    ridge_sin.fit(X_train, sin_beta)
+    ridge_cos = Ridge(alpha=0.01)
+    ridge_cos.fit(X_train, cos_beta)
+    
+    sin_pred_train = ridge_sin.predict(X_train)
+    cos_pred_train = ridge_cos.predict(X_train)
+    beta_pred_train = np.degrees(np.arctan2(sin_pred_train, cos_pred_train)) % 360
+    
+    # Angular residuals
+    angular_resid = (beta_train - beta_pred_train + 180) % 360 - 180
+    noise_std = np.std(angular_resid)
+    mae = np.mean(np.abs(angular_resid))
+    print(f'n_harm={n_harm}: angular residual std={noise_std:.2f}, MAE={mae:.2f}')
+
+# Also try: model beta directly (not sin/cos) with a Fourier series
+# This avoids the wrap-around issue in the residuals
+print('\n--- Direct beta Fourier model ---')
+for n_harm in [5, 10, 15, 20, 30]:
+    selected_freqs = top_freqs[:n_harm]
+    
+    def build_design_matrix_direct(t, freqs):
+        cols = [np.ones_like(t)]
+        for f in freqs:
+            omega = 2 * np.pi * f
+            cols.append(np.sin(omega * t))
+            cols.append(np.cos(omega * t))
+        return np.column_stack(cols)
+    
+    X_train = build_design_matrix_direct(t_train, selected_freqs)
+    
+    ridge = Ridge(alpha=0.01)
+    ridge.fit(X_train, beta_train)
+    beta_pred_train = ridge.predict(X_train)
+    
+    # Handle wrap-around in residuals
+    angular_resid = (beta_train - beta_pred_train + 180) % 360 - 180
+    noise_std = np.std(angular_resid)
+    mae = np.mean(np.abs(angular_resid))
+    print(f'n_harm={n_harm}: angular residual std={noise_std:.2f}, MAE={mae:.2f}')
+EOF
 ```
 
 ## [49] tool
@@ -1355,7 +2780,140 @@ Let me try a more robust approach with proper noise estimation.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+from sklearn.model_selection import KFold
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+t_test = test['t'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+n = len(t_train)
+
+# Determine optimal frequencies from FFT
+all_fft = np.abs(fft(sin_beta - np.polyval(np.polyfit(t_train, sin_beta, 1), t_train))) + \
+          np.abs(fft(cos_beta - np.polyval(np.polyfit(t_train, cos_beta, 1), t_train)))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(all_fft[pos_mask])[-20:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+# Use cross-validation to select the number of harmonics and estimate noise
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Try different numbers of harmonics with CV
+best_n_harm = 5
+best_score = float('inf')
+
+for n_harm in [3, 5, 8, 10, 12, 15, 18, 20]:
+    selected_freqs = top_freqs[:n_harm]
+    X = build_design_matrix(t_train, selected_freqs)
+    
+    # Cross-validate sin model
+    sin_scores = []
+    cos_scores = []
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    
+    for train_idx, val_idx in kf.split(X):
+        X_tr, X_val = X[train_idx], X[val_idx]
+        sin_tr, sin_val = sin_beta[train_idx], sin_beta[val_idx]
+        cos_tr, cos_val = cos_beta[train_idx], cos_beta[val_idx]
+        
+        ridge_sin = Ridge(alpha=0.01)
+        ridge_sin.fit(X_tr, sin_tr)
+        sin_pred_val = ridge_sin.predict(X_val)
+        
+        ridge_cos = Ridge(alpha=0.01)
+        ridge_cos.fit(X_tr, cos_tr)
+        cos_pred_val = ridge_cos.predict(X_val)
+        
+        # Angular error
+        beta_pred_val = np.degrees(np.arctan2(sin_pred_val, cos_pred_val)) % 360
+        angular_err = (beta_val - beta_pred_val + 180) % 360 - 180
+        sin_scores.append(np.mean(angular_err**2))
+        
+        # Also compute on sin/cos directly
+        sin_scores.append(np.mean((sin_val - sin_pred_val)**2))
+        cos_scores.append(np.mean((cos_val - cos_pred_val)**2))
+    
+    mean_score = np.mean(sin_scores)
+    print(f'n_harm={n_harm}: CV sin MSE={np.mean(sin_scores):.4f}, CV cos MSE={np.mean(cos_scores):.4f}')
+    
+    if np.mean(sin_scores) + np.mean(cos_scores) < best_score:
+        best_score = np.mean(sin_scores) + np.mean(cos_scores)
+        best_n_harm = n_harm
+
+print(f'\nBest n_harm: {best_n_harm}')
+
+# Now fit the final model with best_n_harm
+selected_freqs = top_freqs[:best_n_harm]
+X_train = build_design_matrix(t_train, selected_freqs)
+X_test = build_design_matrix(t_test, selected_freqs)
+
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train, sin_beta)
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train, cos_beta)
+
+# Compute training residuals
+sin_pred_train = ridge_sin.predict(X_train)
+cos_pred_train = ridge_cos.predict(X_train)
+beta_pred_train = np.degrees(np.arctan2(sin_pred_train, cos_pred_train)) % 360
+angular_resid = (beta_train - beta_pred_train + 180) % 360 - 180
+noise_std = np.std(angular_resid)
+print(f'Training angular residual std: {noise_std:.4f} degrees')
+
+# Also compute the noise in sin/cos space
+sin_resid_std = np.std(sin_beta - sin_pred_train)
+cos_resid_std = np.std(cos_beta - cos_pred_train)
+print(f'Sin residual std: {sin_resid_std:.4f}')
+print(f'Cos residual std: {cos_resid_std:.4f}')
+
+# Predict for test set
+sin_pred_test = ridge_sin.predict(X_test)
+cos_pred_test = ridge_cos.predict(X_test)
+beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+
+# 95% prediction interval
+# The prediction interval should account for observation noise
+# For a new noisy measurement, beta_new = beta_true + epsilon
+# where epsilon ~ N(0, noise_std^2)
+y_lower = (beta_pred_test - 1.96 * noise_std) % 360
+y_upper = (beta_pred_test + 1.96 * noise_std) % 360
+
+print(f'\n95% prediction interval half-width: {1.96 * noise_std:.4f} degrees')
+
+print('\nPredictions for test set:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [51] tool
@@ -1378,7 +2936,101 @@ Let me simplify and fix the approach
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+t_test = test['t'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+n = len(t_train)
+
+# Determine optimal frequencies from FFT
+sin_detrended = sin_beta - np.polyval(np.polyfit(t_train, sin_beta, 1), t_train)
+cos_detrended = cos_beta - np.polyval(np.polyfit(t_train, cos_beta, 1), t_train)
+all_fft = np.abs(fft(sin_detrended)) + np.abs(fft(cos_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(all_fft[pos_mask])[-20:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+# Build design matrix
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Use 20 harmonics (which gave the best fit)
+n_harm = 20
+selected_freqs = top_freqs[:n_harm]
+X_train = build_design_matrix(t_train, selected_freqs)
+X_test = build_design_matrix(t_test, selected_freqs)
+
+# Fit models
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train, sin_beta)
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train, cos_beta)
+
+# Compute training residuals
+sin_pred_train = ridge_sin.predict(X_train)
+cos_pred_train = ridge_cos.predict(X_train)
+beta_pred_train = np.degrees(np.arctan2(sin_pred_train, cos_pred_train)) % 360
+angular_resid = (beta_train - beta_pred_train + 180) % 360 - 180
+noise_std = np.std(angular_resid)
+print(f'Training angular residual std: {noise_std:.4f} degrees')
+
+# Compute the noise in sin/cos space
+sin_resid_std = np.std(sin_beta - sin_pred_train)
+cos_resid_std = np.std(cos_beta - cos_pred_train)
+print(f'Sin residual std: {sin_resid_std:.4f}')
+print(f'Cos residual std: {cos_resid_std:.4f}')
+
+# The angular noise std should be approximately:
+# sqrt(sin_resid_std^2 + cos_resid_std^2) for isotropic noise
+# But this overestimates because the sin/cos errors are correlated
+# A better estimate: use the angular residuals directly
+print(f'Angular noise std (from residuals): {noise_std:.4f} degrees')
+
+# Predict for test set
+sin_pred_test = ridge_sin.predict(X_test)
+cos_pred_test = ridge_cos.predict(X_test)
+beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+
+# 95% prediction interval for a NEW observation
+y_lower = (beta_pred_test - 1.96 * noise_std) % 360
+y_upper = (beta_pred_test + 1.96 * noise_std) % 360
+
+print(f'\n95% prediction interval half-width: {1.96 * noise_std:.4f} degrees')
+
+print('\nPredictions for test set:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [53] tool
@@ -1443,7 +3095,45 @@ Let me verify the predictions and also try to improve the model by incorporating
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Verify predictions.csv
+pred = pd.read_csv('predictions.csv')
+print('predictions.csv:')
+print(pred)
+print(f'\nShape: {pred.shape}')
+print(f'Columns: {pred.columns.tolist()}')
+print(f'Row count: {len(pred)}')
+
+# Check that t values match test.csv
+test = pd.read_csv('data/test.csv')
+print(f'\nTest t values: {test["t"].values}')
+print(f'Pred t values: {pred["t"].values}')
+print(f'Match: {all(pred["t"].values == test["t"].values)}')
+
+# Check that all angles are in [0, 360)
+print(f'\ny_pred range: [{pred["y_pred"].min():.2f}, {pred["y_pred"].max():.2f}]')
+print(f'y_lower range: [{pred["y_lower"].min():.2f}, {pred["y_lower"].max():.2f}]')
+print(f'y_upper range: [{pred["y_upper"].min():.2f}, {pred["y_upper"].max():.2f}]')
+
+# Check that intervals are reasonable (width should be positive)
+interval_width = pred['y_upper'] - pred['y_lower']
+print(f'\nInterval widths (before wrapping): {interval_width.values}')
+# Some intervals might wrap around 360, making the width negative
+# Let's check the actual angular width
+for i in range(len(pred)):
+    lower = pred['y_lower'].iloc[i]
+    upper = pred['y_upper'].iloc[i]
+    pred_val = pred['y_pred'].iloc[i]
+    if lower <= upper:
+        width = upper - lower
+    else:
+        # Wrapped around 360
+        width = (360 - lower) + upper
+    print(f'  t={pred["t"].iloc[i]}: width={width:.2f} degrees')
+EOF
 ```
 
 ## [55] tool
@@ -1514,7 +3204,133 @@ Let me validate the model and try to improve it by incorporating alpha
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+alpha_train = df['alpha'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+sin_alpha = np.sin(np.radians(alpha_train))
+cos_alpha = np.cos(np.radians(alpha_train))
+
+n = len(t_train)
+
+# Determine optimal frequencies from FFT for alpha too
+sin_detrended_a = sin_alpha - np.polyval(np.polyfit(t_train, sin_alpha, 1), t_train)
+cos_detrended_a = cos_alpha - np.polyval(np.polyfit(t_train, cos_alpha, 1), t_train)
+all_fft_a = np.abs(fft(sin_detrended_a)) + np.abs(fft(cos_detrended_a))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx_a = np.argsort(all_fft_a[pos_mask])[-20:]
+top_freqs_a = np.sort(freqs[pos_mask][top_idx_a])[::-1]
+
+# Also get beta frequencies
+sin_detrended_b = sin_beta - np.polyval(np.polyfit(t_train, sin_beta, 1), t_train)
+cos_detrended_b = cos_beta - np.polyval(np.polyfit(t_train, cos_beta, 1), t_train)
+all_fft_b = np.abs(fft(sin_detrended_b)) + np.abs(fft(cos_detrended_b))
+top_idx_b = np.argsort(all_fft_b[pos_mask])[-20:]
+top_freqs_b = np.sort(freqs[pos_mask][top_idx_b])[::-1]
+
+# Check overlap between alpha and beta frequencies
+print("Top 10 alpha frequencies:", [f'{f:.6f}' for f in top_freqs_a[:10]])
+print("Top 10 beta frequencies:", [f'{f:.6f}' for f in top_freqs_b[:10]])
+
+# Try a model that uses alpha to predict beta
+# Model: beta = f(t, alpha) using Fourier features for both t and alpha
+
+# Build features: sin/cos of t*freqs and sin/cos of alpha*freqs
+def build_features(t, alpha, freqs_t, freqs_alpha):
+    cols = [np.ones_like(t)]
+    # Fourier features for t
+    for f in freqs_t:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    # Fourier features for alpha
+    for f in freqs_alpha[:5]:  # Use top 5 alpha frequencies
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * alpha))
+        cols.append(np.cos(omega * alpha))
+    return np.column_stack(cols)
+
+# Use beta frequencies for t and alpha frequencies for alpha
+selected_freqs_t = top_freqs_b[:15]  # top 15 beta frequencies
+selected_freqs_alpha = top_freqs_a[:5]  # top 5 alpha frequencies
+
+X_train = build_features(t_train, alpha_train, selected_freqs_t, selected_freqs_alpha)
+
+# Fit sin(beta) and cos(beta) models
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train, sin_beta)
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train, cos_beta)
+
+# Training residuals
+sin_pred_train = ridge_sin.predict(X_train)
+cos_pred_train = ridge_cos.predict(X_train)
+beta_pred_train = np.degrees(np.arctan2(sin_pred_train, cos_pred_train)) % 360
+angular_resid = (beta_train - beta_pred_train + 180) % 360 - 180
+noise_std_with_alpha = np.std(angular_resid)
+print(f'\nWith alpha features - angular residual std: {noise_std_with_alpha:.4f} degrees')
+
+# Compare with model without alpha
+def build_features_t_only(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+X_train_tonly = build_features_t_only(t_train, selected_freqs_t)
+ridge_sin2 = Ridge(alpha=0.01)
+ridge_sin2.fit(X_train_tonly, sin_beta)
+ridge_cos2 = Ridge(alpha=0.01)
+ridge_cos2.fit(X_train_tonly, cos_beta)
+
+sin_pred_train2 = ridge_sin2.predict(X_train_tonly)
+cos_pred_train2 = ridge_cos2.predict(X_train_tonly)
+beta_pred_train2 = np.degrees(np.arctan2(sin_pred_train2, cos_pred_train2)) % 360
+angular_resid2 = (beta_train - beta_pred_train2 + 180) % 360 - 180
+noise_std_tonly = np.std(angular_resid2)
+print(f'Without alpha features - angular residual std: {noise_std_tonly:.4f} degrees')
+
+# Cross-validation to estimate noise more reliably
+from sklearn.model_selection import KFold
+
+print('\n--- Cross-validation for noise estimation ---')
+for name, X in [('with alpha', X_train), ('without alpha', X_train_tonly)]:
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    angular_errors = []
+    for train_idx, val_idx in kf.split(X):
+        X_tr, X_val = X[train_idx], X[val_idx]
+        sin_tr, sin_val = sin_beta[train_idx], sin_beta[val_idx]
+        cos_tr, cos_val = cos_beta[train_idx], cos_beta[val_idx]
+        
+        rs = Ridge(alpha=0.01)
+        rs.fit(X_tr, sin_tr)
+        rc = Ridge(alpha=0.01)
+        rc.fit(X_tr, cos_tr)
+        
+        sin_pred = rs.predict(X_val)
+        cos_pred = rc.predict(X_val)
+        beta_pred = np.degrees(np.arctan2(sin_pred, cos_pred)) % 360
+        beta_val = beta_train[val_idx]
+        angular_err = (beta_val - beta_pred + 180) % 360 - 180
+        angular_errors.extend(np.abs(angular_err))
+    
+    print(f'{name}: CV MAE = {np.mean(angular_errors):.2f} degrees, CV std = {np.std(angular_errors):.2f} degrees')
+EOF
 ```
 
 ## [57] tool
@@ -1564,7 +3380,103 @@ The 20-harmonic model is overfitting. Let me find the right complexity.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+from sklearn.model_selection import KFold
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+n = len(t_train)
+
+# Determine optimal frequencies from FFT
+sin_detrended = sin_beta - np.polyval(np.polyfit(t_train, sin_beta, 1), t_train)
+cos_detrended = cos_beta - np.polyval(np.polyfit(t_train, cos_beta, 1), t_train)
+all_fft = np.abs(fft(sin_detrended)) + np.abs(fft(cos_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(all_fft[pos_mask])[-30:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Try different numbers of harmonics with CV
+print('CV results for different numbers of harmonics:')
+for n_harm in [3, 5, 8, 10, 12, 15, 18, 20]:
+    selected_freqs = top_freqs[:n_harm]
+    X = build_design_matrix(t_train, selected_freqs)
+    
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    angular_errors = []
+    sin_errors = []
+    cos_errors = []
+    
+    for train_idx, val_idx in kf.split(X):
+        X_tr, X_val = X[train_idx], X[val_idx]
+        sin_tr, sin_val = sin_beta[train_idx], sin_beta[val_idx]
+        cos_tr, cos_val = cos_beta[train_idx], cos_beta[val_idx]
+        
+        rs = Ridge(alpha=0.01)
+        rs.fit(X_tr, sin_tr)
+        rc = Ridge(alpha=0.01)
+        rc.fit(X_tr, cos_tr)
+        
+        sin_pred = rs.predict(X_val)
+        cos_pred = rc.predict(X_val)
+        beta_pred = np.degrees(np.arctan2(sin_pred, cos_pred)) % 360
+        beta_val = beta_train[val_idx]
+        angular_err = (beta_val - beta_pred + 180) % 360 - 180
+        angular_errors.extend(np.abs(angular_err))
+        sin_errors.extend((sin_val - sin_pred)**2)
+        cos_errors.extend((cos_val - cos_pred)**2)
+    
+    print(f'n_harm={n_harm}: CV MAE={np.mean(angular_errors):.2f}, CV sin MSE={np.mean(sin_errors):.6f}, CV cos MSE={np.mean(cos_errors):.6f}')
+
+# Also try with regularization (different alpha values)
+print('\n--- With regularization tuning ---')
+for n_harm in [5, 10, 15]:
+    selected_freqs = top_freqs[:n_harm]
+    X = build_design_matrix(t_train, selected_freqs)
+    
+    for alpha in [0.001, 0.01, 0.1, 1.0]:
+        kf = KFold(n_splits=5, shuffle=True, random_state=42)
+        angular_errors = []
+        
+        for train_idx, val_idx in kf.split(X):
+            X_tr, X_val = X[train_idx], X[val_idx]
+            sin_tr, sin_val = sin_beta[train_idx], sin_beta[val_idx]
+            cos_tr, cos_val = cos_beta[train_idx], cos_beta[val_idx]
+            
+            rs = Ridge(alpha=alpha)
+            rs.fit(X_tr, sin_tr)
+            rc = Ridge(alpha=alpha)
+            rc.fit(X_tr, cos_tr)
+            
+            sin_pred = rs.predict(X_val)
+            cos_pred = rc.predict(X_val)
+            beta_pred = np.degrees(np.arctan2(sin_pred, cos_pred)) % 360
+            beta_val = beta_train[val_idx]
+            angular_err = (beta_val - beta_pred + 180) % 360 - 180
+            angular_errors.extend(np.abs(angular_err))
+        
+        print(f'n_harm={n_harm}, alpha={alpha}: CV MAE={np.mean(angular_errors):.2f}')
+EOF
 ```
 
 ## [59] tool
@@ -1672,7 +3584,117 @@ The CV MAE is consistently ~60 degrees, suggesting the Fourier model isn't captu
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+t_test = test['t'].values
+
+# Try LOWESS smoothing with different fractions
+# The key is to find the right smoothing parameter
+# frac=0.01 means using 1% of data for each local regression
+
+# First, let's understand the data better
+# Compute the "innovation" - what's the noise level after removing the smooth trend?
+
+# Use LOWESS with a very small fraction to get a smooth fit
+for frac in [0.01, 0.02, 0.05, 0.1, 0.2]:
+    result = lowess(beta_train, t_train, frac=frac, it=3)
+    beta_smooth = result[:, 1]
+    resid = beta_train - beta_smooth
+    
+    # Handle wrap-around in residuals
+    resid_wrapped = (resid + 180) % 360 - 180
+    
+    print(f'LOWESS frac={frac}: residual std={np.std(resid_wrapped):.2f}, MAE={np.mean(np.abs(resid_wrapped)):.2f}')
+
+# The best smoothing parameter should give residuals that look like pure noise
+# Let's use frac=0.02 or 0.05
+
+# Now, for prediction, we need to extrapolate the smooth trend
+# LOWESS doesn't extrapolate well, so let's fit a parametric model to the smooth trend
+
+# Approach: Fit a Fourier series to the LOWESS-smoothed beta
+beta_smooth = lowess(beta_train, t_train, frac=0.02, it=3)[:, 1]
+
+# Now fit a Fourier series to the smoothed data
+from scipy.fft import fft, fftfreq
+n = len(t_train)
+
+# Detrend the smoothed data
+coeffs = np.polyfit(t_train, beta_smooth, 1)
+trend = np.polyval(coeffs, t_train)
+beta_smooth_detrended = beta_smooth - trend
+
+fft_vals = np.abs(fft(beta_smooth_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(fft_vals[pos_mask])[-15:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+print(f'\nTop frequencies from smoothed data:')
+for i, f in enumerate(top_freqs[:10]):
+    print(f'  {i}: freq={f:.6f}, period={1/f:.1f} days')
+
+# Fit Fourier series to smoothed data
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Try different numbers of harmonics
+for n_harm in [3, 5, 8, 10, 12]:
+    selected_freqs = top_freqs[:n_harm]
+    X = build_design_matrix(t_train, selected_freqs)
+    
+    # Fit beta directly (not sin/cos)
+    from sklearn.linear_model import Ridge
+    ridge = Ridge(alpha=0.01)
+    ridge.fit(X, beta_smooth)
+    beta_pred_smooth = ridge.predict(X)
+    
+    # Residual of smooth fit
+    resid_smooth = beta_smooth - beta_pred_smooth
+    resid_wrapped = (resid_smooth + 180) % 360 - 180
+    print(f'Fourier n_harm={n_harm} on smoothed data: residual std={np.std(resid_wrapped):.2f}')
+
+# Now let's use the best model for prediction
+# Use the Fourier model on the smoothed data, then add observation noise
+
+# First, estimate observation noise from the raw data residuals
+# Use the LOWESS smooth with frac=0.02
+beta_smooth_full = lowess(beta_train, t_train, frac=0.02, it=3)[:, 1]
+raw_resid = beta_train - beta_smooth_full
+raw_resid_wrapped = (raw_resid + 180) % 360 - 180
+obs_noise_std = np.std(raw_resid_wrapped)
+print(f'\nObservation noise std (from LOWESS residuals): {obs_noise_std:.2f} degrees')
+
+# But this includes model error too. Let's use a more conservative estimate.
+# The rolling std with window 30 was about 7.8 degrees.
+# Let's use that as a lower bound on observation noise.
+
+# Actually, let me compute the observation noise more carefully
+# by looking at the residuals from a very smooth fit
+beta_very_smooth = lowess(beta_train, t_train, frac=0.005, it=3)[:, 1]
+very_smooth_resid = beta_train - beta_very_smooth
+very_smooth_resid_wrapped = (very_smooth_resid + 180) % 360 - 180
+print(f'Very smooth (frac=0.005) residual std: {np.std(very_smooth_resid_wrapped):.2f}')
+
+# The observation noise should be close to this value
+obs_noise_std = np.std(very_smooth_resid_wrapped)
+print(f'Estimated observation noise std: {obs_noise_std:.2f} degrees')
+EOF
 ```
 
 ## [61] tool
@@ -1787,7 +3809,51 @@ Let me try a more robust approach with proper extrapolation handling.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel, Matern
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values.reshape(-1, 1)
+beta_train = df['beta'].values
+t_test = test['t'].values.reshape(-1, 1)
+
+# Subsample for GP speed
+np.random.seed(42)
+idx = np.random.choice(len(t_train), size=1500, replace=False)
+idx = np.sort(idx)
+t_sub = t_train[idx]
+beta_sub = beta_train[idx]
+
+# Try GP with Matern kernel (better for extrapolation than RBF)
+# Matern 5/2 kernel: smoother than RBF, allows for less smooth functions
+kernel = C(1.0, (1e-3, 1e3)) * Matern(length_scale=100.0, length_scale_bounds=(1e1, 1e4), nu=2.5) + WhiteKernel(noise_level=50, noise_level_bounds=(1, 1000))
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, alpha=1e-6)
+gp.fit(t_sub, beta_sub)
+print(f'GP kernel: {gp.kernel_}')
+
+beta_pred, beta_std = gp.predict(t_test, return_std=True)
+print('\nGP predictions (Matern 5/2, subsampled):')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i][0]}: beta_pred={beta_pred[i]:.2f}, std={beta_std[i]:.2f}, 95% CI: [{beta_pred[i]-1.96*beta_std[i]:.2f}, {beta_pred[i]+1.96*beta_std[i]:.2f}]')
+
+# Also try with RBF kernel
+kernel2 = C(1.0, (1e-3, 1e3)) * RBF(length_scale=100.0, length_scale_bounds=(1e1, 1e4)) + WhiteKernel(noise_level=50, noise_level_bounds=(1, 1000))
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=5, alpha=1e-6)
+gp2.fit(t_sub, beta_sub)
+print(f'\nGP kernel (RBF): {gp2.kernel_}')
+
+beta_pred2, beta_std2 = gp2.predict(t_test, return_std=True)
+print('\nGP predictions (RBF, subsampled):')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i][0]}: beta_pred={beta_pred2[i]:.2f}, std={beta_std2[i]:.2f}, 95% CI: [{beta_pred2[i]-1.96*beta_std2[i]:.2f}, {beta_pred2[i]+1.96*beta_std2[i]:.2f}]')
+EOF
 ```
 
 ## [63] tool
@@ -1861,7 +3927,63 @@ The stationary GP kernels predict回归到均值，这不适合外推。让我�
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Try local linear trend model (allows for changing slope)
+model = UnobservedComponents(beta_train, 'local linear trend')
+res = model.fit(disp=False)
+print(f'Local linear trend params: {res.params}')
+
+# Get the filtered state
+filtered_state = res.filtered_state
+print(f'Filtered state shape: {filtered_state.shape}')
+print(f'Last level: {filtered_state[0, -1]:.2f}')
+print(f'Last slope: {filtered_state[1, -1]:.4f}')
+
+# Predict for the full range
+last_train_idx = len(beta_train) - 1
+max_test_t = t_test.max()
+n_pred = max_test_t - t_train[-1]
+
+print(f'Predicting {n_pred} steps ahead...')
+pred = res.get_prediction(start=last_train_idx + 1, end=last_train_idx + n_pred)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+print(f'Prediction shape: {pred_mean.shape}')
+
+# Map test t values to prediction indices
+results = []
+for i, t in enumerate(t_test):
+    idx = t - t_train[-1] - 1
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        y_lower = ci_row[0]
+        y_upper = ci_row[1]
+        print(f'  t={t}: idx={idx}, beta_pred={mean_val:.2f}, 95% CI: [{y_lower:.2f}, {y_upper:.2f}]')
+        results.append({'t': t, 'y_pred': mean_val, 'y_lower': y_lower, 'y_upper': y_upper})
+    else:
+        print(f'  t={t}: idx={idx} OUT OF RANGE')
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [65] tool
@@ -1982,7 +4104,68 @@ Let me try a fundamentally different approach - model the smoothed signal and ex
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+from scipy.interpolate import UnivariateSpline
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+t_test = test['t'].values
+
+# Step 1: Smooth the beta data using LOWESS
+beta_smooth = lowess(beta_train, t_train, frac=0.01, it=3)[:, 1]
+
+# Step 2: Fit a cubic spline to the smoothed data
+# Use a smoothing spline that balances fit and smoothness
+spl = UnivariateSpline(t_train, beta_smooth, s=1000)
+
+# Step 3: Predict for test points
+beta_pred_spl = spl(t_test)
+
+# Step 4: Estimate observation noise
+# Use the residuals from the LOWESS smooth
+resid = beta_train - beta_smooth
+resid_wrapped = (resid + 180) % 360 - 180
+obs_noise_std = np.std(resid_wrapped)
+print(f'Observation noise std (from LOWESS residuals): {obs_noise_std:.2f} degrees')
+
+# Also compute the noise from the spline fit
+resid_spl = beta_train - spl(t_train)
+resid_spl_wrapped = (resid_spl + 180) % 360 - 180
+print(f'Observation noise std (from spline residuals): {np.std(resid_spl_wrapped):.2f} degrees')
+
+# Step 5: Compute prediction intervals
+# For a new observation, the 95% interval is:
+# [pred - 1.96 * noise_std, pred + 1.96 * noise_std]
+# wrapped to [0, 360)
+
+y_pred = beta_pred_spl % 360
+y_lower = (y_pred - 1.96 * obs_noise_std) % 360
+y_upper = (y_pred + 1.96 * obs_noise_std) % 360
+
+print(f'\n95% prediction interval half-width: {1.96 * obs_noise_std:.2f} degrees')
+
+print('\nPredictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={y_pred[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [67] tool
@@ -2039,7 +4222,136 @@ Let me improve the model by incorporating alpha and adding extrapolation uncerta
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+from scipy.interpolate import UnivariateSpline
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+alpha_train = df['alpha'].values
+t_test = test['t'].values
+
+# Approach: Model beta as a function of t and alpha
+# Since alpha is not available in test, predict alpha first
+
+# Step 1: Smooth alpha
+alpha_smooth = lowess(alpha_train, t_train, frac=0.01, it=3)[:, 1]
+alpha_resid = alpha_train - alpha_smooth
+alpha_resid_wrapped = (alpha_resid + 180) % 360 - 180
+alpha_noise_std = np.std(alpha_resid_wrapped)
+print(f'Alpha observation noise std: {alpha_noise_std:.2f} degrees')
+
+# Step 2: Fit a Fourier model to alpha for extrapolation
+sin_alpha = np.sin(np.radians(alpha_smooth))
+cos_alpha = np.cos(np.radians(alpha_smooth))
+
+n = len(t_train)
+all_fft_a = np.abs(fft(sin_alpha - np.polyval(np.polyfit(t_train, sin_alpha, 1), t_train))) + \
+            np.abs(fft(cos_alpha - np.polyval(np.polyfit(t_train, cos_alpha, 1), t_train)))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx_a = np.argsort(all_fft_a[pos_mask])[-10:]
+top_freqs_a = np.sort(freqs[pos_mask][top_idx_a])[::-1]
+
+# Build design matrix for alpha
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Fit alpha model with top 5 frequencies
+n_harm_a = 5
+X_alpha_train = build_design_matrix(t_train, top_freqs_a[:n_harm_a])
+
+from sklearn.linear_model import Ridge
+ridge_alpha_sin = Ridge(alpha=0.01)
+ridge_alpha_sin.fit(X_alpha_train, sin_alpha)
+ridge_alpha_cos = Ridge(alpha=0.01)
+ridge_alpha_cos.fit(X_alpha_train, cos_alpha)
+
+# Predict alpha for test points
+X_alpha_test = build_design_matrix(t_test, top_freqs_a[:n_harm_a])
+sin_alpha_pred = ridge_alpha_sin.predict(X_alpha_test)
+cos_alpha_pred = ridge_alpha_cos.predict(X_alpha_test)
+alpha_pred_test = np.degrees(np.arctan2(sin_alpha_pred, cos_alpha_pred)) % 360
+
+print(f'\nPredicted alpha for test points:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: alpha_pred={alpha_pred_test[i]:.2f}')
+
+# Step 3: Model beta as a function of t and predicted alpha
+# Use a Fourier model for t plus alpha as a feature
+
+# First, get the top frequencies for beta
+beta_smooth = lowess(beta_train, t_train, frac=0.01, it=3)[:, 1]
+sin_beta = np.sin(np.radians(beta_smooth))
+cos_beta = np.cos(np.radians(beta_smooth))
+
+all_fft_b = np.abs(fft(sin_beta - np.polyval(np.polyfit(t_train, sin_beta, 1), t_train))) + \
+            np.abs(fft(cos_beta - np.polyval(np.polyfit(t_train, cos_beta, 1), t_train)))
+top_idx_b = np.argsort(all_fft_b[pos_mask])[-10:]
+top_freqs_b = np.sort(freqs[pos_mask][top_idx_b])[::-1]
+
+# Build features: t Fourier + alpha
+n_harm_t = 8
+X_train_combined = build_design_matrix(t_train, top_freqs_b[:n_harm_t])
+# Add alpha as a feature
+X_train_combined = np.column_stack([X_train_combined, alpha_train])
+
+X_test_combined = build_design_matrix(t_test, top_freqs_b[:n_harm_t])
+X_test_combined = np.column_stack([X_test_combined, alpha_pred_test])
+
+# Fit sin(beta) and cos(beta) models
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train_combined, sin_beta)
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train_combined, cos_beta)
+
+# Training residuals
+sin_pred_train = ridge_sin.predict(X_train_combined)
+cos_pred_train = ridge_cos.predict(X_train_combined)
+beta_pred_train = np.degrees(np.arctan2(sin_pred_train, cos_pred_train)) % 360
+angular_resid = (beta_train - beta_pred_train + 180) % 360 - 180
+noise_std_combined = np.std(angular_resid)
+print(f'\nCombined model (t + alpha) angular residual std: {noise_std_combined:.2f} degrees')
+
+# Predict for test set
+sin_pred_test = ridge_sin.predict(X_test_combined)
+cos_pred_test = ridge_cos.predict(X_test_combined)
+beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+
+# 95% prediction interval
+y_lower = (beta_pred_test - 1.96 * noise_std_combined) % 360
+y_upper = (beta_pred_test + 1.96 * noise_std_combined) % 360
+
+print(f'\n95% prediction interval half-width: {1.96 * noise_std_combined:.2f} degrees')
+
+print('\nPredictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [69] tool
@@ -2120,7 +4432,140 @@ Let me validate the model and try to improve it further.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+from sklearn.model_selection import KFold
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+alpha_train = df['alpha'].values
+
+# Validate the combined model using a train/test split
+# Hold out the last 200 points as validation
+val_start = len(t_train) - 200
+t_tr = t_train[:val_start]
+beta_tr = beta_train[:val_start]
+alpha_tr = alpha_train[:val_start]
+t_val = t_train[val_start:]
+beta_val = beta_train[val_start:]
+alpha_val = alpha_train[val_start:]
+
+# Smooth alpha on training portion
+alpha_smooth_tr = lowess(alpha_tr, t_tr, frac=0.01, it=3)[:, 1]
+
+# Get top frequencies for alpha from training portion
+sin_alpha_tr = np.sin(np.radians(alpha_smooth_tr))
+cos_alpha_tr = np.cos(np.radians(alpha_smooth_tr))
+n_tr = len(t_tr)
+all_fft_a = np.abs(fft(sin_alpha_tr - np.polyval(np.polyfit(t_tr, sin_alpha_tr, 1), t_tr))) + \
+             np.abs(fft(cos_alpha_tr - np.polyval(np.polyfit(t_tr, cos_alpha_tr, 1), t_tr)))
+freqs = fftfreq(n_tr, d=1)
+pos_mask = freqs > 0
+top_idx_a = np.argsort(all_fft_a[pos_mask])[-10:]
+top_freqs_a = np.sort(freqs[pos_mask][top_idx_a])[::-1]
+
+# Build design matrix for alpha
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Predict alpha for validation set
+n_harm_a = 5
+X_alpha_tr = build_design_matrix(t_tr, top_freqs_a[:n_harm_a])
+X_alpha_val = build_design_matrix(t_val, top_freqs_a[:n_harm_a])
+
+ridge_alpha_sin = Ridge(alpha=0.01)
+ridge_alpha_sin.fit(X_alpha_tr, sin_alpha_tr)
+ridge_alpha_cos = Ridge(alpha=0.01)
+ridge_alpha_cos.fit(X_alpha_tr, cos_alpha_tr)
+
+sin_alpha_pred_val = ridge_alpha_sin.predict(X_alpha_val)
+cos_alpha_pred_val = ridge_alpha_cos.predict(X_alpha_val)
+alpha_pred_val = np.degrees(np.arctan2(sin_alpha_pred_val, cos_alpha_pred_val)) % 360
+
+# Now build combined features for beta
+beta_smooth_tr = lowess(beta_tr, t_tr, frac=0.01, it=3)[:, 1]
+sin_beta_tr = np.sin(np.radians(beta_smooth_tr))
+cos_beta_tr = np.cos(np.radians(beta_smooth_tr))
+
+all_fft_b = np.abs(fft(sin_beta_tr - np.polyval(np.polyfit(t_tr, sin_beta_tr, 1), t_tr))) + \
+             np.abs(fft(cos_beta_tr - np.polyval(np.polyfit(t_tr, cos_beta_tr, 1), t_tr)))
+top_idx_b = np.argsort(all_fft_b[pos_mask])[-10:]
+top_freqs_b = np.sort(freqs[pos_mask][top_idx_b])[::-1]
+
+n_harm_t = 8
+X_t_tr = build_design_matrix(t_tr, top_freqs_b[:n_harm_t])
+X_t_val = build_design_matrix(t_val, top_freqs_b[:n_harm_t])
+
+# Combined features
+X_combined_tr = np.column_stack([X_t_tr, alpha_tr])
+X_combined_val = np.column_stack([X_t_val, alpha_pred_val])
+
+# Fit models
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_combined_tr, sin_beta_tr)
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_combined_tr, cos_beta_tr)
+
+# Predict on validation set
+sin_pred_val = ridge_sin.predict(X_combined_val)
+cos_pred_val = ridge_cos.predict(X_combined_val)
+beta_pred_val = np.degrees(np.arctan2(sin_pred_val, cos_pred_val)) % 360
+
+# Angular errors
+angular_err = (beta_val - beta_pred_val + 180) % 360 - 180
+print(f'Validation MAE: {np.mean(np.abs(angular_err)):.2f} degrees')
+print(f'Validation std: {np.std(angular_err):.2f} degrees')
+print(f'Validation max error: {np.max(np.abs(angular_err)):.2f} degrees')
+
+# Also try without alpha (t-only model)
+X_t_only_tr = build_design_matrix(t_tr, top_freqs_b[:n_harm_t])
+X_t_only_val = build_design_matrix(t_val, top_freqs_b[:n_harm_t])
+
+ridge_sin2 = Ridge(alpha=0.01)
+ridge_sin2.fit(X_t_only_tr, sin_beta_tr)
+ridge_cos2 = Ridge(alpha=0.01)
+ridge_cos2.fit(X_t_only_tr, cos_beta_tr)
+
+sin_pred_val2 = ridge_sin2.predict(X_t_only_val)
+cos_pred_val2 = ridge_cos2.predict(X_t_only_val)
+beta_pred_val2 = np.degrees(np.arctan2(sin_pred_val2, cos_pred_val2)) % 360
+
+angular_err2 = (beta_val - beta_pred_val2 + 180) % 360 - 180
+print(f'\nValidation MAE (t-only): {np.mean(np.abs(angular_err2)):.2f} degrees')
+print(f'Validation std (t-only): {np.std(angular_err2):.2f} degrees')
+
+# Try different smoothing parameters for LOWESS
+print('\n--- Sensitivity to smoothing parameter ---')
+for frac in [0.005, 0.01, 0.02, 0.03]:
+    beta_smooth_tr2 = lowess(beta_tr, t_tr, frac=frac, it=3)[:, 1]
+    sin_beta_tr2 = np.sin(np.radians(beta_smooth_tr2))
+    cos_beta_tr2 = np.cos(np.radians(beta_smooth_tr2))
+    
+    ridge_sin3 = Ridge(alpha=0.01)
+    ridge_sin3.fit(X_combined_tr, sin_beta_tr2)
+    ridge_cos3 = Ridge(alpha=0.01)
+    ridge_cos3.fit(X_combined_tr, cos_beta_tr2)
+    
+    sin_pred_val3 = ridge_sin3.predict(X_combined_val)
+    cos_pred_val3 = ridge_cos3.predict(X_combined_val)
+    beta_pred_val3 = np.degrees(np.arctan2(sin_pred_val3, cos_pred_val3)) % 360
+    
+    angular_err3 = (beta_val - beta_pred_val3 + 180) % 360 - 180
+    print(f'frac={frac}: Validation MAE={np.mean(np.abs(angular_err3)):.2f}, std={np.std(angular_err3):.2f}')
+EOF
 ```
 
 ## [71] tool
@@ -2178,7 +4623,88 @@ The Fourier model is performing terribly on validation. Let me try a much simple
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+
+# Validate a simple random walk model
+# Hold out the last 200 points
+val_start = len(beta_train) - 200
+beta_tr = beta_train[:val_start]
+beta_val = beta_train[val_start:]
+
+# Random walk model: predict last value
+beta_last = beta_tr[-1]
+beta_pred_val = np.full(len(beta_val), beta_last)
+
+# Angular errors
+angular_err = (beta_val - beta_pred_val + 180) % 360 - 180
+print(f'Random walk (last value) Validation MAE: {np.mean(np.abs(angular_err)):.2f} degrees')
+print(f'Random walk (last value) Validation std: {np.std(angular_err):.2f} degrees')
+
+# Try: predict using the most recent observation
+# For each validation point, predict using the training data point at the same relative position
+# This is like a "nearest neighbor" approach
+
+# Try: use a local level state-space model
+model = UnobservedComponents(beta_tr, 'local level')
+res = model.fit(disp=False)
+
+pred = res.get_prediction(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+angular_err_ss = (beta_val - pred_mean + 180) % 360 - 180
+print(f'\nLocal level state-space Validation MAE: {np.mean(np.abs(angular_err_ss)):.2f} degrees')
+print(f'Local level state-space Validation std: {np.std(angular_err_ss):.2f} degrees')
+
+# Try: local linear trend
+model2 = UnobservedComponents(beta_tr, 'local linear trend')
+res2 = model2.fit(disp=False)
+
+pred2 = res2.get_prediction(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+pred_mean2 = pred2.predicted_mean
+
+angular_err_slt = (beta_val - pred_mean2 + 180) % 360 - 180
+print(f'\nLocal linear trend Validation MAE: {np.mean(np.abs(angular_err_slt)):.2f} degrees')
+print(f'Local linear trend Validation std: {np.std(angular_err_slt):.2f} degrees')
+
+# Try: AR(1) model
+from statsmodels.tsa.ar_model import AutoReg
+ar_model = AutoReg(beta_tr, lags=1)
+ar_res = ar_model.fit()
+ar_pred = ar_res.predict(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+
+angular_err_ar = (beta_val - ar_pred + 180) % 360 - 180
+print(f'\nAR(1) Validation MAE: {np.mean(np.abs(angular_err_ar)):.2f} degrees')
+print(f'AR(1) Validation std: {np.std(angular_err_ar):.2f} degrees')
+
+# Try: AR(5) model
+ar_model5 = AutoReg(beta_tr, lags=5)
+ar_res5 = ar_model5.fit()
+ar_pred5 = ar_res5.predict(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+
+angular_err_ar5 = (beta_val - ar_pred5 + 180) % 360 - 180
+print(f'\nAR(5) Validation MAE: {np.mean(np.abs(angular_err_ar5)):.2f} degrees')
+print(f'AR(5) Validation std: {np.std(angular_err_ar5):.2f} degrees')
+
+# Try: simple exponential smoothing
+from statsmodels.tsa.holtwinters import SimpleExpSmoothing
+ses = SimpleExpSmoothing(beta_tr).fit()
+ses_pred = ses.forecast(len(beta_val))
+
+angular_err_ses = (beta_val - ses_pred + 180) % 360 - 180
+print(f'\nSimple Exp Smoothing Validation MAE: {np.mean(np.abs(angular_err_ses)):.2f} degrees')
+print(f'Simple Exp Smoothing Validation std: {np.std(angular_err_ses):.2f} degrees')
+EOF
 ```
 
 ## [73] tool
@@ -2242,7 +4768,81 @@ The simple state-space models work much better. Let me build the final model usi
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Fit local linear trend model on full training data
+model = UnobservedComponents(beta_train, 'local linear trend')
+res = model.fit(disp=False)
+
+print(f'Local linear trend params: {res.params}')
+
+# Get the filtered state estimates
+filtered_state = res.filtered_state
+print(f'Filtered state shape: {filtered_state.shape}')
+print(f'Last level: {filtered_state[0, -1]:.2f}')
+print(f'Last slope: {filtered_state[1, -1]:.4f}')
+
+# Get the observation noise variance
+obs_var = res.params['sigma2.irregular']
+print(f'Observation variance: {obs_var:.4f}')
+print(f'Observation noise std: {np.sqrt(obs_var):.4f}')
+
+# Get the state noise variances
+level_var = res.params.get('sigma2.level', np.nan)
+slope_var = res.params.get('sigma2.trend', np.nan)
+print(f'Level variance: {level_var}')
+print(f'Slope variance: {slope_var}')
+
+# Predict for the full range from end of training to max test t
+last_train_idx = len(beta_train) - 1
+max_test_t = t_test.max()
+n_pred = max_test_t - t_train[-1]
+
+print(f'\nPredicting {n_pred} steps ahead...')
+pred = res.get_prediction(start=last_train_idx + 1, end=last_train_idx + n_pred)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+print(f'Prediction shape: {pred_mean.shape}')
+
+# Map test t values to prediction indices
+results = []
+for i, t in enumerate(t_test):
+    idx = t - t_train[-1] - 1  # index in prediction array
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        y_lower = ci_row[0]
+        y_upper = ci_row[1]
+        
+        # Wrap to [0, 360)
+        mean_val_wrapped = mean_val % 360
+        y_lower_wrapped = y_lower % 360
+        y_upper_wrapped = y_upper % 360
+        
+        print(f'  t={t}: idx={idx}, beta_pred={mean_val_wrapped:.2f}, 95% CI: [{y_lower_wrapped:.2f}, {y_upper_wrapped:.2f}]')
+        results.append({'t': t, 'y_pred': mean_val_wrapped, 'y_lower': y_lower_wrapped, 'y_upper': y_upper_wrapped})
+    else:
+        print(f'  t={t}: idx={idx} OUT OF RANGE')
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [75] tool
@@ -2275,7 +4875,64 @@ Let me fix the code and build the final model properly.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Fit local linear trend model on full training data
+model = UnobservedComponents(beta_train, 'local linear trend')
+res = model.fit(disp=False)
+
+print(f'Local linear trend params: {res.params}')
+
+# Predict for the full range from end of training to max test t
+last_train_idx = len(beta_train) - 1
+max_test_t = t_test.max()
+n_pred = max_test_t - t_train[-1]
+
+print(f'Predicting {n_pred} steps ahead...')
+pred = res.get_prediction(start=last_train_idx + 1, end=last_train_idx + n_pred)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+print(f'Prediction shape: {pred_mean.shape}')
+
+# Map test t values to prediction indices
+results = []
+for i, t in enumerate(t_test):
+    idx = t - t_train[-1] - 1  # index in prediction array
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        y_lower = ci_row[0]
+        y_upper = ci_row[1]
+        
+        # Wrap to [0, 360)
+        mean_val_wrapped = mean_val % 360
+        y_lower_wrapped = y_lower % 360
+        y_upper_wrapped = y_upper % 360
+        
+        print(f'  t={t}: idx={idx}, beta_pred={mean_val_wrapped:.2f}, 95% CI: [{y_lower_wrapped:.2f}, {y_upper_wrapped:.2f}]')
+        results.append({'t': t, 'y_pred': mean_val_wrapped, 'y_lower': y_lower_wrapped, 'y_upper': y_upper_wrapped})
+    else:
+        print(f'  t={t}: idx={idx} OUT OF RANGE')
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [77] tool
@@ -2361,7 +5018,109 @@ Let me check the model parameters and try a simpler approach.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+beta_train = df['beta'].values
+
+# Local level model (simpler)
+model_ll = UnobservedComponents(beta_train, 'local level')
+res_ll = model_ll.fit(disp=False)
+print(f'Local level params: {res_ll.params}')
+print(f'  obs_var: {res_ll.params[0]:.4f}')
+print(f'  level_var: {res_ll.params[1]:.4f}')
+print(f'  obs_noise_std: {np.sqrt(res_ll.params[0]):.4f}')
+print(f'  level_noise_std: {np.sqrt(res_ll.params[1]):.4f}')
+
+# Local linear trend model
+model_llt = UnobservedComponents(beta_train, 'local linear trend')
+res_llt = model_llt.fit(disp=False)
+print(f'\nLocal linear trend params: {res_llt.params}')
+print(f'  obs_var: {res_llt.params[0]:.4f}')
+print(f'  level_var: {res_llt.params[1]:.4f}')
+print(f'  trend_var: {res_llt.params[2]:.4f}')
+print(f'  obs_noise_std: {np.sqrt(res_llt.params[0]):.4f}')
+
+# Validate local level model
+val_start = len(beta_train) - 200
+beta_tr = beta_train[:val_start]
+beta_val = beta_train[val_start:]
+
+model_ll_val = UnobservedComponents(beta_tr, 'local level')
+res_ll_val = model_ll_val.fit(disp=False)
+
+pred_val = res_ll_val.get_prediction(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+pred_mean_val = pred_val.predicted_mean
+
+angular_err = (beta_val - pred_mean_val + 180) % 360 - 180
+print(f'\nLocal level Validation MAE: {np.mean(np.abs(angular_err)):.2f} degrees')
+print(f'Local level Validation std: {np.std(angular_err):.2f} degrees')
+
+# Validate local linear trend
+model_llt_val = UnobservedComponents(beta_tr, 'local linear trend')
+res_llt_val = model_llt_val.fit(disp=False)
+
+pred_val2 = res_llt_val.get_prediction(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+pred_mean_val2 = pred_val2.predicted_mean
+
+angular_err2 = (beta_val - pred_mean_val2 + 180) % 360 - 180
+print(f'Local linear trend Validation MAE: {np.mean(np.abs(angular_err2)):.2f} degrees')
+print(f'Local linear trend Validation std: {np.std(angular_err2):.2f} degrees')
+
+# The local level model is essentially a random walk
+# For a random walk, the prediction h steps ahead is the last filtered state
+# with variance = filtered_state_var + h * level_noise_var + obs_noise_var
+
+# Let's compute this manually for the local level model
+filtered_state = res_ll_val.filtered_state[0]
+filtered_state_cov = res_ll_val.filtered_state_cov
+last_state = filtered_state[-1]
+last_state_var = filtered_state_cov[0, 0, -1]
+obs_var = res_ll_val.params[0]
+level_var = res_ll_val.params[1]
+
+print(f'\nLocal level model:')
+print(f'  Last state: {last_state:.2f}')
+print(f'  Last state var: {last_state_var:.4f}')
+print(f'  Obs noise var: {obs_var:.4f}')
+print(f'  Level noise var: {level_var:.4f}')
+
+# For h steps ahead:
+# E[y_{T+h}] = last_state
+# Var(y_{T+h}) = last_state_var + h * level_var + obs_var
+
+# For the test set:
+t_train = df['t'].values
+t_test = pd.read_csv('data/test.csv')['t'].values
+
+print(f'\nTest predictions using local level model:')
+results = []
+for i, t in enumerate(t_test):
+    h = t - t_train[-1]
+    pred_mean = last_state
+    pred_var = last_state_var + h * level_var + obs_var
+    pred_std = np.sqrt(pred_var)
+    
+    y_lower = pred_mean - 1.96 * pred_std
+    y_upper = pred_mean + 1.96 * pred_std
+    
+    # Wrap to [0, 360)
+    y_pred_wrapped = pred_mean % 360
+    y_lower_wrapped = y_lower % 360
+    y_upper_wrapped = y_upper % 360
+    
+    print(f'  t={t}: h={h}, beta_pred={y_pred_wrapped:.2f}, 95% CI: [{y_lower_wrapped:.2f}, {y_upper_wrapped:.2f}]')
+    results.append({'t': t, 'y_pred': y_pred_wrapped, 'y_lower': y_lower_wrapped, 'y_upper': y_upper_wrapped})
+
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+EOF
 ```
 
 ## [79] tool
@@ -2453,7 +5212,140 @@ Let me try a more sophisticated approach that captures the periodic nature of th
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+from scipy.fft import fft, fftfreq
+from sklearn.linear_model import Ridge
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+alpha_train = df['alpha'].values
+t_test = test['t'].values
+
+# Approach: Model beta - alpha as a function of t
+# If beta = alpha + offset(t), then offset(t) is a smooth function of t
+
+# Compute offset = beta - alpha (wrapped to [-180, 180])
+offset = (beta_train - alpha_train + 180) % 360 - 180
+
+# Smooth the offset using LOWESS
+from statsmodels.nonparametric.smoothers_lowess import lowess
+offset_smooth = lowess(offset, t_train, frac=0.02, it=3)[:, 1]
+offset_resid = offset - offset_smooth
+offset_resid_wrapped = (offset_resid + 180) % 360 - 180
+offset_noise_std = np.std(offset_resid_wrapped)
+print(f'Offset noise std: {offset_noise_std:.2f} degrees')
+
+# Now predict offset for test t values
+# Use a Fourier series for the offset
+sin_offset = np.sin(np.radians(offset_smooth))
+cos_offset = np.cos(np.radians(offset_smooth))
+
+n = len(t_train)
+all_fft_off = np.abs(fft(sin_offset - np.polyval(np.polyfit(t_train, sin_offset, 1), t_train))) + \
+               np.abs(fft(cos_offset - np.polyval(np.polyfit(t_train, cos_offset, 1), t_train)))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx_off = np.argsort(all_fft_off[pos_mask])[-10:]
+top_freqs_off = np.sort(freqs[pos_mask][top_idx_off])[::-1]
+
+# Build design matrix for offset
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Fit offset model with top frequencies
+for n_harm in [3, 5, 8, 10]:
+    selected_freqs = top_freqs_off[:n_harm]
+    X = build_design_matrix(t_train, selected_freqs)
+    
+    ridge = Ridge(alpha=0.01)
+    ridge.fit(X, offset_smooth)
+    offset_pred_train = ridge.predict(X)
+    
+    resid = offset_smooth - offset_pred_train
+    resid_wrapped = (resid + 180) % 360 - 180
+    print(f'Offset Fourier n_harm={n_harm}: residual std={np.std(resid_wrapped):.2f}')
+
+# Use 5 harmonics for offset
+n_harm_off = 5
+selected_freqs_off = top_freqs_off[:n_harm_off]
+X_off_train = build_design_matrix(t_train, selected_freqs_off)
+X_off_test = build_design_matrix(t_test, selected_freqs_off)
+
+ridge_off = Ridge(alpha=0.01)
+ridge_off.fit(X_off_train, offset_smooth)
+offset_pred_test = ridge_off.predict(X_off_test)
+
+# Now predict alpha for test t values
+alpha_smooth = lowess(alpha_train, t_train, frac=0.01, it=3)[:, 1]
+sin_alpha = np.sin(np.radians(alpha_smooth))
+cos_alpha = np.cos(np.radians(alpha_smooth))
+
+all_fft_alpha = np.abs(fft(sin_alpha - np.polyval(np.polyfit(t_train, sin_alpha, 1), t_train))) + \
+                 np.abs(fft(cos_alpha - np.polyval(np.polyfit(t_train, cos_alpha, 1), t_train)))
+top_idx_alpha = np.argsort(all_fft_alpha[pos_mask])[-10:]
+top_freqs_alpha = np.sort(freqs[pos_mask][top_idx_alpha])[::-1]
+
+n_harm_alpha = 5
+selected_freqs_alpha = top_freqs_alpha[:n_harm_alpha]
+X_alpha_train = build_design_matrix(t_train, selected_freqs_alpha)
+X_alpha_test = build_design_matrix(t_test, selected_freqs_alpha)
+
+ridge_alpha_sin = Ridge(alpha=0.01)
+ridge_alpha_sin.fit(X_alpha_train, sin_alpha)
+ridge_alpha_cos = Ridge(alpha=0.01)
+ridge_alpha_cos.fit(X_alpha_train, cos_alpha)
+
+sin_alpha_pred_test = ridge_alpha_sin.predict(X_alpha_test)
+cos_alpha_pred_test = ridge_alpha_cos.predict(X_alpha_test)
+alpha_pred_test = np.degrees(np.arctan2(sin_alpha_pred_test, cos_alpha_pred_test)) % 360
+
+# Predict beta = alpha + offset
+beta_pred_test = (alpha_pred_test + offset_pred_test) % 360
+
+# Prediction interval: account for alpha prediction noise, offset prediction noise, and observation noise
+# Total noise = sqrt(alpha_noise^2 + offset_noise^2 + obs_noise^2)
+alpha_noise_std = 22.82  # from earlier
+offset_noise_std = offset_noise_std
+obs_noise_std = np.sqrt(205.3)  # from local level model
+
+total_noise_std = np.sqrt(alpha_noise_std**2 + offset_noise_std**2 + obs_noise_std**2)
+print(f'\nAlpha noise std: {alpha_noise_std:.2f}')
+print(f'Offset noise std: {offset_noise_std:.2f}')
+print(f'Observation noise std: {obs_noise_std:.2f}')
+print(f'Total noise std: {total_noise_std:.2f}')
+print(f'95% prediction interval half-width: {1.96 * total_noise_std:.2f}')
+
+# 95% prediction interval
+y_lower = (beta_pred_test - 1.96 * total_noise_std) % 360
+y_upper = (beta_pred_test + 1.96 * total_noise_std) % 360
+
+print(f'\nPredictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [81] tool
@@ -2518,7 +5410,79 @@ Let me check if the local linear trend model is seeing a real trend or an artifa
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+
+# Look at the last 100 beta values
+beta_last = df['beta'].tail(100).values
+t_last = df['t'].tail(100).values
+
+print('Last 20 beta values:')
+for i in range(-20, 0):
+    print(f'  t={df["t"].iloc[i]}: beta={df["beta"].iloc[i]:.2f}')
+
+# Check if there's a trend
+from scipy import stats
+slope, intercept, r_value, p_value, std_err = stats.linregress(t_last, beta_last)
+print(f'\nLinear trend in last 100 points: slope={slope:.4f} deg/day, r={r_value:.4f}')
+
+# Check if the trend is real or an artifact of wrapping
+# If beta is near 360 and wraps to 0, the linear trend would show a decrease
+# Let's look at the raw values
+print(f'\nFirst of last 100: beta={beta_last[0]:.2f}')
+print(f'Last of last 100: beta={beta_last[-1]:.2f}')
+print(f'Difference: {beta_last[-1] - beta_last[0]:.2f}')
+
+# The local linear trend model estimated a slope of 0.017 degrees/day
+# Over 4143 days, this would be 0.017 * 4143 = 70 degrees
+# But the actual change from t=0 to t=4142 is beta[4142] - beta[0] = 348.36 - 276.75 = 71.6 degrees
+# So the model is seeing a real trend of about 70 degrees over the full training period
+
+# But this trend might be an artifact of the angle wrapping
+# If beta goes from 276 to 348, that's a 72 degree increase, which is consistent with the trend
+
+# The question is: does beta continue to increase in the future?
+# If beta is periodic, it might start decreasing after reaching a peak
+
+# Let me check the overall pattern of beta over the training period
+# Compute beta smoothed with LOWESS
+from statsmodels.nonparametric.smoothers_lowess import lowess
+beta_smooth = lowess(df['beta'].values, df['t'].values, frac=0.02, it=3)[:, 1]
+
+# Check the trend of the smoothed beta
+slope_smooth, intercept_smooth, r_value_smooth, p_value_smooth, std_err_smooth = stats.linregress(
+    df['t'].values, beta_smooth)
+print(f'\nSmoothed beta linear trend: slope={slope_smooth:.4f} deg/day, r={r_value_smooth:.4f}')
+
+# The smoothed trend has slope 0.091 deg/day, which over 4143 days is 377 degrees
+# This is more than one full cycle, suggesting beta is periodic
+
+# Let me check if beta has a periodic component
+# Compute the residual after removing the linear trend
+beta_detrended = df['beta'].values - (slope_smooth * df['t'].values + intercept_smooth)
+# Wrap to [-180, 180]
+beta_detrended_wrapped = (beta_detrended + 180) % 360 - 180
+
+print(f'\nDetrended beta std: {np.std(beta_detrended_wrapped):.2f}')
+print(f'Detrended beta range: [{beta_detrended_wrapped.min():.2f}, {beta_detrended_wrapped.max():.2f}]')
+
+# If the detrended beta has a small std, the linear trend captures most of the variation
+# If it has a large std, there's significant periodic or other structure
+
+# Let me also check the FFT of the detrended beta
+from scipy.fft import fft, fftfreq
+n = len(df)
+fft_vals = np.abs(fft(beta_detrended_wrapped))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(fft_vals[pos_mask])[-5:]
+print(f'\nTop 5 frequencies of detrended beta:')
+for i in top_idx:
+    print(f'  freq={freqs[pos_mask][i]:.6f}, period={1/freqs[pos_mask][i]:.1f} days')
+EOF
 ```
 
 ## [83] tool
@@ -2605,7 +5569,155 @@ Let me try a proper Fourier model with sin/cos validation.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+from sklearn.model_selection import KFold
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+n = len(t_train)
+
+# Get top frequencies from FFT of detrended sin/cos
+sin_detrended = sin_beta - np.polyval(np.polyfit(t_train, sin_beta, 1), t_train)
+cos_detrended = cos_beta - np.polyval(np.polyfit(t_train, cos_beta, 1), t_train)
+all_fft = np.abs(fft(sin_detrended)) + np.abs(fft(cos_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(all_fft[pos_mask])[-20:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Cross-validation using sin/cos MSE (not angular error)
+print('CV results (sin/cos MSE):')
+for n_harm in [3, 5, 8, 10, 12, 15]:
+    selected_freqs = top_freqs[:n_harm]
+    X = build_design_matrix(t_train, selected_freqs)
+    
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    sin_mses = []
+    cos_mses = []
+    
+    for train_idx, val_idx in kf.split(X):
+        X_tr, X_val = X[train_idx], X[val_idx]
+        sin_tr, sin_val = sin_beta[train_idx], sin_beta[val_idx]
+        cos_tr, cos_val = cos_beta[train_idx], cos_beta[val_idx]
+        
+        rs = Ridge(alpha=0.01)
+        rs.fit(X_tr, sin_tr)
+        rc = Ridge(alpha=0.01)
+        rc.fit(X_tr, cos_tr)
+        
+        sin_pred = rs.predict(X_val)
+        cos_pred = rc.predict(X_val)
+        
+        sin_mses.append(np.mean((sin_val - sin_pred)**2))
+        cos_mses.append(np.mean((cos_val - cos_pred)**2))
+    
+    total_mse = np.mean(sin_mses) + np.mean(cos_mses)
+    print(f'n_harm={n_harm}: sin_MSE={np.mean(sin_mses):.6f}, cos_MSE={np.mean(cos_mses):.6f}, total={total_mse:.6f}')
+
+# Now fit the best model on full training data
+# Use n_harm=10 (good balance)
+n_harm = 10
+selected_freqs = top_freqs[:n_harm]
+X_train = build_design_matrix(t_train, selected_freqs)
+X_test = build_design_matrix(test['t'].values, selected_freqs)
+
+# Read test data
+test = pd.read_csv('data/test.csv')
+t_test = test['t'].values
+
+# Fit sin and cos models
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train, sin_beta)
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train, cos_beta)
+
+# Training residuals
+sin_pred_train = ridge_sin.predict(X_train)
+cos_pred_train = ridge_cos.predict(X_train)
+
+# Compute sin/cos MSE on training
+sin_mse_train = np.mean((sin_beta - sin_pred_train)**2)
+cos_mse_train = np.mean((cos_beta - cos_pred_train)**2)
+print(f'\nTraining sin/cos MSE: {sin_mse_train:.6f}, {cos_mse_train:.6f}')
+
+# Compute angular residuals on training
+beta_pred_train = np.degrees(np.arctan2(sin_pred_train, cos_pred_train)) % 360
+angular_resid = (beta_train - beta_pred_train + 180) % 360 - 180
+print(f'Training angular residual std: {np.std(angular_resid):.2f} degrees')
+print(f'Training angular MAE: {np.mean(np.abs(angular_resid)):.2f} degrees')
+
+# Predict for test set
+sin_pred_test = ridge_sin.predict(X_test)
+cos_pred_test = ridge_cos.predict(X_test)
+beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+
+# Estimate observation noise
+# The sin/cos MSE on training gives us the noise level
+# sin/cos noise std ≈ sqrt(sin_mse + cos_mse) / sqrt(2) for isotropic noise
+# But more precisely, the angular noise std ≈ sqrt(sin_mse + cos_mse)
+# (since for small angles, sin(error) ≈ error * cos(true_angle) and cos(error) ≈ 1 - error^2/2)
+
+# A better estimate: use the angular residual std on training
+# But this includes model error, not just observation noise
+# For the prediction interval, we need the observation noise only
+
+# Let's estimate observation noise from the sin/cos MSE
+# If the model is correct, the sin/cos residuals are just observation noise
+# Observation noise in sin/cos ≈ sqrt(sin_mse_train + cos_mse_train) / 2
+# (assuming equal noise in sin and cos)
+
+obs_noise_sin_cos = np.sqrt((sin_mse_train + cos_mse_train) / 2)
+print(f'\nObservation noise std (sin/cos): {obs_noise_sin_cos:.4f}')
+
+# Convert to angular noise
+# For small angular errors delta: sin(delta) ≈ delta, cos(delta) ≈ 1 - delta^2/2
+# So sin_resid ≈ delta * cos(beta_true), cos_resid ≈ -delta * sin(beta_true) + delta^2/2
+# E[sin_resid^2 + cos_resid^2] ≈ delta^2 * E[cos^2(beta_true) + sin^2(beta_true)] = delta^2
+# So angular noise std ≈ sqrt(sin_mse + cos_mse)
+
+obs_noise_angular = np.sqrt(sin_mse_train + cos_mse_train)
+print(f'Observation noise std (angular): {obs_noise_angular:.4f} radians = {np.degrees(obs_noise_angular):.2f} degrees')
+
+# 95% prediction interval
+y_lower = (beta_pred_test - 1.96 * np.degrees(obs_noise_angular)) % 360
+y_upper = (beta_pred_test + 1.96 * np.degrees(obs_noise_angular)) % 360
+
+print(f'\n95% prediction interval half-width: {1.96 * np.degrees(obs_noise_angular):.2f} degrees')
+
+print('\nPredictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [85] tool
@@ -2647,7 +5759,92 @@ Let me fix the error and continue.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+t_test = test['t'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+n = len(t_train)
+
+# Get top frequencies from FFT of detrended sin/cos
+sin_detrended = sin_beta - np.polyval(np.polyfit(t_train, sin_beta, 1), t_train)
+cos_detrended = cos_beta - np.polyval(np.polyfit(t_train, cos_beta, 1), t_train)
+all_fft = np.abs(fft(sin_detrended)) + np.abs(fft(cos_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(all_fft[pos_mask])[-20:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Use n_harm=10
+n_harm = 10
+selected_freqs = top_freqs[:n_harm]
+X_train = build_design_matrix(t_train, selected_freqs)
+X_test = build_design_matrix(t_test, selected_freqs)
+
+# Fit sin and cos models
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train, sin_beta)
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train, cos_beta)
+
+# Training residuals
+sin_pred_train = ridge_sin.predict(X_train)
+cos_pred_train = ridge_cos.predict(X_train)
+
+sin_mse_train = np.mean((sin_beta - sin_pred_train)**2)
+cos_mse_train = np.mean((cos_beta - cos_pred_train)**2)
+print(f'Training sin/cos MSE: {sin_mse_train:.6f}, {cos_mse_train:.6f}')
+
+# Observation noise estimate
+obs_noise_angular = np.sqrt(sin_mse_train + cos_mse_train)
+print(f'Observation noise std (angular): {np.degrees(obs_noise_angular):.2f} degrees')
+
+# Predict for test set
+sin_pred_test = ridge_sin.predict(X_test)
+cos_pred_test = ridge_cos.predict(X_test)
+beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+
+# 95% prediction interval
+y_lower = (beta_pred_test - 1.96 * np.degrees(obs_noise_angular)) % 360
+y_upper = (beta_pred_test + 1.96 * np.degrees(obs_noise_angular)) % 360
+
+print(f'\n95% prediction interval half-width: {1.96 * np.degrees(obs_noise_angular):.2f} degrees')
+
+print('\nPredictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [87] tool
@@ -2722,7 +5919,98 @@ Let me try a periodic state-space model and also refine the random walk approach
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Try a seasonal model with period ~138 days (dominant period from FFT)
+# The seasonal model adds a seasonal component to the local level model
+
+# But the seasonal model in statsmodels assumes equally spaced data
+# and a fixed period. Let me try period=138
+
+model_seasonal = UnobservedComponents(beta_train, 'local level', seasonal=138)
+try:
+    res_seasonal = model_seasonal.fit(disp=False)
+    print(f'Seasonal model params: {res_seasonal.params}')
+    
+    # Validate
+    val_start = len(beta_train) - 200
+    beta_tr = beta_train[:val_start]
+    beta_val = beta_train[val_start:]
+    
+    model_seasonal_val = UnobservedComponents(beta_tr, 'local level', seasonal=138)
+    res_seasonal_val = model_seasonal_val.fit(disp=False)
+    
+    pred_val = res_seasonal_val.get_prediction(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+    pred_mean_val = pred_val.predicted_mean
+    
+    angular_err = (beta_val - pred_mean_val + 180) % 360 - 180
+    print(f'Seasonal(138) Validation MAE: {np.mean(np.abs(angular_err)):.2f} degrees')
+except Exception as e:
+    print(f'Seasonal model failed: {e}')
+
+# Try with period=100
+model_seasonal100 = UnobservedComponents(beta_train, 'local level', seasonal=100)
+try:
+    res_seasonal100 = model_seasonal100.fit(disp=False)
+    print(f'\nSeasonal(100) model params: {res_seasonal100.params}')
+    
+    model_seasonal100_val = UnobservedComponents(beta_tr, 'local level', seasonal=100)
+    res_seasonal100_val = model_seasonal100_val.fit(disp=False)
+    
+    pred_val100 = res_seasonal100_val.get_prediction(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+    pred_mean_val100 = pred_val100.predicted_mean
+    
+    angular_err100 = (beta_val - pred_mean_val100 + 180) % 360 - 180
+    print(f'Seasonal(100) Validation MAE: {np.mean(np.abs(angular_err100)):.2f} degrees')
+except Exception as e:
+    print(f'Seasonal(100) model failed: {e}')
+
+# Try with period=414 (another dominant period)
+model_seasonal414 = UnobservedComponents(beta_train, 'local level', seasonal=414)
+try:
+    res_seasonal414 = model_seasonal414.fit(disp=False)
+    print(f'\nSeasonal(414) model params: {res_seasonal414.params}')
+    
+    model_seasonal414_val = UnobservedComponents(beta_tr, 'local level', seasonal=414)
+    res_seasonal414_val = model_seasonal414_val.fit(disp=False)
+    
+    pred_val414 = res_seasonal414_val.get_prediction(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+    pred_mean_val414 = pred_val414.predicted_mean
+    
+    angular_err414 = (beta_val - pred_mean_val414 + 180) % 360 - 180
+    print(f'Seasonal(414) Validation MAE: {np.mean(np.abs(angular_err414)):.2f} degrees')
+except Exception as e:
+    print(f'Seasonal(414) model failed: {e}')
+
+# Also try: local level + deterministic trend (drift)
+model_drift = UnobservedComponents(beta_train, 'local level', trend='drift')
+try:
+    res_drift = model_drift.fit(disp=False)
+    print(f'\nLocal level + drift params: {res_drift.params}')
+    
+    model_drift_val = UnobservedComponents(beta_tr, 'local level', trend='drift')
+    res_drift_val = model_drift_val.fit(disp=False)
+    
+    pred_val_drift = res_drift_val.get_prediction(start=len(beta_tr), end=len(beta_tr)+len(beta_val)-1)
+    pred_mean_drift = pred_val_drift.predicted_mean
+    
+    angular_err_drift = (beta_val - pred_mean_drift + 180) % 360 - 180
+    print(f'Local level + drift Validation MAE: {np.mean(np.abs(angular_err_drift)):.2f} degrees')
+except Exception as e:
+    print(f'Local level + drift model failed: {e}')
+EOF
 ```
 
 ## [89] tool
@@ -2756,7 +6044,86 @@ Let me go with a clean, final approach using the local level model.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Fit local level model on full training data
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+# Get the observation noise and level noise
+obs_var = res.params['sigma2.irregular']
+level_var = res.params['sigma2.level']
+obs_noise_std = np.sqrt(obs_var)
+level_noise_std = np.sqrt(level_var)
+
+print(f'Observation noise std: {obs_noise_std:.4f}')
+print(f'Level noise std: {level_noise_std:.4f}')
+
+# Get the filtered state
+filtered_state = res.filtered_state[0]
+filtered_state_cov = res.filtered_state_cov
+
+last_state = filtered_state[-1]
+last_state_var = filtered_state_cov[0, 0, -1]
+
+print(f'Last state estimate: {last_state:.2f}')
+print(f'Last state variance: {last_state_var:.4f}')
+
+# For a local level model, the prediction h steps ahead is:
+# E[y_{T+h}] = last_state
+# Var(y_{T+h}) = last_state_var + h * level_var + obs_var
+
+# But the state-space model's get_prediction should handle this correctly
+# Let me use it for the first few test points and manual computation for the rest
+
+# First, let me use get_prediction for the full range
+last_train_idx = len(beta_train) - 1
+max_test_t = t_test.max()
+n_pred = max_test_t - t_train[-1]
+
+print(f'Predicting {n_pred} steps ahead...')
+pred = res.get_prediction(start=last_train_idx + 1, end=last_train_idx + n_pred)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+# Map test t values to prediction indices
+results = []
+for i, t in enumerate(t_test):
+    idx = t - t_train[-1] - 1
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        y_lower = ci_row[0]
+        y_upper = ci_row[1]
+        
+        # Wrap to [0, 360)
+        mean_val_wrapped = mean_val % 360
+        y_lower_wrapped = y_lower % 360
+        y_upper_wrapped = y_upper % 360
+        
+        print(f'  t={t}: idx={idx}, beta_pred={mean_val_wrapped:.2f}, 95% CI: [{y_lower_wrapped:.2f}, {y_upper_wrapped:.2f}]')
+        results.append({'t': t, 'y_pred': mean_val_wrapped, 'y_lower': y_lower_wrapped, 'y_upper': y_upper_wrapped})
+    else:
+        print(f'  t={t}: idx={idx} OUT OF RANGE')
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [91] tool
@@ -2789,7 +6156,77 @@ Let me fix the parameter access issue.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Fit local level model on full training data
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+# Get the observation noise and level noise
+# params is a numpy array, not a dict
+print(f'Params: {res.params}')
+print(f'Param names: {res.param_names}')
+
+obs_var = res.params[0]
+level_var = res.params[1]
+obs_noise_std = np.sqrt(obs_var)
+level_noise_std = np.sqrt(level_var)
+
+print(f'Observation noise std: {obs_noise_std:.4f}')
+print(f'Level noise std: {level_noise_std:.4f}')
+
+# Get the filtered state
+filtered_state = res.filtered_state[0]
+filtered_state_cov = res.filtered_state_cov
+
+last_state = filtered_state[-1]
+last_state_var = filtered_state_cov[0, 0, -1]
+
+print(f'Last state estimate: {last_state:.2f}')
+print(f'Last state variance: {last_state_var:.4f}')
+
+# Manual prediction for test points
+# For a local level model, the prediction h steps ahead is:
+# E[y_{T+h}] = last_state
+# Var(y_{T+h}) = last_state_var + h * level_var + obs_var
+
+print('\nManual predictions for test points:')
+results = []
+for i, t in enumerate(t_test):
+    h = t - t_train[-1]
+    pred_mean = last_state
+    pred_var = last_state_var + h * level_var + obs_var
+    pred_std = np.sqrt(pred_var)
+    
+    y_lower = pred_mean - 1.96 * pred_std
+    y_upper = pred_mean + 1.96 * pred_std
+    
+    # Wrap to [0, 360)
+    y_pred_wrapped = pred_mean % 360
+    y_lower_wrapped = y_lower % 360
+    y_upper_wrapped = y_upper % 360
+    
+    print(f'  t={t}: h={h}, beta_pred={y_pred_wrapped:.2f}, 95% CI: [{y_lower_wrapped:.2f}, {y_upper_wrapped:.2f}]')
+    results.append({'t': t, 'y_pred': y_pred_wrapped, 'y_lower': y_lower_wrapped, 'y_upper': y_upper_wrapped})
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [93] tool
@@ -2911,7 +6348,138 @@ Let me try to improve the model by using a better noise estimate and also try in
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Compute observation noise more directly
+# The observation noise is the day-to-day variation minus the signal variation
+# ACF at lag 1 = 0.9844
+# Daily change std = 21.6 degrees
+# If signal is smooth, most of the daily change is observation noise
+
+# Use the rolling std with a small window as an estimate of observation noise
+# Rolling std with window 5 (captures noise at short timescales)
+rolling_std_5 = pd.Series(beta_train).rolling(5, center=True).std()
+print(f'Rolling std (window=5): mean={rolling_std_5.mean():.2f}')
+
+# Rolling std with window 3
+rolling_std_3 = pd.Series(beta_train).rolling(3, center=True).std()
+print(f'Rolling std (window=3): mean={rolling_std_3.mean():.2f}')
+
+# The observation noise should be close to the rolling std with a small window
+# Let's use the rolling std with window 3 as the observation noise estimate
+obs_noise_std = rolling_std_3.mean()
+print(f'Estimated observation noise std: {obs_noise_std:.2f} degrees')
+
+# Now build the prediction model
+# Use the local level model but with a fixed observation noise
+# Or just use the random walk prediction with the estimated noise
+
+# For the random walk model:
+# Last state estimate: 347.98
+# Observation noise std: ~7.5 degrees (from rolling std with window 3)
+# 95% CI half-width for h=0: 1.96 * 7.5 = 14.7 degrees
+# For h steps ahead, add process noise: sqrt(h) * level_noise_std
+
+# But the level noise std from the model is 9.8 degrees, which seems large
+# Let me estimate it differently
+
+# The level noise is the variation in the daily changes that's not observation noise
+# If daily_change = signal_change + observation_noise
+# Var(daily_change) = Var(signal_change) + Var(observation_noise)
+# 21.6^2 = Var(signal_change) + 7.5^2
+# Var(signal_change) = 466.6 - 56.3 = 410.3
+# signal_change_std = 20.3 degrees
+
+# But this is the signal change per day, not the level noise
+# The level noise in the state-space model is different
+
+# Let me just use the observation noise for the prediction intervals
+# and the state uncertainty for the extrapolation
+
+# Actually, let me try a completely different approach:
+# Use the last observed beta value as the prediction
+# Use the observation noise (from rolling std) for the prediction interval
+# For distant test points, the interval should be wider
+
+# But how much wider? For a random walk, the uncertainty grows as sqrt(h)
+# For a smooth signal, the uncertainty might grow more slowly
+
+# Let me use the validation MAE to calibrate the prediction intervals
+# Validation MAE = 14.65 degrees
+# For a 95% prediction interval, I need about 2 * MAE = 29.3 degrees
+# But this is for h=200 (the validation set was the last 200 points)
+
+# For h=2 (t=4144), the uncertainty should be smaller
+# For h=1822 (t=5964), the uncertainty should be larger
+
+# Let me use the following formula:
+# CI half-width = obs_noise * sqrt(1 + h * (level_noise/obs_noise)^2) * 1.96
+
+# But I don't know the level_noise/obs_noise ratio
+
+# Let me just use the state-space model's predictions and intervals
+# and accept them as they are
+
+# Actually, let me try a simpler approach:
+# Use the LOWESS-smoothed beta as the prediction
+# Use the observation noise for the prediction interval
+
+from statsmodels.nonparametric.smoothers_lowess import lowess
+
+# Smooth beta
+beta_smooth = lowess(beta_train, t_train, frac=0.01, it=3)[:, 1]
+
+# For prediction, extrapolate the last few points of the smooth curve
+# Use a linear extrapolation from the last few points
+last_n = 50
+t_last = t_train[-last_n:]
+beta_last = beta_smooth[-last_n:]
+
+# Linear extrapolation
+from numpy.polynomial import polynomial as P
+coeffs = np.polyfit(t_last, beta_last, 1)
+
+# Predict for test points
+beta_pred_extrap = np.polyval(coeffs, t_test)
+
+# Observation noise from the LOWESS residuals
+resid = beta_train - beta_smooth
+resid_wrapped = (resid + 180) % 360 - 180
+obs_noise_lowess = np.std(resid_wrapped)
+print(f'\nLOWESS observation noise std: {obs_noise_lowess:.2f} degrees')
+
+# 95% prediction interval
+y_lower = (beta_pred_extrap - 1.96 * obs_noise_lowess) % 360
+y_upper = (beta_pred_extrap + 1.96 * obs_noise_lowess) % 360
+
+print(f'95% prediction interval half-width: {1.96 * obs_noise_lowess:.2f} degrees')
+
+print('\nPredictions (LOWESS + linear extrapolation):')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_extrap[i] % 360:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_extrap % 360,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [95] tool
@@ -3009,7 +6577,169 @@ Let me try to improve the model by incorporating alpha and also validate the app
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.nonparametric.smoothers_lowess import lowess
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+from sklearn.model_selection import KFold
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+alpha_train = df['alpha'].values
+t_test = test['t'].values
+
+# Validate the LOWESS + linear extrapolation approach
+# Hold out the last 200 points
+val_start = len(beta_train) - 200
+t_tr = t_train[:val_start]
+beta_tr = beta_train[:val_start]
+t_val = t_train[val_start:]
+beta_val = beta_train[val_start:]
+
+# LOWESS smooth on training portion
+beta_smooth_tr = lowess(beta_tr, t_tr, frac=0.01, it=3)[:, 1]
+
+# Linear extrapolation from last 50 points
+last_n = 50
+t_last = t_tr[-last_n:]
+beta_last = beta_smooth_tr[-last_n:]
+coeffs = np.polyfit(t_last, beta_last, 1)
+
+# Predict on validation set
+beta_pred_val = np.polyval(coeffs, t_val)
+
+# Angular errors
+angular_err = (beta_val - beta_pred_val + 180) % 360 - 180
+print(f'LOWESS + linear extrapolation Validation MAE: {np.mean(np.abs(angular_err)):.2f} degrees')
+print(f'LOWESS + linear extrapolation Validation std: {np.std(angular_err):.2f} degrees')
+
+# Compare with just using the last value (random walk)
+beta_pred_val_rw = np.full(len(beta_val), beta_tr[-1])
+angular_err_rw = (beta_val - beta_pred_val_rw + 180) % 360 - 180
+print(f'Random walk (last value) Validation MAE: {np.mean(np.abs(angular_err_rw)):.2f} degrees')
+
+# The linear extrapolation should be better if there's a trend
+# But for periodic data, it might be worse
+
+# Let me also try: LOWESS + periodic extrapolation
+# Use the Fourier model to extrapolate the periodic component
+
+# First, detrend the smoothed beta
+trend = np.polyval(coeffs, t_tr)
+beta_detrended = beta_smooth_tr - trend
+
+# FFT of detrended beta
+n_tr = len(t_tr)
+fft_vals = np.abs(fft(beta_detrended))
+freqs = fftfreq(n_tr, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(fft_vals[pos_mask])[-10:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+print(f'\nTop frequencies from detrended smoothed beta:')
+for i in range(min(5, len(top_freqs))):
+    print(f'  freq={top_freqs[i]:.6f}, period={1/top_freqs[i]:.1f} days')
+
+# Build Fourier model for the detrended component
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Try different numbers of harmonics
+for n_harm in [3, 5, 8]:
+    selected_freqs = top_freqs[:n_harm]
+    X_tr = build_design_matrix(t_tr, selected_freqs)
+    X_val = build_design_matrix(t_val, selected_freqs)
+    
+    ridge = Ridge(alpha=0.01)
+    ridge.fit(X_tr, beta_detrended)
+    
+    beta_detrended_pred_val = ridge.predict(X_val)
+    beta_pred_val_fourier = beta_detrended_pred_val + np.polyval(coeffs, t_val)
+    
+    angular_err_fourier = (beta_val - beta_pred_val_fourier + 180) % 360 - 180
+    print(f'Fourier(n_harm={n_harm}) + trend Validation MAE: {np.mean(np.abs(angular_err_fourier)):.2f} degrees')
+
+# Now let me also try a different approach:
+# Use the state-space model but with a periodic component
+# Or use a simple approach: predict beta using the last value + trend
+
+# The key question is: what's the best prediction for beta at future time points?
+# Given the high ACF (0.9844), the best short-term prediction is the last value
+# For longer horizons, the trend matters
+
+# Let me try a compromise: use the LOWESS smooth + trend for prediction
+# and use the observation noise for prediction intervals
+
+# For the final model, let me use:
+# 1. LOWESS smooth with frac=0.01
+# 2. Linear trend from the last 50 points
+# 3. Observation noise from the LOWESS residuals
+
+# But I should also account for the uncertainty in the trend extrapolation
+# For a linear trend, the uncertainty grows with the square of the extrapolation distance
+
+# Let me compute the standard error of the linear extrapolation
+from scipy import stats as scipy_stats
+slope, intercept, r_value, p_value, std_err_slope = scipy_stats.linregress(t_last, beta_last)
+print(f'\nLinear trend: slope={slope:.4f}, intercept={intercept:.2f}, std_err_slope={std_err_slope:.4f}')
+
+# The standard error of the prediction at time t is:
+# SE = obs_noise * sqrt(1 + 1/n + (t - t_mean)^2 / sum((t_i - t_mean)^2))
+# where n is the number of points used for the fit
+
+t_mean = np.mean(t_last)
+ssx = np.sum((t_last - t_mean)**2)
+n_points = len(t_last)
+obs_noise = np.std(beta_tr[-last_n:] - beta_smooth_tr[-last_n:])
+print(f'obs_noise from last {last_n} points: {obs_noise:.2f}')
+
+# For test points, the prediction SE is:
+# SE_pred = obs_noise * sqrt(1 + 1/n + (t_test - t_mean)^2 / ssx)
+# But this is for the trend line, not the actual beta values
+# The actual prediction also includes the observation noise
+
+# Total prediction SE = sqrt(SE_trend^2 + obs_noise^2)
+# where SE_trend includes the uncertainty in the trend line
+
+# Actually, for the LOWESS smooth, the uncertainty is more complex
+# Let me just use a simple approach:
+# prediction = trend(t_test)
+# 95% CI = prediction ± 1.96 * sqrt(obs_noise^2 + trend_uncertainty^2)
+
+# For simplicity, let me use the observation noise from the LOWESS residuals
+# and add a term for trend extrapolation uncertainty
+
+# The trend extrapolation uncertainty grows with (t - t_mean)^2 / ssx
+# For t_test far from t_mean, this can be large
+
+# Let me compute the total prediction uncertainty for each test point
+print('\nPrediction uncertainties:')
+for i, t in enumerate(t_test):
+    trend_pred = np.polyval(coeffs, t)
+    
+    # Trend uncertainty
+    trend_se = np.sqrt(1/n_points + (t - t_mean)**2 / ssx) * std_err_slope
+    
+    # Total uncertainty (observation noise + trend uncertainty)
+    total_se = np.sqrt(obs_noise**2 + trend_se**2)
+    
+    y_lower = (trend_pred - 1.96 * total_se) % 360
+    y_upper = (trend_pred + 1.96 * total_se) % 360
+    
+    print(f'  t={t}: trend_pred={trend_pred:.2f}, trend_se={trend_se:.2f}, total_se={total_se:.2f}, 95% CI: [{y_lower:.2f}, {y_upper:.2f}]')
+EOF
 ```
 
 ## [97] tool
@@ -3109,7 +6839,83 @@ The random walk model (local level) gives the best validation performance. Let m
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Fit local level model on full training data
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+# Get the filtered state and covariance
+filtered_state = res.filtered_state[0]
+filtered_state_cov = res.filtered_state_cov
+
+last_state = filtered_state[-1]
+last_state_var = filtered_state_cov[0, 0, -1]
+
+# Get noise parameters
+obs_var = res.params[0]
+level_var = res.params[1]
+obs_noise_std = np.sqrt(obs_var)
+level_noise_std = np.sqrt(level_var)
+
+print(f'Last state: {last_state:.2f}')
+print(f'Last state var: {last_state_var:.4f}')
+print(f'Observation noise std: {obs_noise_std:.4f}')
+print(f'Level noise std: {level_noise_std:.4f}')
+
+# For a local level model, the prediction h steps ahead:
+# E[y_{T+h}] = last_state
+# Var(y_{T+h}) = last_state_var + h * level_var + obs_var
+
+# But the state-space model's get_prediction handles this correctly
+# Let me use it for the full range
+
+last_train_idx = len(beta_train) - 1
+max_test_t = t_test.max()
+n_pred = max_test_t - t_train[-1]
+
+pred = res.get_prediction(start=last_train_idx + 1, end=last_train_idx + n_pred)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+# Map test t values to prediction indices
+results = []
+for i, t in enumerate(t_test):
+    idx = t - t_train[-1] - 1
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        y_lower = ci_row[0]
+        y_upper = ci_row[1]
+        
+        # Wrap to [0, 360)
+        mean_val_wrapped = mean_val % 360
+        y_lower_wrapped = y_lower % 360
+        y_upper_wrapped = y_upper % 360
+        
+        print(f'  t={t}: beta_pred={mean_val_wrapped:.2f}, 95% CI: [{y_lower_wrapped:.2f}, {y_upper_wrapped:.2f}]')
+        results.append({'t': t, 'y_pred': mean_val_wrapped, 'y_lower': y_lower_wrapped, 'y_upper': y_upper_wrapped})
+    else:
+        print(f'  t={t}: idx={idx} OUT OF RANGE')
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [99] tool
@@ -3221,7 +7027,41 @@ Let me verify the predictions file and also try one more improvement.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Verify predictions.csv
+pred = pd.read_csv('predictions.csv')
+print('predictions.csv:')
+print(pred)
+print(f'\nShape: {pred.shape}')
+print(f'Columns: {pred.columns.tolist()}')
+print(f'Row count: {len(pred)}')
+
+# Check that t values match test.csv
+test = pd.read_csv('data/test.csv')
+print(f'\nTest t values: {test["t"].values}')
+print(f'Pred t values: {pred["t"].values}')
+print(f'Match: {all(pred["t"].values == test["t"].values)}')
+
+# Check that all angles are in [0, 360)
+print(f'\ny_pred range: [{pred["y_pred"].min():.2f}, {pred["y_pred"].max():.2f}]')
+print(f'y_lower range: [{pred["y_lower"].min():.2f}, {pred["y_lower"].max():.2f}]')
+print(f'y_upper range: [{pred["y_upper"].min():.2f}, {pred["y_upper"].max():.2f}]')
+
+# Check interval widths
+for i in range(len(pred)):
+    lower = pred['y_lower'].iloc[i]
+    upper = pred['y_upper'].iloc[i]
+    pred_val = pred['y_pred'].iloc[i]
+    if lower <= upper:
+        width = upper - lower
+    else:
+        # Wrapped around 360
+        width = (360 - lower) + upper
+    print(f'  t={pred["t"].iloc[i]}: width={width:.2f} degrees')
+EOF
 ```
 
 ## [101] tool
@@ -3320,7 +7160,112 @@ The predictions look reasonable. Let me try one more improvement - using a perio
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Try a model with seasonal component
+# The dominant period from FFT is about 138 days
+# Let me try a local level model with seasonal=138
+
+# But this might be slow. Let me try a different approach:
+# Use a Fourier series with a small number of harmonics
+# and compute proper prediction intervals
+
+# First, let me try to improve the noise estimate
+# The observation noise from the local level model is 14 degrees
+# But the validation MAE is 14.65 degrees
+# This suggests the model is well-calibrated
+
+# Let me also try: use a GP with a periodic kernel
+# I'll construct the periodic kernel manually
+
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
+import warnings
+warnings.filterwarnings('ignore')
+
+# Subsample for GP speed
+np.random.seed(42)
+idx = np.random.choice(len(t_train), size=1000, replace=False)
+idx = np.sort(idx)
+t_sub = t_train[idx].reshape(-1, 1)
+beta_sub = beta_train[idx]
+
+# Periodic kernel: k(t, t') = sigma^2 * exp(-2 * sin^2(pi * |t - t'| / p) / l^2)
+# This captures periodic behavior with period p
+
+# I'll use a combination of RBF (for the trend) and periodic kernel
+# k(t, t') = k_RBF(t, t') + k_periodic(t, t')
+
+# For simplicity, let me use just the periodic kernel
+# with period p = 400 days (average of the dominant periods)
+
+# Custom periodic kernel
+from sklearn.gaussian_process.kernels import Kernel, Hyperparameter
+from sklearn.gaussian_process.kernels import StationaryKernelMixin
+
+class PeriodicKernel(StationaryKernelMixin, Kernel):
+    def __init__(self, period=400.0, period_bounds=(100.0, 1000.0), length_scale=100.0, length_scale_bounds=(10.0, 1000.0)):
+        self.period = period
+        self.period_bounds = period_bounds
+        self.length_scale = length_scale
+        self.length_scale_bounds = length_scale_bounds
+    
+    @property
+    def hyperparameter_period(self):
+        return Hyperparameter("period", "numeric", self.period, self.period_bounds)
+    
+    @property
+    def hyperparameter_length_scale(self):
+        return Hyperparameter("length_scale", "numeric", self.length_scale, self.length_scale_bounds)
+    
+    def __call__(self, X, Y=None, eval_gradient=False):
+        X = np.atleast_2d(X)
+        if Y is None:
+            Y = X
+        else:
+            Y = np.atleast_2d(Y)
+        
+        dist = np.abs(X[:, np.newaxis, :] - Y[np.newaxis, :, :])
+        # Periodic kernel: k = sigma^2 * exp(-2 * sin^2(pi * dist / period) / length_scale^2)
+        sin_term = np.sin(np.pi * dist / self.period)
+        K = np.exp(-2 * sin_term**2 / self.length_scale**2)
+        
+        if eval_gradient:
+            # Compute gradients (simplified)
+            return K, np.zeros((K.shape[0], K.shape[1], 0))
+        else:
+            return K
+
+# Try GP with periodic kernel
+try:
+    kernel = C(1.0, (1e-3, 1e3)) * PeriodicKernel(period=400.0, length_scale=100.0) + WhiteKernel(noise_level=100, noise_level_bounds=(1, 10000))
+    gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=3, alpha=1e-6)
+    gp.fit(t_sub, beta_sub)
+    print(f'GP kernel: {gp.kernel_}')
+    
+    t_test_2d = t_test.reshape(-1, 1)
+    beta_pred, beta_std = gp.predict(t_test_2d, return_std=True)
+    
+    print('\nGP periodic predictions:')
+    for i in range(len(t_test)):
+        print(f'  t={t_test[i]}: beta_pred={beta_pred[i]:.2f}, std={beta_std[i]:.2f}, 95% CI: [{beta_pred[i]-1.96*beta_std[i]:.2f}, {beta_pred[i]+1.96*beta_std[i]:.2f}]')
+except Exception as e:
+    print(f'GP periodic failed: {e}')
+    import traceback
+    traceback.print_exc()
+EOF
 ```
 
 ## [103] tool
@@ -3389,7 +7334,83 @@ Let me finalize with the current model and also try to improve it by using a bet
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+beta_train = df['beta'].values
+t_train = df['t'].values
+t_test = test['t'].values
+
+# Fit local level model on full training data
+model = UnobservedComponents(beta_train, 'local level')
+res = model.fit(disp=False)
+
+# Get the filtered state
+filtered_state = res.filtered_state[0]
+filtered_state_cov = res.filtered_state_cov
+
+last_state = filtered_state[-1]
+last_state_var = filtered_state_cov[0, 0, -1]
+
+# Get noise parameters
+obs_var = res.params[0]
+level_var = res.params[1]
+
+# For the prediction, I'll use the state-space model's get_prediction
+# but I'll also try to improve the noise estimate
+
+# The observation noise std from the model is 14 degrees
+# But the validation MAE is 14.65 degrees
+# This suggests the model is well-calibrated
+
+# Let me also try: use a lower observation noise estimate
+# The rolling std with window 3 was about 2 degrees
+# This might be a better estimate of the observation noise
+
+# But using a lower noise estimate would give narrower prediction intervals
+# which might not be well-calibrated
+
+# Let me stick with the model's estimate and finalize the predictions
+
+# Predict for the full range
+last_train_idx = len(beta_train) - 1
+max_test_t = t_test.max()
+n_pred = max_test_t - t_train[-1]
+
+pred = res.get_prediction(start=last_train_idx + 1, end=last_train_idx + n_pred)
+pred_mean = pred.predicted_mean
+pred_ci = pred.conf_int(alpha=0.05)
+
+# Map test t values to prediction indices
+results = []
+for i, t in enumerate(t_test):
+    idx = t - t_train[-1] - 1
+    if 0 <= idx < len(pred_mean):
+        mean_val = pred_mean[idx]
+        ci_row = pred_ci.iloc[idx] if hasattr(pred_ci, 'iloc') else pred_ci[idx]
+        y_lower = ci_row[0]
+        y_upper = ci_row[1]
+        
+        # Wrap to [0, 360)
+        mean_val_wrapped = mean_val % 360
+        y_lower_wrapped = y_lower % 360
+        y_upper_wrapped = y_upper % 360
+        
+        results.append({'t': t, 'y_pred': mean_val_wrapped, 'y_lower': y_lower_wrapped, 'y_upper': y_upper_wrapped})
+
+# Save results
+result_df = pd.DataFrame(results)
+result_df.to_csv('predictions.csv', index=False)
+print(f'Saved predictions.csv with {len(result_df)} rows')
+print(result_df)
+EOF
 ```
 
 ## [105] tool
@@ -3447,7 +7468,129 @@ Let me try a more sophisticated Fourier model with proper uncertainty.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from scipy.fft import fft, fftfreq
+from sklearn.model_selection import KFold
+import warnings
+warnings.filterwarnings('ignore')
 
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+t_train = df['t'].values
+beta_train = df['beta'].values
+t_test = test['t'].values
+
+sin_beta = np.sin(np.radians(beta_train))
+cos_beta = np.cos(np.radians(beta_train))
+
+n = len(t_train)
+
+# Get top frequencies from FFT
+sin_detrended = sin_beta - np.polyval(np.polyfit(t_train, sin_beta, 1), t_train)
+cos_detrended = cos_beta - np.polyval(np.polyfit(t_train, cos_beta, 1), t_train)
+all_fft = np.abs(fft(sin_detrended)) + np.abs(fft(cos_detrended))
+freqs = fftfreq(n, d=1)
+pos_mask = freqs > 0
+top_idx = np.argsort(all_fft[pos_mask])[-20:]
+top_freqs = np.sort(freqs[pos_mask][top_idx])[::-1]
+
+def build_design_matrix(t, freqs):
+    cols = [np.ones_like(t)]
+    for f in freqs:
+        omega = 2 * np.pi * f
+        cols.append(np.sin(omega * t))
+        cols.append(np.cos(omega * t))
+    return np.column_stack(cols)
+
+# Use n_harm=10
+n_harm = 10
+selected_freqs = top_freqs[:n_harm]
+X_train = build_design_matrix(t_train, selected_freqs)
+X_test = build_design_matrix(t_test, selected_freqs)
+
+# Fit sin and cos models
+ridge_sin = Ridge(alpha=0.01)
+ridge_sin.fit(X_train, sin_beta)
+ridge_cos = Ridge(alpha=0.01)
+ridge_cos.fit(X_train, cos_beta)
+
+# Training residuals
+sin_pred_train = ridge_sin.predict(X_train)
+cos_pred_train = ridge_cos.predict(X_train)
+
+# Compute sin/cos MSE on training
+sin_mse_train = np.mean((sin_beta - sin_pred_train)**2)
+cos_mse_train = np.mean((cos_beta - cos_pred_train)**2)
+print(f'Training sin/cos MSE: {sin_mse_train:.6f}, {cos_mse_train:.6f}')
+
+# Observation noise estimate from sin/cos MSE
+# For small angular errors, sin/cos MSE ≈ angular_noise^2
+obs_noise_angular = np.sqrt(sin_mse_train + cos_mse_train)
+print(f'Observation noise std (angular): {np.degrees(obs_noise_angular):.2f} degrees')
+
+# But this includes model error. Let me use cross-validation to estimate the noise.
+# The CV sin/cos MSE gives a better estimate of the true noise level.
+
+# Cross-validate
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+sin_mses_cv = []
+cos_mses_cv = []
+
+for train_idx, val_idx in kf.split(X_train):
+    X_tr, X_val = X_train[train_idx], X_train[val_idx]
+    sin_tr, sin_val = sin_beta[train_idx], sin_beta[val_idx]
+    cos_tr, cos_val = cos_beta[train_idx], cos_beta[val_idx]
+    
+    rs = Ridge(alpha=0.01)
+    rs.fit(X_tr, sin_tr)
+    rc = Ridge(alpha=0.01)
+    rc.fit(X_tr, cos_tr)
+    
+    sin_pred = rs.predict(X_val)
+    cos_pred = rc.predict(X_val)
+    
+    sin_mses_cv.append(np.mean((sin_val - sin_pred)**2))
+    cos_mses_cv.append(np.mean((cos_val - cos_pred)**2))
+
+cv_sin_mse = np.mean(sin_mses_cv)
+cv_cos_mse = np.mean(cos_mses_cv)
+cv_total_mse = cv_sin_mse + cv_cos_mse
+print(f'CV sin/cos MSE: {cv_sin_mse:.6f}, {cv_cos_mse:.6f}, total: {cv_total_mse:.6f}')
+
+# The CV MSE gives a better estimate of the true noise level
+# cv_total_mse ≈ angular_noise^2
+obs_noise_angular_cv = np.sqrt(cv_total_mse)
+print(f'CV observation noise std (angular): {np.degrees(obs_noise_angular_cv):.2f} degrees')
+
+# Predict for test set
+sin_pred_test = ridge_sin.predict(X_test)
+cos_pred_test = ridge_cos.predict(X_test)
+beta_pred_test = np.degrees(np.arctan2(sin_pred_test, cos_pred_test)) % 360
+
+# 95% prediction interval using CV noise estimate
+y_lower = (beta_pred_test - 1.96 * np.degrees(obs_noise_angular_cv)) % 360
+y_upper = (beta_pred_test + 1.96 * np.degrees(obs_noise_angular_cv)) % 360
+
+print(f'\n95% prediction interval half-width: {1.96 * np.degrees(obs_noise_angular_cv):.2f} degrees')
+
+print('\nPredictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]}: beta_pred={beta_pred_test[i]:.2f}, 95% CI: [{y_lower[i]:.2f}, {y_upper[i]:.2f}]')
+
+# Write predictions
+results = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred_test,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+results.to_csv('predictions.csv', index=False)
+print(f'\nSaved predictions.csv with {len(results)} rows')
+EOF
 ```
 
 ## [107] tool
@@ -35659,7 +39802,28 @@ Let me verify the final predictions file and submit.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Final verification
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+
+print(f'predictions.csv shape: {pred.shape}')
+print(f'Columns: {pred.columns.tolist()}')
+print(f'Expected columns: [t, y_pred, y_lower, y_upper]')
+print(f'Row count matches test: {len(pred) == len(test)}')
+print(f't values match: {all(pred["t"].values == test["t"].values)}')
+
+# Check all angles are in [0, 360)
+assert all(0 <= pred['y_pred']) and all(pred['y_pred'] <= 360), 'y_pred out of range'
+assert all(0 <= pred['y_lower']) and all(pred['y_lower'] <= 360), 'y_lower out of range'
+assert all(0 <= pred['y_upper']) and all(pred['y_upper'] <= 360), 'y_upper out of range'
+
+print('\nAll checks passed!')
+print(pred)
+EOF
 ```
 
 ## [111] tool
@@ -67856,7 +72020,28 @@ Let me verify the final predictions file and submit.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Final verification
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+
+print(f'predictions.csv shape: {pred.shape}')
+print(f'Columns: {pred.columns.tolist()}')
+print(f'Expected columns: [t, y_pred, y_lower, y_upper]')
+print(f'Row count matches test: {len(pred) == len(test)}')
+print(f't values match: {all(pred["t"].values == test["t"].values)}')
+
+# Check all angles are in [0, 360)
+assert all(0 <= pred['y_pred']) and all(pred['y_pred'] <= 360), 'y_pred out of range'
+assert all(0 <= pred['y_lower']) and all(pred['y_lower'] <= 360), 'y_lower out of range'
+assert all(0 <= pred['y_upper']) and all(pred['y_upper'] <= 360), 'y_upper out of range'
+
+print('\nAll checks passed!')
+print(pred)
+EOF
 ```
 
 ## [115] tool

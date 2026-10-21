@@ -86,7 +86,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -111,7 +111,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 22:19 ..
 **tool call: bash**
 
 ```
-
+cat data/forecast.csv
 ```
 
 ## [5] tool
@@ -138,7 +138,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [7] tool
@@ -156,7 +156,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+cat data/pools.csv
 ```
 
 ## [9] tool
@@ -187,7 +187,7 @@ C4,C,9752120.0,40
 **tool call: bash**
 
 ```
-
+cat data/history.csv
 ```
 
 ## [11] tool
@@ -1799,7 +1799,7 @@ pool_id       ecl  ecl_lower  ecl_upper
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [35] tool
@@ -1985,7 +1985,7 @@ The deterministic ECL (3,538,040) closely matches the simulated ECL (3,529,123),
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [39] tool

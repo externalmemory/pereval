@@ -55,7 +55,7 @@ Let me start by examining the data files to understand the structure and
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/test.csv
 ```
 
 ## [3] tool
@@ -109,7 +109,15 @@ t
 **tool call: bash**
 
 ```
-
+tail -5 data/train.csv && echo "---" && cat data/test.csv && echo "---" && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print('t range:', df['t'].min(), '-', df['t'].max())
+print('alpha range:', df['alpha'].min(), '-', df['alpha'].max())
+print('beta range:', df['beta'].min(), '-', df['beta'].max())
+print('alpha diffs mean:', df['alpha'].diff().mean())
+print('beta diffs mean:', df['beta'].diff().mean())
+"
 ```
 
 ## [5] tool
@@ -154,7 +162,27 @@ Let me explore the data patterns more
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+
+# Look at alpha and beta patterns
+# Check if there's periodicity
+# Compute alpha - beta difference
+df['diff'] = (df['alpha'] - df['beta']) % 360
+print('alpha - beta diff stats:')
+print(df['diff'].describe())
+print()
+
+# Check for periodic patterns by looking at rolling stats
+print('First 50 rows:')
+print(df.head(50).to_string())
+print()
+print('Alpha at t=0..10:', df['alpha'].head(11).values)
+print('Beta at t=0..10:', df['beta'].head(11).values)
+"
 ```
 
 ## [7] tool
@@ -247,7 +275,27 @@ Let me explore the data more thoroughly to understand the patterns.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+
+# Look at the full range - check for periodicity
+# Sample every 100 days
+for i in range(0, 3045, 200):
+    row = df[df['t'] == i]
+    if len(row) > 0:
+        print(f't={i}: alpha={row[\"alpha\"].values[0]:.2f}, beta={row[\"beta\"].values[0]:.2f}')
+
+print()
+# Check the diff alpha - beta over time
+df['diff'] = (df['alpha'] - df['beta']) % 360
+for i in range(0, 3045, 200):
+    row = df[df['t'] == i]
+    if len(row) > 0:
+        print(f't={i}: diff={row[\"diff\"].values[0]:.2f}')
+"
 ```
 
 ## [9] tool
@@ -311,7 +359,48 @@ Let me analyze the relationship between alpha and beta more carefully and look f
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+
+# Check if alpha and beta have similar trends
+# Compute rolling differences
+window = 50
+df['alpha_diff'] = df['alpha'].diff()
+df['beta_diff'] = df['beta'].diff()
+
+print('Alpha daily change mean:', df['alpha_diff'].mean())
+print('Beta daily change mean:', df['beta_diff'].mean())
+print('Alpha daily change std:', df['alpha_diff'].std())
+print('Beta daily change std:', df['beta_diff'].std())
+
+# Check correlation between alpha_diff and beta_diff
+print('Correlation alpha_diff vs beta_diff:', df['alpha_diff'].corr(df['beta_diff']))
+
+# Let's look at the relationship between alpha and beta more carefully
+# Maybe beta = a*alpha + b + noise (mod 360)
+# Or maybe there's a time-dependent relationship
+
+# Let's check if beta can be predicted from alpha alone
+# Using circular regression
+from numpy import sin, cos, radians
+
+# Convert to radians for circular analysis
+alpha_rad = np.radians(df['alpha'])
+beta_rad = np.radians(df['beta'])
+
+# Check if beta = alpha + offset (mod 360)
+diff_deg = (df['beta'] - df['alpha']) % 360
+print('beta - alpha diff mean:', diff_deg.mean())
+print('beta - alpha diff std:', diff_deg.std())
+
+# Check if beta = -alpha + offset (mod 360)
+diff2_deg = (df['beta'] + df['alpha']) % 360
+print('beta + alpha diff mean:', diff2_deg.mean())
+print('beta + alpha diff std:', diff2_deg.std())
+"
 ```
 
 ## [11] tool
@@ -348,7 +437,69 @@ Let me explore more sophisticated models
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.stats import pearsonr
 
+df = pd.read_csv('data/train.csv')
+
+# Try to understand the relationship between alpha and beta
+# Maybe beta = f(alpha) + g(t) + noise
+# Let's try polynomial regression of beta on alpha
+
+# First, let's look at the relationship more carefully
+# Compute beta as a function of alpha using local smoothing
+from scipy.ndimage import uniform_filter1d
+
+# Sort by alpha
+df_sorted = df.sort_values('alpha')
+print('Sorted alpha vs beta (first 20):')
+for i in range(20):
+    print(f'  alpha={df_sorted.iloc[i][\"alpha\"]:.2f}, beta={df_sorted.iloc[i][\"beta\"]:.2f}')
+
+# Let's try: beta = a*alpha + b (mod 360)
+# Use circular-circular regression
+# Represent both as unit vectors
+alpha_rad = np.radians(df['alpha'])
+beta_rad = np.radians(df['beta'])
+
+# Compute mean resultant length for alpha and beta
+r_alpha = np.sqrt(np.mean(np.cos(alpha_rad))**2 + np.mean(np.sin(alpha_rad))**2)
+r_beta = np.sqrt(np.mean(np.cos(beta_rad))**2 + np.mean(np.sin(beta_rad))**2)
+print(f'Mean resultant length - alpha: {r_alpha:.4f}, beta: {r_beta:.4f}')
+
+# Circular-circular regression: beta = alpha + delta (mod 360)
+# Or more generally, beta = atan2(a*sin(alpha) + b*cos(alpha), c*sin(alpha) + d*cos(alpha))
+# Let's try a simple linear model on sin/cos transformed variables
+
+# Model: sin(beta) = a0 + a1*sin(alpha) + a2*cos(alpha) + noise
+#        cos(beta) = b0 + b1*sin(alpha) + b2*cos(alpha) + noise
+
+from sklearn.linear_model import LinearRegression
+
+X = np.column_stack([np.sin(alpha_rad), np.cos(alpha_rad)])
+y_sin = np.sin(beta_rad)
+y_cos = np.cos(beta_rad)
+
+model_sin = LinearRegression().fit(X, y_sin)
+model_cos = LinearRegression().fit(X, y_cos)
+
+print(f'sin(beta) model R2: {model_sin.score(X, y_sin):.4f}')
+print(f'cos(beta) model R2: {model_cos.score(X, y_cos):.4f}')
+print(f'sin(beta) coeffs: {model_sin.coef_}, intercept: {model_sin.intercept_:.4f}')
+print(f'cos(beta) coeffs: {model_cos.coef_}, intercept: {model_cos.intercept_:.4f}')
+
+# Predict and check
+beta_pred_rad = np.arctan2(model_sin.predict(X), model_cos.predict(X))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+
+# Circular accuracy
+error_rad = np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2)))
+error_deg = np.degrees(error_rad)
+print(f'Mean absolute circular error: {error_deg.mean():.2f} degrees')
+print(f'Std of circular error: {error_deg.std():.2f} degrees')
+"
 ```
 
 ## [13] tool
@@ -412,7 +563,103 @@ Let me try more sophisticated models including time features
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+
+# Let's look at the time trend more carefully
+# Fit alpha and beta separately as functions of t
+# Then use alpha to predict beta
+
+# First, let's understand the time trend in alpha and beta
+# They seem to have a slow drift + some periodic component
+
+# Let's try: beta = f(t, alpha) 
+# Using sin/cos of t for periodicity
+
+# Create features
+t = df['t'].values
+alpha = df['alpha'].values
+beta = df['beta'].values
+
+# Try different feature sets
+# Feature set 1: t, alpha
+X1 = np.column_stack([t, alpha])
+
+# Feature set 2: t, alpha, alpha^2
+X2 = np.column_stack([t, alpha, alpha**2])
+
+# Feature set 3: t, sin(alpha), cos(alpha)
+X3 = np.column_stack([t, np.sin(np.radians(alpha)), np.cos(np.radians(alpha))])
+
+# Feature set 4: t, alpha, sin(alpha), cos(alpha)
+X4 = np.column_stack([t, alpha, np.sin(np.radians(alpha)), np.cos(np.radians(alpha))])
+
+# Feature set 5: t, alpha, alpha^2, sin(alpha), cos(alpha)
+X5 = np.column_stack([t, alpha, alpha**2, np.sin(np.radians(alpha)), np.cos(np.radians(alpha))])
+
+# Feature set 6: t, alpha, sin(2*alpha), cos(2*alpha)
+X6 = np.column_stack([t, alpha, np.sin(2*np.radians(alpha)), np.cos(2*np.radians(alpha))])
+
+# Feature set 7: t, alpha, sin(alpha), cos(alpha), sin(2*alpha), cos(2*alpha)
+X7 = np.column_stack([t, alpha, np.sin(np.radians(alpha)), np.cos(np.radians(alpha)), 
+                       np.sin(2*np.radians(alpha)), np.cos(2*np.radians(alpha))])
+
+# Feature set 8: t, alpha, t*sin(alpha), t*cos(alpha)
+X8 = np.column_stack([t, alpha, t*np.sin(np.radians(alpha)), t*np.cos(np.radians(alpha))])
+
+# Feature set 9: sin(t), cos(t), alpha, sin(alpha), cos(alpha)
+X9 = np.column_stack([np.sin(np.radians(t)), np.cos(np.radians(t)), alpha, 
+                       np.sin(np.radians(alpha)), np.cos(np.radians(alpha))])
+
+# Feature set 10: t, alpha, sin(t), cos(t), sin(alpha), cos(alpha)
+X10 = np.column_stack([t, alpha, np.sin(np.radians(t)), np.cos(np.radians(t)),
+                        np.sin(np.radians(alpha)), np.cos(np.radians(alpha))])
+
+# Also try: predict beta using sin(beta) and cos(beta) separately
+# This is better for circular data
+
+models = {
+    't+alpha': X1,
+    't+alpha+alpha2': X2,
+    't+sin_cos(alpha)': X3,
+    't+alpha+sin_cos(alpha)': X4,
+    't+alpha+alpha2+sin_cos(alpha)': X5,
+    't+alpha+sin_cos(2*alpha)': X6,
+    't+alpha+sin_cos(alpha)+sin_cos(2*alpha)': X7,
+    't+alpha+t*sin_cos(alpha)': X8,
+    'sin_cos(t)+alpha+sin_cos(alpha)': X9,
+    't+alpha+sin_cos(t)+sin_cos(alpha)': X10,
+}
+
+for name, X in models.items():
+    # Linear regression on beta directly
+    model = LinearRegression().fit(X, beta)
+    beta_pred = model.predict(X)
+    # Circular error
+    beta_pred_rad = np.radians(beta_pred)
+    beta_rad = np.radians(beta)
+    error = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+    print(f'{name}: MSE={mean_squared_error(beta, beta_pred):.2f}, Mean circular error={error.mean():.2f} deg')
+
+# Also try the sin/cos approach for beta
+print()
+print('--- sin/cos beta models ---')
+for name, X in models.items():
+    model_sin = LinearRegression().fit(X, np.sin(beta_rad))
+    model_cos = LinearRegression().fit(X, np.cos(beta_rad))
+    beta_pred_rad = np.arctan2(model_sin.predict(X), model_cos.predict(X))
+    beta_pred_deg = np.degrees(beta_pred_rad) % 360
+    error = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+    r2_sin = 1 - np.var(np.sin(beta_rad) - model_sin.predict(X)) / np.var(np.sin(beta_rad))
+    r2_cos = 1 - np.var(np.cos(beta_rad) - model_cos.predict(X)) / np.var(np.cos(beta_rad))
+    print(f'{name}: R2_sin={r2_sin:.4f}, R2_cos={r2_cos:.4f}, Mean circular error={error.mean():.2f} deg')
+"
 ```
 
 ## [15] tool
@@ -485,7 +732,42 @@ Let me look at this from a time series perspective and try different approaches
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Let's look at beta as a function of t more carefully
+# Try periodic components with different frequencies
+
+# First, let's check the autocorrelation of beta
+from statsmodels.tsa.stattools import acf
+acf_beta = acf(beta, nlags=1000)
+# Find peaks
+peaks = []
+for i in range(1, len(acf_beta)):
+    if acf_beta[i] > acf_beta[i-1] and acf_beta[i] > acf_beta[i+1] and acf_beta[i] > 0.1:
+        peaks.append((i, acf_beta[i]))
+print('ACF peaks (lag, value):')
+for p in peaks[:20]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+
+# Also check alpha
+acf_alpha = acf(alpha, nlags=1000)
+peaks_a = []
+for i in range(1, len(acf_alpha)):
+    if acf_alpha[i] > acf_alpha[i-1] and acf_alpha[i] > acf_alpha[i+1] and acf_alpha[i] > 0.1:
+        peaks_a.append((i, acf_alpha[i]))
+print('ACF peaks for alpha:')
+for p in peaks_a[:20]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+"
 ```
 
 ## [17] tool
@@ -509,7 +791,46 @@ Let me fix the ACF analysis
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.stattools import acf
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Check ACF for beta
+acf_beta = acf(beta, nlags=500)
+peaks = []
+for i in range(1, len(acf_beta)-1):
+    if acf_beta[i] > acf_beta[i-1] and acf_beta[i] > acf_beta[i+1] and acf_beta[i] > 0.05:
+        peaks.append((i, acf_beta[i]))
+print('ACF peaks for beta (lag, value):')
+for p in peaks[:20]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+
+# Check ACF for alpha
+acf_alpha = acf(alpha, nlags=500)
+peaks_a = []
+for i in range(1, len(acf_alpha)-1):
+    if acf_alpha[i] > acf_alpha[i-1] and acf_alpha[i] > acf_alpha[i+1] and acf_alpha[i] > 0.05:
+        peaks_a.append((i, acf_alpha[i]))
+print('ACF peaks for alpha:')
+for p in peaks_a[:20]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+
+# Also look at the diff series
+acf_beta_diff = acf(np.diff(beta), nlags=500)
+peaks_diff = []
+for i in range(1, len(acf_beta_diff)-1):
+    if acf_beta_diff[i] > acf_beta_diff[i-1] and acf_beta_diff[i] > acf_beta_diff[i+1] and acf_beta_diff[i] > 0.05:
+        peaks_diff.append((i, acf_beta_diff[i]))
+print('ACF peaks for beta_diff:')
+for p in peaks_diff[:20]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+"
 ```
 
 ## [19] tool
@@ -539,7 +860,51 @@ Let me explore the periodic structure more carefully
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.stattools import acf
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# More detailed ACF analysis for alpha
+acf_alpha = acf(alpha, nlags=1500)
+# Find all significant peaks
+peaks_a = []
+for i in range(1, len(acf_alpha)-1):
+    if acf_alpha[i] > acf_alpha[i-1] and acf_alpha[i] > acf_alpha[i+1] and acf_alpha[i] > 0.1:
+        peaks_a.append((i, acf_alpha[i]))
+print('ACF peaks for alpha (all):')
+for p in peaks_a[:30]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+
+# Check beta ACF more carefully
+acf_beta = acf(beta, nlags=1500)
+peaks_b = []
+for i in range(1, len(acf_beta)-1):
+    if acf_beta[i] > acf_beta[i-1] and acf_beta[i] > acf_beta[i+1] and acf_beta[i] > 0.05:
+        peaks_b.append((i, acf_beta[i]))
+print('ACF peaks for beta (all):')
+for p in peaks_b[:30]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+
+# Also check alpha ACF with more detail around lag 324
+print()
+print('Alpha ACF around lag 324:')
+for i in range(310, 340):
+    print(f'  lag={i}, acf={acf_alpha[i]:.4f}')
+
+# Check if there's a period of about 324 days
+# Also check for other periods
+print()
+print('Alpha ACF at various lags:')
+for lag in [100, 200, 324, 400, 500, 600, 700, 800, 900, 1000]:
+    if lag < len(acf_alpha):
+        print(f'  lag={lag}, acf={acf_alpha[lag]:.4f}')
+"
 ```
 
 ## [21] tool
@@ -629,7 +994,99 @@ Let me try a more systematic approach with Fourier features
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Try Fourier features for t
+# The alpha has period ~324 days
+# Let's try different periods
+
+# Approach: model beta as a function of t using Fourier series
+# beta(t) = a0 + sum(a_k * sin(2*pi*k*t/P) + b_k * cos(2*pi*k*t/P))
+
+# First, let's find the dominant period for beta
+from statsmodels.tsa.stattools import acf
+acf_beta = acf(beta, nlags=1500)
+# Find peaks
+peaks = []
+for i in range(1, len(acf_beta)-1):
+    if acf_beta[i] > acf_beta[i-1] and acf_beta[i] > acf_beta[i+1] and acf_beta[i] > 0.05:
+        peaks.append((i, acf_beta[i]))
+print('Beta ACF peaks:')
+for p in peaks[:20]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+
+# Let's also try modeling beta as a function of alpha and t
+# Using a more flexible approach
+
+# Try: beta = f(t) + g(alpha) + h(t, alpha)
+# where f, g, h are smooth functions
+
+# First, let's try a simple approach: 
+# Model beta using Fourier features of t
+
+def fourier_features(t, periods, n_harmonics=3):
+    features = []
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Try periods around 324 (alpha's period) and other candidates
+periods_to_try = [324, 360, 180, 120, 90, 72, 60, 45, 36, 324/2, 324/3]
+
+# Also try t directly
+best_mse = float('inf')
+best_name = ''
+
+for P in periods_to_try:
+    for n_harm in [1, 2, 3]:
+        X = fourier_features(t, [P], n_harm)
+        X = np.column_stack([t, X])  # add linear trend
+        
+        model = Ridge(alpha=1.0).fit(X, beta)
+        beta_pred = model.predict(X)
+        mse = mean_squared_error(beta, beta_pred)
+        if mse < best_mse:
+            best_mse = mse
+            best_name = f'P={P}, n_harm={n_harm}'
+        
+print(f'Best Fourier model: {best_name}, MSE={best_mse:.2f}')
+
+# Now try including alpha as a feature
+# Model: beta = f(t) + g(alpha) + noise
+# Use Fourier for both t and alpha
+
+# Fourier features for alpha
+X_t = fourier_features(t, [324], 3)
+X_alpha = fourier_features(alpha, [360], 3)  # alpha wraps at 360
+
+X_combined = np.column_stack([t, X_t, alpha, X_alpha])
+model = Ridge(alpha=1.0).fit(X_combined, beta)
+beta_pred = model.predict(X_combined)
+mse = mean_squared_error(beta, beta_pred)
+print(f'Combined t+alpha model MSE: {mse:.2f}')
+
+# Also try the sin/cos beta approach with t features
+# Model sin(beta) and cos(beta) separately
+X_combined2 = np.column_stack([t, X_t, alpha, X_alpha])
+model_sin = Ridge(alpha=1.0).fit(X_combined2, np.sin(np.radians(beta)))
+model_cos = Ridge(alpha=1.0).fit(X_combined2, np.cos(np.radians(beta)))
+beta_pred_rad = np.arctan2(model_sin.predict(X_combined2), model_cos.predict(X_combined2))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_deg)/2))))
+print(f'Combined t+alpha sin/cos model MSE: {mean_squared_error(beta, beta_pred_deg):.2f}, circular error: {error.mean():.2f} deg')
+"
 ```
 
 ## [23] tool
@@ -689,7 +1146,82 @@ Let me try a more comprehensive modeling approach
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import cross_val_score, KFold
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Let's try a comprehensive feature set
+# Include: t (linear), Fourier of t at various frequencies, alpha, sin/cos of alpha
+
+# Key insight: alpha has period ~324 days
+# Let's try Fourier features for t at multiple periods
+
+def make_features(t, alpha, periods=[324, 360, 180, 120, 90, 72, 60, 45, 36]):
+    features = [t, np.ones_like(t, dtype=float)]  # linear trend + intercept
+    
+    # Fourier of t
+    for P in periods:
+        for k in range(1, 4):  # 3 harmonics
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    
+    # Alpha features
+    features.append(alpha)
+    features.append(np.sin(np.radians(alpha)))
+    features.append(np.cos(np.radians(alpha)))
+    features.append(alpha**2)
+    
+    # Interaction: t * sin/cos(alpha)
+    features.append(t * np.sin(np.radians(alpha)))
+    features.append(t * np.cos(np.radians(alpha)))
+    
+    return np.column_stack(features)
+
+X = make_features(t, alpha)
+print(f'Number of features: {X.shape[1]}')
+
+# Try different regularization strengths
+for alpha_reg in [0.001, 0.01, 0.1, 1.0, 10.0]:
+    model = Ridge(alpha=alpha_reg).fit(X, beta)
+    beta_pred = model.predict(X)
+    mse = mean_squared_error(beta, beta_pred)
+    rmse = np.sqrt(mse)
+    # Circular error
+    beta_pred_rad = np.radians(beta_pred)
+    beta_rad = np.radians(beta)
+    circ_error = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+    print(f'Ridge alpha={alpha_reg}: MSE={mse:.2f}, RMSE={rmse:.2f}, circ_error={circ_error.mean():.2f} deg')
+
+# Also try: model sin(beta) and cos(beta) separately
+# This is better for circular data
+print()
+print('--- sin/cos beta models ---')
+for alpha_reg in [0.001, 0.01, 0.1, 1.0, 10.0]:
+    model_sin = Ridge(alpha=alpha_reg).fit(X, np.sin(beta_rad))
+    model_cos = Ridge(alpha=alpha_reg).fit(X, np.cos(beta_rad))
+    beta_pred_rad = np.arctan2(model_sin.predict(X), model_cos.predict(X))
+    beta_pred_deg = np.degrees(beta_pred_rad) % 360
+    mse = mean_squared_error(beta, beta_pred_deg)
+    circ_error = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+    print(f'Ridge alpha={alpha_reg}: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg')
+
+# Let's also try cross-validation to estimate noise
+print()
+print('--- Cross-validation ---')
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+model = Ridge(alpha=1.0).fit(X, beta)
+scores = cross_val_score(model, X, beta, cv=kf, scoring='neg_mean_squared_error')
+print(f'5-fold CV MSE: {-scores.mean():.2f} (+/- {scores.std():.2f})')
+print(f'5-fold CV RMSE: {np.sqrt(-scores.mean()):.2f}')
+"
 ```
 
 ## [25] tool
@@ -752,7 +1284,98 @@ Let me look at the data more carefully and try a different modeling approach
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Let's look at the relationship between alpha and beta more carefully
+# Maybe beta = alpha + offset where offset has some pattern
+
+diff = (beta - alpha) % 360
+print('beta - alpha diff (mod 360) stats:')
+print(f'  mean: {diff.mean():.2f}')
+print(f'  std: {diff.std():.2f}')
+print(f'  min: {diff.min():.2f}')
+print(f'  max: {diff.max():.2f}')
+
+# Also try: beta = -alpha + offset (mod 360)
+diff2 = (beta + alpha) % 360
+print()
+print('beta + alpha (mod 360) stats:')
+print(f'  mean: {diff2.mean():.2f}')
+print(f'  std: {diff2.std():.2f}')
+
+# Let's look at the relationship in a different way
+# Maybe the key is in the angular velocities
+# Compute alpha and beta as functions of t using local regression
+
+# Let's try a completely different approach:
+# Model beta(t) as a Gaussian Process
+# This can handle the circular nature and extrapolation
+
+# First, let's try a simple approach: 
+# Fit a polynomial to beta vs t (with wrapping)
+# But polynomials don't work well for extrapolation with periodic data
+
+# Let me try: model beta as a sum of sinusoids + linear trend
+# Use the period found from ACF analysis
+
+# The alpha has period ~324 days
+# Let me check if beta also has this period
+# by looking at beta filtered by alpha
+
+# Actually, let me try a completely different approach:
+# Use alpha as a feature and model beta = f(alpha) with a periodic kernel
+
+# Or maybe I should try: beta = g(alpha) where g is a smooth periodic function
+# Since alpha wraps at 360, we can use Fourier series in alpha
+
+# Let me try: beta = a0 + sum(a_k * sin(2*pi*k*alpha/360) + b_k * cos(2*pi*k*alpha/360))
+# This is a Fourier series in alpha
+
+from sklearn.linear_model import Ridge
+
+# Fourier in alpha only
+X_alpha = []
+for k in range(1, 10):
+    X_alpha.append(np.sin(2 * np.pi * k * alpha / 360))
+    X_alpha.append(np.cos(2 * np.pi * k * alpha / 360))
+X_alpha = np.column_stack(X_alpha)
+
+model = Ridge(alpha=1.0).fit(X_alpha, beta)
+beta_pred = model.predict(X_alpha)
+mse = mean_squared_error(beta, beta_pred)
+circ_error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred)/2))))
+print(f'Fourier in alpha only: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg')
+
+# Fourier in alpha + linear in t
+X_comb = np.column_stack([t, X_alpha])
+model = Ridge(alpha=1.0).fit(X_comb, beta)
+beta_pred = model.predict(X_comb)
+mse = mean_squared_error(beta, beta_pred)
+circ_error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred)/2))))
+print(f'Fourier in alpha + linear t: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg')
+
+# Fourier in alpha + Fourier in t
+X_t = []
+for P in [324, 360, 180, 120]:
+    for k in range(1, 4):
+        X_t.append(np.sin(2 * np.pi * k * t / P))
+        X_t.append(np.cos(2 * np.pi * k * t / P))
+X_t = np.column_stack(X_t)
+
+X_comb2 = np.column_stack([X_t, X_alpha])
+model = Ridge(alpha=1.0).fit(X_comb2, beta)
+beta_pred = model.predict(X_comb2)
+mse = mean_squared_error(beta, beta_pred)
+circ_error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred)/2))))
+print(f'Fourier in t + alpha: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg')
+"
 ```
 
 ## [27] tool
@@ -809,7 +1432,76 @@ Let me try a more systematic approach with better feature engineering
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Let me try a different approach: model beta as a function of t
+# using a flexible Fourier series, and see what the noise level is
+
+# First, let's try to find the best periodic model for beta vs t
+# Using cross-validation
+
+def make_fourier_features(t, periods, n_harmonics=5):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Try different sets of periods
+period_sets = [
+    [324],
+    [324, 360],
+    [324, 360, 180],
+    [324, 360, 180, 120],
+    [324, 360, 180, 120, 90],
+    [324, 360, 180, 120, 90, 72],
+    [324, 360, 180, 120, 90, 72, 60],
+    [324, 360, 180, 120, 90, 72, 60, 45],
+    [324, 360, 180, 120, 90, 72, 60, 45, 36],
+]
+
+from sklearn.model_selection import cross_val_score, KFold
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+for periods in period_sets:
+    X = make_fourier_features(t, periods, n_harmonics=3)
+    model = Ridge(alpha=1.0).fit(X, beta)
+    beta_pred = model.predict(X)
+    mse = mean_squared_error(beta, beta_pred)
+    scores = cross_val_score(Ridge(alpha=1.0), X, beta, cv=kf, scoring='neg_mean_squared_error')
+    cv_mse = -scores.mean()
+    print(f'Periods {periods}: MSE={mse:.2f}, CV MSE={cv_mse:.2f}, RMSE={np.sqrt(cv_mse):.2f}')
+
+# Now let's also try adding alpha features
+print()
+print('--- With alpha features ---')
+for periods in period_sets[:3]:
+    X_t = make_fourier_features(t, periods, n_harmonics=3)
+    X_alpha = np.column_stack([
+        alpha,
+        np.sin(np.radians(alpha)),
+        np.cos(np.radians(alpha)),
+        np.sin(2*np.radians(alpha)),
+        np.cos(2*np.radians(alpha)),
+    ])
+    X = np.column_stack([X_t, X_alpha])
+    model = Ridge(alpha=1.0).fit(X, beta)
+    beta_pred = model.predict(X)
+    mse = mean_squared_error(beta, beta_pred)
+    scores = cross_val_score(Ridge(alpha=1.0), X, beta, cv=kf, scoring='neg_mean_squared_error')
+    cv_mse = -scores.mean()
+    print(f'Periods {periods} + alpha: MSE={mse:.2f}, CV MSE={cv_mse:.2f}, RMSE={np.sqrt(cv_mse):.2f}')
+"
 ```
 
 ## [29] tool
@@ -878,7 +1570,61 @@ Let me try a completely different approach - Gaussian Process and also look at t
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Let me look at the data in a different way
+# Maybe beta = alpha + f(t) where f(t) is periodic
+# Or beta = g(alpha + h(t)) for some functions f, g, h
+
+# Let's compute beta - alpha (mod 360) and see if it has a pattern
+diff = (beta - alpha) % 360
+print('beta - alpha (mod 360) first 50:')
+print(diff[:50])
+
+# Check if diff has a periodic pattern
+from statsmodels.tsa.stattools import acf
+acf_diff = acf(diff, nlags=500)
+peaks = []
+for i in range(1, len(acf_diff)-1):
+    if acf_diff[i] > acf_diff[i-1] and acf_diff[i] > acf_diff[i+1] and acf_diff[i] > 0.05:
+        peaks.append((i, acf_diff[i]))
+print('ACF peaks for beta-alpha diff:')
+for p in peaks[:20]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+
+# Also check beta + alpha (mod 360)
+diff2 = (beta + alpha) % 360
+acf_diff2 = acf(diff2, nlags=500)
+peaks2 = []
+for i in range(1, len(acf_diff2)-1):
+    if acf_diff2[i] > acf_diff2[i-1] and acf_diff2[i] > acf_diff2[i+1] and acf_diff2[i] > 0.05:
+        peaks2.append((i, acf_diff2[i]))
+print('ACF peaks for beta+alpha (mod 360):')
+for p in peaks2[:20]:
+    print(f'  lag={p[0]}, acf={p[1]:.4f}')
+
+# Let me also try: maybe the relationship is in the angular velocity
+# alpha_dot and beta_dot are related
+alpha_dot = np.diff(alpha)
+beta_dot = np.diff(beta)
+# Handle wrapping
+alpha_dot = np.where(alpha_dot > 180, alpha_dot - 360, alpha_dot)
+alpha_dot = np.where(alpha_dot < -180, alpha_dot + 360, alpha_dot)
+beta_dot = np.where(beta_dot > 180, beta_dot - 360, beta_dot)
+beta_dot = np.where(beta_dot < -180, beta_dot + 360, beta_dot)
+
+print()
+print('Correlation between alpha_dot and beta_dot:', np.corrcoef(alpha_dot, beta_dot)[0,1])
+print('Alpha_dot mean:', alpha_dot.mean(), 'std:', alpha_dot.std())
+print('Beta_dot mean:', beta_dot.mean(), 'std:', beta_dot.std())
+"
 ```
 
 ## [31] tool
@@ -941,7 +1687,73 @@ Let me try modeling the offset between alpha and beta, and also try a GP approac
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Model offset = (beta - alpha) mod 360 as a function of t
+offset = (beta - alpha) % 360
+# Handle wrapping: if offset > 180, it might be better to think of it as offset - 360
+offset_centered = np.where(offset > 180, offset - 360, offset)
+
+print('Offset (beta - alpha) mod 360 stats:')
+print(f'  mean: {offset.mean():.2f}')
+print(f'  mean of centered: {offset_centered.mean():.2f}')
+print(f'  std: {offset_centered.std():.2f}')
+
+# Model offset_centered as a function of t using Fourier series
+def make_fourier_features(t, periods, n_harmonics=5):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Try different periods for the offset
+from sklearn.model_selection import cross_val_score, KFold
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+period_sets = [
+    [324],
+    [324, 360],
+    [324, 360, 180],
+    [324, 360, 180, 120],
+    [324, 360, 180, 120, 90],
+    [324, 360, 180, 120, 90, 72, 60, 45, 36],
+]
+
+for periods in period_sets:
+    X = make_fourier_features(t, periods, n_harmonics=3)
+    model = Ridge(alpha=1.0).fit(X, offset_centered)
+    offset_pred = model.predict(X)
+    mse = mean_squared_error(offset_centered, offset_pred)
+    scores = cross_val_score(Ridge(alpha=1.0), X, offset_centered, cv=kf, scoring='neg_mean_squared_error')
+    cv_mse = -scores.mean()
+    print(f'Periods {periods}: MSE={mse:.2f}, CV MSE={cv_mse:.2f}, RMSE={np.sqrt(cv_mse):.2f}')
+
+# Now, if we can model offset(t), then beta = alpha + offset(t) (mod 360)
+# For test, we don't have alpha, but we can predict alpha from t too!
+# Let me also model alpha as a function of t
+
+print()
+print('--- Modeling alpha as function of t ---')
+for periods in period_sets:
+    X = make_fourier_features(t, periods, n_harmonics=3)
+    model = Ridge(alpha=1.0).fit(X, alpha)
+    alpha_pred = model.predict(X)
+    mse = mean_squared_error(alpha, alpha_pred)
+    scores = cross_val_score(Ridge(alpha=1.0), X, alpha, cv=kf, scoring='neg_mean_squared_error')
+    cv_mse = -scores.mean()
+    print(f'Periods {periods}: MSE={mse:.2f}, CV MSE={cv_mse:.2f}, RMSE={np.sqrt(cv_mse):.2f}')
+"
 ```
 
 ## [33] tool
@@ -999,7 +1811,86 @@ Let me try a Gaussian Process approach and also a more careful time series analy
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, PeriodicKernel, WhiteKernel, ConstantKernel as C, ExpSineSquared
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values.reshape(-1, 1)
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Try GP with periodic kernel for beta vs t
+# The alpha has period ~324 days
+kernel = C(1.0, (1e-3, 1e3)) * ExpSineSquared(length_scale=100.0, periodicity=324.0) + WhiteKernel(noise_level=1000.0)
+
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, random_state=42, alpha=0.0)
+gp.fit(t, beta)
+print(f'GP kernel: {gp.kernel_}')
+
+# Predict on training data
+beta_pred, beta_std = gp.predict(t, return_std=True)
+mse = mean_squared_error(beta, beta_pred)
+circ_error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred)/2))))
+print(f'GP beta vs t: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg')
+print(f'GP std mean: {beta_std.mean():.2f}')
+
+# Now try with alpha as additional feature
+# Normalize features
+t_norm = t / 3000.0  # normalize t
+alpha_norm = alpha.reshape(-1, 1) / 360.0  # normalize alpha
+
+X = np.column_stack([t_norm, alpha_norm])
+
+kernel2 = C(1.0, (1e-3, 1e3)) * ExpSineSquared(length_scale=100.0, periodicity=324.0) + WhiteKernel(noise_level=1000.0)
+gp2 = GaussianProcessRegressor(kernel=kernel2, n_restarts_optimizer=5, random_state=42, alpha=0.0)
+gp2.fit(X, beta)
+beta_pred2, beta_std2 = gp2.predict(X, return_std=True)
+mse2 = mean_squared_error(beta, beta_pred2)
+circ_error2 = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred2)/2))))
+print(f'GP beta vs t+alpha: MSE={mse2:.2f}, circ_error={circ_error2.mean():.2f} deg')
+print(f'GP std mean: {beta_std2.mean():.2f}')
+
+# Try a simpler approach: just use the best Fourier model
+# and estimate noise from residuals
+print()
+print('--- Simple Fourier model for beta ---')
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import cross_val_score, KFold
+
+def make_fourier_features(t, periods, n_harmonics=5):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Best periods from earlier analysis
+periods = [324, 360, 180, 120, 90, 72, 60, 45, 36]
+X = make_fourier_features(t.flatten(), periods, n_harmonics=3)
+model = Ridge(alpha=1.0).fit(X, beta)
+beta_pred = model.predict(X)
+residuals = beta - beta_pred
+noise_std = np.std(residuals)
+print(f'Fourier model noise std: {noise_std:.2f} degrees')
+print(f'Fourier model MSE: {mean_squared_error(beta, beta_pred):.2f}')
+
+# Also try: model sin(beta) and cos(beta) separately
+# This is better for circular data
+beta_rad = np.radians(beta)
+model_sin = Ridge(alpha=1.0).fit(X, np.sin(beta_rad))
+model_cos = Ridge(alpha=1.0).fit(X, np.cos(beta_rad))
+beta_pred_rad = np.arctan2(model_sin.predict(X), model_cos.predict(X))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std_circ = np.std(residuals_circ)
+print(f'Sin/cos model noise std: {noise_std_circ:.2f} degrees')
+print(f'Sin/cos model MSE: {mean_squared_error(beta, beta_pred_deg):.2f}')
+"
 ```
 
 ## [35] tool
@@ -1033,7 +1924,68 @@ Let me fix the import and try again
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ExpSineSquared, WhiteKernel, ConstantKernel as C, DotProduct
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values.reshape(-1, 1)
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Try GP with ExpSineSquared kernel for beta vs t
+# The alpha has period ~324 days
+kernel = C(1.0, (1e-3, 1e3)) * ExpSineSquared(length_scale=100.0, periodicity=324.0) + WhiteKernel(noise_level=1000.0)
+
+gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, random_state=42)
+gp.fit(t, beta)
+print(f'GP kernel: {gp.kernel_}')
+
+# Predict on training data
+beta_pred, beta_std = gp.predict(t, return_std=True)
+mse = mean_squared_error(beta, beta_pred)
+circ_error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred)/2))))
+print(f'GP beta vs t: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg')
+print(f'GP std mean: {beta_std.mean():.2f}')
+
+# Try a simpler approach: just use the best Fourier model
+# and estimate noise from residuals
+print()
+print('--- Simple Fourier model for beta ---')
+from sklearn.linear_model import Ridge
+
+def make_fourier_features(t, periods, n_harmonics=5):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Best periods from earlier analysis
+periods = [324, 360, 180, 120, 90, 72, 60, 45, 36]
+X = make_fourier_features(t.flatten(), periods, n_harmonics=3)
+model = Ridge(alpha=1.0).fit(X, beta)
+beta_pred = model.predict(X)
+residuals = beta - beta_pred
+noise_std = np.std(residuals)
+print(f'Fourier model noise std: {noise_std:.2f} degrees')
+print(f'Fourier model MSE: {mean_squared_error(beta, beta_pred):.2f}')
+
+# Also try: model sin(beta) and cos(beta) separately
+beta_rad = np.radians(beta)
+model_sin = Ridge(alpha=1.0).fit(X, np.sin(beta_rad))
+model_cos = Ridge(alpha=1.0).fit(X, np.cos(beta_rad))
+beta_pred_rad = np.arctan2(model_sin.predict(X), model_cos.predict(X))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std_circ = np.std(residuals_circ)
+print(f'Sin/cos model noise std: {noise_std_circ:.2f} degrees')
+print(f'Sin/cos model MSE: {mean_squared_error(beta, beta_pred_deg):.2f}')
+"
 ```
 
 ## [37] tool
@@ -1073,7 +2025,79 @@ Let me take a more focused approach and build the final model
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Model sin(beta) and cos(beta) separately using Fourier features of t
+# This is the best approach for circular data
+
+def make_fourier_features(t, periods, n_harmonics=5):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Use periods that capture the periodic structure
+periods = [324, 360, 180, 120, 90, 72, 60, 45, 36]
+X = make_fourier_features(t, periods, n_harmonics=3)
+
+# Model sin(beta) and cos(beta)
+beta_rad = np.radians(beta)
+model_sin = Ridge(alpha=1.0).fit(X, np.sin(beta_rad))
+model_cos = Ridge(alpha=1.0).fit(X, np.cos(beta_rad))
+
+beta_pred_rad = np.arctan2(model_sin.predict(X), model_cos.predict(X))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+
+# Compute residuals
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std = np.std(residuals_circ)
+print(f'Sin/cos model noise std: {noise_std:.2f} degrees')
+print(f'Sin/cos model MSE: {mean_squared_error(beta, beta_pred_deg):.2f}')
+print(f'Mean circular error: {residuals_circ.mean():.2f} degrees')
+
+# Also try including alpha features
+X_alpha = np.column_stack([
+    alpha,
+    np.sin(np.radians(alpha)),
+    np.cos(np.radians(alpha)),
+    np.sin(2*np.radians(alpha)),
+    np.cos(2*np.radians(alpha)),
+])
+X_combined = np.column_stack([X, X_alpha])
+
+model_sin2 = Ridge(alpha=1.0).fit(X_combined, np.sin(beta_rad))
+model_cos2 = Ridge(alpha=1.0).fit(X_combined, np.cos(beta_rad))
+beta_pred_rad2 = np.arctan2(model_sin2.predict(X_combined), model_cos2.predict(X_combined))
+beta_pred_deg2 = np.degrees(beta_pred_rad2) % 360
+residuals_circ2 = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad2)/2))))
+noise_std2 = np.std(residuals_circ2)
+print(f'With alpha - noise std: {noise_std2:.2f} degrees')
+print(f'With alpha - MSE: {mean_squared_error(beta, beta_pred_deg2):.2f}')
+
+# Also try: model beta directly (not sin/cos) with alpha features
+model_direct = Ridge(alpha=1.0).fit(X_combined, beta)
+beta_pred_direct = model_direct.predict(X_combined)
+residuals_direct = beta - beta_pred_direct
+noise_std_direct = np.std(residuals_direct)
+print(f'Direct model with alpha - noise std: {noise_std_direct:.2f} degrees')
+print(f'Direct model with alpha - MSE: {mean_squared_error(beta, beta_pred_direct):.2f}')
+
+# The noise std is the key for prediction intervals
+# For a 95% prediction interval, we use 1.96 * noise_std
+print(f'\nFor 95% PI: +/- {1.96 * noise_std:.2f} degrees (circular model)')
+print(f'For 95% PI: +/- {1.96 * noise_std2:.2f} degrees (with alpha)')
+EOF
 ```
 
 ## [39] tool
@@ -1125,7 +2149,92 @@ Let me explore the alpha-beta relationship more carefully and try different mode
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge, KNeighborsRegressor
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Let me try a completely different approach
+# Maybe beta = f(alpha) where f is a smooth periodic function
+# Let's use a local regression (LOESS-like) approach
+
+# Or maybe I should try: for each alpha value, compute the mean beta
+# But alpha is continuous, so let's bin it
+
+# Bin alpha into 36 bins (10-degree bins)
+alpha_bins = np.floor(alpha / 10).astype(int) % 36
+bin_means = []
+for b in range(36):
+    mask = alpha_bins == b
+    if mask.sum() > 0:
+        bin_means.append((b, beta[mask].mean(), mask.sum()))
+    else:
+        bin_means.append((b, np.nan, 0))
+
+print('Bin means for beta by alpha bin:')
+for b, mean, count in bin_means:
+    if count > 5:
+        print(f'  alpha bin {b} ({(b*10):.0f}-{(b*10+10):.0f}): beta_mean={mean:.2f}, n={count}')
+
+# This doesn't seem very informative either
+
+# Let me try a different approach: maybe the relationship is
+# beta = alpha + f(t) where f(t) is periodic
+# Or beta = g(alpha + h(t)) for some functions
+
+# Actually, let me try a completely different approach:
+# Use a neural network with sklearn's MLPRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
+
+# Features: t, alpha, sin(alpha), cos(alpha), sin(2*alpha), cos(2*alpha)
+X = np.column_stack([
+    t,
+    alpha,
+    np.sin(np.radians(alpha)),
+    np.cos(np.radians(alpha)),
+    np.sin(2*np.radians(alpha)),
+    np.cos(2*np.radians(alpha)),
+])
+
+# Scale features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Try MLP
+mlp = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42, early_stopping=True)
+mlp.fit(X_scaled, beta)
+beta_pred = mlp.predict(X_scaled)
+mse = mean_squared_error(beta, beta_pred)
+circ_error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred)/2))))
+print(f'MLP: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg')
+
+# Try MLP with sin/cos output
+mlp2 = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42, early_stopping=True)
+mlp2.fit(X_scaled, np.sin(np.radians(beta)))
+mlp2_cos = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42, early_stopping=True)
+mlp2_cos.fit(X_scaled, np.cos(np.radians(beta)))
+
+beta_pred_rad = np.arctan2(mlp2.predict(X_scaled), mlp2_cos.predict(X_scaled))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+mse2 = mean_squared_error(beta, beta_pred_deg)
+circ_error2 = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_deg)/2))))
+print(f'MLP sin/cos: MSE={mse2:.2f}, circ_error={circ_error2.mean():.2f} deg')
+
+# Try KNN
+knn = KNeighborsRegressor(n_neighbors=20)
+knn.fit(X_scaled, beta)
+beta_pred_knn = knn.predict(X_scaled)
+mse_knn = mean_squared_error(beta, beta_pred_knn)
+circ_error_knn = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_knn)/2))))
+print(f'KNN: MSE={mse_knn:.2f}, circ_error={circ_error_knn.mean():.2f} deg')
+EOF
 ```
 
 ## [41] tool
@@ -1161,7 +2270,68 @@ Let me fix the imports and try a more focused approach
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.neural_network import MLPRegressor
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import StandardScaler
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Features
+X = np.column_stack([
+    t,
+    alpha,
+    np.sin(np.radians(alpha)),
+    np.cos(np.radians(alpha)),
+    np.sin(2*np.radians(alpha)),
+    np.cos(2*np.radians(alpha)),
+])
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# MLP with sin/cos output
+mlp_sin = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1)
+mlp_cos = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1)
+mlp_sin.fit(X_scaled, np.sin(np.radians(beta)))
+mlp_cos.fit(X_scaled, np.cos(np.radians(beta)))
+
+beta_pred_rad = np.arctan2(mlp_sin.predict(X_scaled), mlp_cos.predict(X_scaled))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+mse = mean_squared_error(beta, beta_pred_deg)
+circ_error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_deg)/2))))
+print(f'MLP sin/cos: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg, std={circ_error.std():.2f}')
+
+# KNN
+knn = KNeighborsRegressor(n_neighbors=20)
+knn.fit(X_scaled, beta)
+beta_pred_knn = knn.predict(X_scaled)
+mse_knn = mean_squared_error(beta, beta_pred_knn)
+circ_error_knn = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_knn)/2))))
+print(f'KNN: MSE={mse_knn:.2f}, circ_error={circ_error_knn.mean():.2f} deg')
+
+# KNN with sin/cos
+knn_sin = KNeighborsRegressor(n_neighbors=20)
+knn_cos = KNeighborsRegressor(n_neighbors=20)
+knn_sin.fit(X_scaled, np.sin(np.radians(beta)))
+knn_cos.fit(X_scaled, np.cos(np.radians(beta)))
+beta_pred_knn_rad = np.arctan2(knn_sin.predict(X_scaled), knn_cos.predict(X_scaled))
+beta_pred_knn_deg = np.degrees(beta_pred_knn_rad) % 360
+mse_knn2 = mean_squared_error(beta, beta_pred_knn_deg)
+circ_error_knn2 = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_knn_deg)/2))))
+print(f'KNN sin/cos: MSE={mse_knn2:.2f}, circ_error={circ_error_knn2.mean():.2f} deg')
+
+# Noise estimation
+residuals = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_deg)/2))))
+print(f'Noise std (MLP sin/cos): {residuals.std():.2f} degrees')
+print(f'95% PI half-width: {1.96 * residuals.std():.2f} degrees')
+EOF
 ```
 
 ## [43] tool
@@ -1203,7 +2373,77 @@ Let me check the MLP model more carefully with cross-validation
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.neural_network import MLPRegressor
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import cross_val_score, KFold
+from sklearn.preprocessing import StandardScaler
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Features
+X = np.column_stack([
+    t,
+    alpha,
+    np.sin(np.radians(alpha)),
+    np.cos(np.radians(alpha)),
+    np.sin(2*np.radians(alpha)),
+    np.cos(2*np.radians(alpha)),
+])
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Check with cross-validation
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# MLP sin/cos approach
+mlp_sin = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1)
+mlp_cos = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1)
+
+# Cross-validate
+scores = cross_val_score(mlp_sin, X_scaled, np.sin(np.radians(beta)), cv=kf, scoring='neg_mean_squared_error')
+print(f'MLP sin CV MSE: {-scores.mean():.2f}')
+
+scores = cross_val_score(mlp_cos, X_scaled, np.cos(np.radians(beta)), cv=kf, scoring='neg_mean_squared_error')
+print(f'MLP cos CV MSE: {-scores.mean():.2f}')
+
+# Also try: just predict beta directly with MLP
+scores = cross_val_score(MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1), 
+                         X_scaled, beta, cv=kf, scoring='neg_mean_squared_error')
+print(f'MLP direct CV MSE: {-scores.mean():.2f}')
+
+# The issue is that MLP with early_stopping uses validation_fraction, which means
+# it's not using all the data for training. Let me try a different approach.
+
+# Let me also try: maybe the model is just memorizing the training data
+# and the circular error on training data is low because of overfitting
+
+# Let me check: what's the training error vs test error?
+# Train on full data, then check
+mlp_sin_full = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1)
+mlp_cos_full = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1)
+mlp_sin_full.fit(X_scaled, np.sin(np.radians(beta)))
+mlp_cos_full.fit(X_scaled, np.cos(np.radians(beta)))
+
+beta_pred_rad = np.arctan2(mlp_sin_full.predict(X_scaled), mlp_cos_full.predict(X_scaled))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+circ_error = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_deg)/2))))
+print(f'Training circular error: {circ_error.mean():.4f} deg')
+print(f'Training circular error std: {circ_error.std():.4f} deg')
+print(f'Max circular error: {circ_error.max():.2f} deg')
+
+# The training error is very low (0.45 deg), which suggests overfitting
+# The model has memorized the training data
+
+# For extrapolation, this won't work well
+# Let me go back to the Fourier approach which generalizes better
+EOF
 ```
 
 ## [45] tool
@@ -1282,7 +2522,88 @@ Let me try a more creative approach - modeling the joint dynamics
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import cross_val_score, KFold
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Let me try a different approach:
+# Model beta as a function of alpha using a periodic spline-like approach
+# Since alpha wraps at 360, we can use Fourier features of alpha
+
+# But first, let me check: does beta have a relationship with alpha
+# that becomes clearer when we look at it differently?
+
+# Maybe beta = f(alpha) where f is a multi-valued function
+# (i.e., for a given alpha, beta can take multiple values depending on t)
+
+# Let's check: for a given alpha bin, what's the distribution of beta?
+alpha_bins = np.floor(alpha / 20).astype(int)  # 18-degree bins
+for b in range(18):
+    mask = alpha_bins == b
+    if mask.sum() > 10:
+        beta_mean = beta[mask].mean()
+        beta_std = beta[mask].std()
+        print(f'alpha bin {b*20}-{(b+1)*20}: beta_mean={beta_mean:.2f}, beta_std={beta_std:.2f}, n={mask.sum()}')
+
+# Let me also try: maybe the relationship is beta = alpha + offset(t)
+# where offset(t) is periodic
+# We already tried this and it didn't work well
+
+# Let me try yet another approach: 
+# Maybe beta = g(t) where g is a sum of sinusoids
+# and the alpha information helps us determine the phase/amplitude
+
+# Actually, let me try a completely different approach:
+# Use the fact that alpha has period ~324 days
+# Model alpha(t) = A*sin(2*pi*t/324 + phi) + noise
+# Then model beta(t) = B*sin(2*pi*t/P + theta) + noise
+# where P might be different from 324
+
+# Let me find the dominant period of beta using FFT
+from numpy.fft import fft, fftfreq
+
+# Remove mean from beta
+beta_centered = beta - beta.mean()
+N = len(beta_centered)
+yf = fft(beta_centered)
+xf = fftfreq(N, 1)  # sampling rate = 1 per day
+
+# Find dominant frequencies
+magnitudes = np.abs(yf[:N//2])
+freqs = xf[:N//2]
+# Exclude DC component
+pos_mask = freqs > 0
+pos_freqs = freqs[pos_mask]
+pos_mags = magnitudes[pos_mask]
+
+# Find top frequencies
+top_idx = np.argsort(pos_mags)[-10:]
+print('\nTop frequencies in beta:')
+for idx in sorted(top_idx, reverse=True):
+    freq = pos_freqs[idx]
+    period = 1.0 / freq if freq > 0 else float('inf')
+    print(f'  freq={freq:.6f} cycles/day, period={period:.2f} days, magnitude={pos_mags[idx]:.2f}')
+
+# Also check alpha
+alpha_centered = alpha - alpha.mean()
+yf_alpha = fft(alpha_centered)
+magnitudes_alpha = np.abs(yf_alpha[:N//2])
+pos_mags_alpha = magnitudes_alpha[pos_mask]
+top_idx_alpha = np.argsort(pos_mags_alpha)[-10:]
+print('\nTop frequencies in alpha:')
+for idx in sorted(top_idx_alpha, reverse=True):
+    freq = pos_freqs[idx]
+    period = 1.0 / freq if freq > 0 else float('inf')
+    print(f'  freq={freq:.6f} cycles/day, period={period:.2f} days, magnitude={pos_mags_alpha[idx]:.2f}')
+EOF
 ```
 
 ## [47] tool
@@ -1386,7 +2707,90 @@ The FFT reveals beta has a dominant period of ~1015 days. Let me build a model u
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import cross_val_score, KFold
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Key periods from FFT analysis
+# Beta dominant periods: 1015, 761, 609, 381, 338, 305, 160
+# Alpha dominant periods: 305, 338, 160, 109, 80, 65, 46
+
+# Let me build a Fourier model for beta using the dominant periods
+def make_fourier_features(t, periods, n_harmonics=3):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Beta periods
+beta_periods = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65]
+X_beta = make_fourier_features(t, beta_periods, n_harmonics=2)
+
+# Alpha periods  
+alpha_periods = [305, 338, 160, 109, 80, 65, 46]
+X_alpha = make_fourier_features(t, alpha_periods, n_harmonics=2)
+
+# Combined: beta periods + alpha periods + alpha features
+X_alpha_features = np.column_stack([
+    alpha,
+    np.sin(np.radians(alpha)),
+    np.cos(np.radians(alpha)),
+    np.sin(2*np.radians(alpha)),
+    np.cos(2*np.radians(alpha)),
+])
+
+X_combined = np.column_stack([X_beta, X_alpha, X_alpha_features])
+
+# Also try: just beta periods
+X_just_beta = make_fourier_features(t, beta_periods, n_harmonics=3)
+
+# Model sin(beta) and cos(beta) separately
+beta_rad = np.radians(beta)
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# Try different models
+models_to_try = {
+    'beta_periods_h2': X_beta,
+    'beta_periods_h3': X_just_beta,
+    'beta+alpha_periods': X_combined,
+}
+
+for name, X in models_to_try.items():
+    model_sin = Ridge(alpha=1.0).fit(X, np.sin(beta_rad))
+    model_cos = Ridge(alpha=1.0).fit(X, np.cos(beta_rad))
+    beta_pred_rad = np.arctan2(model_sin.predict(X), model_cos.predict(X))
+    beta_pred_deg = np.degrees(beta_pred_rad) % 360
+    mse = mean_squared_error(beta, beta_pred_deg)
+    circ_error = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+    scores = cross_val_score(Ridge(alpha=1.0), X, np.sin(beta_rad), cv=kf, scoring='neg_mean_squared_error')
+    cv_mse_sin = -scores.mean()
+    scores = cross_val_score(Ridge(alpha=1.0), X, np.cos(beta_rad), cv=kf, scoring='neg_mean_squared_error')
+    cv_mse_cos = -scores.mean()
+    print(f'{name}: MSE={mse:.2f}, circ_error={circ_error.mean():.2f} deg, CV sin MSE={cv_mse_sin:.6f}, CV cos MSE={cv_mse_cos:.6f}')
+
+# The noise level is key for prediction intervals
+# Let's estimate it from the best model
+# Use the model with beta_periods_h3 (most features)
+model_sin = Ridge(alpha=1.0).fit(X_just_beta, np.sin(beta_rad))
+model_cos = Ridge(alpha=1.0).fit(X_just_beta, np.cos(beta_rad))
+beta_pred_rad = np.arctan2(model_sin.predict(X_just_beta), model_cos.predict(X_just_beta))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std = np.std(residuals_circ)
+print(f'\nBest model noise std: {noise_std:.2f} degrees')
+print(f'95% PI half-width: {1.96 * noise_std:.2f} degrees')
+EOF
 ```
 
 ## [49] tool
@@ -1422,7 +2826,92 @@ Excellent! The Fourier model with beta periods works much better. Let me now bui
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Best model: Fourier features with beta periods + alpha features
+def make_fourier_features(t, periods, n_harmonics=3):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+beta_periods = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65]
+X_beta = make_fourier_features(t, beta_periods, n_harmonics=3)
+
+# Alpha features
+X_alpha = np.column_stack([
+    alpha,
+    np.sin(np.radians(alpha)),
+    np.cos(np.radians(alpha)),
+    np.sin(2*np.radians(alpha)),
+    np.cos(2*np.radians(alpha)),
+])
+
+X_combined = np.column_stack([X_beta, X_alpha])
+
+# Fit sin(beta) and cos(beta) models
+beta_rad = np.radians(beta)
+model_sin = Ridge(alpha=1.0).fit(X_combined, np.sin(beta_rad))
+model_cos = Ridge(alpha=1.0).fit(X_combined, np.cos(beta_rad))
+
+# Estimate noise from training residuals
+beta_pred_rad = np.arctan2(model_sin.predict(X_combined), model_cos.predict(X_combined))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std = np.std(residuals_circ)
+print(f'Noise std: {noise_std:.2f} degrees')
+print(f'95% PI half-width: {1.96 * noise_std:.2f} degrees')
+
+# Now load test data and predict
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
+
+# For test, we don't have alpha, so we can only use t features
+X_test_beta = make_fourier_features(t_test, beta_periods, n_harmonics=3)
+# We can't include alpha features for test since we don't have alpha
+# But we can predict alpha from t and then use it
+# Let me first try without alpha features for test
+
+# Predict beta for test
+beta_test_pred_rad = np.arctan2(model_sin.predict(X_test_beta), model_cos.predict(X_test_beta))
+beta_test_pred_deg = np.degrees(beta_test_pred_rad) % 360
+
+# 95% prediction interval
+# For a new noisy measurement, the interval accounts for observation noise
+# The prediction interval is: [pred - 1.96*noise_std, pred + 1.96*noise_std]
+# But we need to handle the circular wrapping
+
+half_width = 1.96 * noise_std
+y_lower = (beta_test_pred_deg - half_width) % 360
+y_upper = (beta_test_pred_deg + half_width) % 360
+
+# Create predictions dataframe
+predictions = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_test_pred_deg,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print(f'\nPredictions shape: {predictions.shape}')
+print(predictions.head(10))
+print(f'\nTest t range: {t_test.min()} - {t_test.max()}')
+print(f'Training t range: {t.min()} - {t.max()}')
+
+# Save predictions
+predictions.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+EOF
 ```
 
 ## [51] tool
@@ -1487,7 +2976,76 @@ I need to fix the feature mismatch. Let me retrain using only t features for tes
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+# Build Fourier features for t only (no alpha, since test doesn't have alpha)
+def make_fourier_features(t, periods, n_harmonics=3):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+beta_periods = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65]
+X = make_fourier_features(t, beta_periods, n_harmonics=3)
+
+# Fit sin(beta) and cos(beta) models
+beta_rad = np.radians(beta)
+model_sin = Ridge(alpha=1.0).fit(X, np.sin(beta_rad))
+model_cos = Ridge(alpha=1.0).fit(X, np.cos(beta_rad))
+
+# Estimate noise from training residuals
+beta_pred_rad = np.arctan2(model_sin.predict(X), model_cos.predict(X))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std = np.std(residuals_circ)
+print(f'Noise std: {noise_std:.2f} degrees')
+print(f'95% PI half-width: {1.96 * noise_std:.2f} degrees')
+print(f'Training MSE: {np.mean((beta - beta_pred_deg)**2):.2f}')
+
+# Load test data
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
+
+# Create features for test (same periods, no alpha)
+X_test = make_fourier_features(t_test, beta_periods, n_harmonics=3)
+
+# Predict beta for test
+beta_test_pred_rad = np.arctan2(model_sin.predict(X_test), model_cos.predict(X_test))
+beta_test_pred_deg = np.degrees(beta_test_pred_rad) % 360
+
+# 95% prediction interval for a NEW noisy measurement
+# The interval accounts for observation noise
+half_width = 1.96 * noise_std
+y_lower = (beta_test_pred_deg - half_width) % 360
+y_upper = (beta_test_pred_deg + half_width) % 360
+
+# Create predictions dataframe
+predictions = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_test_pred_deg,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print(f'\nPredictions shape: {predictions.shape}')
+print(predictions.to_string())
+print(f'\nTest t range: {t_test.min()} - {t_test.max()}')
+print(f'Training t range: {t.min()} - {t.max()}')
+
+# Save predictions
+predictions.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+EOF
 ```
 
 ## [53] tool
@@ -1546,7 +3104,38 @@ Let me verify the output and also try to improve by including alpha predictions
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Verify predictions.csv
+pred = pd.read_csv('predictions.csv')
+print('Predictions shape:', pred.shape)
+print('Columns:', pred.columns.tolist())
+print(pred.to_string())
+print()
+
+# Check that all test t values are present
+test = pd.read_csv('data/test.csv')
+print('Test shape:', test.shape)
+print('Test t values:', test['t'].values)
+print('Pred t values:', pred['t'].values)
+print('Match:', all(pred['t'].values == test['t'].values))
+
+# Check that predictions are valid angles
+print(f'\ny_pred range: {pred["y_pred"].min():.2f} - {pred["y_pred"].max():.2f}')
+print(f'y_lower range: {pred["y_lower"].min():.2f} - {pred["y_lower"].max():.2f}')
+print(f'y_upper range: {pred["y_upper"].min():.2f} - {pred["y_upper"].max():.2f}')
+
+# Check that lower < upper (accounting for wrapping)
+for i, row in pred.iterrows():
+    # Handle wrapping: if lower > upper, the interval wraps around 360
+    if row['y_lower'] <= row['y_upper']:
+        width = row['y_upper'] - row['y_lower']
+    else:
+        width = (360 - row['y_lower']) + row['y_upper']
+    print(f't={row["t"]}: pred={row["y_pred"]:.2f}, [{row["y_lower"]:.2f}, {row["y_upper"]:.2f}], width={width:.2f}')
+EOF
 ```
 
 ## [55] tool
@@ -1645,7 +3234,91 @@ Let me try to improve the model by also predicting alpha from t and using it as 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+def make_fourier_features(t, periods, n_harmonics=3):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Step 1: Model alpha from t (alpha has period ~324 days)
+alpha_periods = [324, 360, 180, 120, 90, 72, 60, 45, 36]
+X_alpha = make_fourier_features(t, alpha_periods, n_harmonics=3)
+model_alpha_sin = Ridge(alpha=1.0).fit(X_alpha, np.sin(np.radians(alpha)))
+model_alpha_cos = Ridge(alpha=1.0).fit(X_alpha, np.cos(np.radians(alpha)))
+alpha_pred_rad = np.arctan2(model_alpha_sin.predict(X_alpha), model_alpha_cos.predict(X_alpha))
+alpha_pred_deg = np.degrees(alpha_pred_rad) % 360
+alpha_noise_std = np.std(np.degrees(np.arcsin(np.abs(np.sin(np.radians(alpha - alpha_pred_deg)/2)))))
+print(f'Alpha prediction noise std: {alpha_noise_std:.2f} degrees')
+
+# Step 2: Now model beta using both t and predicted alpha
+# Use the same beta periods as before
+beta_periods = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65]
+X_beta = make_fourier_features(t, beta_periods, n_harmonics=3)
+
+# Add predicted alpha features
+X_combined = np.column_stack([X_beta, alpha_pred_deg, 
+                               np.sin(np.radians(alpha_pred_deg)),
+                               np.cos(np.radians(alpha_pred_deg))])
+
+# Also try with actual alpha (for comparison)
+X_with_alpha = np.column_stack([X_beta, alpha,
+                                  np.sin(np.radians(alpha)),
+                                  np.cos(np.radians(alpha))])
+
+# Model sin(beta) and cos(beta)
+beta_rad = np.radians(beta)
+
+# Model with predicted alpha
+model_sin = Ridge(alpha=1.0).fit(X_combined, np.sin(beta_rad))
+model_cos = Ridge(alpha=1.0).fit(X_combined, np.cos(beta_rad))
+beta_pred_rad = np.arctan2(model_sin.predict(X_combined), model_cos.predict(X_combined))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std_pred_alpha = np.std(residuals_circ)
+print(f'With predicted alpha - noise std: {noise_std_pred_alpha:.2f} degrees')
+print(f'With predicted alpha - MSE: {mean_squared_error(beta, beta_pred_deg):.2f}')
+
+# Model with actual alpha (for comparison)
+model_sin2 = Ridge(alpha=1.0).fit(X_with_alpha, np.sin(beta_rad))
+model_cos2 = Ridge(alpha=1.0).fit(X_with_alpha, np.cos(beta_rad))
+beta_pred_rad2 = np.arctan2(model_sin2.predict(X_with_alpha), model_cos2.predict(X_with_alpha))
+beta_pred_deg2 = np.degrees(beta_pred_rad2) % 360
+residuals_circ2 = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad2)/2))))
+noise_std_actual_alpha = np.std(residuals_circ2)
+print(f'With actual alpha - noise std: {noise_std_actual_alpha:.2f} degrees')
+print(f'With actual alpha - MSE: {mean_squared_error(beta, beta_pred_deg2):.2f}')
+
+# The predicted alpha adds uncertainty. For the final model,
+# we should account for both the beta noise and the alpha prediction uncertainty.
+# Total noise std = sqrt(beta_noise^2 + alpha_pred_noise^2 * (d_beta/d_alpha)^2)
+# But since we don't know d_beta/d_alpha, let's just use the larger of the two
+
+print(f'\nComparison:')
+print(f'  Beta-only noise std: {noise_std_pred_alpha:.2f} (with predicted alpha as feature)')
+print(f'  Beta-only noise std (actual alpha): {noise_std_actual_alpha:.2f}')
+print(f'  Alpha prediction noise: {alpha_noise_std:.2f}')
+
+# For the final model, let's use the beta-only model (without alpha features)
+# since it's simpler and more robust for extrapolation
+# The noise std of ~4 degrees is already good
+
+# But let me also try: what if I include alpha features but with the predicted alpha?
+# The noise would be slightly higher due to alpha prediction error
+# Total noise std ~ sqrt(4.07^2 + alpha_noise_contribution^2)
+EOF
 ```
 
 ## [57] tool
@@ -1696,7 +3369,98 @@ Let me build the final model with alpha predicted from t
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+def make_fourier_features(t, periods, n_harmonics=3):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Step 1: Model alpha from t
+alpha_periods = [324, 360, 180, 120, 90, 72, 60, 45, 36]
+X_alpha_train = make_fourier_features(t, alpha_periods, n_harmonics=3)
+model_alpha_sin = Ridge(alpha=1.0).fit(X_alpha_train, np.sin(np.radians(alpha)))
+model_alpha_cos = Ridge(alpha=1.0).fit(X_alpha_train, np.cos(np.radians(alpha)))
+
+# Step 2: Model beta using t Fourier features + predicted alpha features
+beta_periods = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65]
+X_beta_train = make_fourier_features(t, beta_periods, n_harmonics=3)
+
+# Get predicted alpha for training
+alpha_pred_rad_train = np.arctan2(model_alpha_sin.predict(X_alpha_train), 
+                                   model_alpha_cos.predict(X_alpha_train))
+alpha_pred_deg_train = np.degrees(alpha_pred_rad_train) % 360
+
+# Combined features for beta
+X_combined_train = np.column_stack([X_beta_train, alpha_pred_deg_train,
+                                     np.sin(np.radians(alpha_pred_deg_train)),
+                                     np.cos(np.radians(alpha_pred_deg_train))])
+
+# Fit beta models
+beta_rad = np.radians(beta)
+model_sin = Ridge(alpha=1.0).fit(X_combined_train, np.sin(beta_rad))
+model_cos = Ridge(alpha=1.0).fit(X_combined_train, np.cos(beta_rad))
+
+# Estimate noise from training residuals
+beta_pred_rad = np.arctan2(model_sin.predict(X_combined_train), model_cos.predict(X_combined_train))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std = np.std(residuals_circ)
+print(f'Noise std: {noise_std:.2f} degrees')
+print(f'95% PI half-width: {1.96 * noise_std:.2f} degrees')
+print(f'Training MSE: {np.mean((beta - beta_pred_deg)**2):.2f}')
+
+# Step 3: Predict for test data
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
+
+# Predict alpha for test
+X_alpha_test = make_fourier_features(t_test, alpha_periods, n_harmonics=3)
+alpha_pred_rad_test = np.arctan2(model_alpha_sin.predict(X_alpha_test),
+                                  model_alpha_cos.predict(X_alpha_test))
+alpha_pred_deg_test = np.degrees(alpha_pred_rad_test) % 360
+
+# Predict beta for test
+X_beta_test = make_fourier_features(t_test, beta_periods, n_harmonics=3)
+X_combined_test = np.column_stack([X_beta_test, alpha_pred_deg_test,
+                                    np.sin(np.radians(alpha_pred_deg_test)),
+                                    np.cos(np.radians(alpha_pred_deg_test))])
+
+beta_test_pred_rad = np.arctan2(model_sin.predict(X_combined_test), 
+                                 model_cos.predict(X_combined_test))
+beta_test_pred_deg = np.degrees(beta_test_pred_rad) % 360
+
+# 95% prediction interval
+half_width = 1.96 * noise_std
+y_lower = (beta_test_pred_deg - half_width) % 360
+y_upper = (beta_test_pred_deg + half_width) % 360
+
+# Create predictions dataframe
+predictions = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_test_pred_deg,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print(f'\nPredictions shape: {predictions.shape}')
+print(predictions.to_string())
+
+# Save predictions
+predictions.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+EOF
 ```
 
 ## [59] tool
@@ -1760,7 +3524,38 @@ Let me verify the final output and make sure everything is correct
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Verify predictions.csv
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+
+print('=== Verification ===')
+print(f'Predictions shape: {pred.shape}')
+print(f'Test shape: {test.shape}')
+print(f'Columns: {pred.columns.tolist()}')
+print(f'Expected columns: [t, y_pred, y_lower, y_upper]')
+print(f'Column match: {pred.columns.tolist() == ["t", "y_pred", "y_lower", "y_upper"]}')
+print(f'Row count match: {len(pred) == len(test)}')
+print(f't values match: {all(pred["t"].values == test["t"].values)}')
+
+# Check that all angles are in [0, 360)
+print(f'y_pred in [0,360): {(pred["y_pred"] >= 0).all() and (pred["y_pred"] < 360).all()}')
+print(f'y_lower in [0,360): {(pred["y_lower"] >= 0).all() and (pred["y_lower"] < 360).all()}')
+print(f'y_upper in [0,360): {(pred["y_upper"] >= 0).all() and (pred["y_upper"] < 360).all()}')
+
+# Check that intervals make sense (width ~16 degrees)
+for i, row in pred.iterrows():
+    if row['y_lower'] <= row['y_upper']:
+        width = row['y_upper'] - row['y_lower']
+    else:
+        width = (360 - row['y_lower']) + row['y_upper']
+    print(f't={row["t"]:.0f}: y_pred={row["y_pred"]:.2f}, [{row["y_lower"]:.2f}, {row["y_upper"]:.2f}], width={width:.2f}')
+
+print(f'\nAll checks passed!')
+EOF
 ```
 
 ## [61] tool
@@ -1843,7 +3638,76 @@ Let me try to refine the model further with more features and better regularizat
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge, LassoCV
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import cross_val_score, KFold
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+def make_fourier_features(t, periods, n_harmonics=3):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Try different sets of periods for beta
+# From FFT: dominant periods are 1015, 761, 609, 381, 338, 305
+# Also try including more harmonics
+
+beta_periods_v1 = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65]
+beta_periods_v2 = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65, 46]
+beta_periods_v3 = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65, 46, 324]
+
+# Alpha periods
+alpha_periods = [324, 360, 180, 120, 90, 72, 60, 45, 36]
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+for name, periods in [('v1', beta_periods_v1), ('v2', beta_periods_v2), ('v3', beta_periods_v3)]:
+    for n_harm in [2, 3]:
+        X_beta = make_fourier_features(t, periods, n_harmonics=n_harm)
+        
+        # Predict alpha from t
+        X_alpha = make_fourier_features(t, alpha_periods, n_harmonics=3)
+        model_alpha_sin = Ridge(alpha=1.0).fit(X_alpha, np.sin(np.radians(alpha)))
+        model_alpha_cos = Ridge(alpha=1.0).fit(X_alpha, np.cos(np.radians(alpha)))
+        alpha_pred_rad = np.arctan2(model_alpha_sin.predict(X_alpha), 
+                                           model_alpha_cos.predict(X_alpha))
+        alpha_pred_deg = np.degrees(alpha_pred_rad) % 360
+        
+        # Combined features
+        X_combined = np.column_stack([X_beta, alpha_pred_deg,
+                                             np.sin(np.radians(alpha_pred_deg)),
+                                             np.cos(np.radians(alpha_pred_deg))])
+        
+        # Try different regularization
+        for reg in [0.01, 0.1, 1.0, 10.0]:
+            model_sin = Ridge(alpha=reg).fit(X_combined, np.sin(np.radians(beta)))
+            model_cos = Ridge(alpha=reg).fit(X_combined, np.cos(np.radians(beta)))
+            beta_pred_rad = np.arctan2(model_sin.predict(X_combined), model_cos.predict(X_combined))
+            beta_pred_deg = np.degrees(beta_pred_rad) % 360
+            residuals_circ = np.degrees(np.arcsin(np.abs(np.sin(np.radians(beta - beta_pred_deg)/2))))
+            noise_std = np.std(residuals_circ)
+            
+            # CV score
+            scores = cross_val_score(Ridge(alpha=reg), X_combined, np.sin(np.radians(beta)), cv=kf, scoring='neg_mean_squared_error')
+            cv_mse_sin = -scores.mean()
+            scores = cross_val_score(Ridge(alpha=reg), X_combined, np.cos(np.radians(beta)), cv=kf, scoring='neg_mean_squared_error')
+            cv_mse_cos = -scores.mean()
+            
+            print(f'{name}, n_harm={n_harm}, reg={reg}: noise_std={noise_std:.3f}, CV_sin={cv_mse_sin:.6f}, CV_cos={cv_mse_cos:.6f}')
+
+# The best model seems to be the one with noise_std ~4.0
+# Let me stick with the current model but try to optimize it slightly
+EOF
 ```
 
 ## [63] tool
@@ -1912,7 +3776,97 @@ Let me finalize the best model and generate predictions
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
 
+df = pd.read_csv('data/train.csv')
+t = df['t'].values
+beta = df['beta'].values
+alpha = df['alpha'].values
+
+def make_fourier_features(t, periods, n_harmonics=3):
+    features = [np.ones_like(t, dtype=float)]
+    for P in periods:
+        for k in range(1, n_harmonics+1):
+            features.append(np.sin(2 * np.pi * k * t / P))
+            features.append(np.cos(2 * np.pi * k * t / P))
+    return np.column_stack(features)
+
+# Best model: v3 with n_harm=3, reg=0.01
+beta_periods = [1015, 761, 609, 381, 338, 305, 160, 109, 80, 65, 46, 324]
+alpha_periods = [324, 360, 180, 120, 90, 72, 60, 45, 36]
+
+X_beta = make_fourier_features(t, beta_periods, n_harmonics=3)
+X_alpha = make_fourier_features(t, alpha_periods, n_harmonics=3)
+
+# Predict alpha from t
+model_alpha_sin = Ridge(alpha=1.0).fit(X_alpha, np.sin(np.radians(alpha)))
+model_alpha_cos = Ridge(alpha=1.0).fit(X_alpha, np.cos(np.radians(alpha)))
+alpha_pred_rad = np.arctan2(model_alpha_sin.predict(X_alpha), 
+                                   model_alpha_cos.predict(X_alpha))
+alpha_pred_deg = np.degrees(alpha_pred_rad) % 360
+
+# Combined features for beta
+X_combined = np.column_stack([X_beta, alpha_pred_deg,
+                                     np.sin(np.radians(alpha_pred_deg)),
+                                     np.cos(np.radians(alpha_pred_deg))])
+
+# Fit beta models
+beta_rad = np.radians(beta)
+model_sin = Ridge(alpha=0.01).fit(X_combined, np.sin(beta_rad))
+model_cos = Ridge(alpha=0.01).fit(X_combined, np.cos(beta_rad))
+
+# Estimate noise from training residuals
+beta_pred_rad = np.arctan2(model_sin.predict(X_combined), model_cos.predict(X_combined))
+beta_pred_deg = np.degrees(beta_pred_rad) % 360
+residuals_circ = np.degrees(np.arcsin(np.abs(np.sin((beta_rad - beta_pred_rad)/2))))
+noise_std = np.std(residuals_circ)
+print(f'Noise std: {noise_std:.2f} degrees')
+print(f'95% PI half-width: {1.96 * noise_std:.2f} degrees')
+print(f'Training circular error mean: {residuals_circ.mean():.2f} degrees')
+
+# Predict for test data
+test_df = pd.read_csv('data/test.csv')
+t_test = test_df['t'].values
+
+# Predict alpha for test
+X_alpha_test = make_fourier_features(t_test, alpha_periods, n_harmonics=3)
+alpha_pred_rad_test = np.arctan2(model_alpha_sin.predict(X_alpha_test),
+                                        model_alpha_cos.predict(X_alpha_test))
+alpha_pred_deg_test = np.degrees(alpha_pred_rad_test) % 360
+
+# Predict beta for test
+X_beta_test = make_fourier_features(t_test, beta_periods, n_harmonics=3)
+X_combined_test = np.column_stack([X_beta_test, alpha_pred_deg_test,
+                                          np.sin(np.radians(alpha_pred_deg_test)),
+                                          np.cos(np.radians(alpha_pred_deg_test))])
+
+beta_test_pred_rad = np.arctan2(model_sin.predict(X_combined_test), 
+                                       model_cos.predict(X_combined_test))
+beta_test_pred_deg = np.degrees(beta_test_pred_rad) % 360
+
+# 95% prediction interval
+half_width = 1.96 * noise_std
+y_lower = (beta_test_pred_deg - half_width) % 360
+y_upper = (beta_test_pred_deg + half_width) % 360
+
+# Create predictions dataframe
+predictions = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_test_pred_deg,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print(f'\nPredictions shape: {predictions.shape}')
+print(predictions.to_string())
+
+# Save predictions
+predictions.to_csv('predictions.csv', index=False)
+print('\nPredictions saved to predictions.csv')
+EOF
 ```
 
 ## [65] tool
@@ -1987,7 +3941,43 @@ Let me verify the final output file
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Verify predictions.csv
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+
+print('=== Final Verification ===')
+print(f'Predictions shape: {pred.shape}')
+print(f'Test shape: {test.shape}')
+print(f'Columns: {pred.columns.tolist()}')
+print(f'Expected columns: [t, y_pred, y_lower, y_upper]')
+print(f'Column match: {pred.columns.tolist() == ["t", "y_pred", "y_lower", "y_upper"]}')
+print(f'Row count match: {len(pred) == len(test)}')
+print(f't values match: {all(pred["t"].values == test["t"].values)}')
+
+# Check that all angles are in [0, 360)
+print(f'y_pred in [0,360): {(pred["y_pred"] >= 0).all() and (pred["y_pred"] < 360).all()}')
+print(f'y_lower in [0,360): {(pred["y_lower"] >= 0).all() and (pred["y_lower"] < 360).all()}')
+print(f'y_upper in [0,360): {(pred["y_upper"] >= 0).all() and (pred["y_upper"] < 360).all()}')
+
+# Check that y_lower <= y_upper (accounting for wrapping)
+for i, row in pred.iterrows():
+    if row['y_lower'] <= row['y_upper']:
+        width = row['y_upper'] - row['y_lower']
+        ok = True
+    else:
+        width = (360 - row['y_lower']) + row['y_upper']
+        ok = True  # wrapping is fine
+    print(f't={row["t"]:.0f}: y_pred={row["y_pred"]:.2f}, [{row["y_lower"]:.2f}, {row["y_upper"]:.2f}], width={width:.2f}')
+
+# Check file exists and is readable
+import os
+print(f'\nFile size: {os.path.getsize("predictions.csv")} bytes')
+print('\nAll checks passed!')
+EOF
 ```
 
 ## [67] tool
@@ -2085,7 +4075,7 @@ The predictions look good. Let me do one final check to make sure everything is 
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [69] tool

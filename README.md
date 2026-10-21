@@ -56,33 +56,38 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 
 | Model | CCAR | CECL⁵ | Ballistic | Two-body | Three-body¹ | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| *Oracle (true model)* | 0.031 | 0 | — | 0.005 | 0.039 | 0.31 | — | *floor* |
-| Kimi K3³ | 0.12 | 1.5e-05 | 14 | 0.094 | **3.3** | **50** | 0.077 | **2.00** |
-| deepseek-v4-flash-0731⁴ | 0.30 | **1.4e-05** | 14 | 0.30 | 269 | 522 | 0.067 | 2.86 |
-| GLM-5.1 | 0.055 | 5.9e-05 | 12 | 0.092 | 436 | 899 | 0.25 | 3.93 |
-| mimo-v2.5-free | 0.57 | 2.9e-05 | 12 | 0.19 | 2426 | 292 | 0.15 | 4.93 |
-| nemotron-3-ultra:free | 0.27 | 1.6e-05 | 16 | 2429 | 817 | 1356 | 0.099 | 5.57 |
-| ling-3.0-flash:free | 0.193 | 8.7e-03 | 43 | 1556 | 3309 | 591 | 0.076² | 5.71 |
-| nemotron-3-super:free | 0.45 | 5.6e-04 | 60 | 106 | 370 | 918 | 0.12 | 6.29 |
-| *Naive baseline* | 0.85 | *0.071* | 22 | 17 | 332 | 20037 | 0.14 | *6.86* |
-| Claude Haiku 4.5 | 0.37 | 9.9e-03 | 83 | 105 | 1850 | 1348 | 0.10 | 6.86 |
+| *Oracle (true model)* | 0.031 | 0 | *none* | 0.005 | 0.039 | 0.31 | *none* | *floor* |
+| minimax-m3.1-flash:free⁶ | 0.080 | **6.5e-06** | **4.3** | **0.069** | 164 | 361 | 0.070 | **1.71** |
+| Kimi K3³ | 0.12 | 1.5e-05 | 14 | 0.094 | **3.3** | **50** | 0.077 | 2.71 |
+| deepseek-v4-flash-0731⁴ | 0.30 | 1.4e-05 | 14 | 0.30 | 269 | 522 | 0.067 | 3.71 |
+| GLM-5.1 | 0.055 | 5.9e-05 | 12 | 0.092 | 436 | 899 | 0.25 | 4.79 |
+| mimo-v2.5-free | 0.57 | 2.9e-05 | 12 | 0.19 | 2426 | 292 | 0.15 | 5.79 |
+| nemotron-3-ultra:free | 0.27 | 1.6e-05 | 16 | 2429 | 817 | 1356 | 0.099 | 6.57 |
+| ling-3.0-flash:free | 0.193 | 8.7e-03 | 43 | 1556 | 3309 | 591 | 0.076² | 6.71 |
+| nemotron-3-super:free | 0.45 | 5.6e-04 | 60 | 106 | 370 | 918 | 0.12 | 7.29 |
+| *Naive baseline* | 0.85 | *0.071* | 22 | 17 | 332 | 20037 | 0.14 | *7.86* |
+| Claude Haiku 4.5 | 0.37 | 9.9e-03 | 83 | 105 | 1850 | 1348 | 0.10 | 7.86 |
 | *Degenerate answer* | *0.57* | *0.019* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
 
-**Two models separate from the field, and nothing below them is ordered.** Permuting ranks within each column reproduces the observed spread at p = 0.001 and the observed range at p = 0.016, so the aggregate detects that the top of the column is real rather than a resolved ranking ([detail](docs/limitations.md#what-completing-one-row-did-to-the-aggregate)).
+**The top of the column separates from the field, and nothing below it is ordered.** Permuting ranks within each column reproduces the observed spread at p < 0.0001 and the observed range at p = 0.002 over ten ranked rows. Dropping the top two rows takes the spread to p = 0.05 and dropping the top three returns it to noise at p = 0.56, so the aggregate detects that the top two or three models are genuinely different, not that anything beneath them is ranked ([detail](docs/limitations.md#what-completing-one-row-did-to-the-aggregate)).
 
-**Three-body and the flyby are the tasks with headroom left.** On three-body, K3's 3.3 sits roughly two orders of magnitude clear of a next-best 269, and six of the eight ranked models are worse than the naive harmonic fit. On the flyby, eight of the nine ranked rows are worse than the degenerate answer and K3 is the only one that beats it. Two-body, CCAR and CECL, by contrast, are solved by most of the cast, which is the difficulty gradient working as designed.
+**Three-body and the flyby are the tasks with headroom left.** On three-body, K3's 3.3 sits roughly two orders of magnitude clear of a next-best 164, and six of the nine ranked models are worse than the naive harmonic fit. On the flyby, nine of the ten ranked rows are worse than the degenerate answer and K3 is still the only one that beats it. Two-body, CCAR and CECL, by contrast, are solved by most of the cast, which is the difficulty gradient working as designed.
 
-**The three reference rows are the point of the table.** The *oracle* is the true generating model, the floor a perfect answer reaches (ballistic and quantile have none by design). The *naive baseline* is the obvious wrong method, and Claude Haiku falls through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling posts the lowest quantile score in the table and is still worse than a constant on three-body.
+**The three reference rows are the point of the table.** The *oracle* is the true generating model, the floor a perfect answer reaches (ballistic and quantile have none by design). The *naive baseline* is the obvious wrong method, and Claude Haiku falls through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling is within a few percent of the lowest quantile score in the table and is still worse than a constant on three-body.
 
 CCAR's response law is now drawn per instance rather than fixed and published. That changed the answer key, not the question, so archived runs stay in the column ([detail](docs/limitations.md#the-ccar-response-law-was-public)).
 
 ¹ Three-body was re-measured under the corrected circular scorer. Re-running moved cells hard and in both directions on identical instances, so the column inherits run-to-run instability along with the fix ([detail](docs/limitations.md#re-measuring-three-body)).
 
-² ling's 0.076 is the lowest model score in that column but is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimal places ([detail](docs/tasks/quantile.md)).
+² ling's 0.076 is among the lowest model scores in that column but is not a better method: on two of three seeds it reproduces the moment-matched normal baseline to four decimal places ([detail](docs/tasks/quantile.md)).
 
 ³ Kimi K3 is the only frontier model here and is not the only paid one (Claude Haiku 4.5 is also paid). Its cells come from two serving endpoints, compared on one matched instance ([detail](docs/limitations.md#serving-provenance-is-not-controlled)).
 
 ⁴ deepseek-v4-flash-0731 replaces deepseek-v4-flash-free, a different and now-superseded model version whose row had three unmeasured cells. It beats the degenerate constant on every run of every task except two of three on the flyby ([detail](docs/limitations.md#budget-confounds)).
+
+⁵ CECL is reported as `ecl_regret`, balance-weighted squared error in pool lifetime loss rates, which is its headline metric; the simulated prediction intervals are diagnostics rather than a ranking axis, because the shock law is disclosed to the agent ([detail](docs/tasks/cecl.md)). **The column is two groups and a gap, not a gradient.** Six models land between 6.5e-06 and 5.9e-05 with interval coverage 0.93 to 0.96, then nothing until nemotron-3-super at 5.6e-04, ling at 8.7e-03 and Claude Haiku at 9.9e-03, whose coverage falls to 0.84, 0.67 and 0.48. Claude Haiku is also the one model worse than the degenerate answer here. Within the leading six the spread is a factor of nine on three instances, which this suite cannot resolve, so read the column as whether a model built the simulation and calibrated to it. Two rows come from a different serving path than their other cells: mimo-v2.5 and ling-3.0-flash no longer have free endpoints, and nemotron-3-ultra's free endpoint returned HTTP 503 on five consecutive attempts while the paid one completed in three minutes.
+
+⁶ minimax-m3.1-flash:free was measured with three draws per instance rather than one, so a maximum over its raw samples is taken over fifteen or twenty four draws rather than three and is not the same statistic as the archived cells. Each of its cells is therefore reported on the matched convention: the mean, over every way of drawing one sample per instance, of the maximum across the same instances the other rows use (three for the orbital, ballistic and CECL columns, eight for CCAR, and for quantile three paired single-instance runs on the archived seeds). Its as-measured maxima over all draws are higher, and are CCAR 0.091, CECL 1.2e-05, ballistic 11, two-body 0.102, three-body 361, flyby 1891 and quantile 0.076. No sample errored in any column. Its quantile row is weaker evidence than the rest: seven of its nine samples hit the four-hour wall clock, including the one that sets the as-measured maximum, while no archived quantile run was clock-bound, so 0.070 is an upper bound on its regret rather than a measurement of it. Its flyby run time-capped three of fifteen samples, as archived flyby rows also did, and the sample that sets the as-measured 1891 ran to completion uncapped.
 
 ## Layout
 
@@ -106,4 +111,3 @@ MIT for this repository's own code. The ballistic task depends on [py-ballisticc
 
 [^1]: *pereval* (Russian: перевал, "mountain pass"): the hard route through, not around. It also happens to end in `eval`.
 
-⁵ CECL is reported as `ecl_regret`, balance-weighted squared error in pool lifetime loss rates, which is its headline metric; the simulated prediction intervals are diagnostics rather than a ranking axis, because the shock law is disclosed to the agent ([detail](docs/tasks/cecl.md)). **The column is two groups and a gap, not a gradient.** Five models land between 1.4e-05 and 5.9e-05 with interval coverage 0.93 to 0.95, then nothing until nemotron-3-super at 5.6e-04, ling at 8.7e-03 and Claude Haiku at 9.9e-03, whose coverage falls to 0.84, 0.67 and 0.48. Claude Haiku is also the one model worse than the degenerate answer here. Within the leading five the spread is a factor of four on three instances, which this suite cannot resolve, so read the column as whether a model built the simulation and calibrated to it. Two rows come from a different serving path than their other cells: mimo-v2.5 and ling-3.0-flash no longer have free endpoints, and nemotron-3-ultra's free endpoint returned HTTP 503 on five consecutive attempts while the paid one completed in three minutes.

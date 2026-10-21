@@ -161,6 +161,11 @@ def conditional_matrix(base: np.ndarray, z: float, rho: float) -> np.ndarray:
     return out
 
 
+#: The supervisory scenarios an instance carries, in increasing severity. The
+#: severity bands they draw from in the CCAR generator are disjoint, so the
+#: ordering holds by construction rather than by luck of the draw.
+SCENARIOS = ("baseline", "adverse", "severe")
+
 #: How long conditions deteriorate before recovery begins, in quarters, by
 #: scenario. Published supervisory scenarios deteriorate for a few quarters and
 #: then recover; they do not worsen monotonically for the whole horizon. Two to
@@ -422,69 +427,136 @@ def annual_counts_rows(annual):
     return rows
 
 
-def generate(seed: int = 1, n_years: int = 40, scenario: str = "adverse") -> dict:
-    """One instance. n_years of annual counts, then a nine-quarter scenario."""
+def generate(seed: int = 1, n_years: int = 40,
+             scenarios: tuple[str, ...] = SCENARIOS) -> dict:
+    """One instance: ONE history, and one projection target per scenario.
+
+    A bank fits one model to one history and then runs that model under every
+    supervisory scenario. The scenarios differ only in the future macro path, so
+    an instance carries a single set of annual counts, a single macro history and
+    a single holdout cohort, with a projection target for each scenario.
+
+    An earlier version rotated one scenario across instances instead. That was
+    wrong in two ways. It made severity inseparable from the instance's own drawn
+    response law, since instance index fixed both, so no difference between a
+    baseline run and a severe one could be attributed to severity. And it made
+    the failure that matters here unobservable: an agent that sees one scenario
+    cannot refit per scenario, so the submission could not reveal whether it
+    would have.
+    """
     if n_years < 10:
         raise ValueError("need at least 10 years of annual counts")
+    if not scenarios:
+        raise ValueError("need at least one scenario")
+    unknown = [s for s in scenarios if s not in STRESS_QUARTERS]
+    if unknown:
+        raise ValueError(f"unknown scenarios {unknown}")
     n_intime = 4 * n_years
     ss = np.random.SeedSequence([seed, 7717])
     rng_law, rng_port = (np.random.default_rng(s) for s in ss.spawn(2))
     dgp = draw_dgp(rng_law)
-    macros = _ccar_macros(seed, n_intime, 50, None, scenario)
-    calib, stress = macros["intime_slice"], macros["stress_slice"]
-    # Give the horizon a realistic shape: deteriorate for a few quarters, turn,
-    # then recover partly. The inherited overlay is monotone across all nine.
-    peak = int(rng_law.integers(*STRESS_QUARTERS[macros["scenario"]], endpoint=True))
-    recovery = float(rng_law.uniform(*RECOVERY_FRACTION[macros["scenario"]]))
-    dgp["peak_quarter"], dgp["recovery_fraction"] = peak, recovery
-    levels = reshape_scenario(macros["levels"], calib, stress,
-                              hump_shape(stress.stop - stress.start, peak, recovery))
-    scenario_rows = [
-        {"quarter": n_intime + 1 + k,
-         **{n: round(float(levels[n][stress.start + k]), 4) for n in MACRO_COLUMNS}}
-        for k in range(stress.stop - stress.start)
-    ]
-    z = systematic_factor(dgp, levels, calib)
     base = quarterly_base()
 
-    annual, _ = simulate_history(base, dgp, z[calib], n_years, rng_port)
+    # sibling_ref="pre_stress" is what makes "one history" well defined. On the
+    # shipped CCAR setting the equity siblings are standardised over the whole
+    # path, so the stress window's own volatility reaches back into the
+    # historical sp500 and djia and the three scenarios disagree about the past.
+    # See pereval.tasks.ccar.generator._simulate.
+    macros = {
+        name: _ccar_macros(seed, n_intime, 50, None, name, sibling_ref="pre_stress")
+        for name in scenarios
+    }
+    first = macros[scenarios[0]]
+    calib, stress = first["intime_slice"], first["stress_slice"]
+    horizon = stress.stop - stress.start
+
+    # CCAR's training rows carry a tenth column, the default rate of ITS
+    # portfolio, and the scenario rows built below carry only the nine macros.
+    # That asymmetry shipped a series named `default_rate` that is not this
+    # portfolio's: against the counts in transitions.csv it runs eight times too
+    # large, and its correlation with them swings from 0.03 to 0.78 across
+    # instances, so it is noise on one instance and a shortcut on the next. The
+    # prompt promises nine series. Ship nine.
+    history_rows = [{k: v for k, v in row.items() if k != "default_rate"}
+                    for row in first["train_rows"]]
+
+    # Give each horizon a realistic shape: deteriorate for a few quarters, turn,
+    # then recover partly. The inherited overlay is monotone across all nine.
+    peaks, recoveries, z_scen = {}, {}, {}
+    scenario_rows, z_hist = [], None
+    for name in scenarios:
+        peak = int(rng_law.integers(*STRESS_QUARTERS[name], endpoint=True))
+        recovery = float(rng_law.uniform(*RECOVERY_FRACTION[name]))
+        peaks[name], recoveries[name] = peak, recovery
+        levels = reshape_scenario(macros[name]["levels"], calib, stress,
+                                  hump_shape(horizon, peak, recovery))
+        scenario_rows.extend(
+            {"scenario": name, "quarter": n_intime + 1 + k,
+             **{c: round(float(levels[c][stress.start + k]), 4)
+                for c in MACRO_COLUMNS}}
+            for k in range(horizon)
+        )
+        z = systematic_factor(dgp, levels, calib)
+        z_scen[name] = z[stress]
+        # The factor over the history window is standardised on that window and
+        # built from driver columns the overlay does not touch before the stress
+        # slice, so every scenario agrees about it. Checked, not assumed.
+        if z_hist is None:
+            z_hist = z[calib]
+        elif not np.allclose(z_hist, z[calib]):
+            raise AssertionError("scenario changed the historical factor path")
+    dgp["peak_quarter"], dgp["recovery_fraction"] = peaks, recoveries
+
+    annual, _ = simulate_history(base, dgp, z_hist, n_years, rng_port)
     mix = holdout_mix(dgp["mix_tilt"])
-    z_scen = z[stress]
     counts = {r: int(v) for r, v in
               zip(LIVE, np.round(mix * N_OBLIGORS).astype(int))}
-    per_rating, total = expected_default_path(base, dgp, z_scen, mix)
-    dists = expected_distributions(base, dgp, z_scen, mix)
 
-    # one realized holdout path, reported as a diagnostic rather than scored
-    realized, _ = simulate_history(base, dgp, np.repeat(z_scen, 1), 2, rng_port, mix)
+    per_scenario = {}
+    for name in scenarios:
+        zs = z_scen[name]
+        per_rating, total = expected_default_path(base, dgp, zs, mix)
+        dists = expected_distributions(base, dgp, zs, mix)
+        per_scenario[name] = {
+            "per_rating_default_rate": per_rating,
+            "portfolio_default_rate": total,
+            "rating_distribution": {str(k): v for k, v in dists.items()},
+            "default_increments": expected_default_increments(base, dgp, zs, mix),
+            "z_scenario": [float(v) for v in zs],
+            "peak_quarter": peaks[name],
+            "recovery_fraction": recoveries[name],
+        }
+
     return {
         "dgp": dgp,
         "annual_counts": annual_counts_rows(annual),
-        "history_rows": macros["train_rows"],
+        "history_rows": history_rows,
         "scenario_rows": scenario_rows,
         "holdout_mix": {r: float(v) for r, v in zip(LIVE, mix)},
         "holdout_counts": counts,
         "truth": {
-            "per_rating_default_rate": per_rating,
-            "portfolio_default_rate": total,
-            "rating_distribution": {str(k): v for k, v in dists.items()},
+            "scenarios": per_scenario,
+            "scenario_names": list(scenarios),
             # Derived from the ROUNDED obligor counts in data/portfolio.csv, not
             # from the unrounded mix: the degenerate anchor has to be reachable
             # from public data, and integer counts are all the agent can see.
             "start_mix": {**{r: float(n) / sum(counts.values())
                              for r, n in counts.items()}, "D": 0.0},
-            "default_increments": expected_default_increments(
-                base, dgp, z_scen, mix),
             # public information, derived from data/transitions.csv, carried here
-            # so the scorer can compare the agent's own historical fit to it
+            # so the scorer can compare the agent's own historical fit to it.
+            # One history, so one backtest, shared by all three scenarios.
             "observed_annual_default_rate": [
                 float(c[:, D].sum() / c.sum()) for c in annual
             ],
             "checkpoints": list(CHECKPOINTS),
             "horizon_quarters": N_STRESS,
-            "z_scenario": [float(v) for v in z_scen],
+            # The drawn asset correlation. Carried into truth, and so into the
+            # sample metadata the agent never sees, only so that the scorer can
+            # rebuild the oracle quarterly matrices from `quarterly_base` and the
+            # factor path and compare the SHAPE of a submitted matrix against
+            # them. Nothing scored uses it.
+            "rho": float(dgp["rho"]),
         },
-        "scenario": macros["scenario"],
         "seed": seed,
     }
 
@@ -498,7 +570,7 @@ def _csv(rows):
 
 
 def public_files(bundle: dict) -> dict[str, str]:
-    """Only these four files enter the sandbox."""
+    """Only these five files enter the sandbox."""
     mix = bundle["holdout_counts"]
     return {
         "data/transitions.csv": _csv(bundle["annual_counts"]),
@@ -508,7 +580,8 @@ def public_files(bundle: dict) -> dict[str, str]:
             [{"rating": r, "obligors": n} for r, n in mix.items()]),
         "data/policy.json": json.dumps(
             {"checkpoints": list(CHECKPOINTS), "horizon_quarters": N_STRESS,
-             "obligors": int(sum(mix.values()))}),
+             "obligors": int(sum(mix.values())),
+             "scenarios": list(bundle["truth"]["scenario_names"])}),
     }
 
 
@@ -516,7 +589,8 @@ __all__ = [
     "BASE_MIX", "D", "LIVE", "MACRO_COLUMNS", "N_OBLIGORS", "RHO_RANGE",
     "CELL_FLOOR", "CHECKPOINTS", "RECOVERY_FRACTION",
     "TOP_OF_SCALE_QUARTERLY",
-    "STRESS_QUARTERS", "conditional_matrix", "hump_shape", "reshape_scenario",
+    "SCENARIOS", "STRESS_QUARTERS", "conditional_matrix", "hump_shape",
+    "reshape_scenario",
     "draw_dgp", "expected_default_path",
     "expected_distributions", "generate",
     "holdout_mix", "public_files", "quarterly_base", "simulate_history",

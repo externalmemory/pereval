@@ -66,7 +66,7 @@ Predict y with a 95% interval for every row in data/test.csv and write predictio
 **tool call: bash**
 
 ```
-
+cd /data 2>/dev/null; ls -la; echo "---"; head -20 train.csv; echo "---"; head -20 test.csv; echo "---"; wc -l train.csv test.csv
 ```
 
 ## [3] tool
@@ -91,7 +91,7 @@ drwxr-xr-x 2 root root 4096 Aug 11 00:31 data
 **tool call: bash**
 
 ```
-
+cd /; ls -la; echo "---"; find / -name "train.csv" 2>/dev/null; echo "==="; ls -la data 2>/dev/null
 ```
 
 ## [5] tool
@@ -136,7 +136,7 @@ drwxr-xr-x   1 root root 4096 Aug 11 00:31 workspace
 **tool call: bash**
 
 ```
-
+cd /workspace; pwd; ls -la; echo "---"; head -20 data/train.csv; echo "---"; head -20 data/test.csv; echo "---"; wc -l data/train.csv data/test.csv
 ```
 
 ## [7] tool
@@ -205,7 +205,16 @@ Ss4z6R,500.0
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd
+tr=pd.read_csv('data/train.csv')
+te=pd.read_csv('data/test.csv')
+print(tr.groupby('category')['x'].agg(['min','max','count']))
+print('test categories:')
+print(te.groupby('category')['x'].agg(['min','max','count']))
+print('train cats', tr['category'].unique())
+print('test cats', te['category'].unique())
+"
 ```
 
 ## [9] tool
@@ -244,7 +253,16 @@ Length: 5, dtype: str
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+for c,g in tr.groupby('category'):
+    g=g.sort_values('x')
+    print('=== category',c)
+    # compute mean y at each x
+    m=g.groupby('x')['y'].agg(['mean','std','count'])
+    print(m)
+"
 ```
 
 ## [11] tool
@@ -348,7 +366,23 @@ x
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+m=tr[tr['category']=='PDuZgN'].groupby('x')['y'].mean()
+x=np.array(m.index); y=np.array(m.values)
+# try log-log fit for -y
+lx=np.log(x); ly=np.log(-y)
+A=np.vstack([lx,np.ones_like(lx)]).T
+coef,res,_,_=np.linalg.lstsq(A,ly,rcond=None)
+print('loglog slope,intercept',coef,'exp(int)=',np.exp(coef[1]))
+pred=coef[0]*lx+coef[1]
+print('loglog R2',1-np.sum((ly-pred)**2)/np.sum((ly-ly.mean())**2))
+# linear fit y vs x
+coef2,_,_,_=np.linalg.lstsq(np.vstack([x,np.ones_like(x)]).T,y,rcond=None)
+r=y-(coef2[0]*x+coef2[1])
+print('linear slope,int',coef2,'ssr',np.sum(r**2))
+"
 ```
 
 ## [13] tool
@@ -421,7 +455,19 @@ linear slope,int [-0.00314   0.197195] ssr 0.15941809709123653
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+for c in ['PDuZgN','Qbh9aV','Ss4z6R','FPYCfv','Vi7zXY']:
+    m=tr[tr['category']==c].groupby('x')['y'].mean()
+    x=np.array(m.index); y=np.array(m.values)
+    lx=np.log(x); ly=np.log(-y)
+    A=np.vstack([lx,np.ones_like(lx)]).T
+    coef,_,_,_=np.linalg.lstsq(A,ly,rcond=None)
+    pred=coef[0]*lx+coef[1]
+    r2=1-np.sum((ly-pred)**2)/np.sum((ly-ly.mean())**2)
+    print(c,'loglog slope=%.3f int=%.3f'%(coef[0],coef[1]),'R2=%.3f'%r2)
+"
 ```
 
 ## [15] tool
@@ -474,7 +520,22 @@ Vi7zXY loglog slope=1.726 int=-8.474 R2=0.898
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+c='PDuZgN'
+m=tr[tr['category']==c].groupby('x')['y'].mean()
+x=np.array(m.index); y=np.array(m.values)
+def fit(xb):
+    A=np.vstack([xb,np.ones_like(xb)]).T
+    coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+    r=y-(A@coef)
+    ss=1-np.sum(r**2)/np.sum((y-y.mean())**2)
+    return coef,ss
+for name,xb in [('x',x),('x2',x**2),('x3',x**3),('x4',x**4),('sqrt',np.sqrt(x)),('x^1.5',x**1.5),('xlnx',x*np.log(x)),('x^2.5',x**2.5),('exp(.005x)',np.exp(0.005*x)),('log',np.log(x))]:
+    co,ss=fit(xb)
+    print(name,ss,'coef',np.round(co,4))
+"
 ```
 
 ## [17] tool
@@ -510,7 +571,18 @@ log 0.6798733028433488 coef [-0.4051  1.6104]
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+    m=tr[tr['category']==c].groupby('x')['y'].mean()
+    x=np.array(m.index); y=np.array(m.values)
+    A=np.vstack([x**2,x,np.ones_like(x)]).T
+    coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+    r=y-A@coef
+    ss=1-np.sum(r**2)/np.sum((y-y.mean())**2)
+    print(c,'quad coef(a,b,c)=',np.round(coef,6),'R2',round(ss,6),'maxres',np.max(np.abs(r)))
+"
 ```
 
 ## [19] tool
@@ -552,7 +624,20 @@ Ss4z6R quad coef(a,b,c)= [-8.0000e-06  3.6000e-04 -6.0898e-02] R2 0.994487 maxre
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+for c in ['PDuZgN','Qbh9aV','Ss4z6R','FPYCfv','Vi7zXY']:
+    m=tr[tr['category']==c].groupby('x')['y'].mean()
+    x=np.array(m.index); y=np.array(m.values)
+    print('===',c,'npts',len(x))
+    for d in [1,2,3,4,5]:
+        A=np.vstack([x**i for i in range(d,0,-1)]+[np.ones_like(x)]).T
+        coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+        r=y-A@coef
+        ss=1-np.sum(r**2)/np.sum((y-y.mean())**2)
+        print(' deg',d,'R2',round(ss,5),'maxres',round(np.max(np.abs(r)),5))
+"
 ```
 
 ## [21] tool
@@ -625,7 +710,39 @@ Ss4z6R quad coef(a,b,c)= [-8.0000e-06  3.6000e-04 -6.0898e-02] R2 0.994487 maxre
 **tool call: bash**
 
 ```
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+tr=pd.read_csv('data/train.csv')
 
+def fitc(cat, model, p0, bounds):
+    g=tr[tr['category']==cat]
+    x=g['x'].values.astype(float); y=g['y'].values
+    try:
+        p,cov=curve_fit(model,x,y,p0=p0,bounds=bounds,maxfev=200000)
+        r=y-model(x,*p)
+        sse=np.sum(r**2)
+        return p,sse, len(x)
+    except Exception as e:
+        return None,None,None
+
+models={
+ 'power_off': (lambda x,a,b,c:a*x**b+c, (1,-1,0)),
+ 'exp_off': (lambda x,a,b,c:a*np.exp(b*x)+c, (1,-0.001,0)),
+ 'quad': (lambda x,a,b,c:a*x**2+b*x+c, (-1e-5,0,-0.05)),
+ 'sqrt_off': (lambda x,a,b,c:a*np.sqrt(x)+c, (1,0)),
+ 'log_off': (lambda x,a,b:a*np.log(x)+b, (1,0)),
+}
+for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+    g=tr[tr['category']==c]; n=len(g)
+    print('===',c)
+    for name,(f,p0) in models.items():
+        p,sse,_=fitc(c,f,p0,(-np.inf,np.inf))
+        if p is None: 
+            print(name,'failed');continue
+        rmse=np.sqrt(sse/n)
+        print(' ',name,'rmse',round(rmse,4),'p',np.round(p,5))
+"
 ```
 
 ## [23] tool
@@ -702,7 +819,35 @@ sqrt_off failed
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+tr=pd.read_csv('data/train.csv')
+for c in ['FPYCfv','Vi7zXY']:
+    g=tr[tr['category']==c]; x=g['x'].values.astype(float); y=g['y'].values; n=len(y)
+    print('===',c,'n',n,'std',round(y.std(),4))
+    # quad
+    A=np.vstack([x**2,x,np.ones_like(x)]).T
+    coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+    r=y-A@coef
+    print(' quad rmse',round(np.sqrt(np.sum(r**2)/n),4),'coef',np.round(coef,6))
+    # sqrt_off
+    def f(x,a,b,c): return a*np.sqrt(x)+c
+    p,_=curve_fit(f,x,y,p0=[-1,0,0],maxfev=100000)
+    r=y-f(x,*p)
+    print(' sqrt_off rmse',round(np.sqrt(np.sum(r**2)/n),4),'p',np.round(p,5))
+    def f2(x,a,b,c): return a*np.exp(b*x)+c
+    p2,_=curve_fit(f2,x,y,p0=[-1,-0.001,0],maxfev=200000)
+    r2=y-f2(x,*p2)
+    print(' exp_off rmse',round(np.sqrt(np.sum(r2**2)/n),4),'p',np.round(p2,5))
+    def f3(x,a,b,c): return a*x**b+c
+    try:
+        p3,_=curve_fit(f3,x,y,p0=[-1,1,0],maxfev=200000)
+        r3=y-f3(x,*p3)
+        print(' power_off rmse',round(np.sqrt(np.sum(r3**2)/n),4),'p',np.round(p3,5))
+    except Exception as e:
+        print(' power_off fail')
+"
 ```
 
 ## [25] tool
@@ -801,7 +946,23 @@ sqrt_off failed
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+    g=tr[tr['category']==c]
+    m=g.groupby('x')['y'].mean()
+    s=g.groupby('x')['y'].std()
+    x=np.array(m.index); 
+    A=np.vstack([x**2,x,np.ones_like(x)]).T
+    coef,_,_,_=np.linalg.lstsq(A,np.array(m.values),rcond=None)
+    r=np.array(m.values)-A@coef
+    print('===',c)
+    print(' x: meanres, meanSE, res/SE')
+    for i,xx in enumerate(x):
+        se=s.iloc[i]/np.sqrt(g.groupby('x')['y'].count().iloc[i])
+        print(' ',int(xx), 'res',round(r[i],4),'se',round(se,4))
+"
 ```
 
 ## [27] tool
@@ -952,7 +1113,27 @@ sqrt_off failed
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+    g=tr[tr['category']==c]; x=g['x'].values.astype(float); y=g['y'].values
+    A=np.vstack([x**2,x,np.ones_like(x)]).T
+    coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+    rmse=np.sqrt(np.mean((y-A@coef)**2))
+    print(c,'own rmse',round(rmse,4),'a,b,c',np.round(coef,6))
+# pooled
+g=tr[tr['category'].isin(['PDuZgN','Qbh9aV','Ss4z6R'])]
+x=g['x'].values.astype(float); y=g['y'].values
+A=np.vstack([x**2,x,np.ones_like(x)]).T
+coef,_,_,_=np.linalg.lstsq(A,y,rcond=None)
+rmse=np.sqrt(np.mean((y-A@coef)**2))
+print('POOLED a,b,c',np.round(coef,6),'rmse',round(rmse,4))
+for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+    g=tr[tr['category']==c]; x=g['x'].values.astype(float); y=g['y'].values
+    A=np.vstack([x**2,x,np.ones_like(x)]).T
+    print(c,'pooled rmse',round(np.sqrt(np.mean((y-A@coef)**2)),4))
+"
 ```
 
 ## [29] tool
@@ -1067,7 +1248,48 @@ The data looks like smooth functional relationships per category, with test inpu
 **tool call: bash**
 
 ```
+cd /workspace; cat > solution.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+
+rows = []
+for cat in te['category'].unique():
+    g = tr[tr['category'] == cat]
+    x = g['x'].values.astype(float)
+    y = g['y'].values
+    n = len(y)
+    # design matrix: [x^2, x, 1]
+    X = np.vstack([x**2, x, np.ones_like(x)]).T
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    p = X.shape[1]
+    resid = y - X @ beta
+    dof = n - p
+    sigma2 = resid @ resid / dof
+    # covariance of beta
+    XtX_inv = np.linalg.inv(X.T @ X)
+    cov = sigma2 * XtX_inv
+    tcrit = stats.t.ppf(0.975, dof)
+
+    Xt = te[te['category'] == cat]
+    for xx in Xt['x'].values:
+        d0 = np.array([xx**2, xx, 1.0])
+        yhat = d0 @ beta
+        pred_var = sigma2 * (1.0 + d0 @ XtX_inv @ d0)
+        hw = tcrit * np.sqrt(pred_var)
+        rows.append((cat, xx, yhat, yhat - hw, yhat + hw))
+
+out = pd.DataFrame(rows, columns=['category','x','y_pred','y_lower','y_upper'])
+# merge to keep exact test order
+merged = te.merge(out, on=['category','x'], how='left')
+merged = merged[['category','x','y_pred','y_lower','y_upper']]
+merged.to_csv('predictions.csv', index=False)
+print(merged)
+print('rows', len(merged))
+EOF
+python3 solution.py
 ```
 
 ## [31] tool
@@ -1151,7 +1373,16 @@ Solid first pass, but I want to examine the noise structure—it may be heterosc
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+for c in ['PDuZgN','Qbh9aV','Ss4z6R','FPYCfv','Vi7zXY']:
+    g=tr[tr['category']==c]
+    st=g.groupby('x')['y'].agg(['mean','std','count'])
+    print('===',c)
+    for x,row in st.iterrows():
+        print('  x',int(x),'std',round(row['std'],4),'n',int(row['count']))
+"
 ```
 
 ## [33] tool
@@ -1244,7 +1475,18 @@ Solid first pass, but I want to examine the noise structure—it may be heterosc
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('data/train.csv')
+for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+    g=tr[tr['category']==c]
+    st=g.groupby('x')['y'].agg(['std'])
+    x=st.index.values.astype(float); s=st['std'].values
+    # linear a+bx
+    A=np.vstack([x,np.ones_like(x)]).T
+    coef,_,_,_=np.linalg.lstsq(A,s,rcond=None)
+    print(c,'std~x: b,a',np.round(coef,5),'mean std/x',round((s/x).mean(),5))
+"
 ```
 
 ## [35] tool
@@ -1319,7 +1561,61 @@ Noise clearly grows with x (heteroscedastic). Let me refine the prediction inter
 **tool call: bash**
 
 ```
+cd /workspace; cat > solution2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+
+rows = []
+for cat in te['category'].unique():
+    g = tr[tr['category'] == cat]
+    x = g['x'].values.astype(float)
+    y = g['y'].values
+    n = len(y)
+    X = np.vstack([x**2, x, np.ones_like(x)]).T          # [x^2, x, 1]
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    p = X.shape[1]
+    dof = n - p
+    resid = y - X @ beta
+
+    # --- robust (White HC0) covariance of beta ---
+    XtX_inv = np.linalg.inv(X.T @ X)
+    meat = X.T @ (resid[:, None] * (resid ** 2)[:, None]**0 * X)  # placeholder
+    meat = (X.T @ ((resid**2)[:, None] * X))
+    cov_beta = XtX_inv @ meat @ XtX_inv
+
+    # --- heteroscedastic noise sigma(x) = a + b*x, fitted on within-x stds ---
+    df = pd.DataFrame({'x': x, 'r': resid})
+    groups = df.groupby('x')['r'].agg(['std', 'count'])
+    gx = groups.index.values.astype(float)
+    gstd = groups['std'].values
+    w = groups['count'].values.astype(float)
+    A = np.vstack([gx, np.ones_like(gx)]).T
+    ab, *_ = np.linalg.lstsq(A * w[:, None], gstd * w, rcond=None)  # weighted
+    b_sig, a_sig = ab
+    # floor for small x
+    floor = 1e-3
+
+    Xt = te[te['category'] == cat]
+    for xx in Xt['x'].values:
+        d0 = np.array([xx**2, xx, 1.0])
+        yhat = d0 @ beta
+        sigma0 = max(a_sig + b_sig * xx, floor)
+        pred_var = sigma0**2 + d0 @ cov_beta @ d0
+        tcrit = stats.t.ppf(0.975, dof)
+        hw = tcrit * np.sqrt(pred_var)
+        rows.append((cat, xx, yhat, sigma0, yhat - hw, yhat + hw))
+
+out = pd.DataFrame(rows, columns=['category','x','y_pred','sigma0','y_lower','y_upper'])
+merged = te.merge(out, on=['category','x'], how='left')
+merged = merged[['category','x','y_pred','y_lower','y_upper']]
+merged.to_csv('predictions.csv', index=False)
+print(merged)
+print('rows', len(merged))
+EOF
+python3 solution2.py
 ```
 
 ## [37] tool
@@ -1414,7 +1710,19 @@ Let me verify the predictions file and sanity-check the fitted noise values.
 **tool call: bash**
 
 ```
-
+cd /workspace; python3 solution2.py > /dev/null 2>&1; python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+t=pd.read_csv('data/test.csv')
+print('pred rows',len(p),'test rows',len(t))
+print('columns',list(p.columns))
+print(p.isna().sum().sum(),'NaNs')
+print(p.head())
+print('any lower>upper?', (p.y_lower>p.y_upper).any())
+# order fine?
+print((p.category==t.category).all(), (p.x==t.x).all())
+# fitted sigma summary
+"
 ```
 
 ## [39] tool
@@ -1467,7 +1775,7 @@ The predictions are complete and valid (29 rows matching test inputs). Let me do
 **tool call: bash**
 
 ```
-
+cd /workspace; ls -la predictions.csv; echo "---"; cat predictions.csv
 ```
 
 ## [41] tool

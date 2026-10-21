@@ -111,7 +111,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -137,7 +137,7 @@ drwxr-xr-x 1 root root 4096 Oct 19 17:33 ..
 **tool call: bash**
 
 ```
-
+head -20 data/transitions.csv
 ```
 
 ## [5] tool
@@ -175,7 +175,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+wc -l data/transitions.csv
 ```
 
 ## [7] tool
@@ -194,7 +194,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/transitions.csv | sort -u
 ```
 
 ## [9] tool
@@ -235,7 +235,7 @@ year
 **tool call: bash**
 
 ```
-
+head -5 data/macro_history.csv
 ```
 
 ## [11] tool
@@ -258,7 +258,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+tail -5 data/macro_history.csv
 ```
 
 ## [13] tool
@@ -281,7 +281,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+wc -l data/macro_history.csv
 ```
 
 ## [15] tool
@@ -300,7 +300,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+cat data/scenario.csv
 ```
 
 ## [17] tool
@@ -328,7 +328,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cat data/portfolio.csv
 ```
 
 ## [19] tool
@@ -354,7 +354,7 @@ CCC/C,318
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [21] tool
@@ -844,7 +844,7 @@ dtype: float64
 **tool call: bash**
 
 ```
-
+grep ',D,' data/transitions.csv | head
 ```
 
 ## [27] tool
@@ -860,7 +860,7 @@ dtype: float64
 **tool call: bash**
 
 ```
-
+cut -d, -f2 data/transitions.csv | sort -u
 ```
 
 ## [29] tool
@@ -1352,7 +1352,7 @@ Row sums min/max: 0.9999999999999994 1.0
 **tool call: bash**
 
 ```
-
+ls -l *.csv
 ```
 
 ## [39] tool

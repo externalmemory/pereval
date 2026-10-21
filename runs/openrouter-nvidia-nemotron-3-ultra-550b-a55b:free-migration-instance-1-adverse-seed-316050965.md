@@ -2886,7 +2886,7 @@ All three output files are correctly formatted and saved. Let me verify they're 
 **tool call: bash**
 
 ```
-
+ls -la *.csv
 ```
 
 ## [25] tool

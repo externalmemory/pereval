@@ -66,13 +66,24 @@ Predict y with a 95% interval for every row in data/test.csv and write predictio
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+print(tr['category'].value_counts())
+print('---test---')
+print(te['category'].value_counts())
+print('---ranges per category---')
+for c in tr['category'].unique():
+    t = tr[tr.category==c]; s = te[te.category==c]
+    print(c, 'train x:', t.x.min(), t.x.max(), 'n=',len(t), '| test x:', s.x.min(), s.x.max(), 'n=',len(s))
+"
 ```
 
 ## [3] tool
@@ -169,7 +180,17 @@ ZD5BTm train x: 25.0 100.0 n= 28 | test x: 125.0 200.0 n= 4
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd
+pd.set_option('display.width', 200)
+tr = pd.read_csv('data/train.csv')
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    print('====', c, 'n=', len(t))
+    # group by x to see replicates
+    g = t.groupby('x')['y'].agg(['count','mean','std','min','max'])
+    print(g)
+"
 ```
 
 ## [6] tool
@@ -297,7 +318,72 @@ The data has 5 categories, each needing extrapolation beyond the training x-rang
 **tool call: bash**
 
 ```
+cat > explore.py << 'EOF'
+import numpy as np, pandas as pd
+from numpy.polynomial import polynomial as P
 
+tr = pd.read_csv('data/train.csv')
+
+def fit_predict(model, xtr, ytr, xte):
+    """Return predictions for each candidate model."""
+    if model == 'poly1':
+        X = np.column_stack([np.ones_like(xtr), xtr])
+        Xt = np.column_stack([np.ones_like(xte), xte])
+        b, *_ = np.linalg.lstsq(X, ytr, rcond=None)
+        return Xt @ b
+    if model == 'poly2':
+        X = np.column_stack([np.ones_like(xtr), xtr, xtr**2])
+        Xt = np.column_stack([np.ones_like(xte), xte, xte**2])
+        b, *_ = np.linalg.lstsq(X, ytr, rcond=None)
+        return Xt @ b
+    if model == 'poly3':
+        X = np.column_stack([np.ones_like(xtr), xtr, xtr**2, xtr**3])
+        Xt = np.column_stack([np.ones_like(xte), xte, xte**2, xte**3])
+        b, *_ = np.linalg.lstsq(X, ytr, rcond=None)
+        return Xt @ b
+    if model == 'exp_linear':  # log(-y) ~ x  -> y = -exp(a+bx)
+        X = np.column_stack([np.ones_like(xtr), xtr])
+        Xt = np.column_stack([np.ones_like(xte), xte])
+        b, *_ = np.linalg.lstsq(X, np.log(-ytr), rcond=None)
+        return -np.exp(Xt @ b)
+    if model == 'exp_quad':  # log(-y) ~ x + x^2
+        X = np.column_stack([np.ones_like(xtr), xtr, xtr**2])
+        Xt = np.column_stack([np.ones_like(xte), xte, xte**2])
+        b, *_ = np.linalg.lstsq(X, np.log(-ytr), rcond=None)
+        return -np.exp(Xt @ b)
+    if model == 'power':  # log(-y) ~ log(x)
+        X = np.column_stack([np.ones_like(xtr), np.log(xtr)])
+        Xt = np.column_stack([np.ones_like(xte), np.log(xte)])
+        b, *_ = np.linalg.lstsq(X, np.log(-ytr), rcond=None)
+        return -np.exp(Xt @ b)
+    if model == 'power_quad':  # log(-y) ~ log(x) + log(x)^2
+        X = np.column_stack([np.ones_like(xtr), np.log(xtr), np.log(xtr)**2])
+        Xt = np.column_stack([np.ones_like(xte), np.log(xte), np.log(xte)**2])
+        b, *_ = np.linalg.lstsq(X, np.log(-ytr), rcond=None)
+        return -np.exp(Xt @ b)
+
+models = ['poly1','poly2','poly3','exp_linear','exp_quad','power','power_quad']
+
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    # holdout: fit on lower ~65% of x range, test on upper part
+    xmax = x.max()
+    cut = 25 + 0.6*(xmax-25)
+    mtr = x <= cut; mte = ~mtr
+    print(f'==== {c}: fit x<= {cut}, validate on {mte.sum()} pts x>{cut}')
+    for m in models:
+        try:
+            pred = fit_predict(m, x[mtr], y[mtr], x[mte])
+            rmse = np.sqrt(np.mean((pred - y[mte])**2))
+            # also full-range fit rmse (in-sample)
+            pred_in = fit_predict(m, x, y, x)
+            rmse_in = np.sqrt(np.mean((pred_in - y)**2))
+            print(f'  {m:12s} holdout RMSE={rmse:.4f}   in-sample RMSE={rmse_in:.4f}')
+        except Exception as e:
+            print(f'  {m:12s} FAILED {e}')
+EOF
+python explore.py
 ```
 
 ## [8] tool
@@ -435,13 +521,75 @@ The holdout RMSEs look dominated by noise, which clearly grows with |y| — sugg
 **tool call: bash**
 
 ```
+cat > explore2.py << 'EOF'
+import numpy as np, pandas as pd
 
+tr = pd.read_csv('data/train.csv')
+
+# Noise structure: std of y and std of log(-y) at each x for categories with replicates
+for c in ['JyETCo','Lbo0TZ','NyIqGn','ZD5BTm']:
+    t = tr[tr.category==c]
+    g = t.groupby('x')['y'].agg(['mean','std'])
+    g['cv'] = g['std']/g['mean'].abs()
+    g['std_log'] = t.assign(ly=np.log(-t.y)).groupby('x')['ly'].std()
+    print(c)
+    print(g.round(3))
+    print()
+EOF
+python explore2.py
 ```
 
 **tool call: bash**
 
 ```
+cat > explore3.py << 'EOF'
+import numpy as np, pandas as pd
 
+tr = pd.read_csv('data/train.csv')
+
+def design(model, x):
+    x = np.asarray(x, float)
+    if model=='log_lin_x':   return np.column_stack([np.ones_like(x), x])
+    if model=='log_quad_x':  return np.column_stack([np.ones_like(x), x, x**2])
+    if model=='log_lin_logx':return np.column_stack([np.ones_like(x), np.log(x)])
+    if model=='log_quad_logx':return np.column_stack([np.ones_like(x), np.log(x), np.log(x)**2])
+    if model=='raw_quad':    return None
+
+def fit_pred_log(model, xtr, ytr, xte):
+    """fit model, return predicted log(-y) at xte"""
+    if model=='raw_quad':
+        X = np.column_stack([np.ones_like(xtr), xtr, xtr**2])
+        Xt = np.column_stack([np.ones_like(xte), xte, xte**2])
+        b,*_ = np.linalg.lstsq(X, ytr, rcond=None)
+        pr = Xt@b
+        pr = np.where(pr<0, pr, -1e-9)
+        return np.log(-pr)
+    X = design(model, xtr); Xt = design(model, xte)
+    b,*_ = np.linalg.lstsq(X, np.log(-ytr), rcond=None)
+    return Xt@b
+
+models = ['log_lin_x','log_quad_x','log_lin_logx','log_quad_logx','raw_quad']
+
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    ly = np.log(-y)
+    xmax = x.max()
+    print(f'==== {c}')
+    for m in models:
+        errs = []
+        for frac in [0.5, 0.625, 0.75]:
+            cut = 25 + frac*(xmax-25)
+            mtr = x<=cut; mte = ~mtr
+            if mte.sum()==0: continue
+            pred = fit_pred_log(m, x[mtr], y[mtr], x[mte])
+            errs.append(np.sqrt(np.mean((pred-ly[mte])**2)))
+        # full in-sample log-space rmse
+        pred_in = fit_pred_log(m, x, y, x)
+        rmse_in = np.sqrt(np.mean((pred_in-ly)**2))
+        print(f'  {m:14s} holdout logRMSE={[round(e,3) for e in errs]}  in-sample={rmse_in:.3f}')
+EOF
+python explore3.py
 ```
 
 ## [10] tool
@@ -563,7 +711,17 @@ The noise on log scale is substantial and not cleanly constant. Let me look at r
 **tool call: bash**
 
 ```
-
+cat > explore4.py << 'EOF'
+import numpy as np, pandas as pd
+tr = pd.read_csv('data/train.csv')
+for c in ['NyIqGn','Lbo0TZ','ZD5BTm','JyETCo']:
+    t = tr[tr.category==c].sort_values(['x'])
+    print('====', c)
+    for xv, grp in t.groupby('x'):
+        vals = np.sort(grp.y.values)
+        print(f'x={xv:6.1f}: ' + ' '.join(f'{v:7.3f}' for v in vals))
+EOF
+python explore4.py
 ```
 
 ## [13] tool
@@ -721,7 +879,51 @@ The noise is large and roughly proportional to |y| (multiplicative). The key cha
 **tool call: bash**
 
 ```
+cat > explore5.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import curve_fit
+import warnings; warnings.filterwarnings('ignore')
 
+tr = pd.read_csv('data/train.csv'); te = pd.read_csv('data/test.csv')
+
+def fits(c):
+    t = tr[tr.category==c]
+    # use per-x means weighted by n for stability, on raw scale for nonlinear forms
+    g = t.groupby('x').agg(y=('y','mean'), n=('y','size')).reset_index()
+    x = g.x.values; y = g.y.values; n = g.n.values
+    xt = te[te.category==c].x.values
+    res = {}
+    # Form G: raw quadratic, weighted
+    W = np.diag(n)
+    X = np.column_stack([np.ones_like(x), x, x**2])
+    b = np.linalg.solve(X.T@W@X, X.T@W@y)
+    res['raw_quad'] = np.column_stack([np.ones_like(xt), xt, xt**2])@b
+    # Form C: power law on log scale, weighted
+    X = np.column_stack([np.ones_like(x), np.log(x)])
+    b = np.linalg.solve(X.T@W@X, X.T@W@np.log(-y))
+    res['power'] = -np.exp(np.column_stack([np.ones_like(xt), np.log(xt)])@b)
+    # Form B: log-quad in x, weighted
+    X = np.column_stack([np.ones_like(x), x, x**2])
+    b = np.linalg.solve(X.T@W@X, X.T@W@np.log(-y))
+    res['logquad_x'] = -np.exp(np.column_stack([np.ones_like(xt), xt, xt**2])@b)
+    # Form: log-quad in log x, weighted
+    X = np.column_stack([np.ones_like(x), np.log(x), np.log(x)**2])
+    b = np.linalg.solve(X.T@W@X, X.T@W@np.log(-y))
+    res['logquad_logx'] = -np.exp(np.column_stack([np.ones_like(xt), np.log(xt), np.log(xt)**2])@b)
+    # Form A: exponential
+    X = np.column_stack([np.ones_like(x), x])
+    b = np.linalg.solve(X.T@W@X, X.T@W@np.log(-y))
+    res['exp'] = -np.exp(np.column_stack([np.ones_like(xt), xt])@b)
+    return xt, res
+
+for c in tr['category'].unique():
+    xt, res = fits(c)
+    print('====', c)
+    df = pd.DataFrame(res, index=xt)
+    df.index.name='x'
+    print(df.round(3))
+EOF
+python explore5.py
 ```
 
 ## [15] tool
@@ -849,7 +1051,32 @@ Model disagreement at test x is enormous (factor 3–10 at the far end). I need 
 **tool call: bash**
 
 ```
+cat > explore6.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
+tr = pd.read_csv('data/train.csv')
 
+# Pooled noise-shape analysis per category using replicates
+for c in ['JyETCo','Lbo0TZ','NyIqGn','ZD5BTm']:
+    t = tr[tr.category==c].copy()
+    t['z'] = -t.y
+    g = t.groupby('x')['z']
+    t['med'] = g.transform('median')
+    t['m'] = g.transform('mean')
+    # scaled residuals on raw and log scale
+    t['r_raw'] = (t.z - t.m)/t.m
+    t['r_log'] = np.log(t.z) - np.log(t.m)
+    rr = t.r_raw.values; rl = t.r_log.values
+    print(f'==== {c}  (n={len(t)})')
+    print(f'  raw-scale resid: skew={stats.skew(rr):.2f} kurt={stats.kurtosis(rr):.2f} std={rr.std():.3f}')
+    print(f'  log-scale resid: skew={stats.skew(rl):.2f} kurt={stats.kurtosis(rl):.2f} std={rl.std():.3f}')
+    # normal test
+    print(f'  log-resid normaltest p={stats.normaltest(rl).pvalue:.3f}; raw-resid normaltest p={stats.normaltest(rr).pvalue:.3f}')
+    # quantiles of log resid
+    qs = np.quantile(rl, [0.01,0.05,0.25,0.5,0.75,0.95,0.99])
+    print('  log-resid quantiles [1,5,25,50,75,95,99]:', np.round(qs,3))
+EOF
+python explore6.py
 ```
 
 ## [17] tool
@@ -916,7 +1143,28 @@ The raw-scale relative residuals are closer to normal — noise is multiplicativ
 **tool call: bash**
 
 ```
+cat > explore7.py << 'EOF'
+import numpy as np, pandas as pd
+tr = pd.read_csv('data/train.csv')
 
+for c in ['NyIqGn','Lbo0TZ','ZD5BTm','JyETCo']:
+    t = tr[tr.category==c].copy()
+    t['k'] = t.groupby('x').cumcount()
+    piv = t.pivot_table(index='k', columns='x', values='y')
+    print('====', c, 'units k =', len(piv))
+    # smoothness of each unit curve: mean abs second difference vs overall
+    arr = piv.values  # rows=units, cols=x sorted
+    xs = piv.columns.values
+    # check monotone and smoothness
+    for i in range(len(arr)):
+        row = arr[i]
+        d2 = np.abs(np.diff(row, 2)).mean()
+        mono = np.all(np.diff(row) <= 0.01)
+        print(f'  unit {i}: mean|2nd diff|={d2:.4f} mono~{mono} first={row[0]:.3f} last={row[-1]:.3f}')
+    # cross-x correlation of units (are same-k rows correlated?)
+    print('  corr between consecutive x columns (avg):', np.mean([np.corrcoef(arr[:,j], arr[:,j+1])[0,1] for j in range(arr.shape[1]-1)]).round(3))
+EOF
+python explore7.py
 ```
 
 ## [19] tool
@@ -1040,7 +1288,59 @@ No hidden unit structure — replicates are iid. The noise std appears proportio
 **tool call: bash**
 
 ```
+cat > explore8.py << 'EOF'
+import numpy as np, pandas as pd
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+def design(model, x):
+    x = np.asarray(x, float)
+    if model=='poly1':   return np.column_stack([np.ones_like(x), x]), 'raw'
+    if model=='poly2':   return np.column_stack([np.ones_like(x), x, x**2]), 'raw'
+    if model=='poly3':   return np.column_stack([np.ones_like(x), x, x**2, x**3]), 'raw'
+    if model=='exp':     return np.column_stack([np.ones_like(x), x]), 'log'
+    if model=='expquad': return np.column_stack([np.ones_like(x), x, x**2]), 'log'
+    if model=='power':   return np.column_stack([np.ones_like(x), np.log(x)]), 'log'
+    if model=='powerquad':return np.column_stack([np.ones_like(x), np.log(x), np.log(x)**2]), 'log'
+    if model=='xexp':    return np.column_stack([np.ones_like(x), np.log(x), x]), 'log'   # -a x^p e^{bx}
+    if model=='xexpquad':return np.column_stack([np.ones_like(x), np.log(x), x, x**2]), 'log'
+
+models = ['poly1','poly2','poly3','exp','expquad','power','powerquad','xexp','xexpquad']
+
+def fit_pred(model, xtr, ytr, xte, wtr):
+    X, kind = design(model, xtr)
+    Xt, _ = design(model, xte)
+    W = np.diag(wtr)
+    tgt = ytr if kind=='raw' else np.log(-ytr)
+    b = np.linalg.solve(X.T@W@X + 1e-10*np.eye(X.shape[1]), X.T@W@tgt)
+    pr = Xt@b
+    return pr if kind=='raw' else -np.exp(pr)
+
+rng = np.random.default_rng(0)
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    w = 1.0/np.maximum(x,1)**2   # noise std ~ x
+    xmax = x.max()
+    scores = {m: [] for m in models}
+    for rep in range(60):
+        frac = rng.uniform(0.55, 0.8)
+        cut = 25 + frac*(xmax-25)
+        mtr = x <= cut; mte = ~mtr
+        if mte.sum() < 2: continue
+        for m in models:
+            try:
+                pr = fit_pred(m, x[mtr], y[mtr], x[mte], w[mtr])
+                scores[m].append(np.sqrt(np.mean((pr - y[mte])**2)))
+            except Exception:
+                scores[m].append(np.nan)
+    print('====', c)
+    order = sorted(models, key=lambda m: np.nanmean(scores[m]))
+    for m in order:
+        s = np.array(scores[m])
+        print(f'  {m:10s} holdoutRMSE mean={np.nanmean(s):.4f} med={np.nanmedian(s):.4f}')
+EOF
+python explore8.py
 ```
 
 ## [21] tool
@@ -1137,7 +1437,44 @@ Clear result: **raw quadratic (poly2) wins for 4 of 5 categories** and is essent
 **tool call: bash**
 
 ```
+cat > explore9.py << 'EOF'
+import numpy as np, pandas as pd
+import statsmodels.api as sm
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    w = 1.0/x**2
+    X = sm.add_constant(np.column_stack([x, x**2]))
+    fit = sm.WLS(y, X, weights=w).fit()
+    r = fit.resid
+    print('====', c, ' params:', np.round(fit.params,8), ' R2w~', round(fit.rsquared,4))
+    # residual pattern: mean weighted resid in x bins
+    df = pd.DataFrame({'x':x,'r':r})
+    df['bin'] = pd.qcut(df.x, 4)
+    print('  resid mean by x-quartile:', df.groupby('bin',observed=True)['r'].mean().round(3).values,
+          ' resid std:', df.groupby('bin',observed=True)['r'].std().round(3).values)
+    # sigma model: compare per-x std vs x and vs |f|
+    g = t.groupby('x')['y'].agg(['std','count','mean'])
+    g = g[g['count']>1]
+    if len(g)>=3:
+        lx = np.log(g.index.values); ls = np.log(g['std'].values); lf = np.log(np.abs(g['mean'].values))
+        bx = np.polyfit(lx, ls, 1); bf = np.polyfit(lf, ls, 1)
+        # residual ss for each
+        rx = ls - np.polyval(bx, lx); rf = ls - np.polyval(bf, lf)
+        print(f'  sigma~x^b: b={bx[0]:.2f} (resid sd {rx.std():.3f}) ; sigma~|f|^b: b={bf[0]:.2f} (resid sd {rf.std():.3f})')
+    # spline check: fit smoothing spline to per-x means, compare with quad
+    from scipy.interpolate import UnivariateSpline
+    gm = t.groupby('x')['y'].mean()
+    xs = gm.index.values; ys = gm.values
+    k = min(3, len(xs)-1)
+    spl = UnivariateSpline(xs, ys, k=k, s=len(xs)*np.var(r))
+    quad_pred = fit.predict(sm.add_constant(np.column_stack([xs, xs**2])))
+    print('  max |spline - quad| on grid:', np.max(np.abs(spl(xs)-quad_pred)).round(4), ' vs noise std~', round(np.std(r),3))
+EOF
+python explore9.py
 ```
 
 ## [23] tool
@@ -1227,7 +1564,52 @@ Quadratic fits are excellent (patternless residuals, spline deviation < noise). 
 **tool call: bash**
 
 ```
+cat > mock.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
+import statsmodels.api as sm
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+def quad_wls(x, y):
+    X = sm.add_constant(np.column_stack([x, x**2]))
+    w = 1.0/x**2
+    return sm.WLS(y, X, weights=w).fit()
+
+def predict_with_pi(fit, x0, n, p):
+    X0 = sm.add_constant(np.column_stack([x0, x0**2]))
+    pr = fit.get_prediction(X0)
+    m = pr.predicted_mean
+    # obs noise var = s^2 * x0^2 ; mean var from fit
+    s2 = fit.mse_resid  # weighted
+    var_mean = pr.var_pred_mean
+    var_tot = var_mean + s2*x0**2
+    tcrit = stats.t.ppf(0.975, n-p)
+    half = tcrit*np.sqrt(var_tot)
+    return m, m-half, m+half
+
+print('MOCK TEST: fit x<=0.5*range, predict upper half (mimics real 2x extrapolation)')
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    xmax = x.max()
+    cut = 25 + 0.5*(xmax-25)
+    mtr = x<=cut; mte = ~mtr
+    if mte.sum()<3: 
+        print(f'{c}: not enough upper pts'); continue
+    fit = quad_wls(x[mtr], y[mtr])
+    n = mtr.sum(); p = 3
+    m, lo, hi = predict_with_pi(fit, x[mte], n, p)
+    rmse = np.sqrt(np.mean((m-y[mte])**2))
+    cov = np.mean((y[mte]>=lo)&(y[mte]<=hi))
+    # compare with per-x means of held out
+    gm = pd.DataFrame({'x':x[mte],'y':y[mte]}).groupby('x')['y'].mean()
+    m2, lo2, hi2 = predict_with_pi(fit, gm.index.values, n, p)
+    rmse_means = np.sqrt(np.mean((m2-gm.values)**2))
+    cov_means = np.mean((gm.values>=lo2)&(gm.values<=hi2))
+    print(f'{c}: n_tr={n} n_te={mte.sum()} RMSE={rmse:.3f} cov={cov:.2f} | vs x-means: RMSE={rmse_means:.3f} cov={cov_means:.2f}')
+EOF
+python mock.py
 ```
 
 ## [25] tool
@@ -1262,7 +1644,62 @@ Coverage is below 95% in the mock for some categories. Let me diagnose: bias (mi
 **tool call: bash**
 
 ```
+cat > mock2.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
+import statsmodels.api as sm
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+def fit_fam(fam, x, y):
+    if fam=='quad':
+        X = sm.add_constant(np.column_stack([x, x**2])); kind='raw'
+    elif fam=='powerquad':
+        lx=np.log(x); X = sm.add_constant(np.column_stack([lx, lx**2])); kind='log'
+    elif fam=='exp':
+        X = sm.add_constant(x); kind='log'
+    elif fam=='power':
+        X = sm.add_constant(np.log(x)); kind='log'
+    w = 1.0/x**2
+    tgt = y if kind=='raw' else np.log(-y)
+    return sm.WLS(tgt, X, weights=w).fit(), kind
+
+def pred_fam(fit, kind, fam, x0):
+    if fam=='quad':
+        X0 = sm.add_constant(np.column_stack([x0, x0**2]))
+    elif fam=='powerquad':
+        lx=np.log(x0); X0 = sm.add_constant(np.column_stack([lx, lx**2]))
+    elif fam=='exp':
+        X0 = sm.add_constant(x0)
+    elif fam=='power':
+        X0 = sm.add_constant(np.log(x0))
+    m = fit.predict(X0)
+    return m if kind=='raw' else -np.exp(m)
+
+fams = ['quad','powerquad','exp','power']
+print('2x mock: fit lower half, predict upper half -- per-category per-family')
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    cut = 25 + 0.5*(x.max()-25)
+    mtr = x<=cut; mte = ~mtr
+    gm = pd.DataFrame({'x':x[mte],'y':y[mte]}).groupby('x')['y'].mean()
+    xu = gm.index.values; yu = gm.values
+    print(f'== {c} (held-out x-means, bias = mean pred-actual)')
+    for fam in fams:
+        fit, kind = fit_fam(fam, x[mtr], y[mtr])
+        m = pred_fam(fit, kind, fam, xu)
+        bias = np.mean(m - yu)
+        rmse = np.sqrt(np.mean((m-yu)**2))
+        print(f'   {fam:10s} RMSE={rmse:.3f} bias={bias:+.3f}')
+    # detailed for quad
+    fit, kind = fit_fam('quad', x[mtr], y[mtr])
+    m = pred_fam(fit, kind, 'quad', xu)
+    print('   quad detail x / pred / actual:')
+    for xi, mi, yi in zip(xu, m, yu):
+        print(f'     x={xi:6.1f} pred={mi:7.3f} actual={yi:7.3f}')
+EOF
+python mock2.py
 ```
 
 ## [27] tool
@@ -1377,7 +1814,50 @@ The mock shows quad wins decisively for data-rich categories, but powerquad is b
 **tool call: bash**
 
 ```
+cat > mock3.py << 'EOF'
+import numpy as np, pandas as pd
+import statsmodels.api as sm
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+def fit_fam(fam, x, y):
+    w = 1.0/x**2
+    if fam=='quad':
+        X = sm.add_constant(np.column_stack([x, x**2]))
+        return sm.WLS(y, X, weights=w).fit(), 'raw'
+    else:
+        lx=np.log(x); X = sm.add_constant(np.column_stack([lx, lx**2]))
+        return sm.WLS(np.log(-y), X, weights=w).fit(), 'log'
+
+def pred_fam(fit, kind, fam, x0):
+    if fam=='quad':
+        X0 = sm.add_constant(np.column_stack([x0, x0**2]))
+    else:
+        lx=np.log(x0); X0 = sm.add_constant(np.column_stack([lx, lx**2]))
+    m = fit.predict(X0)
+    return m if kind=='raw' else -np.exp(m)
+
+print('Targeted 2x mocks:')
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    xmax = x.max()
+    # fit on x <= xmax/2 (mimics real ratio), and also x <= 0.62*xmax
+    for cutfrac in [0.5, 0.62]:
+        cut = 25 + cutfrac*(xmax-25)
+        mtr = x<=cut; mte = ~mtr
+        gm = pd.DataFrame({'x':x[mte],'y':y[mte]}).groupby('x')['y'].mean()
+        xu = gm.index.values; yu = gm.values
+        if len(xu)<1: continue
+        fq,_k = fit_fam('quad', x[mtr], y[mtr])
+        fp,_k2 = fit_fam('powerquad', x[mtr], y[mtr])
+        mq = pred_fam(fq,'raw','quad',xu)
+        mp = pred_fam(fp,'log','powerquad',xu)
+        ma = 0.5*(mq+mp)
+        def r(m): return np.sqrt(np.mean((m-yu)**2))
+        print(f'{c} cut={cut:.0f} n_tr={mtr.sum()} n_xte={len(xu)}: quad={r(mq):.3f} powerquad={r(mp):.3f} avg={r(ma):.3f}')
+EOF
+python mock3.py
 ```
 
 ## [29] tool
@@ -1424,7 +1904,43 @@ The short-category mocks were degenerate (fit on only 2 distinct x). Let me redo
 **tool call: bash**
 
 ```
+cat > mock4.py << 'EOF'
+import numpy as np, pandas as pd
+import statsmodels.api as sm
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+def fit_pred(fam, x, y, x0):
+    w = 1.0/x**2
+    if fam=='quad':
+        X = sm.add_constant(np.column_stack([x, x**2])); tgt=y
+        X0 = sm.add_constant(np.column_stack([x0, x0**2]))
+    elif fam=='powerquad':
+        lx=np.log(x); X = sm.add_constant(np.column_stack([lx, lx**2])); tgt=np.log(-y)
+        lx0=np.log(x0); X0 = sm.add_constant(np.column_stack([lx0, lx0**2]))
+    elif fam=='power':
+        X = sm.add_constant(np.log(x)); tgt=np.log(-y)
+        X0 = sm.add_constant(np.log(x0))
+    elif fam=='exp':
+        X = sm.add_constant(x); tgt=np.log(-y)
+        X0 = sm.add_constant(x0)
+    fit = sm.WLS(tgt, X, weights=w).fit()
+    m = fit.predict(X0)
+    return m if fam=='quad' else -np.exp(m)
+
+for c in ['JyETCo','ZD5BTm']:
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    mtr = x<=75; mte = x>=100
+    gm = t[mte].groupby('x')['y'].mean()
+    xu = gm.index.values; yu = gm.values
+    print(f'== {c}: fit x<=75 (n={mtr.sum()}), predict x=100 (mean={yu[0]:.3f})')
+    for fam in ['quad','powerquad','power','exp']:
+        m = fit_pred(fam, x[mtr], y[mtr], xu)
+        print(f'   {fam:10s} pred={m[0]:.3f}  err={m[0]-yu[0]:+.3f}')
+    # also fit each pair/triple and LOO at x=75 to compare families interpolation-style
+EOF
+python mock4.py
 ```
 
 ## [31] tool
@@ -1458,7 +1974,38 @@ ValueError: shapes (1,2) and (3,) not aligned: 2 (dim 1) != 3 (dim 0)
 **tool call: bash**
 
 ```
+cat > mock4.py << 'EOF'
+import numpy as np, pandas as pd
+import statsmodels.api as sm
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+def D(fam, x):
+    x = np.atleast_1d(np.asarray(x,float))
+    if fam=='quad':      return np.column_stack([np.ones_like(x), x, x**2]), 'raw'
+    if fam=='powerquad': return np.column_stack([np.ones_like(x), np.log(x), np.log(x)**2]), 'log'
+    if fam=='power':     return np.column_stack([np.ones_like(x), np.log(x)]), 'log'
+    if fam=='exp':       return np.column_stack([np.ones_like(x), x]), 'log'
+
+def fit_pred(fam, x, y, x0):
+    w = 1.0/x**2
+    X, kind = D(fam, x); X0, _ = D(fam, x0)
+    tgt = y if kind=='raw' else np.log(-y)
+    fit = sm.WLS(tgt, X, weights=w).fit()
+    m = X0@fit.params
+    return m if kind=='raw' else -np.exp(m)
+
+for c in ['JyETCo','ZD5BTm']:
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values
+    mtr = x<=75
+    y100 = t[t.x>=100]['y'].mean()
+    print(f'== {c}: fit x<=75 (n={mtr.sum()}), predict x=100 (mean={y100:.3f})')
+    for fam in ['quad','powerquad','power','exp']:
+        m = fit_pred(fam, x[mtr], y[mtr], np.array([100.0]))
+        print(f'   {fam:10s} pred={m[0]:.3f}  err={m[0]-y100:+.3f}')
+EOF
+python mock4.py
 ```
 
 ## [33] tool
@@ -1517,7 +2064,68 @@ Now the proper mocks confirm **quad is best or tied-best for every category**. C
 **tool call: bash**
 
 ```
+cat > pipeline.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
 
+def fit_category(x, y, inflate=1.0):
+    """Fit WLS quadratic with sigma(x)=s*x. Returns a predictor."""
+    x = np.asarray(x, float); y = np.asarray(y, float)
+    n = len(x); p = 3
+    X = np.column_stack([np.ones_like(x), x, x**2])
+    w = 1.0/x**2
+    XtW = X.T * w
+    XtWX = XtW @ X
+    XtWX_inv = np.linalg.inv(XtWX)
+    beta = XtWX_inv @ (XtW @ y)
+    resid = y - X @ beta
+    # noise scale s: prefer replicate-based estimate
+    df = pd.DataFrame({'x': x, 'y': y})
+    g = df.groupby('x')['y']
+    vc = g.var().dropna()
+    cnt = g.size()
+    if len(vc) >= 3:  # enough replicate groups
+        xs_v = vc.index.values.astype(float)
+        df_noise = int((cnt[xs_v] - 1).sum())
+        s2 = float(((cnt[xs_v]-1)*vc.values/xs_v**2).sum() / df_noise)
+    else:
+        df_noise = n - p
+        s2 = float(np.sum(resid**2 * w) / df_noise)
+    dfree = min(n - p, max(df_noise, 1))
+    def predict(x0, alpha=0.05):
+        x0 = np.atleast_1d(np.asarray(x0, float))
+        X0 = np.column_stack([np.ones_like(x0), x0, x0**2])
+        mean = X0 @ beta
+        var_mean = s2 * np.einsum('ij,jk,ik->i', X0, XtWX_inv, X0)
+        var_tot = var_mean + s2 * x0**2
+        tcrit = stats.t.ppf(1 - alpha/2, dfree)
+        half = inflate * tcrit * np.sqrt(var_tot)
+        return mean, mean - half, mean + half
+    return predict, dict(beta=beta, s=np.sqrt(s2), dfree=dfree, n=n)
+
+if __name__ == '__main__':
+    import sys
+    tr = pd.read_csv('data/train.csv')
+    te = pd.read_csv('data/test.csv')
+    inflate = float(sys.argv[1]) if len(sys.argv) > 1 else 1.0
+    rows = []
+    for c in te['category'].unique():
+        t = tr[tr.category == c]
+        pred, info = fit_category(t.x.values, t.y.values, inflate)
+        xt = te[te.category == c].x.values
+        m, lo, hi = pred := predict if False else pred
+        m, lo, hi = pred[0](xt), None, None
+        m, lo, hi = pred(xt)
+        print(f'{c}: s={info["s"]:.5f} df={info["dfree"]} beta={np.round(info["beta"],8)}')
+        for xi, mi, li, hi_ in zip(xt, m, lo, hi):
+            rows.append(dict(category=c, x=xi, y_pred=mi, y_lower=li, y_upper=hi_))
+    out = pd.DataFrame(rows)
+    te_order = te.reset_index().merge(out, on=['category','x'], how='left').set_index('index').sort_index()
+    te_order[['category','x','y_pred','y_lower','y_upper']].to_csv('predictions.csv', index=False)
+    print('wrote predictions.csv', len(te_order), 'rows')
+    print(te_order[['category','x','y_pred','y_lower','y_upper']].round(4).to_string())
+EOF
+python pipeline.py
 ```
 
 ## [35] tool
@@ -1541,7 +2149,66 @@ SyntaxError: invalid syntax
 **tool call: bash**
 
 ```
+cat > pipeline.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
 
+def fit_category(x, y, inflate=1.0):
+    """Fit WLS quadratic with sigma(x)=s*x. Returns a predictor and info."""
+    x = np.asarray(x, float); y = np.asarray(y, float)
+    n = len(x); p = 3
+    X = np.column_stack([np.ones_like(x), x, x**2])
+    w = 1.0/x**2
+    XtW = X.T * w
+    XtWX = XtW @ X
+    XtWX_inv = np.linalg.inv(XtWX)
+    beta = XtWX_inv @ (XtW @ y)
+    resid = y - X @ beta
+    df = pd.DataFrame({'x': x, 'y': y})
+    g = df.groupby('x')['y']
+    vc = g.var().dropna()
+    cnt = g.size()
+    if len(vc) >= 3:  # replicate-based noise estimate
+        xs_v = vc.index.values.astype(float)
+        df_noise = int((cnt[xs_v] - 1).sum())
+        s2 = float(((cnt[xs_v]-1)*vc.values/xs_v**2).sum() / df_noise)
+    else:
+        df_noise = n - p
+        s2 = float(np.sum(resid**2 * w) / df_noise)
+    dfree = max(min(n - p, df_noise), 1)
+    def predict(x0, alpha=0.05):
+        x0 = np.atleast_1d(np.asarray(x0, float))
+        X0 = np.column_stack([np.ones_like(x0), x0, x0**2])
+        mean = X0 @ beta
+        var_mean = s2 * np.einsum('ij,jk,ik->i', X0, XtWX_inv, X0)
+        var_tot = var_mean + s2 * x0**2
+        tcrit = stats.t.ppf(1 - alpha/2, dfree)
+        half = inflate * tcrit * np.sqrt(var_tot)
+        return mean, mean - half, mean + half
+    return predict, dict(beta=beta, s=np.sqrt(s2), dfree=dfree, n=n)
+
+if __name__ == '__main__':
+    import sys
+    tr = pd.read_csv('data/train.csv')
+    te = pd.read_csv('data/test.csv')
+    inflate = float(sys.argv[1]) if len(sys.argv) > 1 else 1.0
+    rows = []
+    for c in te['category'].unique():
+        t = tr[tr.category == c]
+        predict, info = fit_category(t.x.values, t.y.values, inflate)
+        xt = te[te.category == c].x.values
+        m, lo, hi = predict(xt)
+        print(f'{c}: s={info["s"]:.5f} df={info["dfree"]} beta={np.round(info["beta"],8)}')
+        for xi, mi, li, hi_ in zip(xt, m, lo, hi):
+            rows.append(dict(category=c, x=xi, y_pred=mi, y_lower=li, y_upper=hi_))
+    out = pd.DataFrame(rows)
+    te_order = te.reset_index().merge(out, on=['category','x'], how='left').set_index('index').sort_index()
+    final = te_order[['category','x','y_pred','y_lower','y_upper']]
+    final.to_csv('predictions.csv', index=False)
+    print('wrote predictions.csv', len(final), 'rows')
+    print(final.round(4).to_string())
+EOF
+python pipeline.py
 ```
 
 ## [37] tool
@@ -1619,7 +2286,44 @@ A complete, valid `predictions.csv` (29 rows) is now on disk. Now let me calibra
 **tool call: bash**
 
 ```
+cat > calib.py << 'EOF'
+import numpy as np, pandas as pd
+from pipeline import fit_category
 
+tr = pd.read_csv('data/train.csv')
+
+def run_mock(inflate, cutfrac):
+    cov_pts, cov_means, scores, widths = [], [], [], []
+    details = []
+    for c in tr['category'].unique():
+        t = tr[tr.category==c].sort_values('x')
+        x = t.x.values; y = t.y.values
+        xmax = x.max()
+        cut = 25 + cutfrac*(xmax-25)
+        mtr = x<=cut; mte = ~mtr
+        if mte.sum() < 2: continue
+        predict, info = fit_category(x[mtr], y[mtr], inflate)
+        m, lo, hi = predict(x[mte])
+        cov_pts.append(np.mean((y[mte]>=lo)&(y[mte]<=hi)))
+        # x-means coverage
+        gm = pd.DataFrame({'x':x[mte],'y':y[mte]}).groupby('x')['y'].mean()
+        mm, lm, hm = predict(gm.index.values)
+        cov_means.append(np.mean((gm.values>=lm)&(gm.values<=hm)))
+        # interval score (95%): width + 2/alpha*(dist outside)
+        alpha=0.05
+        pen = np.where(y[mte]<lo, lo-y[mte], 0) + np.where(y[mte]>hi, y[mte]-hi, 0)
+        scores.append(np.mean((hi-lo) + (2/alpha)*pen))
+        widths.append(np.mean(hi-lo))
+        details.append((c, round(cov_pts[-1],2), round(cov_means[-1],2)))
+    return np.mean(cov_pts), np.mean(cov_means), np.mean(scores), np.mean(widths), details
+
+for inflate in [1.0, 1.2, 1.4, 1.6]:
+    for cutfrac in [0.5, 0.65]:
+        cp, cm, sc, wd, det = run_mock(inflate, cutfrac)
+        print(f'inflate={inflate} cut={cutfrac}: cov_pts={cp:.2f} cov_xmeans={cm:.2f} avgIntervalScore={sc:.3f} avgWidth={wd:.3f}')
+        print('   ', det)
+EOF
+python calib.py
 ```
 
 ## [39] tool
@@ -1713,7 +2417,69 @@ The mock harness has issues (rank-deficient fits for short categories → NaN). 
 **tool call: bash**
 
 ```
+cat > calib2.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+def fit_category(x, y, inflate=1.0):
+    x = np.asarray(x, float); y = np.asarray(y, float)
+    n = len(x); p = 3
+    X = np.column_stack([np.ones_like(x), x, x**2])
+    w = 1.0/x**2
+    XtW = X.T * w
+    XtWX_inv = np.linalg.pinv(XtW @ X)
+    beta = XtWX_inv @ (XtW @ y)
+    resid = y - X @ beta
+    df_ = pd.DataFrame({'x': x, 'y': y})
+    g = df_.groupby('x')['y']
+    vc = g.var().dropna(); cnt = g.size()
+    if len(vc) >= 3:
+        xs_v = vc.index.values.astype(float)
+        df_noise = int((cnt[xs_v]-1).sum())
+        s2 = float(((cnt[xs_v]-1)*vc.values/xs_v**2).sum()/df_noise)
+    else:
+        df_noise = n-p; s2 = float(np.sum(resid**2*w)/df_noise)
+    dfree = max(min(n-p, df_noise), 1)
+    def predict(x0):
+        x0 = np.atleast_1d(np.asarray(x0, float))
+        X0 = np.column_stack([np.ones_like(x0), x0, x0**2])
+        mean = X0@beta
+        var_mean = s2*np.einsum('ij,jk,ik->i', X0, XtWX_inv, X0)
+        var_tot = np.maximum(var_mean + s2*x0**2, 1e-12)
+        half = inflate*stats.t.ppf(0.975, dfree)*np.sqrt(var_tot)
+        return mean, mean-half, mean+half
+    return predict
+
+def mock_eval(inflate):
+    alpha = 0.05
+    allcov, allscore, allwidth, per_cat = [], [], [], {}
+    for c in tr['category'].unique():
+        t = tr[tr.category==c].sort_values('x')
+        x = t.x.values; y = t.y.values; xmax = x.max()
+        # choose cut to mimic 2x extrapolation, but require >=3 distinct x in fit
+        cut = 25 + 0.5*(xmax-25)
+        mtr = x<=cut; mte = ~mtr
+        if np.unique(x[mtr]).size < 3:
+            cut = 25 + 0.75*(xmax-25)   # short cats: fit 3 of 4 x-values
+            mtr = x<=cut; mte = ~mtr
+        if mte.sum() < 1: continue
+        predict = fit_category(x[mtr], y[mtr], inflate)
+        m, lo, hi = predict(x[mte])
+        cov = (y[mte]>=lo)&(y[mte]<=hi)
+        pen = np.where(y[mte]<lo, lo-y[mte], 0)+np.where(y[mte]>hi, y[mte]-hi, 0)
+        score = (hi-lo) + (2/alpha)*pen
+        allcov.extend(cov.tolist()); allscore.extend(score.tolist()); allwidth.extend((hi-lo).tolist())
+        per_cat[c] = (round(float(np.mean(cov)),2), round(float(np.mean(score)),3))
+    return np.mean(allcov), np.mean(allscore), np.mean(allwidth), per_cat
+
+for inflate in [1.0, 1.15, 1.3, 1.5]:
+    cov, sc, wd, pc = mock_eval(inflate)
+    print(f'inflate={inflate}: coverage={cov:.3f} intervalScore={sc:.3f} width={wd:.3f}')
+    print('   per-cat (cov, score):', pc)
+EOF
+python calib2.py
 ```
 
 ## [41] tool
@@ -1769,7 +2535,46 @@ inflate=1.5: coverage=0.976 intervalScore=0.989 width=0.928
 **tool call: bash**
 
 ```
+cat > robust_test.py << 'EOF'
+import numpy as np, pandas as pd
+import statsmodels.api as sm
+import warnings; warnings.filterwarnings('ignore')
+tr = pd.read_csv('data/train.csv')
 
+def fit_pred(x, y, x0, method):
+    X = np.column_stack([np.ones_like(x), x, x**2])
+    X0 = np.column_stack([np.ones_like(x0), x0, x0**2])
+    w = 1.0/x**2
+    if method=='WLS':
+        fit = sm.WLS(y, X, weights=w).fit()
+        return X0@fit.params
+    if method=='OLS':
+        fit = sm.OLS(y, X).fit()
+        return X0@fit.params
+    if method=='RLM':  # robust with weights
+        fit = sm.RLM(y, X, M=sm.robust.norms.HuberT()).fit()
+        return X0@fit.params
+    if method=='RLM_W':  # robust on log? no - weighted robust: use RLM on whitened data
+        Xw = X*np.sqrt(w)[:,None]; yw = y*np.sqrt(w)
+        fit = sm.RLM(yw, Xw, M=sm.robust.norms.HuberT()).fit()
+        return X0@fit.params
+
+for c in tr['category'].unique():
+    t = tr[tr.category==c].sort_values('x')
+    x = t.x.values; y = t.y.values; xmax=x.max()
+    cut = 25+0.5*(xmax-25)
+    mtr = x<=cut; mte = ~mtr
+    if np.unique(x[mtr]).size<3:
+        cut = 25+0.75*(xmax-25); mtr = x<=cut; mte = ~mtr
+    gm = pd.DataFrame({'x':x[mte],'y':y[mte]}).groupby('x')['y'].mean()
+    xu = gm.index.values; yu = gm.values
+    res = {}
+    for meth in ['WLS','OLS','RLM','RLM_W']:
+        m = fit_pred(x[mtr], y[mtr], xu, meth)
+        res[meth] = round(np.sqrt(np.mean((m-yu)**2)),3)
+    print(c, res)
+EOF
+python robust_test.py
 ```
 
 ## [43] tool
@@ -1808,7 +2613,7 @@ WLS is the most consistent — keeping it. Finalizing with inflate=1.3 baked in,
 **tool call: bash**
 
 ```
-
+sed -i 's/inflate = float(sys.argv\[1\]) if len(sys.argv) > 1 else 1.0/inflate = float(sys.argv[1]) if len(sys.argv) > 1 else 1.3/' pipeline.py && python pipeline.py 2>&1 | tail -8
 ```
 
 ## [45] tool
@@ -1834,7 +2639,23 @@ WLS is the most consistent — keeping it. Finalizing with inflate=1.3 baked in,
 **tool call: bash**
 
 ```
-
+cat > verify.py << 'EOF'
+import pandas as pd, numpy as np
+te = pd.read_csv('data/test.csv')
+pr = pd.read_csv('predictions.csv')
+print('test rows:', len(te), 'pred rows:', len(pr))
+assert len(te)==len(pr)
+# exact match of category,x in order
+assert (te['category'].values == pr['category'].values).all(), 'category mismatch'
+assert np.allclose(te['x'].values, pr['x'].values), 'x mismatch'
+assert pr[['y_pred','y_lower','y_upper']].notna().all().all(), 'NaNs present'
+assert (pr.y_lower < pr.y_pred).all() and (pr.y_pred < pr.y_upper).all(), 'ordering violated'
+assert np.isfinite(pr[['y_pred','y_lower','y_upper']].values).all()
+print('columns:', list(pr.columns))
+print('all checks passed')
+print(pr.round(4).to_string())
+EOF
+python verify.py
 ```
 
 ## [47] tool

@@ -49,13 +49,13 @@ Estimate the population tail quantiles for all 100 blocks described in data/task
 **tool call: bash**
 
 ```
-
+cat data/task.txt
 ```
 
 **tool call: bash**
 
 ```
-
+head -20 data/blocks.csv && echo "---" && wc -l data/blocks.csv
 ```
 
 ## [3] tool
@@ -648,7 +648,14 @@ block,x
 **tool call: bash**
 
 ```
-
+cd /root 2>/dev/null || cd ~; python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/blocks.csv')
+print(df.shape)
+print(df.head())
+g = df.groupby('block').agg(n=('x','size'), mn=('x','min'), p25=('x',lambda x: x.quantile(.25)), med=('x','median'), p75=('x',lambda x: x.quantile(.75)), mx=('x','max'), mean=('x','mean'), sd=('x','std'), skew=('x','skew'))
+print(g.describe().T)
+"
 ```
 
 ## [6] tool
@@ -679,7 +686,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/blocks.csv'
 **tool call: bash**
 
 ```
-
+find / -name "blocks.csv" 2>/dev/null; find / -name "task.txt" 2>/dev/null; pwd; ls -la
 ```
 
 ## [8] tool
@@ -698,7 +705,13 @@ drwxr-xr-x 2 root root 4096 Aug 11 01:34 data
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/blocks.csv')
+print(df.shape)
+g = df.groupby('block').agg(n=('x','size'), mn=('x','min'), p25=('x',lambda x: x.quantile(.25)), med=('x','median'), p75=('x',lambda x: x.quantile(.75)), mx=('x','max'), mean=('x','mean'), sd=('x','std'), skew=('x','skew'))
+print(g.describe().T)
+"
 ```
 
 ## [10] tool
@@ -2195,7 +2208,39 @@ print("time", time.time()-t0)
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/prof.py <<'EOF'
+import numpy as np, time
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
 
+def t_nll2(params, x):
+    df, loc, lsc = params
+    if df <= 0.05 or df > 300: return 1e12
+    sc = np.exp(lsc)
+    if sc <= 1e-12: return 1e12
+    a = gammaln((df+1)/2) - gammaln(df/2) - 0.5*np.log(df*np.pi) - np.log(sc)
+    z2 = ((x-loc)/sc)**2
+    return -np.sum(a - 0.5*(df+1)*np.log1p(z2/df))
+
+def t_fixed_fit(x, dfc):
+    x = np.asarray(x, float)
+    med = np.median(x); mad = np.median(np.abs(x-med))
+    if mad == 0: mad = np.std(x)+1e-12
+    res = optimize.minimize(lambda p: t_nll2([dfc,p[0],p[1]],x), [med, np.log(mad)], method='Nelder-Mead', options={'maxiter':800,'xatol':1e-4,'fatol':1e-4})
+    return res.x[0], np.exp(res.x[1])
+
+rng=np.random.default_rng(0)
+x=rng.standard_t(3,10)
+t0=time.time()
+for _ in range(200):
+    q_tfixed=(lambda dfc: (lambda x,taus,m: None))(None)
+    loc,sc=t_fixed_fit(x,3)
+    stats.t.ppf([.9,.95,.99],3,loc=loc,scale=sc)
+print("200 fixed fits:", time.time()-t0)
+EOF
+python3 /tmp/prof.py
 ```
 
 ## [32] tool
@@ -2218,7 +2263,121 @@ print("time", time.time()-t0)
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/mixsim.py <<'EOF'
+import numpy as np, pandas as pd, time
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings, sys
+warnings.filterwarnings('ignore')
 
+def t_nll2(params, x):
+    df, loc, lsc = params
+    if df <= 0.05 or df > 300: return 1e12
+    sc = np.exp(lsc)
+    if sc <= 1e-12: return 1e12
+    a = gammaln((df+1)/2) - gammaln(df/2) - 0.5*np.log(df*np.pi) - np.log(sc)
+    z2 = ((x-loc)/sc)**2
+    return -np.sum(a - 0.5*(df+1)*np.log1p(z2/df))
+
+def t_fixed_fit(x, dfc):
+    x = np.asarray(x, float)
+    med = np.median(x); mad = np.median(np.abs(x-med))
+    if mad == 0: mad = np.std(x)+1e-12
+    res = optimize.minimize(lambda p: t_nll2([dfc,p[0],p[1]],x), [med, np.log(mad)], method='Nelder-Mead', options={'maxiter':800,'xatol':1e-4,'fatol':1e-4})
+    return res.x[0], np.exp(res.x[1])
+
+def q_tfixed(x, taus, dfc):
+    loc, sc = t_fixed_fit(x, dfc)
+    return stats.t.ppf(taus, dfc, loc=loc, scale=sc)
+
+def q_normal(x, taus):
+    x = np.asarray(x); mu, sd = x.mean(), x.std(ddof=1)
+    if sd == 0: sd = 1e-9
+    return mu + stats.norm.ppf(taus)*sd
+
+def t_free_one(x, d0=3.0, cap=None):
+    x = np.asarray(x,float)
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    res=optimize.minimize(lambda p: t_nll2(p,x),[d0,med,np.log(mad)],method='Nelder-Mead',options={'maxiter':2000,'xatol':1e-4,'fatol':1e-4})
+    df, loc, lsc = res.x
+    if cap and df>cap: df=cap
+    return df, loc, np.exp(lsc)
+
+def q_tfree(x, taus, cap):
+    df, loc, sc = t_free_one(x, cap=cap)
+    return stats.t.ppf(taus, df, loc=loc, scale=sc)
+
+def rho(d, tau):
+    return np.where(d >= 0, tau*d, (tau-1)*d)
+
+def excess_loss(qhat, pop, tau):
+    p = np.sort(pop); m=len(pop)
+    qtrue = p[int(np.ceil(tau*m))-1]
+    return (rho(pop - qhat, tau).mean() - rho(pop - qtrue, tau).mean())
+
+dfd = pd.read_csv('data/blocks.csv')
+scales = dfd.groupby('block').x.std(ddof=1).values
+mvals = dfd.groupby('block').x.count().values
+nblocks = len(scales)
+
+methods = {}
+for dfc in [2.5,3,3.5,4,5]:
+    methods[f't{dfc}'] = (lambda dfc:(lambda x,taus,m: q_tfixed(x,taus,dfc)))(dfc)
+methods['norm'] = lambda x,taus,m: q_normal(x,taus)
+methods['tfree'] = lambda x,taus,m: q_tfree(x,taus,None)
+methods['tcap5'] = lambda x,taus,m: q_tfree(x,taus,5)
+methods['tcap8'] = lambda x,taus,m: q_tfree(x,taus,8)
+
+def make_mixture(dist_list, probs):
+    cs=np.cumsum(np.array(probs)/np.sum(probs))
+    dl=list(dist_list)
+    def draw(rng, m):
+        i=np.searchsorted(cs,rng.random())
+        return dl[i].rvs(size=m, random_state=rng)
+    return draw
+
+nrm=stats.norm(0,1)
+mixtures = {
+ 'mixA': make_mixture([stats.t(2,0,1),stats.t(3,0,1),stats.t(5,0,1)], [0.3,0.3,0.4]),
+ 'mixB': make_mixture([stats.t(2.5,0,1),stats.t(5,0,1),nrm], [0.35,0.25,0.4]),
+ 'mixC': make_mixture([stats.t(3,0,1),nrm,stats.johnsonsu(1.8,0.9),stats.johnsonsu(-1.8,0.9)], [0.3,0.3,0.2,0.2]),
+ 'mixE': make_mixture([stats.t(3,0,1),stats.t(5,0,1),nrm], [0.35,0.35,0.3]),
+}
+
+def simulate_blocks(mix, reps=40, seed=0):
+    rng = np.random.default_rng(seed)
+    res = {k: [] for k in methods}
+    for r in range(reps):
+        tot = {k: 0.0 for k in methods}
+        for b in range(nblocks):
+            s = scales[(b+r*7) % nblocks]; m = mvals[(b+r*7)%nblocks]
+            pop = mix(rng, m) * s
+            x = rng.choice(pop, size=10, replace=False)
+            taus=np.array([0.90,0.95,0.99])
+            for k, fn in methods.items():
+                try:
+                    q = fn(x, taus, m)
+                    loss = excess_loss(q[0],pop,0.90)+excess_loss(q[1],pop,0.95)+excess_loss(q[2],pop,0.99)
+                    tot[k]+=loss
+                except Exception:
+                    pass
+        for k in methods: res[k].append(tot[k])
+    return {k: np.mean(v) for k,v in res.items()}
+
+if __name__=='__main__':
+    t0=time.time()
+    which = sys.argv[1] if len(sys.argv)>1 else 'all'
+    for name,mix in mixtures.items():
+        if which!='all' and name!=which: continue
+        out = simulate_blocks(mix, reps=40, seed=7)
+        s = sorted(out.items(), key=lambda kv: kv[1])
+        print("==", name, flush=True)
+        print("  ", " | ".join(f"{k}:{v:.2f}" for k,v in s), flush=True)
+    print("time", time.time()-t0, flush=True)
+EOF
+nohup python3 /tmp/mixsim.py all > /tmp/mixsim_out.txt 2>&1 &
+echo "started"; sleep 90; cat /tmp/mixsim_out.txt
 ```
 
 ## [34] tool
@@ -2264,7 +2423,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 60; cat /tmp/mixsim_out.txt; echo "---"; ps aux | grep mixsim | grep -v grep | head
 ```
 
 ## [36] tool
@@ -2302,7 +2461,7 @@ bash: line 1: ps: command not found
 **tool call: bash**
 
 ```
-
+sleep 100; cat /tmp/mixsim_out.txt; echo "---"; ls -la /tmp/mixsim_out.txt
 ```
 
 ## [38] tool
@@ -2342,7 +2501,76 @@ bash: line 1: ps: command not found
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/diag.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings, time
+warnings.filterwarnings('ignore')
 
+def t_nll2(params, x):
+    df, loc, lsc = params
+    if df <= 0.05 or df > 300: return 1e12
+    sc = np.exp(lsc)
+    if sc <= 1e-12: return 1e12
+    a = gammaln((df+1)/2) - gammaln(df/2) - 0.5*np.log(df*np.pi) - np.log(sc)
+    z2 = ((x-loc)/sc)**2
+    return -np.sum(a - 0.5*(df+1)*np.log1p(z2/df))
+
+def t_fixed_fit(x, dfc):
+    x = np.asarray(x, float)
+    med = np.median(x); mad = np.median(np.abs(x-med))
+    if mad == 0: mad = np.std(x)+1e-12
+    res = optimize.minimize(lambda p: t_nll2([dfc,p[0],p[1]],x), [med, np.log(mad)], method='Nelder-Mead', options={'maxiter':800,'xatol':1e-4,'fatol':1e-4})
+    return res.x[0], np.exp(res.x[1])
+
+def q_tfixed(x, taus, dfc):
+    loc, sc = t_fixed_fit(x, dfc)
+    return stats.t.ppf(taus, dfc, loc=loc, scale=sc)
+
+def q_normal(x, taus):
+    x = np.asarray(x); mu, sd = x.mean(), x.std(ddof=1)
+    if sd == 0: sd = 1e-9
+    return mu + stats.norm.ppf(taus)*sd
+
+def rho(d, tau):
+    return np.where(d >= 0, tau*d, (tau-1)*d)
+
+def loss_both(qhat, pop, tau):
+    p = np.sort(pop); m=len(pop)
+    qtrue = p[int(np.ceil(tau*m))-1]
+    return rho(pop - qhat, tau).mean() - rho(pop - qtrue, tau).mean()
+
+methods = {}
+for dfc in [2,2.5,3,3.5,4,5,6]:
+    methods[f't{dfc}'] = (lambda dfc:(lambda x,taus,m: q_tfixed(x,taus,dfc)))(dfc)
+methods['norm'] = lambda x,taus,m: q_normal(x,taus)
+
+truths = {'t2':stats.t(2,0,1), 't3':stats.t(3,0,1), 't5':stats.t(5,0,1), 'norm':stats.norm(0,1)}
+
+t0=time.time()
+for tn, dist in truths.items():
+    rng = np.random.default_rng(100)
+    agg = {k: np.zeros(4) for k in methods}
+    nsamp=3000
+    for r in range(nsamp):
+        m = int(np.random.default_rng(r*3+1).integers(250,595))
+        s = np.exp(np.random.default_rng(r+5).normal(np.log(15.7), 1.0))  # scale like data
+        pop = dist.rvs(size=m, random_state=np.random.default_rng(r)) * s
+        x = pop[np.random.default_rng(r*7).choice(m, 10, replace=False)]
+        taus=np.array([0.90,0.95,0.99])
+        for k,fn in methods.items():
+            try:
+                q=fn(x,taus,m)
+                l = loss_both(q[0],pop,0.90)+loss_both(q[1],pop,0.95)+loss_both(q[2],pop,0.99)
+                agg[k] += [l, loss_both(q[0],pop,0.90), loss_both(q[1],pop,0.95), loss_both(q[2],pop,0.99)]
+            except Exception: pass
+    print("==", tn)
+    for k in sorted(methods, key=lambda k: agg[k][0]):
+        print(f"   {k:5s} tot={agg[k][0]/nsamp:8.3f}  q90={agg[k][1]/nsamp:6.3f} q95={agg[k][2]/nsamp:7.3f} q99={agg[k][3]/nsamp:7.3f}")
+print("time", time.time()-t0)
+EOF
+python3 /tmp/diag.py
 ```
 
 ## [40] tool
@@ -2567,7 +2795,142 @@ time 213.6883099079132
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/predsim.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings, time
+warnings.filterwarnings('ignore')
 
+def t_nll2(params, x, D):
+    loc, lsc = params
+    sc = np.exp(lsc)
+    if sc <= 1e-12: return 1e12
+    a = gammaln((D+1)/2) - gammaln(D/2) - 0.5*np.log(D*np.pi) - np.log(sc)
+    z2 = ((x-loc)/sc)**2
+    return -np.sum(a - 0.5*(D+1)*np.log1p(z2/D))
+
+def HessianNLL(fun, p0, eps=1e-4):
+    # numeric Hessian of fun at p0 (fun returns scalar)
+    n=len(p0)
+    H=np.zeros((n,n))
+    f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps
+        fp=fun(pi)
+        pi=p0.copy(); pi[i]-=eps
+        fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+
+def fit_tD(x, D):
+    x=np.asarray(x,float)
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    res=optimize.minimize(lambda p: t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':800,'xatol':1e-4,'fatol':1e-4})
+    return res.x[0], np.exp(res.x[1]), res.fun
+
+def posterior_q(x, D, taus, B=3000, seed=0):
+    # returns predictive quantiles (point estimates) and posterior interval for q95
+    rng=np.random.default_rng(seed)
+    mu, sc0, _ = fit_tD(x, D)
+    th0=np.array([mu, np.log(sc0)])
+    H=HessianNLL(lambda p: t_nll2(p,x,D), th0)
+    try:
+        cov=np.linalg.inv(H)
+    except np.linalg.LinAlgError:
+        cov=np.diag([1e-3,1e-3])
+    ths=rng.multivariate_normal(th0, cov, size=B)
+    # predictive quantiles: solve mean_tCDF(x) = f
+    def Fpred(xgrid):
+        # vector of x -> mean cdf over ths
+        out=np.empty(len(xgrid))
+        for k,xv in enumerate(xgrid):
+            out[k]=np.mean(stats.t.cdf(xv, D, loc=ths[:,0], scale=np.exp(ths[:,1])))
+        return out
+    qs=[]
+    for f in taus:
+        # bisection: find x with Fpred(x)=f
+        lo, hi = mu-50*sc0, mu+50*sc0
+        # ensure bracket
+        for _ in range(60):
+            mid=(lo+hi)/2
+            fmid=np.mean(stats.t.cdf(mid, D, loc=ths[:,0], scale=np.exp(ths[:,1])))
+            if fmid<f: lo=mid
+            else: hi=mid
+            if hi-lo < 1e-6*(abs(mu)+abs(sc0)+1): break
+        qs.append((lo+hi)/2)
+    # posterior interval of q95 (plug-in quantile conditional on theta)
+    q95_draws = ths[:,0] + stats.t.ppf(0.95,D)*np.exp(ths[:,1])
+    return np.array(qs), np.percentile(q95_draws,2.5), np.percentile(q95_draws,97.5)
+
+def q_plugin(x, D, taus):
+    mu,sc,_=fit_tD(x,D)
+    return stats.t.ppf(taus,D,loc=mu,scale=sc)
+
+def q_norm(x, taus):
+    x=np.asarray(x); mu,sd=x.mean(),x.std(ddof=1)
+    if sd==0: sd=1e-9
+    return mu+stats.norm.ppf(taus)*sd
+def q_tpredn(x, taus):
+    x=np.asarray(x); n=len(x); mu,sd=x.mean(),x.std(ddof=1)
+    if sd==0: sd=1e-9
+    return mu+stats.t.ppf(taus,n-1)*sd*np.sqrt(1+1/n)
+
+def rho(d,tau): return np.where(d>=0, tau*d, (tau-1)*d)
+def excess(qhat,pop,tau):
+    p=np.sort(pop); m=len(pop); qt=p[int(np.ceil(tau*m))-1]
+    return rho(pop-qhat,tau).mean()-rho(pop-qt,tau).mean()
+
+truths={'t2':stats.t(2,0,1),'t3':stats.t(3,0,1),'t5':stats.t(5,0,1),'norm':stats.norm(0,1)}
+taus=np.array([0.90,0.95,0.99])
+methods={}
+for D in [3,4,5]:
+    methods[f'plug{D}']=(lambda D:(lambda x: q_plugin(x,D,taus)))(D)
+    methods[f'pred{D}']=None  # handled specially
+methods['norm']=lambda x: q_norm(x,taus)
+methods['tpredn']=lambda x: q_tpredn(x,taus)
+
+out={}
+for tn,dist in truths.items():
+    rng=np.random.default_rng(11)
+    agg={k:[] for k in methods}
+    cov_stats={D:[] for D in [3,4,5]}
+    for r in range(300):
+        m=int(rng.integers(250,595)); s=np.exp(rng.normal(np.log(20),0.9))
+        pop=dist.rvs(size=m,random_state=rng)*s
+        x=rng.choice(pop,10,replace=False)
+        for k,fn in methods.items():
+            if k is None: continue
+            if k=='predD': continue
+            try:
+                q=fn(x)
+                agg[k].append(excess(q[0],pop,0.90)+excess(q[1],pop,0.95)+excess(q[2],pop,0.99))
+            except Exception: agg[k].append(np.nan)
+        for D in [3,4,5]:
+            try:
+                q,lo,hi=posterior_q(x,D,taus,seed=r)
+                agg[f'pred{D}'].append(excess(q[0],pop,0.90)+excess(q[1],pop,0.95)+excess(q[2],pop,0.99))
+                p=np.sort(pop); qt=p[int(np.ceil(0.95*m))-1]
+                cov_stats[D].append(lo<=qt<=hi)
+            except Exception:
+                agg[f'pred{D}'].append(np.nan); cov_stats[D].append(np.nan)
+    print("==",tn)
+    for k in sorted(agg, key=lambda k: np.nanmean(agg[k])):
+        print(f"   {k:7s} {np.nanmean(agg[k]):8.3f}", end="")
+    print()
+    for D in [3,4,5]:
+        print(f"   coverage q95 interval pred{D}: {np.nanmean(cov_stats[D]):.3f}")
+    print(flush=True)
+EOF
+nohup python3 /tmp/predsim.py > /tmp/predsim_out.txt 2>&1 &
+echo started; sleep 150; cat /tmp/predsim_out.txt
 ```
 
 ## [42] tool
@@ -2630,7 +2993,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 120; cat /tmp/predsim_out.txt
 ```
 
 ## [44] tool
@@ -2713,7 +3076,92 @@ started
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/skewsim.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings, time
+warnings.filterwarnings('ignore')
 
+def t_nll2(params, x, D):
+    loc,lsc=params; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    res=optimize.minimize(lambda p: t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':800,'xatol':1e-4,'fatol':1e-4})
+    return res.x[0],np.exp(res.x[1])
+def q_plugin(x,D,taus):
+    mu,sc=fit_tD(x,D); return stats.t.ppf(taus,D,loc=mu,scale=sc)
+def q_norm(x,taus):
+    x=np.asarray(x); mu,sd=x.mean(),x.std(ddof=1)
+    if sd==0: sd=1e-9
+    return mu+stats.norm.ppf(taus)*sd
+
+def rho(d,tau): return np.where(d>=0,tau*d,(tau-1)*d)
+def excess(q,pop,tau):
+    p=np.sort(pop); m=len(pop); qt=p[int(np.ceil(tau*m))-1]
+    return rho(pop-q,tau).mean()-rho(pop-qt,tau).mean()
+
+# skew-t via jf_skew_t (Jones-Faddy)
+def fit_jf(x):
+    try:
+        return stats.jf_skew_t.fit(x)
+    except Exception:
+        return None
+def q_jf(x,taus):
+    try:
+        a,b,loc,sc=stats.jf_skew_t.fit(x)
+        return stats.jf_skew_t.ppf(taus,a,b,loc=loc,scale=sc)
+    except Exception:
+        return q_norm(x,taus)
+
+# one-sided upper tail GPD heuristic: fit GPD to top 4 excesses above (6th largest), extrapolate
+def q_gpd_up(x,taus,K=4):
+    xs=np.sort(np.asarray(x)); n=len(xs)
+    u=xs[n-K]; exc=xs[n-K+1:]-u
+    try:
+        xi,loc,sc=stats.genpareto.fit(exc,floc=0); sc=max(sc,1e-9)
+        pu=K/n
+        q=[]
+        for f in taus:
+            p=1-f; ratio=pu/p
+            q.append(u+sc*np.log(ratio) if abs(xi)<1e-9 else u+sc/xi*(ratio**xi-1))
+        return np.array(q)
+    except Exception:
+        return q_norm(x,taus)
+
+truths={
+ 'jsuR': stats.johnsonsu(1.5,0.8,loc=0,scale=1),
+ 'jsuL': stats.johnsonsu(-1.5,0.8,loc=0,scale=1),
+ 'jsuR2': stats.johnsonsu(1.0,1.0,loc=0,scale=1),
+}
+taus=np.array([0.90,0.95,0.99])
+methods={'plug3':lambda x:q_plugin(x,3,taus),'plug4':lambda x:q_plugin(x,4,taus),
+         'norm':lambda x:q_norm(x,taus),'jf':lambda x:q_jf(x,taus),'gpd_up':lambda x:q_gpd_up(x,taus)}
+
+for tn,dist in truths.items():
+    rng=np.random.default_rng(9)
+    agg={k:[] for k in methods}
+    for r in range(400):
+        m=int(rng.integers(250,600)); s=np.exp(rng.normal(np.log(15),1.0))
+        pop=dist.rvs(size=m,random_state=rng)*s
+        x=rng.choice(pop,10,replace=False)
+        for k,fn in methods.items():
+            try:
+                q=fn(x)
+                agg[k].append(excess(q[0],pop,.90)+excess(q[1],pop,.95)+excess(q[2],pop,.99))
+            except Exception: agg[k].append(np.nan)
+    print("==",tn)
+    for k in sorted(agg,key=lambda k: np.nanmean(agg[k])):
+        print(f"   {k:7s} {np.nanmean(agg[k]):8.3f}")
+    print(flush=True)
+EOF
+nohup python3 /tmp/skewsim.py > /tmp/skewsim_out.txt 2>&1 &
+echo started; sleep 130; cat /tmp/skewsim_out.txt
 ```
 
 ## [46] tool
@@ -2809,7 +3257,69 @@ started
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/jftest.py <<'EOF'
+import numpy as np
+from scipy import stats
+import warnings, time
+warnings.filterwarnings('ignore')
 
+def q_norm(x,taus):
+    x=np.asarray(x); mu,sd=x.mean(),x.std(ddof=1)
+    if sd==0: sd=1e-9
+    return mu+stats.norm.ppf(taus)*sd
+def q_plugin_t(x,D,taus):
+    from scipy import optimize
+    from scipy.special import gammaln
+    def nll(p):
+        loc,lsc=p; sc=np.exp(lsc)
+        if sc<=1e-12: return 1e12
+        a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+        z2=((x-loc)/sc)**2
+        return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    res=optimize.minimize(nll,[med,np.log(mad)],method='Nelder-Mead')
+    mu,sc=res.x[0],np.exp(res.x[1])
+    return stats.t.ppf(taus,D,loc=mu,scale=sc)
+def q_jf(x,taus):
+    try:
+        a,b,loc,sc=stats.jf_skew_t.fit(x)
+        if not np.isfinite(sc) or sc<=0 or not np.isfinite(a) or not np.isfinite(b): return None
+        q=stats.jf_skew_t.ppf(taus,a,b,loc=loc,scale=sc)
+        if not np.all(np.isfinite(q)) or np.max(q)>1e6*np.max(np.abs(x))+1e6: 
+            # guard blowup
+            return q_norm(x,taus)
+        return q
+    except Exception:
+        return q_norm(x,taus)
+
+def rho(d,tau): return np.where(d>=0,tau*d,(tau-1)*d)
+def excess(q,pop,tau):
+    p=np.sort(pop); m=len(pop); qt=p[int(np.ceil(tau*m))-1]
+    return rho(pop-q,tau).mean()-rho(pop-qt,tau).mean()
+
+truths={'t2':stats.t(2,0,1),'t3':stats.t(3,0,1),'t5':stats.t(5,0,1),'norm':stats.norm(0,1),
+        'jsuR':stats.johnsonsu(1.5,0.8),'jsuL':stats.johnsonsu(-1.5,0.8)}
+taus=np.array([0.90,0.95,0.99])
+for tn,dist in truths.items():
+    rng=np.random.default_rng(3)
+    agg={'plug3':[],'plug4':[],'norm':[],'jf':[]}
+    for r in range(350):
+        m=int(rng.integers(250,600)); s=np.exp(rng.normal(np.log(15),1.0))
+        pop=dist.rvs(size=m,random_state=rng)*s
+        x=rng.choice(pop,10,replace=False)
+        q3=q_plugin_t(x,3,taus); q4=q_plugin_t(x,4,taus); qn=q_norm(x,taus); qj=q_jf(x,taus)
+        agg['plug3'].append(excess(q3[0],pop,.9)+excess(q3[1],pop,.95)+excess(q3[2],pop,.99))
+        agg['plug4'].append(excess(q4[0],pop,.9)+excess(q4[1],pop,.95)+excess(q4[2],pop,.99))
+        agg['norm'].append(excess(qn[0],pop,.9)+excess(qn[1],pop,.95)+excess(qn[2],pop,.99))
+        agg['jf'].append(excess(qj[0],pop,.9)+excess(qj[1],pop,.95)+excess(qj[2],pop,.99))
+    print("==",tn)
+    for k in sorted(agg,key=lambda k: np.mean(agg[k])):
+        print(f"   {k:5s} {np.mean(agg[k]):8.3f}")
+    print(flush=True)
+EOF
+nohup python3 /tmp/jftest.py > /tmp/jftest_out.txt 2>&1 &
+echo started; sleep 150; cat /tmp/jftest_out.txt
 ```
 
 ## [48] tool
@@ -2925,7 +3435,86 @@ started
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/covsim.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
 
+def t_nll2(params,x,D):
+    loc,lsc=params; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    res=optimize.minimize(lambda p: t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':800})
+    return res.x[0],np.exp(res.x[1])
+def HessianNLL(fun,p0,eps=2e-4):
+    n=len(p0); H=np.zeros((n,n)); f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps; fp=fun(pi)
+        pi=p0.copy(); pi[i]-=eps; fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+
+def hess_int(x,D,quant=(2.5,97.5),B=3000,seed=0):
+    rng=np.random.default_rng(seed)
+    mu,sc,_=fit_tD(x,D); th0=np.array([mu,np.log(sc)])
+    H=HessianNLL(lambda p: t_nll2(p,x,D), th0)
+    try: cov=np.linalg.inv(H)
+    except: cov=np.diag([1e-3,1e-3])
+    ths=rng.multivariate_normal(th0,cov,size=B)
+    q95=ths[:,0]+stats.t.ppf(0.95,D)*np.exp(ths[:,1])
+    return np.percentile(q95,quant[0]),np.percentile(q95,quant[1])
+
+def boot_int(x,D,quant=(2.5,97.5),B=300,seed=0):
+    rng=np.random.default_rng(seed)
+    mu,sc,_=fit_tD(x,D)
+    qs=[]
+    for b in range(B):
+        xs=rng.choice(x,10,replace=True)
+        try:
+            m,s,_=fit_tD(xs,D)
+            qs.append(m+stats.t.ppf(0.95,D)*s)
+        except Exception: pass
+    if len(qs)<30: return (mu+stats.t.ppf(0.95,D)*sc*0.5, mu+stats.t.ppf(0.95,D)*sc*2.0)
+    return np.percentile(qs,quant[0]),np.percentile(qs,quant[1])
+
+truths={'t3':stats.t(3,0,1),'t4':stats.t(4,0,1),'t5':stats.t(5,0,1),'norm':stats.norm(0,1)}
+int_methods={
+ 'hess_2.5':lambda x,D:hess_int(x,D,(2.5,97.5)),
+ 'hess_1':lambda x,D:hess_int(x,D,(1,99)),
+ 'hess_0.5':lambda x,D:hess_int(x,D,(0.5,99.5)),
+ 'boot_2.5':lambda x,D:boot_int(x,D,(2.5,97.5)),
+ 'boot_1':lambda x,D:boot_int(x,D,(1,99)),
+}
+for tn,dist in truths.items():
+    rng=np.random.default_rng(5)
+    cov={k:[] for k in int_methods}
+    for r in range(250):
+        m=int(rng.integers(250,600)); s=rng.lognormal(np.log(15),1.0)
+        pop=dist.rvs(size=m,random_state=rng)*s
+        x=rng.choice(pop,10,replace=False)
+        p=np.sort(pop); qt=p[int(np.ceil(0.95*m))-1]
+        for k,fn in int_methods.items():
+            lo,hi=fn(x,4)
+            cov[k].append(lo<=qt<=hi)
+    print("==",tn)
+    for k in int_methods: print(f"   {k:9s} {np.mean(cov[k]):.3f}", end="")
+    print(flush=True)
+EOF
+nohup python3 /tmp/covsim.py > /tmp/covsim_out.txt 2>&1 &
+echo started; sleep 150; cat /tmp/covsim_out.txt
 ```
 
 ## [50] tool
@@ -2955,7 +3544,9 @@ ValueError: not enough values to unpack (expected 3, got 2)
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i 's/mu,sc,_=fit_tD(x,D)/mu,sc=fit_tD(x,D)/g' /tmp/covsim.py
+nohup python3 /tmp/covsim.py > /tmp/covsim_out.txt 2>&1 &
+echo started; sleep 160; cat /tmp/covsim_out.txt
 ```
 
 ## [52] tool
@@ -2968,7 +3559,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 120; cat /tmp/covsim_out.txt; echo "==error?=="; tail -30 /tmp/covsim_out.txt
 ```
 
 ## [54] tool
@@ -2987,7 +3578,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 240; cat /tmp/covsim_out.txt
 ```
 
 ## [56] tool
@@ -3009,7 +3600,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 200; cat /tmp/covsim_out.txt
 ```
 
 ## [58] tool
@@ -3035,7 +3626,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 300; cat /tmp/covsim_out.txt
 ```
 
 ## [60] tool
@@ -3045,7 +3636,7 @@ started
 **tool call: bash**
 
 ```
-
+sleep 120; cat /tmp/covsim_out.txt
 ```
 
 ## [62] tool
@@ -3170,7 +3761,76 @@ started
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/build_pred.py <<'EOF'
+import numpy as np, pandas as pd
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
 
+D = 4.0   # fixed df
+
+def t_nll2(params,x,D):
+    loc,lsc=params; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    res=optimize.minimize(lambda p: t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':2000,'xatol':1e-8,'fatol':1e-8})
+    return res.x[0],np.exp(res.x[1])
+def HessianNLL(fun,p0,eps=1e-4):
+    n=len(p0); H=np.zeros((n,n)); f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps; fp=fun(pi)
+        pi=p0.copy(); pi[i]-=eps; fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+
+dfd=pd.read_csv('data/blocks.csv')
+out=[]
+B=6000
+taus=[0.90,0.95,0.99]
+loQ,hiQ=0.5,99.5
+rng=np.random.default_rng(123)
+for b,g in dfd.groupby('block'):
+    x=np.sort(g['x'].values); m=len(x)
+    mu,sc=fit_tD(x,D)
+    th0=np.array([mu,np.log(sc)])
+    H=HessianNLL(lambda p: t_nll2(p,x,D), th0)
+    try:
+        cov=np.linalg.inv(H)
+    except np.linalg.LinAlgError:
+        cov=np.diag([(sc*0.3)**2, 0.1])
+    # ensure PD
+    cov=(cov+cov.T)/2
+    w,v=np.linalg.eigh(cov); w=np.clip(w,1e-6,None)
+    cov=v@np.diag(w)@v.T
+    ths=rng.multivariate_normal(th0,cov,size=B)
+    locs=ths[:,0]; scs=np.exp(ths[:,1])
+    # predictive q95 posterior draws
+    pred = locs[:,None] + scs[:,None]*np.random.standard_t(D,size=(B,1))
+    qs=np.percentile(pred[:,0],[t*100 for t in taus])
+    q95_post=locs + stats.t.ppf(0.95,D)*scs
+    lo,hi=np.percentile(q95_post,[loQ,hiQ])
+    out.append(dict(block=b, q90=qs[0], q95=qs[1], q99=qs[2], lo=lo, hi=hi))
+
+res=pd.DataFrame(out).sort_values('block').reset_index(drop=True)
+print(res.head())
+print(res.describe())
+res.to_csv('predictions.csv', index=False)
+print("rows:", len(res))
+EOF
+nohup python3 /tmp/build_pred.py > /tmp/build_pred_out.txt 2>&1 &
+echo started; sleep 120; cat /tmp/build_pred_out.txt
 ```
 
 ## [64] tool
@@ -3213,7 +3873,17 @@ rows: 100
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+res=pd.read_csv('predictions.csv')
+print(res.columns.tolist())
+print('NaN count:', res.isna().sum().sum())
+d=pd.read_csv('data/blocks.csv')
+for b in [92,97,27,86,37,46,87,13,4,56,78,59]:
+    x=d[d.block==b].x.values
+    r=res[res.block==b].iloc[0]
+    print(f'block {b}: max={x.max():.2f} min={x.min():.2f} med={pd.Series(x).median():.2f} | q90={r.q90:.2f} q95={r.q95:.2f} q99={r.q99:.2f} lo={r.lo:.2f} hi={r.hi:.2f}')
+"
 ```
 
 ## [66] tool
@@ -3273,7 +3943,81 @@ block 59: max=176.20 min=-179.50 med=40.42 | q90=217.67 q95=276.90 q99=487.55 lo
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/boostsim.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
+D=4.0
+def t_nll2(params,x,D):
+    loc,lsc=params; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    res=optimize.minimize(lambda p: t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':1500})
+    return res.x[0],np.exp(res.x[1])
+def HessianNLL(fun,p0,eps=1e-4):
+    n=len(p0); H=np.zeros((n,n)); f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps; fp=fun(pi); pi=p0.copy(); pi[i]-=eps; fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+def pred_q(x,D,taus,B=3000,seed=0):
+    rng=np.random.default_rng(seed)
+    mu,sc=fit_tD(x,D); th0=np.array([mu,np.log(sc)])
+    H=HessianNLL(lambda p: t_nll2(p,x,D), th0)
+    try: cov=np.linalg.inv(H)
+    except: cov=np.diag([1e-3,1e-3])
+    cov=(cov+cov.T)/2
+    w,v=np.linalg.eigh(cov); w=np.clip(w,1e-6,None); cov=v@np.diag(w)@v.T
+    ths=rng.multivariate_normal(th0,cov,size=B)
+    locs=ths[:,0]; scs=np.exp(ths[:,1])
+    pred=locs[:,None]+scs[:,None]*np.random.standard_t(D,size=(B,1))
+    return np.percentile(pred[:,0],[f*100 for f in taus])
+def boost(x,q,beta=0.35,thr=1.5,capfac=1.7):
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-9
+    tR=(x.max()-med)/mad; tL=(med-x.min())/mad
+    if tR<=0 or tL<=0: return q
+    ratio=tR/tL
+    if ratio<=thr: return q
+    q=q.copy(); fac=1+beta*(ratio-1); fac=min(fac,capfac)
+    q[1]=q[1]*fac; q[2]=q[2]*fac
+    return q
+def rho(d,tau): return np.where(d>=0,tau*d,(tau-1)*d)
+def excess(q,pop,tau):
+    p=np.sort(pop); m=len(pop); qt=p[int(np.ceil(tau*m))-1]
+    return rho(pop-q,tau).mean()-rho(pop-qt,tau).mean()
+taus=np.array([0.90,0.95,0.99])
+truths={'t3':stats.t(3,0,1),'t5':stats.t(5,0,1),'norm':stats.norm(0,1),
+        'jsuR':stats.johnsonsu(1.5,0.8),'jsuL':stats.johnsonsu(-1.5,0.8)}
+for tn,dst in truths.items():
+    rng=np.random.default_rng(77)
+    a=[]; bb=[]
+    for r in range(300):
+        m=int(rng.integers(250,600)); s=rng.lognormal(np.log(15),1.0)
+        pop=dst.rvs(size=m,random_state=rng)*s
+        x=rng.choice(pop,10,replace=False)
+        q=pred_q(x,D,taus,seed=r)
+        qb=boost(x,q)
+        la=excess(q[0],pop,.9)+excess(q[1],pop,.95)+excess(q[2],pop,.99)
+        lb=excess(qb[0],pop,.9)+excess(qb[1],pop,.95)+excess(qb[2],pop,.99)
+        a.append(la); bb.append(lb)
+    print(f"{tn}: no-boost {np.mean(a):.3f}  boost {np.mean(bb):.3f}", flush=True)
+EOF
+nohup python3 /tmp/boostsim.py > /tmp/boostsim_out.txt 2>&1 &
+echo started; sleep 180; cat /tmp/boostsim_out.txt
 ```
 
 ## [68] tool
@@ -3327,7 +4071,87 @@ jsuL: no-boost 39.178  boost 26.602
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/seljf.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
+D=4.0
+def t_nll2(params,x,D):
+    loc,lsc=params; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    res=optimize.minimize(lambda p: t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':1500})
+    return res.x[0],np.exp(res.x[1]),res.fun
+def HessianNLL(fun,p0,eps=1e-4):
+    n=len(p0); H=np.zeros((n,n)); f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps; fp=fun(pi); pi=p0.copy(); pi[i]-=eps; fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+def pred_q(x,D,taus,B=3000,seed=0):
+    rng=np.random.default_rng(seed)
+    mu,sc,_=fit_tD(x,D); th0=np.array([mu,np.log(sc)])
+    H=HessianNLL(lambda p: t_nll2(p,x,D), th0)
+    try: cov=np.linalg.inv(H)
+    except: cov=np.diag([1e-3,1e-3])
+    cov=(cov+cov.T)/2
+    w,v=np.linalg.eigh(cov); w=np.clip(w,1e-6,None); cov=v@np.diag(w)@v.T
+    ths=rng.multivariate_normal(th0,cov,size=B)
+    locs=ths[:,0]; scs=np.exp(ths[:,1])
+    pred=locs[:,None]+scs[:,None]*np.random.standard_t(D,size=(B,1))
+    return np.percentile(pred[:,0],[f*100 for f in taus])
+def select_q(x,taus,seed=0):
+    # ejs rule
+    qt=pred_q(x,D,taus,seed=seed)
+    try:
+        a,b,loc,sc=stats.jf_skew_t.fit(x)
+        nll_jf=-np.sum(stats.jf_skew_t.logpdf(x,a,b,loc=loc,scale=sc))
+        qj=stats.jf_skew_t.ppf(taus,a,b,loc=loc,scale=sc)
+        if not np.all(np.isfinite(qj)): return qt
+    except Exception:
+        return qt
+    _,_,nll_t=fit_tD(x,D)
+    # AIC: t has 2 params, jf has 4
+    aic_t=2*nll_t+2*2; aic_jf=2*nll_jf+2*4
+    # guard against blowup
+    if aic_jf < aic_t - 4 and qj[1] < 5*qt[1] and qj[2] < 6*qt[2] and qj[0]<4*qt[0]:
+        return qj
+    return qt
+def rho(d,tau): return np.where(d>=0,tau*d,(tau-1)*d)
+def excess(q,pop,tau):
+    p=np.sort(pop); m=len(pop); qt=p[int(np.ceil(tau*m))-1]
+    return rho(pop-q,tau).mean()-rho(pop-qt,tau).mean()
+taus=np.array([0.90,0.95,0.99])
+truths={'t3':stats.t(3,0,1),'t5':stats.t(5,0,1),'norm':stats.norm(0,1),
+        'jsuR':stats.johnsonsu(1.5,0.8),'jsuL':stats.johnsonsu(-1.5,0.8)}
+for tn,dst in truths.items():
+    rng=np.random.default_rng(31)
+    A=[];BB=[]
+    for r in range(250):
+        m=int(rng.integers(250,600)); s=rng.lognormal(np.log(15),1.0)
+        pop=dst.rvs(size=m,random_state=rng)*s
+        x=rng.choice(pop,10,replace=False)
+        qa=pred_q(x,taus,seed=r)
+        qb=select_q(x,taus,seed=r)
+        A.append(excess(qa[0],pop,.9)+excess(qa[1],pop,.95)+excess(qa[2],pop,.99))
+        BB.append(excess(qb[0],pop,.9)+excess(qb[1],pop,.95)+excess(qb[2],pop,.99))
+    print(f"{tn}: base {np.mean(A):.3f}  sel {np.mean(BB):.3f}", flush=True)
+EOF
+nohup python3 /tmp/seljf.py > /tmp/seljf_out.txt 2>&1 &
+echo started; sleep 200; cat /tmp/seljf_out.txt
 ```
 
 ## [70] tool
@@ -3351,7 +4175,10 @@ TypeError: pred_q() missing 1 required positional argument: 'taus'
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i 's/pred_q(x,taus,seed=r)/pred_q(x,D,taus,seed=r)/g; s/select_q(x,taus,seed=r)/select_q(x,taus,seed=r)/g' /tmp/seljf.py
+grep -n "pred_q(x" /tmp/seljf.py | head
+nohup python3 /tmp/seljf.py > /tmp/seljf_out.txt 2>&1 &
+echo started; sleep 200; cat /tmp/seljf_out.txt
 ```
 
 ## [72] tool
@@ -3397,7 +4224,28 @@ jsuL: base 37.772  sel 35.575
 **tool call: bash**
 
 ```
+cd /workspace && cat >> /tmp/seljf.py <<'EOF'
 
+# apply to real data
+import pandas as pd
+dfd=pd.read_csv('data/blocks.csv')
+D=4.0
+rows=[]
+for b,g in dfd.groupby('block'):
+    x=np.sort(g['x'].values)
+    qt=pred_q(x,D,taus,seed=0)
+    qs=select_q(x,taus,seed=0)
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    tR=(x.max()-med)/mad; tL=(med-x.min())/mad
+    rows.append(dict(block=b, q90=qs[0],q95=qs[1],q99=qs[2], base90=qt[0],base95=qt[1],base99=qt[2],
+                     skew=stats.skew(x), tR=tR, tL=tL,
+                     sel=(np.any(np.abs(np.array(qs)-np.array(qt))>1e-6))))
+r=pd.DataFrame(rows)
+print("selected count:", r.sel.sum())
+print(r[r.sel][['block','skew','tR','tL','q95','base95','q99','base99','q90','base90']].to_string())
+EOF
+nohup python3 /tmp/seljf.py >> /tmp/seljf_out.txt 2>&1 &
+echo started; sleep 120; cat /tmp/seljf_out.txt
 ```
 
 ## [74] tool
@@ -3586,7 +4434,91 @@ selected count: 100
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/finalmix.py <<'EOF'
+import numpy as np, pandas as pd
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
+def t_nll2(p,x,D):
+    loc,lsc=p; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    r=optimize.minimize(lambda p:t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':1500})
+    return r.x[0],np.exp(r.x[1])
+def Hess(fun,p0,eps=1e-4):
+    n=len(p0); H=np.zeros((n,n)); f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps; fp=fun(pi); pi=p0.copy(); pi[i]-=eps; fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+def pred_q(x,D,taus,B=3000,seed=0):
+    rng=np.random.default_rng(seed)
+    mu,sc=fit_tD(x,D); th0=np.array([mu,np.log(sc)])
+    H=Hess(lambda p:t_nll2(p,x,D),th0)
+    try: cov=np.linalg.inv(H)
+    except: cov=np.diag([1e-3,1e-3])
+    cov=(cov+cov.T)/2; w,v=np.linalg.eigh(cov); cov=v@np.diag(np.clip(w,1e-6,None))@v.T
+    ths=rng.multivariate_normal(th0,cov,size=B)
+    pred=ths[:,0,None]+np.exp(ths[:,1,None])*np.random.standard_t(D,size=(B,1))
+    return np.percentile(pred[:,0],[f*100 for f in taus])
+def rho(d,t): return np.where(d>=0,t*d,(t-1)*d)
+def exc(q,pop,t):
+    p=np.sort(pop); m=len(pop); qt=p[int(np.ceil(t*m))-1]
+    return rho(pop-q,t).mean()-rho(pop-qt,t).mean()
 
+dfd=pd.read_csv('data/blocks.csv'); scales=dfd.groupby('block').x.std(ddof=1).values; mvals=dfd.groupby('block').x.count().values
+nblocks=len(scales)
+taus=np.array([0.90,0.95,0.99])
+def mk(comps,probs):
+    cs=np.cumsum(np.array(probs)/np.sum(probs)); dl=list(comps)
+    def dr(rng,m):
+        i=np.searchsorted(cs,rng.random()); return dl[i].rvs(size=m,random_state=rng)
+    return dr
+heavy=[stats.t(2.5,0,1),stats.t(3,0,1),stats.t(4,0,1),stats.t(5,0,1),stats.norm(0,1),
+       stats.johnsonsu(1.5,0.8),stats.johnsonsu(-1.5,0.8)]
+mixes={
+ 'M1': mk([heavy[1],heavy[2],heavy[3],heavy[4]],[0.3,0.3,0.25,0.15]),
+ 'M2': mk([heavy[1],heavy[3],heavy[4],heavy[5],heavy[6]],[0.3,0.3,0.2,0.1,0.1]),
+ 'M3': mk([heavy[0],heavy[2],heavy[4],heavy[5]],[0.35,0.3,0.25,0.1]),
+}
+def full(x,D,q99df=None):
+    q=pred_q(x,D,taus)
+    if q99df: q[2]=pred_q(x,q99df,np.array([0.99]))[0]
+    return q
+def run(mix,reps=50,seed=0):
+    rng=np.random.default_rng(seed)
+    agg={'P4':[],'P3':[],'P5':[],'P4q99_3':[],'P4q99_5':[]}
+    for r in range(reps):
+        tot={k:0.0 for k in agg}
+        for b in range(nblocks):
+            s=scales[(b+r*11)%nblocks]; m=mvals[(b+r*11)%nblocks]
+            pop=mix(rng,m)*s
+            x=rng.choice(pop,10,replace=False)
+            p4=full(x,4); p3=full(x,3); p5=full(x,5)
+            p4q3=full(x,4,3); p4q5=full(x,4,5)
+            for k,q in {'P4':p4,'P3':p3,'P5':p5,'P4q99_3':p4q3,'P4q99_5':p4q5}.items():
+                tot[k]+=exc(q[0],pop,.9)+exc(q[1],pop,.95)+exc(q[2],pop,.99)
+        for k in agg: agg[k].append(tot[k])
+    return {k:np.mean(v) for k,v in agg.items()}
+for name,mix in mixes.items():
+    out=run(mix,reps=35,seed=3)
+    print(name, {k:round(v,1) for k,v in sorted(out.items(),key=lambda kv:kv[1])}, flush=True)
+print("done")
+EOF
+nohup python3 /tmp/finalmix.py > /tmp/finalmix_out.txt 2>&1 &
+echo started; sleep 170; cat /tmp/finalmix_out.txt
 ```
 
 ## [78] tool
@@ -3627,7 +4559,7 @@ M2 {'P5': np.float64(882.2), 'P4q99_5': np.float64(925.7), 'P4': np.float64(950.
 **tool call: bash**
 
 ```
-
+sleep 120; cat /tmp/finalmix_out.txt
 ```
 
 ## [80] tool
@@ -3713,7 +4645,75 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/build2.py <<'EOF'
+import numpy as np, pandas as pd
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
 
+DP=5.0   # df for point estimates
+DI=4.0   # df for interval (heavier, ensures coverage)
+
+def t_nll2(params,x,D):
+    loc,lsc=params; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    r=optimize.minimize(lambda p:t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':2000,'xatol':1e-8,'fatol':1e-8})
+    return r.x[0],np.exp(r.x[1])
+def Hess(fun,p0,eps=1e-4):
+    n=len(p0); H=np.zeros((n,n)); f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps; fp=fun(pi); pi=p0.copy(); pi[i]-=eps; fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+
+dfd=pd.read_csv('data/blocks.csv')
+out=[]; B=8000
+taus=[0.90,0.95,0.99]
+rng=np.random.default_rng(2024)
+for b,g in dfd.groupby('block'):
+    x=np.sort(g['x'].values); m=len(x)
+    # point estimates from df=DP
+    mu,sc=fit_tD(x,DP); th0=np.array([mu,np.log(sc)])
+    H=Hess(lambda p:t_nll2(p,x,DP),th0)
+    try: cov=np.linalg.inv(H)
+    except: cov=np.diag([1e-3,1e-3])
+    cov=(cov+cov.T)/2; w,v=np.linalg.eigh(cov); cov=v@np.diag(np.clip(w,1e-6,None))@v.T
+    ths=rng.multivariate_normal(th0,cov,size=B)
+    pred=ths[:,0,None]+np.exp(ths[:,1,None])*np.random.standard_t(DP,size=(B,1))
+    qs=np.percentile(pred[:,0],[f*100 for f in taus])
+    # interval from df=DI (heavier) posterior, widened
+    muI,scI=fit_tD(x,DI); th0I=np.array([muI,np.log(scI)])
+    HI=Hess(lambda p:t_nll2(p,x,DI),th0I)
+    try: covI=np.linalg.inv(HI)
+    except: covI=np.diag([1e-3,1e-3])
+    covI=(covI+covI.T)/2; wI,vI=np.linalg.eigh(covI); covI=vI@np.diag(np.clip(wI,1e-6,None))@vI.T
+    thsI=rng.multivariate_normal(th0I,covI,size=B)
+    q95I=thsI[:,0]+stats.t.ppf(0.95,DI)*np.exp(thsI[:,1])
+    lo,hi=np.percentile(q95I,[0.5,99.5])
+    out.append(dict(block=b,q90=qs[0],q95=qs[1],q99=qs[2],lo=lo,hi=hi))
+
+res=pd.DataFrame(out).sort_values('block').reset_index(drop=True)
+res.to_csv('predictions.csv',index=False)
+print("rows",len(res),"NaN",res.isna().sum().sum())
+print(res.head())
+for b in [1,27,37,46,47,56,87,92,97,99]:
+    r=res[res.block==b].iloc[0]
+    print(f"{b}: q90={r.q90:.2f} q95={r.q95:.2f} q99={r.q99:.2f} lo={r.lo:.2f} hi={r.hi:.2f}")
+EOF
+python3 /tmp/build2.py
 ```
 
 ## [84] tool
@@ -3796,7 +4796,98 @@ rows 100 NaN 0
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/build3.py <<'EOF'
+import numpy as np, pandas as pd
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
 
+DP=5.0; DI=4.0
+
+def t_nll2(p,x,D):
+    loc,lsc=p; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    r=optimize.minimize(lambda p:t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':2000,'xatol':1e-8,'fatol':1e-8})
+    return r.x[0],np.exp(r.x[1])
+def Hess(fun,p0,eps=1e-4):
+    n=len(p0); H=np.zeros((n,n)); f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps; fp=fun(pi); pi=p0.copy(); pi[i]-=eps; fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+def pred_q(x,D,taus,B=4000,seed=0):
+    rng=np.random.default_rng(seed)
+    mu,sc=fit_tD(x,D); th0=np.array([mu,np.log(sc)])
+    H=Hess(lambda p:t_nll2(p,x,D),th0)
+    try: cov=np.linalg.inv(H)
+    except: cov=np.diag([1e-3,1e-3])
+    cov=(cov+cov.T)/2; w,v=np.linalg.eigh(cov); cov=v@np.diag(np.clip(w,1e-6,None))@v.T
+    ths=rng.multivariate_normal(th0,cov,size=B)
+    pred=ths[:,0,None]+np.exp(ths[:,1,None])*np.random.standard_t(D,size=(B,1))
+    return np.percentile(pred[:,0],[f*100 for f in taus])
+
+dfd=pd.read_csv('data/blocks.csv')
+out=[]; B=8000
+rng=np.random.default_rng(2024)
+DAIC=4.0; CAP=4.0
+for b,g in dfd.groupby('block'):
+    x=np.sort(g['x'].values); m=len(x)
+    base=pred_q(x,DP,[0.90,0.95,0.99])
+    # try jf
+    use_jf=False; qj=None
+    try:
+        a,bj,loc,sc=stats.jf_skew_t.fit(x)
+        nll_jf=-np.sum(stats.jf_skew_t.logpdf(x,a,bj,loc=loc,scale=sc))
+        qj=stats.jf_skew_t.ppf([0.90,0.95,0.99],a,bj,loc=loc,scale=sc)
+        _,_,nll_t5=fit_tD(x,DP); # nll of t5
+        # for fair AIC compare t5 (2 params) vs jf (4 params)
+        if np.all(np.isfinite(qj)) and np.all(np.isfinite([a,bj,loc,sc])) and sc>0:
+            aic_t=2*nll_t5+2*2; aic_jf=2*nll_jf+2*4
+            # guards against blowup: jf quantiles not > CAP*base (for q95,q99) and not absurd relative scale
+            if (aic_jf < aic_t - DAIC and qj[1] < CAP*base[1] and qj[2] < CAP*base[2]
+                and qj[0] < CAP*base[0] and qj[2] < 1e6):
+                use_jf=True
+    except Exception:
+        pass
+    if use_jf:
+        qs=qj
+    else:
+        qs=base
+    # interval from df=DI posterior, widened
+    muI,scI=fit_tD(x,DI); th0I=np.array([muI,np.log(scI)])
+    HI=Hess(lambda p:t_nll2(p,x,DI),th0I)
+    try: covI=np.linalg.inv(HI)
+    except: covI=np.diag([1e-3,1e-3])
+    covI=(covI+covI.T)/2; wI,vI=np.linalg.eigh(covI); covI=vI@np.diag(np.clip(wI,1e-6,None))@vI.T
+    thsI=rng.multivariate_normal(th0I,covI,size=B)
+    q95I=thsI[:,0]+stats.t.ppf(0.95,DI)*np.exp(thsI[:,1])
+    lo,hi=np.percentile(q95I,[0.5,99.5])
+    out.append(dict(block=b,q90=qs[0],q95=qs[1],q99=qs[2],lo=lo,hi=hi,jf=use_jf))
+
+res=pd.DataFrame(out).sort_values('block').reset_index(drop=True)
+print("jf selected count:", res.jf.sum())
+res[['block','q90','q95','q99','lo','hi']].to_csv('predictions.csv',index=False)
+print("rows",len(res),"NaN",res[['q90','q95','q99','lo','hi']].isna().sum().sum())
+print(res[res.jf][['block','q90','q95','q99','lo','hi']].to_string())
+print()
+for b in [1,27,37,46,47,56,87,92,97,99,38,71,41,73]:
+    r=res[res.block==b].iloc[0]
+    print(f"{b}: q90={r.q90:.2f} q95={r.q95:.2f} q99={r.q99:.2f} lo={r.lo:.2f} hi={r.hi:.2f} jf={r.jf}")
+EOF
+python3 /tmp/build3.py
 ```
 
 ## [86] tool
@@ -3862,7 +4953,16 @@ Index: []
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv | head -5 && echo "..." && wc -l predictions.csv && python3 -c "
+import pandas as pd
+r=pd.read_csv('predictions.csv')
+print('columns:', r.columns.tolist())
+print('n blocks:', len(r), 'unique:', r.block.nunique())
+print('blocks 1..100:', sorted(r.block.tolist())==list(range(1,101)))
+print('any NaN:', r.isna().any().any())
+print('all q95 in [lo,hi]:', ((r.hi>=r.q95)&(r.lo<=r.q95)).all())
+print(r[['block','q90','q95','q99','lo','hi']].describe().round(3))
+"
 ```
 
 ## [88] tool
@@ -3913,7 +5013,75 @@ max    100.000  1016.850  1326.805  1887.669  452.116  2294.403
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/val.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+from scipy.special import gammaln
+import warnings
+warnings.filterwarnings('ignore')
+DP=5.0; DI=4.0
+def t_nll2(p,x,D):
+    loc,lsc=p; sc=np.exp(lsc)
+    if sc<=1e-12: return 1e12
+    a=gammaln((D+1)/2)-gammaln(D/2)-0.5*np.log(D*np.pi)-np.log(sc)
+    z2=((x-loc)/sc)**2
+    return -np.sum(a-0.5*(D+1)*np.log1p(z2/D))
+def fit_tD(x,D):
+    x=np.asarray(x,float); med=np.median(x); mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)+1e-12
+    r=optimize.minimize(lambda p:t_nll2(p,x,D),[med,np.log(mad)],method='Nelder-Mead',options={'maxiter':1500})
+    return r.x[0],np.exp(r.x[1])
+def Hess(fun,p0,eps=1e-4):
+    n=len(p0); H=np.zeros((n,n)); f0=fun(p0)
+    for i in range(n):
+        pi=p0.copy(); pi[i]+=eps; fp=fun(pi); pi=p0.copy(); pi[i]-=eps; fm=fun(pi)
+        H[i,i]=(fp-2*f0+fm)/eps**2
+        for j in range(i+1,n):
+            pij=p0.copy(); pij[i]+=eps; pij[j]+=eps; fpp=fun(pij)
+            pij=p0.copy(); pij[i]+=eps; pij[j]-=eps; fpm=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]+=eps; fmp=fun(pij)
+            pij=p0.copy(); pij[i]-=eps; pij[j]-=eps; fmm=fun(pij)
+            H[i,j]=H[j,i]=(fpp-fpm-fmp+fmm)/(4*eps**2)
+    return H
+def pipeline(x,taus,B=4000,seed=0):
+    rng=np.random.default_rng(seed)
+    mu,sc=fit_tD(x,DP); th0=np.array([mu,np.log(sc)])
+    H=Hess(lambda p:t_nll2(p,x,DP),th0)
+    try: cov=np.linalg.inv(H)
+    except: cov=np.diag([1e-3,1e-3])
+    cov=(cov+cov.T)/2; w,v=np.linalg.eigh(cov); cov=v@np.diag(np.clip(w,1e-6,None))@v.T
+    ths=rng.multivariate_normal(th0,cov,size=B)
+    pred=ths[:,0,None]+np.exp(ths[:,1,None])*np.random.standard_t(DP,size=(B,1))
+    q=np.percentile(pred[:,0],[f*100 for f in taus])
+    muI,scI=fit_tD(x,DI); th0I=np.array([muI,np.log(scI)])
+    HI=Hess(lambda p:t_nll2(p,x,DI),th0I)
+    try: covI=np.linalg.inv(HI)
+    except: covI=np.diag([1e-3,1e-3])
+    covI=(covI+covI.T)/2; wI,vI=np.linalg.eigh(covI); covI=vI@np.diag(np.clip(wI,1e-6,None))@vI.T
+    thsI=rng.multivariate_normal(th0I,covI,size=B)
+    q95I=thsI[:,0]+stats.t.ppf(0.95,DI)*np.exp(thsI[:,1])
+    lo,hi=np.percentile(q95I,[0.5,99.5])
+    return q,lo,hi
+def rho(d,t): return np.where(d>=0,t*d,(t-1)*d)
+def exc(q,pop,t):
+    p=np.sort(pop); m=len(pop); qt=p[int(np.ceil(t*m))-1]
+    return rho(pop-q,t).mean()-rho(pop-qt,t).mean()
+taus=np.array([0.90,0.95,0.99])
+for tn,dist in {'t3':stats.t(3,0,1),'t4':stats.t(4,0,1),'t5':stats.t(5,0,1),'norm':stats.norm(0,1)}.items():
+    rng=np.random.default_rng(50); loss=[]; cov=[]; covtight=[]
+    for r in range(250):
+        m=int(rng.integers(250,600)); s=rng.lognormal(np.log(15),1.0)
+        pop=dist.rvs(size=m,random_state=rng)*s
+        x=rng.choice(pop,10,replace=False)
+        q,lo,hi=pipeline(x,taus,seed=r)
+        loss.append(exc(q[0],pop,.9)+exc(q[1],pop,.95)+exc(q[2],pop,.99))
+        p=np.sort(pop); qt=p[int(np.ceil(0.95*m))-1]
+        cov.append(lo<=qt<=hi)
+    print(f"{tn}: loss {np.mean(loss):.3f}  cov95 {np.mean(cov):.3f}")
+print("done")
+EOF
+nohup python3 /tmp/val.py > /tmp/val_out.txt 2>&1 &
+echo started; sleep 120; cat /tmp/val_out.txt
 ```
 
 ## [90] tool
@@ -3949,7 +5117,14 @@ done
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+r=pd.read_csv('predictions.csv')
+print(r.columns.tolist())
+print('rows:',len(r),'blocks 1-100:', sorted(r.block)==list(range(1,101)))
+print('NaN anywhere:', r.isna().any().any())
+print(r.head(10).round(3).to_string(index=False))
+"
 ```
 
 ## [92] tool

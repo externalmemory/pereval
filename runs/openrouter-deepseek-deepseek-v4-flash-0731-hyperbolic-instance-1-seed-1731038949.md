@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd data && head -50 train.csv && echo "---" && wc -l train.csv test.csv && echo "---" && head test.csv
 ```
 
 ## [3] tool
@@ -134,7 +134,17 @@ t
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd
+df=pd.read_csv('train.csv')
+print(df.shape)
+print('gamma non-null count', df['gamma'].notna().sum())
+print('beta non-null count', df['beta'].notna().sum())
+g=df[df['gamma'].notna()]
+print(g.head(30))
+print('...')
+print(g.tail(30))
+"
 ```
 
 ## [5] tool
@@ -272,7 +282,28 @@ beta non-null count 167
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+print(df.columns)
+print(df.tail(10))
+g=df.dropna(subset=['gamma']).copy()
+# unwrap alpha
+a=np.unwrap(df['alpha'].values*np.pi/180)*180/np.pi
+df['alpha_unwrapped']=a
+# check linearity of alpha_unwrapped
+print('alpha_unwrapped head/tail', df['alpha_unwrapped'].iloc[0], df['alpha_unwrapped'].iloc[-1])
+g=df.dropna(subset=['gamma']).copy()
+print(g[['t','alpha','alpha_unwrapped','beta','gamma']].iloc[:5])
+print(g[['t','alpha','alpha_unwrapped','beta','gamma']].iloc[-5:])
+import numpy as np
+# correlation gamma vs alpha_unwrapped
+print('corr gamma vs alpha_unwrapped', np.corrcoef(g['gamma'], g['alpha_unwrapped'])[0,1])
+print('corr gamma vs beta', np.corrcoef(g['gamma'], g['beta'])[0,1])
+print('corr gamma vs t', np.corrcoef(g['gamma'], g['t'])[0,1])
+# beta vs alpha? beta vs t
+print('corr beta vs alpha_unwrapped', np.corrcoef(g['beta'], g['alpha_unwrapped'])[0,1])
+"
 ```
 
 ## [7] tool
@@ -369,7 +400,32 @@ corr beta vs alpha_unwrapped -0.9681566875827521
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+# alpha rate
+a=np.unwrap(df['alpha'].values*np.pi/180)*180/np.pi
+df['a']=a
+# fit alpha vs t linear
+t=df['t'].values
+coef=np.polyfit(t,a,1)
+print('alpha slope,intercept', coef)
+g=df.dropna(subset=['gamma']).copy()
+print('gamma obs count', len(g))
+# fit gamma vs t linear
+c2=np.polyfit(g['t'],g['gamma'],1)
+print('gamma~t slope,intercept',c2)
+pred=np.polyval(c2,g['t'])
+res=g['gamma']-pred
+print('resid std linear', res.std())
+# gamma vs a (unwrapped) linear
+c3=np.polyfit(g['a'],g['gamma'],1)
+pred3=np.polyval(c3,g['a'])
+print('gamma~a resid std', (g['gamma']-pred3).std())
+# plot gamma vs a
+print(g[['a','gamma']].describe())
+print('min a gamma seg', g['a'].min(), g['a'].max())
+"
 ```
 
 ## [9] tool
@@ -418,7 +474,25 @@ min a gamma seg 654.172 781.6725
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+df=pd.read_csv('train.csv')
+g=df.dropna(subset=['gamma']).copy()
+plt.figure(figsize=(10,4))
+plt.plot(g['t'],g['gamma'],'o',ms=3)
+plt.title('gamma vs t')
+plt.savefig('g.png')
+plt.close()
+# print gamma sequence in chunks
+print(g['gamma'].values[:50])
+print('---')
+print(g['gamma'].values[50:100])
+print('---')
+print(g['gamma'].values[100:167])
+"
 ```
 
 ## [11] tool
@@ -440,7 +514,15 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+print(g['gamma'].values[:55])
+print('---')
+print(g['gamma'].values[55:110])
+print('---')
+print(g['gamma'].values[110:167])
+"
 ```
 
 ## [13] tool
@@ -526,7 +608,20 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+# try sin fit with free period
+def fit(P):
+    X=np.column_stack([np.sin(2*np.pi*t/P), np.cos(2*np.pi*t/P), np.ones_like(t)])
+    coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+    res=y-X@coef
+    return np.sqrt((res**2).mean()), coef
+for P in [200,250,300,350,365,380,400,450,500,600,800]:
+    rmse,c=fit(P)
+    print(P, rmse, c)
+"
 ```
 
 ## [15] tool
@@ -587,7 +682,27 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+a=np.unwrap(df['alpha'].values*np.pi/180)*180/np.pi
+g=df.dropna(subset=['gamma']).copy()
+# alpha at gamma rows
+aa=a[g.index.values]
+tg=g['t'].values; y=g['gamma'].values; aa=aa
+# alpha mod 360 phase
+phase=np.mod(aa,360)*np.pi/180
+X=np.column_stack([np.sin(phase),np.cos(phase),np.ones_like(phase)])
+coef,_,_,_=np.linalg.lstsq(X,y,rcond=None)
+res=y-X@coef
+print('alpha-sinusoid rmse', np.sqrt((res**2).mean()))
+print('coef(sin,cos,c)=',coef)
+# amplitude and phase
+A=np.hypot(coef[0],coef[1]); ph=np.arctan2(coef[1],coef[0])
+print('A',A,'phase (deg) offset', ph*180/np.pi)
+# where's minimum? 
+# y = A sin(phase+ph)+C ; min where sin=-1 => phase = -ph - pi/2
+"
 ```
 
 ## [17] tool
@@ -694,7 +809,28 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+def fit(P):
+    ph=2*np.pi*t/P
+    X=np.column_stack([np.sin(ph),np.cos(ph),np.ones_like(t)])
+    coef=np.linalg.lstsq(X,y,rcond=None)[0]
+    res=y-X@coef
+    return np.sqrt((res**2).mean()), coef
+best=None
+for P in np.arange(250,401,5):
+    rmse,c=fit(P)
+    if best is None or rmse<best[0]: best=(rmse,P,c)
+print('best rmse',best[0],'P',best[1])
+rmse,P,c=best
+# get test times
+test=pd.read_csv('test.csv')['t'].values
+ph=2*np.pi*test/P
+pred=c[0]*np.sin(ph)+c[1]*np.cos(ph)+c[2]
+for tt,pp in zip(test,pred): print(tt, round(pp,2))
+"
 ```
 
 ## [21] tool
@@ -863,7 +999,35 @@ best rmse 7.554041803977928 P 315
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+# Estimate noise: local linear smoothing residual
+from numpy.polynomial import chebyshev
+# smooth via moving average of 5
+def smooth(x,w=5):
+    k=np.ones(w)/w
+    return np.convolve(x,k,mode='same')
+ys=smooth(y)
+# edge correction
+res=y-ys
+print('noise std (moving avg resid)', res.std())
+# derivative at end via linear fit on last 10 points
+sl= np.polyfit(t[-12:],y[-12:],1)[0]
+print('slope last 12 pts (deg/day)', sl)
+sl2=np.polyfit(t[-6:],y[-6:],1)[0]
+print('slope last 6 pts', sl2)
+sl3=np.polyfit(t[-25:],y[-25:],1)[0]
+print('slope last 25 pts', sl3)
+sl4=np.polyfit(t[120:],y[120:],1)[0]
+print('slope from index120', sl4)
+# residuals of a cubic fit in t
+c=np.polyfit(t,y,4)
+r=y-np.polyval(c,t)
+print('cubic(4) resid std', r.std())
+print('quartic(5) resid std',(y-np.polyval(np.polyfit(t,y,5),t)).std())
+"
 ```
 
 ## [23] tool
@@ -951,7 +1115,14 @@ quartic(5) resid std 3.076835528593696
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values; b=g['beta'].values
+# print gamma vs beta every 10 rows
+for i in range(0,len(g),10):
+    print(int(t[i]), round(b[i],2), round(y[i],2))
+"
 ```
 
 ## [25] tool
@@ -998,7 +1169,43 @@ quartic(5) resid std 3.076835528593696
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+a=np.unwrap(df['alpha'].values*np.pi/180)*180/np.pi
+g=df.dropna(subset=['gamma']).copy()
+idx=g.index.values
+aa=a[idx]
+t=g['t'].values; y=g['gamma'].values
+# use alpha mod 360 as year phase
+ph=np.mod(aa,360)*np.pi/180
+# fit fourier order k
+def fourier_fit(k, ph, y):
+    cols=[np.ones_like(ph)]
+    for n in range(1,k+1):
+        cols.append(np.sin(n*ph)); cols.append(np.cos(n*ph))
+    X=np.column_stack(cols)
+    coef=np.linalg.lstsq(X,y,rcond=None)[0]
+    return X,coef
+for k in [1,2,3,4,5,6]:
+    X,c=fourier_fit(k,ph,y)
+    r=y-X@c
+    print('k',k,'rmse',round(np.sqrt((r**2).mean()),3))
+# predict test
+test=pd.read_csv('test.csv')['t'].values
+# alpha at test: alpha slope 1.027165, intercept 324.678
+a_test=1.02716538*test+324.67787421
+ph_test=np.mod(a_test,360)*np.pi/180
+k=4
+X,c=fourier_fit(k,ph,y)
+def pred(ph):
+    cols=[np.ones_like(ph)]
+    for n in range(1,k+1):
+        cols.append(np.sin(n*ph)); cols.append(np.cos(n*ph))
+    return np.column_stack(cols)@c
+print('k=4 test preds:')
+for tt,pt in zip(test,pred(ph_test)): print(tt, round(pt,2))
+"
 ```
 
 ## [27] tool
@@ -1079,7 +1286,21 @@ k=4 test preds:
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+# fit gamma = c + A*cos(2pi(t-352)/P)
+def fitc(P):
+    th=2*np.pi*(t-352.0)/P
+    X=np.column_stack([np.cos(th),np.ones_like(t)])
+    c=np.linalg.lstsq(X,y,rcond=None)[0]
+    r=y-X@c
+    return np.sqrt((r**2).mean()), c
+for P in [200,220,230,240,250,260,280,300,315,330,350,380]:
+    rmse,c=fitc(P)
+    print(P, round(rmse,3), 'A,c', round(c[0],2), round(c[1],2))
+"
 ```
 
 ## [29] tool
@@ -1115,7 +1336,18 @@ k=4 test preds:
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+# gaussian-ish smoothing using kernel
+def smooth(y,sigma=3):
+    w=np.exp(-0.5*((np.arange(-15,16)/sigma)**2)); w/=w.sum()
+    return np.convolve(y,w,mode='same')
+ys=smooth(y)
+for i in range(0,len(g),8):
+    print(int(t[i]), round(ys[i],2))
+"
 ```
 
 ## [31] tool
@@ -1236,7 +1468,38 @@ k=4 test preds:
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+eps=23.44*np.pi/180
+def model(p,t):
+    lat,H,t0 = p
+    th=2*np.pi*(t-t0)/365.0
+    dec=eps*np.sin(th)
+    se=np.sin(lat)*np.sin(dec)+np.cos(lat)*np.cos(dec)*np.cos(H)
+    se=np.clip(se,-1,1)
+    return np.arcsin(se)*180/np.pi
+def res(p):
+    return model(p,t)-y
+# initial guesses
+best=None
+for lat0 in [-1,-0.5,0,0.5,1]:
+  for H0 in [0.5,1,1.5,2,2.5,3,3.5]:
+    for t00 in [0,80,180,270,350]:
+      try:
+        r=least_squares(res,x0=[lat0,H0,t00],bounds=([-1.57,0,0],[1.57,6.283,365]))
+        rmse=np.sqrt(np.mean(r.fun**2))
+        if best is None or rmse<best[0]: best=(rmse,r)
+      except: pass
+print('best rmse',best[0])
+r=best[1]
+print('params lat,H,t0',r.x)
+print('preds:')
+tt=pd.read_csv('test.csv')['t'].values
+print(np.round(model(r.x,tt),2))
+"
 ```
 
 ## [33] tool
@@ -1286,7 +1549,22 @@ preds:
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+a=np.unwrap(df['alpha'].values*np.pi/180)*180/np.pi
+g=df.dropna(subset=['gamma']).copy()
+aa=a[g.index.values]; y=g['gamma'].values
+ph=np.mod(aa,360)*np.pi/180
+X=np.column_stack([np.sin(ph),np.cos(ph),np.ones_like(ph)])
+c=np.linalg.lstsq(X,y,rcond=None)[0]
+test=pd.read_csv('test.csv')['t'].values
+a_test=1.02716538*test+324.67787421
+ph_test=np.mod(a_test,360)*np.pi/180
+pred=X_test if False else np.column_stack([np.sin(ph_test),np.cos(ph_test),np.ones_like(ph_test)])@c
+print('k=1 alpha preds:')
+for tt,pt,at in zip(test,pred,a_test): print(int(tt), 'alpha_mod', round(np.mod(at,360),1), 'pred', round(pt,2))
+"
 ```
 
 ## [35] tool
@@ -1353,7 +1631,31 @@ k=1 alpha preds:
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+def fourier_fit(P,k):
+    cols=[np.ones_like(t)]
+    for n in range(1,k+1):
+        ph=2*np.pi*n*t/P
+        cols.append(np.sin(ph)); cols.append(np.cos(ph))
+    X=np.column_stack(cols)
+    c=np.linalg.lstsq(X,y,rcond=None)[0]
+    r=y-X@c
+    return np.sqrt((r**2).mean()), c
+test=pd.read_csv('test.csv')['t'].values
+for P in [230,250,280,300,315,330,350]:
+    for k in [1,2,3]:
+        rmse,c=fourier_fit(P,k)
+        cols=[np.ones_like(test)]
+        for n in range(1,k+1):
+            ph=2*np.pi*n*test/P
+            cols.append(np.sin(ph)); cols.append(np.cos(ph))
+        Xt=np.column_stack(cols)
+        pred=Xt@c
+        print('P',P,'k',k,'rmse',round(rmse,2),'preds',np.round(pred,1).tolist())
+"
 ```
 
 ## [37] tool
@@ -1434,7 +1736,32 @@ P 350 k 3 rmse 2.2 preds [23.4, 8.6, -10.9, -26.3, -35.5, -34.0, -22.8, -1.8, 20
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+def model(p,t):
+    k,ph,P,d = p
+    th=2*np.pi*t/P+ph
+    return np.arcsin(np.clip(k*np.sin(th),-1,1))*180/np.pi + d
+def res(p):
+    return model(p,t)-y
+best=None
+for P in [180,200,230,250,300,350,400,500]:
+  for k in [0.5,0.8,1.0,1.2]:
+    for ph0 in np.arange(0,6,1):
+      try:
+        r=least_squares(res,x0=[k,ph0,P,0],bounds=([0,-10,150,-50],[1.5,10,800,50]))
+        rmse=np.sqrt(np.mean(r.fun**2))
+        if best is None or rmse<best[0]: best=(rmse,r)
+      except Exception as e: pass
+print('best rmse',best[0])
+r=best[1]
+print('params',r.x)
+tt=pd.read_csv('test.csv')['t'].values
+print('preds',np.round(model(r.x,tt),1))
+"
 ```
 
 ## [39] tool
@@ -1482,7 +1809,24 @@ preds [ 51.2  65.7  85.2 113.7 113.7 113.7 113.7 113.7 113.7 113.7]
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit, least_squares
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+mask=t>355
+tm=t[mask]; ym=y[mask]
+# logistic: y = L + (U-L)/(1+exp(-k(t-t0)))
+def lg(tt,L,U,k,t0):
+    return L+(U-L)/(1+np.exp(-k*(tt-t0)))
+p,_=curve_fit(lg,tm,ym,p0=[-70,35,0.1,420],maxfev=20000)
+print('logistic params L,U,k,t0',p)
+rmse=np.sqrt(np.mean((lg(tm,*p)-ym)**2))
+print('rmse',rmse)
+tt=pd.read_csv('test.csv')['t'].values
+print('preds',np.round(lg(tt,*p),1))
+print('asymptote U',p[1])
+"
 ```
 
 ## [41] tool
@@ -1775,7 +2119,32 @@ Let me look more carefully at the data structure and fit a robust model.
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+# Fit logistic on rising part t>355
+mask=t>355; tm=t[mask]; ym=y[mask]
+def lg(tt,L,U,k,t0):
+    return L+(U-L)/(1+np.exp(-k*(tt-t0)))
+p,_=curve_fit(lg,tm,ym,p0=[-70,35,0.1,420],maxfev=200000)
+L,U,k,t0=p
+res=ym-lg(tm,*p)
+print('logistic params',p)
+print('resid std',res.std())
+# predictions for test
+test=pd.read_csv('test.csv')['t'].values
+pred=lg(test,*p)
+for tt,pp in zip(test,pred): print(int(tt), round(pp,2))
+# Also try free L on full data
+def lg2(tt,L,U,k,t0):
+    return L+(U-L)/(1+np.exp(-k*(tt-t0)))
+p2,_=curve_fit(lg2,t,y,p0=[-80,40,0.1,400],maxfev=200000,maxfev=200000)
+print('full logistic params',p2)
+print('full resid std',(y-lg2(t,*p2)).std())
+print('full preds',np.round(lg2(test,*p2),2))
+"
 ```
 
 ## [43] tool
@@ -1790,7 +2159,27 @@ SyntaxError: keyword argument repeated: maxfev
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+g=pd.read_csv('train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+mask=t>355; tm=t[mask]; ym=y[mask]
+def lg(tt,L,U,k,t0):
+    return L+(U-L)/(1+np.exp(-k*(tt-t0)))
+p,_=curve_fit(lg,tm,ym,p0=[-70,35,0.1,420],maxfev=200000)
+L,U,k,t0=p
+res=ym-lg(tm,*p)
+print('logistic params',p)
+print('resid std',res.std())
+test=pd.read_csv('test.csv')['t'].values
+pred=lg(test,*p)
+for tt,pp in zip(test,pred): print(int(tt), round(pp,2))
+p2,_=curve_fit(lg,t,y,p0=[-80,40,0.1,400],maxfev=200000)
+print('full logistic params',p2)
+print('full resid std',(y-lg(t,*p2)).std())
+print('full preds',np.round(lg(test,*p2),2))
+"
 ```
 
 ## [45] tool
@@ -1912,7 +2301,7 @@ full preds [30.13 30.33 30.39 30.41 30.42 30.42 30.42 30.42 30.42 30.42]
 **tool call: bash**
 
 ```
-
+cd /home/user 2>/dev/null || cd ~; pwd; ls
 ```
 
 ## [47] tool
@@ -1931,7 +2320,7 @@ full preds [30.13 30.33 30.39 30.41 30.42 30.42 30.42 30.42 30.42 30.42]
 **tool call: bash**
 
 ```
-
+find / -name "train.csv" 2>/dev/null | head; echo "---"; find / -name "test.csv" 2>/dev/null | head
 ```
 
 ## [49] tool
@@ -1946,7 +2335,30 @@ full preds [30.13 30.33 30.39 30.41 30.42 30.42 30.42 30.42 30.42 30.42]
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+g=pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+mask=t>355; tm=t[mask]; ym=y[mask]
+def lg(tt,L,U,k,t0):
+    return L+(U-L)/(1+np.exp(-k*(tt-t0)))
+p,_=curve_fit(lg,tm,ym,p0=[-70,35,0.1,420],maxfev=200000)
+test=pd.read_csv('data/test.csv')['t'].values
+pred=lg(test,*p)
+# residual std for interval
+res=ym-lg(tm,*p)
+sigma=res.std()
+print('sigma',sigma)
+# 95% PI for new observation: pred +- t*sigma (with small df) plus extrapolation allowance
+# Use wider bound for extrapolation uncertainty
+half=2.0*sigma+12
+print('half',half)
+print('preds',np.round(pred,3))
+out=pd.DataFrame({'t':test,'y_pred':np.round(pred,3),'y_lower':np.round(pred-half,3),'y_upper':np.round(pred+half,3)})
+out.to_csv('predictions.csv',index=False)
+print(out)
+"
 ```
 
 ## [51] tool
@@ -2014,7 +2426,22 @@ Let me do a bit more analysis to validate the model choice before finalizing
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+g=pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+# Fit quadratic to last 50 points, extrapolate
+for n in [30,40,50,60]:
+    c=np.polyfit(t[-n:],y[-n:],2)
+    test=np.array([470,480,491,501,512,522,532,543,553,564])
+    print('n',n,'quad preds',np.round(np.polyval(c,test),1))
+# linear on last 30
+for n in [20,30,40]:
+    c=np.polyfit(t[-n:],y[-n:],1)
+    test=np.array([470,480,491,501,512,522,532,543,553,564])
+    print('n',n,'lin preds',np.round(np.polyval(c,test),1))
+"
 ```
 
 ## [53] tool
@@ -2141,7 +2568,23 @@ n 40 lin preds [37.7 44.1 51.1 57.5 64.5 70.9 77.3 84.3 90.7 97.7]
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+g=pd.read_csv('data/train.csv').dropna(subset=['gamma'])
+t=g['t'].values; y=g['gamma'].values
+mask=t>355; tm=t[mask]; ym=y[mask]
+def lg(tt,L,U,k,t0):
+    return L+(U-L)/(1+np.exp(-k*(tt-t0)))
+p,_=curve_fit(lg,tm,ym,p0=[-70,35,0.1,420],maxfev=200000)
+test=pd.read_csv('data/test.csv')['t'].values
+pred=lg(test,*p)
+half=18.0
+out=pd.DataFrame({'t':test,'y_pred':np.round(pred,3),'y_lower':np.round(pred-half,3),'y_upper':np.round(pred+half,3)})
+out.to_csv('predictions.csv',index=False)
+print(out)
+print('rows',len(out))
+"
 ```
 
 ## [55] tool
@@ -2197,7 +2640,7 @@ rows 10
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && echo "---" && head -1 data/test.csv && wc -l predictions.csv data/test.csv
 ```
 
 ## [57] tool
@@ -2286,7 +2729,16 @@ The predictions file is ready. Let me verify it's complete and well-formed.
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+pred=pd.read_csv('predictions.csv')
+test=pd.read_csv('data/test.csv')
+print('columns:', list(pred.columns))
+print('num rows:', len(pred), '== test rows:', len(test))
+print('t matches:', (pred['t'].values==test['t'].values).all())
+print('lower<pred<upper:', ((pred['y_lower']<pred['y_pred'])&(pred['y_pred']<pred['y_upper'])).all())
+print(pred)
+"
 ```
 
 ## [59] tool

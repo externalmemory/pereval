@@ -66,7 +66,7 @@ Predict y with a 95% interval for every row in data/test.csv and write predictio
 **tool call: bash**
 
 ```
-
+cd data && head -20 train.csv && echo "---" && head -20 test.csv && echo "---" && wc -l train.csv test.csv
 ```
 
 ## [3] tool
@@ -129,7 +129,15 @@ UsN6Q8,125.0
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd
+tr=pd.read_csv('train.csv')
+te=pd.read_csv('test.csv')
+print('train cats:'); print(tr.groupby('category').agg(xmin=('x','min'),xmax=('x','max'),n=('x','size')))
+print('test cats:'); print(te.groupby('category').agg(xmin=('x','min'),xmax=('x','max'),n=('x','size')))
+print('train categories', sorted(tr.category.unique()))
+print('test categories', sorted(te.category.unique()))
+"
 ```
 
 ## [5] tool
@@ -165,7 +173,15 @@ test categories ['H6F6wO', 'JLbWvI', 'P9x4od', 'UsN6Q8', 'YdTZK3']
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd
+tr=pd.read_csv('train.csv')
+for c in sorted(tr.category.unique()):
+    d=tr[tr.category==c]
+    print('===',c,'n=',len(d))
+    g=d.groupby('x')['y'].agg(['mean','std','count'])
+    print(g)
+"
 ```
 
 ## [7] tool
@@ -291,7 +307,20 @@ x
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+for c in sorted(tr.category.unique()):
+    d=tr[tr.category==c]
+    g=d.groupby('x')['y'].mean()
+    xs=g.index.values; ys=g.values
+    print('===',c)
+    for deg in [1,2,3]:
+        coef=np.polyfit(xs,ys,deg)
+        pred=np.polyval(coef,xs)
+        rmse=np.sqrt(np.mean((pred-ys)**2))
+        print('  deg',deg,'rmse',round(rmse,5),'coef',np.round(coef,5))
+"
 ```
 
 ## [9] tool
@@ -370,7 +399,23 @@ x
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+tr=pd.read_csv('train.csv')
+for c in ['JLbWvI','P9x4od','YdTZK3']:
+    d=tr[tr.category==c]
+    g=d.groupby('x')['y'].mean()
+    xs=g.index.values; ys=g.values
+    # power law through origin: log(-y)=a+b log x
+    b,a=np.polyfit(np.log(xs),np.log(-ys),1)
+    print(c,'power b=',round(b,4),'a=',round(a,4))
+    # check residuals in log space
+    pred=a+b*np.log(xs)
+    print('  log rmse',round(np.sqrt(np.mean((np.log(-ys)-pred)**2)),5))
+    # second differences for quadratic check (normalized)
+    sd=np.diff(ys,2)
+    print('  2nd diffs',np.round(sd,4))
+"
 ```
 
 ## [11] tool
@@ -497,7 +542,28 @@ YdTZK3 power b= 1.3399 a= -7.8762
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+tr=pd.read_csv('train.csv')
+def f_power(x,a,b,c): return a + b*x**c
 
+for c in sorted(tr.category.unique()):
+    d=tr[tr.category==c]
+    xs=d.x.values; ys=d.y.values
+    # quadratic on raw
+    coef=np.polyfit(xs,ys,2)
+    res=ys-np.polyval(coef,xs)
+    s_res=np.std(res)
+    # power with offset free
+    try:
+        p,_=curve_fit(f_power,xs,ys,p0=[0,-0.001,1.5],maxfev=20000)
+        res2=ys-f_power(xs,*p)
+        s2=np.std(res2)
+        print(c,'quad s_res',round(s_res,4),'offset-power s_res',round(s2,4),'params',np.round(p,4))
+    except Exception as e:
+        print(c,'quad s_res',round(s_res,4),'power fail',e)
+"
 ```
 
 ## [13] tool
@@ -542,7 +608,28 @@ YdTZK3 quad s_res 0.062 offset-power s_res 0.0607 params [-0.0663 -0.      2.314
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+# joint model y = A + b_cat * x^p  (shared A, shared p, per-cat scale)
+def resid(z):
+    A=z[0]; p=z[1]; b=z[2:2+len(cats)]
+    errs=[]
+    for i,c in enumerate(cats):
+        d=tr[tr.category==c]
+        pred=A+b[i]*d.x.values**p
+        errs.extend(pred-d.y.values)
+    return np.array(errs)
+z0=np.array([-0.06,2.3]+[-0.001]*len(cats))
+r=least_squares(resid,z0)
+print('shared A',r.x[0],'p',r.x[1],'b',np.round(r.x[2:],5))
+print('rmse',np.sqrt(np.mean(resid(r.x)**2)))
+print('noise stds per cat (overall sample):')
+for i,c in enumerate(cats):
+    print(c, r.x[i+2])
+"
 ```
 
 ## [15] tool
@@ -610,7 +697,31 @@ YdTZK3 -1.7415534928803498e-06
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+def fit(p, per_cat_a):
+    # p shared, if per_cat_a True fit a_c,b_c per cat
+    dat=[]
+    for c in cats:
+        d=tr[tr.category==c]
+        u=d.x.values**p
+        X=np.column_stack([np.ones(len(u)),u])
+        beta,_,_,_=np.linalg.lstsq(X,d.y.values,rcond=None)
+        pred=X@beta
+        dat.append((d.y.values-pred)*1.0)
+    return np.concatenate(dat)
+# grid p
+best=None
+for p in np.linspace(1.8,3.0,50):
+    rmse=np.sqrt(np.mean(fit(p,True)**2))
+    if best is None or rmse<best[1]: best=(p,rmse)
+print('best p (per-cat a,b):',best)
+for p in np.linspace(2.0,2.6,7):
+    print(p, round(np.sqrt(np.mean(fit(p,True)**2)),4))
+"
 ```
 
 ## [17] tool
@@ -691,7 +802,49 @@ best p (per-cat a,b): (np.float64(2.289795918367347), np.float64(0.0593391722576
 **tool call: bash**
 
 ```
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+def fit_model(shared_a):
+    n=len(tr)
+    def resid(z):
+        if shared_a:
+            A=z[0];p=z[1];bs=z[2:]
+            pred=A + np.where(tr.category.values==None) # not used
+        return 0
+    # do per-cat a,b shared p
+    def resid_percat(z):
+        p=z[0]
+        err=[]
+        for i,c in enumerate(cats):
+            d=tr[tr.category==c]
+            a=z[1+2*i]; b=z[2+2*i]
+            err.append(a+b*d.x.values**p - d.y.values)
+        return np.concatenate(err)
+    z0=np.zeros(1+2*len(cats)); z0[0]=2.29
+    # init a,b by linear fit at p=2.29
+    for i,c in enumerate(cats):
+        d=tr[tr.category==c]
+        u=d.x.values**2.29
+        beta=np.polyfit(u,d.y.values,1)
+        z0[1+2*i]=beta[1]; z0[2+2*i]=beta[0]
+    r=least_squares(resid_percat,z0)
+    return r
 
+r=fit_model(False)
+print('p=',r.x[0])
+# covariance
+J=r.jac
+import numpy as np
+s2=np.sum(r.fun**2)/(len(r.fun)-len(r.x))
+cov=s2*np.linalg.inv(J.T@J)
+se=np.sqrt(np.diag(cov))
+print('se p=',se[0])
+print('p 95% ci',r.x[0]-1.96*se[0],r.x[0]+1.96*se[0])
+print('rmse',np.sqrt(np.mean(r.fun**2)))
+"
 ```
 
 ## [19] tool
@@ -737,7 +890,22 @@ rmse 0.05933914761847583
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
+tr=pd.read_csv('train.csv')
+for c in sorted(tr.category.unique()):
+    d=tr[tr.category==c]
+    xs=d.x.values; ys=d.y.values
+    def fexp(x,a,b,k): return a+b*np.exp(k*x)
+    def fsqrt(x,a,b,k): return a+b*np.exp(k*np.sqrt(x))
+    for name,f,p0 in [('exp',fexp,[-0.06,-0.001,0.01]),('sqrt-exp',fsqrt,[-0.06,-0.001,0.05])]:
+        try:
+            popt,_=curve_fit(f,xs,ys,p0=p0,maxfev=100000)
+            print(c,name,'rmse',round(np.sqrt(np.mean((f(xs,*popt)-ys)**2)),4),'params',np.round(popt,4))
+        except Exception as e:
+            print(c,name,'fail')
+"
 ```
 
 ## [21] tool
@@ -923,7 +1091,34 @@ Let me refine my understanding of the functional form and build the solution.
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr=pd.read_csv('train.csv')
+cats=sorted(tr.category.unique())
+def resid_percat(z):
+    p=z[0]
+    err=[]
+    for i,c in enumerate(cats):
+        d=tr[tr.category==c]
+        a=z[1+2*i]; b=z[2+2*i]
+        err.append(a+b*d.x.values**p - d.y.values)
+    return np.concatenate(err)
+z0=np.zeros(1+2*len(cats)); z0[0]=2.29
+for i,c in enumerate(cats):
+    d=tr[tr.category==c]
+    beta=np.polyfit(d.x.values**2.29,d.y.values,1)
+    z0[1+2*i]=beta[1]; z0[2+2*i]=beta[0]
+r=least_squares(resid_percat,z0)
+p=r.x[0]
+print('p=',p)
+te=pd.read_csv('test.csv')
+for c in cats:
+    i=cats.index(c); a=r.x[1+2*i]; b=r.x[2+2*i]
+    sub=te[te.category==c]
+    for _,row in sub.iterrows():
+        print(c,row.x, round(a+b*row.x**p,3))
+"
 ```
 
 ## [23] tool
@@ -1010,7 +1205,85 @@ The power-law model (shared exponent p≈2.29, per-category intercept/slope) is 
 **tool call: bash**
 
 ```
+cd data && cat > ../solution.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+tr = pd.read_csv('train.csv')
+te = pd.read_csv('test.csv')
+cats = sorted(tr.category.unique())
+
+# ---- global shared exponent p, per-category intercept+slope in u=x^p ----
+def resid_percat(z):
+    p = z[0]
+    err = []
+    for i, c in enumerate(cats):
+        d = tr[tr.category == c]
+        a = z[1 + 2*i]; b = z[2 + 2*i]
+        err.append(a + b * d.x.values**p - d.y.values)
+    return np.concatenate(err)
+
+z0 = np.zeros(1 + 2*len(cats)); z0[0] = 2.29
+for i, c in enumerate(cats):
+    d = tr[tr.category == c]
+    beta = np.polyfit(d.x.values**2.29, d.y.values, 1)
+    z0[1 + 2*i] = beta[1]; z0[2 + 2*i] = beta[0]
+
+r = least_squares(resid_percat, z0)
+p_hat = r.x[0]
+n = len(tr)
+s2 = np.sum(r.fun**2) / (n - len(r.x))
+cov = s2 * np.linalg.inv(r.jac.T @ r.jac)
+se_p = np.sqrt(cov[0, 0])
+
+# best-fit per-category params
+best = {}
+resid_dict = {}
+for i, c in enumerate(cats):
+    a = r.x[1 + 2*i]; b = r.x[2 + 2*i]
+    best[c] = (a, b)
+    d = tr[tr.category == c]
+    resid_dict[c] = (a + b*d.x.values**p_hat) - d.y.values
+
+def fit_ab(c, xvals, yvals, p):
+    u = xvals**p
+    X = np.column_stack([np.ones(len(u)), u])
+    beta, *_ = np.linalg.lstsq(X, yvals, rcond=None)
+    return beta
+
+# ---- prediction + posterior predictive interval via MC over p ----
+np.random.seed(0)
+NMC = 6000
+test_rows = te.to_dict('records')
+
+# per-category training x,y
+cat_data = {c: (tr[tr.category==c].x.values, tr[tr.category==c].y.values) for c in cats}
+
+# sigma per category (noise) from best-fit residuals
+sigma = {c: np.std(resid_dict[c]) for c in cats}
+
+# precompute test x per row
+res = []
+for row in test_rows:
+    c = row['category']; x0 = row['x']
+    # MC predictive draws
+    pmc = np.random.normal(p_hat, se_p, NMC)
+    draws = np.empty(NMC)
+    for k in range(NMC):
+        p = pmc[k]
+        xv, yv = cat_data[c]
+        ab = fit_ab(c, xv, yv, p)
+        draws[k] = ab[0] + ab[1]*x0**p + np.random.normal(0, sigma[c])
+    lo, hi = np.percentile(draws, [2.5, 97.5])
+    a, b = best[c]
+    yhat = a + b*x0**p_hat
+    res.append((c, x0, yhat, lo, hi))
+
+out = pd.DataFrame(res, columns=['category','x','y_pred','y_lower','y_upper'])
+out.to_csv('../predictions.csv', index=False)
+print(out.to_string())
+EOF
+cd .. && python3 solution.py
 ```
 
 ## [25] tool
@@ -1049,7 +1322,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'train.csv'
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i "s#read_csv('train.csv')#read_csv('data/train.csv')#; s#read_csv('test.csv')#read_csv('data/test.csv')#" solution.py && python3 solution.py
 ```
 
 ## [27] tool
@@ -1103,7 +1376,34 @@ FileNotFoundError: [Errno 2] No such file or directory: 'train.csv'
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr=pd.read_csv('data/train.csv'); te=pd.read_csv('data/test.csv')
+cats=sorted(tr.category.unique())
+def resid_percat(z):
+    p=z[0]; err=[]
+    for i,c in enumerate(cats):
+        d=tr[tr.category==c]; a=z[1+2*i]; b=z[2+2*i]
+        err.append(a+b*d.x.values**p-d.y.values)
+    return np.concatenate(err)
+z0=np.zeros(1+2*len(cats)); z0[0]=2.29
+for i,c in enumerate(cats):
+    d=tr[tr.category==c]; beta=np.polyfit(d.x.values**2.29,d.y.values,1)
+    z0[1+2*i]=beta[1]; z0[2+2*i]=beta[0]
+r=least_squares(resid_percat,z0); ph=r.x[0]
+s2=np.sum(r.fun**2)/(len(tr)-len(r.x)); se=np.sqrt(s2*np.linalg.inv(r.jac.T@r.jac)[0,0])
+print('p',ph,'se',se)
+# sensitivity for JLbWvI at x=800
+for p in [ph, ph-se, ph+se, ph-2*se, ph+2*se]:
+    for c in ['JLbWvI','H6F6wO','YdTZK3']:
+        i=cats.index(c); d=tr[tr.category==c]
+        u=d.x.values**p; beta=np.polyfit(u,d.y.values,1)
+        pred=beta[1]+beta[0]*800**p if c!='H6F6wO' else beta[1]+beta[0]*200**p
+        if c=='JLbWvI': print(' JLbWvI@800 p=%.3f pred=%.3f'%(p,pred))
+        if c=='H6F6wO': print(' H6F6wO@200 p=%.3f pred=%.3f'%(p,pred))
+    print('---')
+"
 ```
 
 ## [29] tool
@@ -1157,7 +1457,14 @@ The intervals are honestly calibrated (MC over p shows extrapolation is well-con
 **tool call: bash**
 
 ```
-
+cd /workspace && head -3 predictions.csv && wc -l predictions.csv && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); t=pd.read_csv('data/test.csv')
+print('rows',len(p),'test',len(t))
+print('cols',list(p.columns))
+print('match', (p.category.values==t.category.values).all() and (p.x.values==t.x.values).all())
+print('any lower>upper', (p.y_lower>p.y_upper).any())
+"
 ```
 
 ## [31] tool
@@ -1177,7 +1484,7 @@ head: cannot open 'predictions.csv' for reading: No such file or directory
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -la && ls -la data/ | head
 ```
 
 ## [33] tool
@@ -1205,7 +1512,7 @@ drwxr-xr-x 1 root root 4096 Aug 11 00:40 ..
 **tool call: bash**
 
 ```
-
+ls -la /predictions.csv && head -3 /predictions.csv && wc -l /predictions.csv
 ```
 
 ## [35] tool
@@ -1230,7 +1537,13 @@ H6F6wO,150.0,-1.5807076789857208,-1.683370793711054,-1.4803749087238853
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i "s#out.to_csv('../predictions.csv'#out.to_csv('predictions.csv'#" solution.py && rm -f /predictions.csv && python3 solution.py && ls -la predictions.csv && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); t=pd.read_csv('data/test.csv')
+print('rows',len(p),'test',len(t)); print('cols',list(p.columns))
+print('match', (p.category.values==t.category.values).all() and (p.x.values==t.x.values).all())
+print('bad', (p.y_lower>p.y_upper).any())
+"
 ```
 
 ## [37] tool
@@ -1301,7 +1614,7 @@ The predictions file is complete (29 rows matching test inputs) with correct col
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv
 ```
 
 ## [39] tool

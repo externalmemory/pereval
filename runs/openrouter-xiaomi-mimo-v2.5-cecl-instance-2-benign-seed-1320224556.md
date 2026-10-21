@@ -86,13 +86,13 @@ I'll start by exploring the data and policy files.
 **tool call: bash**
 
 ```
-
+ls -la data/ && echo "--- policy ---" && cat data/policy.json && echo "--- history head ---" && head -5 data/history.csv && echo "--- forecast head ---" && head -5 data/forecast.csv && echo "--- pools ---" && cat data/pools.csv
 ```
 
 **tool call: bash**
 
 ```
-
+cd data 2>/dev/null; wc -l *.csv 2>/dev/null
 ```
 
 ## [3] tool
@@ -152,13 +152,24 @@ C4,C,6330337.0,40
 **tool call: bash**
 
 ```
-
+cd data; cat forecast.csv; echo "==="; python3 -c "
+import pandas as pd
+h=pd.read_csv('history.csv')
+print(h.groupby('segment').agg(n=('pd','size'), pd_mean=('pd','mean'), lgd_mean=('lgd','mean'), pp_mean=('prepay','mean'), pd_std=('pd','std')))
+print(h['quarter'].min(), h['quarter'].max())
+print(h.dtypes)
+"
 ```
 
 **tool call: bash**
 
 ```
-
+cd data; python3 -c "
+import pandas as pd
+h=pd.read_csv('history.csv'); f=pd.read_csv('forecast.csv')
+print(f)
+print(h.head(20).to_string())
+"
 ```
 
 ## [6] tool
@@ -242,13 +253,36 @@ dtype: object
 **tool call: bash**
 
 ```
-
+cd data; python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.formula.api as smf
+h=pd.read_csv('history.csv')
+for s in 'ABC':
+    d=h[h.segment==s]
+    for y in ['pd','lgd','prepay']:
+        m=smf.ols(f'{y} ~ unemployment + hpi_growth', d).fit()
+        print(s,y,'R2=%.4f'%m.rsquared, np.round(m.params.values,5))
+    # check lgd vs pd
+    print(' corr pd-lgd', d.pd.corr(d.lgd), 'pd-pp', d.pd.corr(d.prepay))
+"
 ```
 
 **tool call: bash**
 
 ```
-
+cd data; python3 -c "
+import pandas as pd, numpy as np
+h=pd.read_csv('history.csv')
+d=h[h.segment=='A']
+# try functional form lgd = a+b*pd^c
+from scipy.optimize import curve_fit
+def f(pd,a,b,c): return a+b*pd**c
+for s in ['A','B','C']:
+    d=h[h.segment==s]
+    p,_=curve_fit(f,d.pd.values,d.lgd.values,p0=[0.3,10,-0.5])
+    pred=f(d.pd.values,*p)
+    print(s,'lgd fit',np.round(p,4),'maxerr',np.abs(pred-d.lgd.values).max())
+"
 ```
 
 ## [9] tool
@@ -302,13 +336,41 @@ OLS on macro drivers fits well. Let me compare a few functional forms and check 
 **tool call: bash**
 
 ```
-
+cd data; python3 -c "
+import pandas as pd, numpy as np
+from scipy.stats import norm
+h=pd.read_csv('history.csv')
+for s in 'ABC':
+    d=h[h.segment==s]
+    X=np.column_stack([np.ones(len(d)),d.unemployment,d.hpi_growth])
+    for y in ['pd','lgd','prepay']:
+        yv=d[y].values
+        b=np.linalg.lstsq(X,yv,rcond=None)[0]
+        raw=np.sqrt(np.mean((X@b-yv)**2))
+        # probit link
+        z=norm.ppf(np.clip(yv,1e-4,1-1e-4))
+        b2=np.linalg.lstsq(X,z,rcond=None)[0]
+        p=norm.cdf(X@b2); pr=np.sqrt(np.mean((p-yv)**2))
+        # logit link
+        lg=np.log(yv/(1-yv)); b3=np.linalg.lstsq(X,lg,rcond=None)[0)
+        p3=1/(1+np.exp(-(X@b3))); lr=np.sqrt(np.mean((p3-yv)**2))
+        print(s,y,'raw=%.5f probit=%.5f logit=%.5f'%(raw,pr,lr))
+"
 ```
 
 **tool call: bash**
 
 ```
-
+cd data; python3 -c "
+import pandas as pd,numpy as np
+h=pd.read_csv('history.csv')
+for s in 'ABC':
+    d=h[h.segment==s].sort_values('quarter')
+    X=np.column_stack([np.ones(len(d)),d.unemployment,d.hpi_growth])
+    b=np.linalg.lstsq(X,d.pd.values,rcond=None)[0]
+    r=d.pd.values-X@b
+    print(s,'resid ac1=%.3f'%np.corrcoef(r[:-1],r[1:])[0,1], 'unemp range %.2f-%.2f'%(d.unemployment.min(),d.unemployment.max()),'hpi %.3f-%.3f'%(d.hpi_growth.min(),d.hpi_growth.max()))
+"
 ```
 
 ## [12] tool
@@ -340,7 +402,24 @@ C resid ac1=0.118 unemp range 3.61-7.21 hpi -0.071-0.099
 **tool call: bash**
 
 ```
-
+cd data; python3 -c "
+import pandas as pd, numpy as np
+from scipy.stats import norm
+h=pd.read_csv('history.csv')
+for s in 'ABC':
+    d=h[h.segment==s]
+    X=np.column_stack([np.ones(len(d)),d.unemployment,d.hpi_growth])
+    for y in ['pd','lgd','prepay']:
+        yv=d[y].values
+        b=np.linalg.lstsq(X,yv,rcond=None)[0]
+        raw=np.sqrt(np.mean((X@b-yv)**2))
+        z=norm.ppf(np.clip(yv,1e-4,1-1e-4))
+        b2=np.linalg.lstsq(X,z,rcond=None)[0]
+        pr=np.sqrt(np.mean((norm.cdf(X@b2)-yv)**2))
+        lg=np.log(yv/(1-yv)); b3=np.linalg.lstsq(X,lg,rcond=None)[0]
+        lr=np.sqrt(np.mean((1/(1+np.exp(-(X@b3)))-yv)**2))
+        print(s,y,'raw=%.5f probit=%.5f logit=%.5f'%(raw,pr,lr))
+"
 ```
 
 ## [15] tool
@@ -413,7 +492,114 @@ Probit link fits PD far better (RMSE 0.006→0.0014), consistent with the probit
 **tool call: bash**
 
 ```
+mkdir -p /root/work && cat > /root/work/model.py <<'EOF'
+import pandas as pd, numpy as np, json
+from scipy.stats import norm
 
+D='/root/data/'
+pol=json.load(open(D+'policy.json'))
+FQ=pol['forecast_quarters']; RQ=pol['reversion_quarters']
+rho=pol['rho']; pers=pol['persistence']; LVL=pol['interval_level']
+
+hist=pd.read_csv(D+'history.csv')
+fcst=pd.read_csv(D+'forecast.csv')
+pools=pd.read_csv(D+'pools.csv')
+
+# ---- fit probit-link OLS per segment: rate ~ 1 + unemp + hpi ----
+def fit_link(d,y):
+    X=np.column_stack([np.ones(len(d)),d.unemployment.values,d.hpi_growth.values])
+    z=norm.ppf(np.clip(d[y].values,1e-6,1-1e-6))
+    return np.linalg.lstsq(X,z,rcond=None)[0]
+
+def pred_link(b,un,hi):
+    X=np.column_stack([np.ones(len(un)),un,hi])
+    return np.clip(norm.cdf(X@b),1e-6,1-1e-6)
+
+models={}; hmean={}
+for s in sorted(hist.segment.unique()):
+    d=hist[hist.segment==s]
+    models[s]={y:fit_link(d,y) for y in ['pd','lgd','prepay']}
+    hmean[s]={y:d[y].mean() for y in ['pd','lgd','prepay']}
+
+# ---- mean rate path to max pool term ----
+TMAX=int(pools.remaining_quarters.max())
+un=fcst.unemployment.values; hi=fcst.hpi_growth.values
+
+segs=sorted(pools.segment.unique())
+mean_paths={}   # seg -> dict of arrays length TMAX for pd,lgd,prepay
+for s in segs:
+    b=models[s]
+    pf=pd.DataFrame({'pd':pred_link(b['pd'],un,hi),'lgd':pred_link(b['lgd'],un,hi),
+                     'prepay':pred_link(b['prepay'],un,hi)})
+    mp={y:np.empty(TMAX) for y in ['pd','lgd','prepay']}
+    nfc=min(FQ,TMAX)
+    for y in ['pd','lgd','prepay']:
+        mp[y][:nfc]=pf[y].values[:nfc]
+    last=pf.iloc[nfc-1]
+    for y in ['pd','lgd','prepay']:
+        for q in range(nfc,TMAX):           # post-forecast quarters
+            idx=q-nfc+1                      # 1..RQ
+            w=min(idx/RQ,1.0) if RQ>0 else 1.0
+            mp[y][q]=(1-w)*last[y]+w*hmean[s][y]
+    mean_paths[s]=mp
+
+# ---- balance recursion on a PD path matrix (N,T) ----
+def lifetime_loss(mp_d, lgd, pp, B, T):
+    """mp_d: (N,T) realized PD; lgd,pp arrays length T; returns (N,) total loss"""
+    N=mp_d.shape[0]
+    q=np.arange(1,T+1)
+    P=B*(1-(q-1)/T)            # beginning principal scheduled
+    S=np.ones(N)               # survival fraction
+    tot=np.zeros(N)
+    for j in range(T):
+        tot+=P[j]*S*mp_d[:,j]*lgd[j]
+        S=S*(1-mp_d[:,j])*(1-pp[j])
+    return tot
+
+# ---- Monte Carlo ----
+np.random.seed(12345)
+N=40000
+a=np.sqrt(rho); c=np.sqrt(1-rho)
+bp=np.sqrt(pers); ap=np.sqrt(1-pers*pers)
+
+results=[]
+seg_store={}
+for s in segs:
+    mp=mean_paths[s]
+    z=np.zeros((N,TMAX)); z[:,0]=np.random.randn(N)
+    for j in range(1,TMAX):
+        z[:,j]=pers*z[:,j-1]+ap*np.random.randn(N)
+    for y in ['pd','lgd','prepay']:
+        m=np.clip(mp[y],1e-9,1-1e-9)
+        if y=='pd':
+            pd_real=norm.cdf((norm.ppf(m)[None,:]+a*z)/c)
+        else:
+            pd_real=np.broadcast_to(m[None,:],(N,TMAX)).copy()
+        if y=='pd': PD=pd_real
+        elif y=='lgd': LGD=pd_real
+        else: PP=pd_real
+    seg_store[s]=(PD,LGD,PP)
+
+for _,r in pools.iterrows():
+    s=r.segment; T=int(r.remaining_quarters); B=float(r.balance)
+    PD,LGD,PP=seg_store[s]
+    loss=lifetime_loss(PD[:,:T],LGD[0,:T],PP[0,:T],B,T)
+    mean_paths_check=mean_paths[s]
+    ecl=loss.mean()
+    lo,hi=np.percentile(loss,[(1-LVL)/2*100,(1+LVL)/2*100])
+    results.append(dict(pool_id=r.pool_id,segment=s,balance=B,ecl=ecl,ecl_lower=lo,ecl_upper=hi,
+                        lmean=loss.mean(),lstd=loss.std()))
+
+out=pd.DataFrame(results)
+out['rate']=out.ecl/out.balance
+print(out.to_string(float_format=lambda x:'%.2f'%x))
+out['ecl']=np.clip(out.ecl,0,out.balance)
+out['ecl_lower']=np.clip(out.ecl_lower,0,out.balance)
+out['ecl_upper']=np.clip(out.ecl_upper,0,out.balance)
+out[['pool_id','ecl','ecl_lower','ecl_upper']].to_csv('/root/predictions.csv',index=False)
+print('\nportfolio allowance %.2f'%out.ecl.sum())
+EOF
+cd /root && python3 work/model.py
 ```
 
 ## [17] tool
@@ -437,7 +623,7 @@ FileNotFoundError: [Errno 2] No such file or directory: '/root/data/policy.json'
 **tool call: bash**
 
 ```
-
+pwd; ls -d data 2>/dev/null; readlink -f data; ls
 ```
 
 ## [19] tool
@@ -459,7 +645,7 @@ data
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i "s|D='/root/data/'|D='/workspace/data/'|; s|/root/predictions.csv|/workspace/predictions.csv|" work/model.py && python3 work/model.py
 ```
 
 ## [21] tool
@@ -479,7 +665,7 @@ sed: can't read work/model.py: No such file or directory
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i "s|D='/root/data/'|D='/workspace/data/'|; s|/root/predictions.csv|/workspace/predictions.csv|" /root/work/model.py && cp /root/work/model.py work/model.py && python3 work/model.py
 ```
 
 ## [23] tool
@@ -499,7 +685,7 @@ cp: cannot create regular file 'work/model.py': No such file or directory
 **tool call: bash**
 
 ```
-
+cd /workspace && mkdir -p work && cp /root/work/model.py work/model.py && python3 work/model.py
 ```
 
 ## [25] tool
@@ -557,13 +743,51 @@ predictions.csv is written. Let me verify the mechanics: mean preservation, reve
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/verify.py <<'EOF'
+import pandas as pd, numpy as np, json
+from scipy.stats import norm
+exec(open('work/model.py').read().split('# ---- Monte Carlo ----')[0].replace("np.random.seed","#np.random.seed"))
 
+# print mean paths
+for s in segs:
+    mp=mean_paths[s]
+    print(s,'PD ',np.round(mp['pd'][:16],4))
+    print(s,'LGD',np.round(mp['lgd'][:12],4))
+    print(s,'PP ',np.round(mp['prepay'][:12],4))
+    print(s,'hist mean PD %.4f LGD %.4f PP %.4f'%(hmean[s]['pd'],hmean[s]['lgd'],hmean[s]['prepay']))
+
+# reversion check: last forecast val -> hist mean
+print('\nreversion blend A pd: lastfc=%.4f'%mean_paths['A']['pd'][FQ-1], '-> fm=%.4f'%hmean['A']['pd'])
+print('q9..12:',np.round(mean_paths['A']['pd'][FQ:TMAX],4))
+
+# deterministic recursion (mean PD) for comparison
+def det(mp,B,T):
+    P=B*(1-(np.arange(1,T+1)/T-1/T)); S=1.0; tot=0.0
+    for j in range(T):
+        tot+=P[j]*S*mp['pd'][j]*mp['lgd'][j]; S*=(1-mp['pd'][j])*(1-mp['prepay'][j])
+    return tot
+print()
+for _,r in pools.iterrows():
+    T=int(r.remaining_quarters)
+    print(r.pool_id,'det=%.0f'%det(mean_paths[r.segment],float(r.balance),T))
+EOF
+python3 work/verify.py
 ```
 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import numpy as np
+from scipy.stats import norm
+np.random.seed(0)
+rho=0.02
+m=np.array([0.01,0.03,0.08,0.3])
+N=2000000; z=np.random.randn(N)
+for mm in m:
+    r=norm.cdf((norm.ppf(mm)+np.sqrt(rho)*z)/np.sqrt(1-rho))
+    print('m=%.3f -> sim mean %.5f std %.5f'%(mm,r.mean(),r.std()))
+"
 ```
 
 ## [27] tool
@@ -648,7 +872,79 @@ All mechanics verified: marginal mean PD preserved exactly, reversion weights (1
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/model2.py <<'EOF'
+import pandas as pd, numpy as np, json
+from scipy.stats import norm
+D='/workspace/data/'
+pol=json.load(open(D+'policy.json'))
+FQ=pol['forecast_quarters']; RQ=pol['reversion_quarters']
+rho=pol['rho']; pers=pol['persistence']; LVL=pol['interval_level']
+hist=pd.read_csv(D+'history.csv'); fcst=pd.read_csv(D+'forecast.csv'); pools=pd.read_csv(D+'pools.csv')
 
+def fit_link(d,y):
+    X=np.column_stack([np.ones(len(d)),d.unemployment.values,d.hpi_growth.values])
+    z=norm.ppf(np.clip(d[y].values,1e-6,1-1e-6))
+    return np.linalg.lstsq(X,z,rcond=None)[0]
+def pred_link(b,un,hi):
+    return np.clip(norm.cdf(np.column_stack([np.ones(len(un)),un,hi])@b),1e-6,1-1e-6)
+
+models={}; hmean={}
+for s in sorted(hist.segment.unique()):
+    d=hist[hist.segment==s]
+    models[s]={y:fit_link(d,y) for y in ['pd','lgd','prepay']}
+    hmean[s]={y:d[y].mean() for y in ['pd','lgd','prepay']}
+
+TMAX=int(pools.remaining_quarters.max()); un=fcst.unemployment.values; hi=fcst.hpi_growth.values
+mean_paths={}
+for s in sorted(pools.segment.unique()):
+    b=models[s]; nfc=min(FQ,TMAX)
+    pf={y:pred_link(b[y],un,hi) for y in ['pd','lgd','prepay']}
+    mp={y:np.empty(TMAX) for y in ['pd','lgd','prepay']}
+    for y in mp: mp[y][:nfc]=pf[y][:nfc]
+    for y in mp:
+        for q in range(nfc,TMAX):
+            w=min((q-nfc+1)/RQ,1.0) if RQ>0 else 1.0
+            mp[y][q]=(1-w)*pf[y][nfc-1]+w*hmean[s][y]
+    mean_paths[s]=mp
+
+def lifetime(PD,LGD,PP,B,T):
+    P=B*(1-(np.arange(1,T+1)-1)/T); S=np.ones(PD.shape[0]); tot=np.zeros(PD.shape[0])
+    for j in range(T):
+        tot+=P[j]*S*PD[:,j]*LGD[j]; S=S*(1-PD[:,j])*(1-PP[j])
+    return tot
+
+N=200000; NS=3
+a=np.sqrt(rho); c=np.sqrt(1-rho); bp=np.sqrt(pers); ap=np.sqrt(1-pers*pers)
+res=[]
+for seed in range(NS):
+    np.random.seed(9000+seed)
+    r_=pools.copy(); acc={}
+    for s in sorted(pools.segment.unique()):
+        mp=mean_paths[s]
+        z=np.zeros((N,TMAX)); z[:,0]=np.random.randn(N)
+        for j in range(1,TMAX): z[:,j]=pers*z[:,j-1]+ap*np.random.randn(N)
+        mPD=np.clip(mp['pd'],1e-9,1-1e-9)
+        PD=norm.cdf((norm.ppf(mPD)[None,:]+a*z)/c)
+        LGD=np.broadcast_to(mp['lgd'][None,:],(N,TMAX))
+        PP=np.broadcast_to(mp['prepay'][None,:],(N,TMAX))
+        for _,r in pools[pools.segment==s].iterrows():
+            T=int(r.remaining_quarters); B=float(r.balance)
+            acc[r.pool_id]=lifetime(PD[:,:T],LGD[0,:T],PP[0,:T],B,T)
+        del PD,z,LGD,PP
+    for pid,L in acc.items():
+        res.append((seed,pid,L.mean(),*np.percentile(L,[2.5,97.5])))
+R=pd.DataFrame(res,columns=['seed','pool_id','ecl','lo','hi'])
+pools['balance']=pools.balance.astype(float)
+summ=R.groupby('pool_id').agg(ecl=('ecl','mean'),lo=('lo','mean'),hi=('hi','mean'),
+                              ecl_sd=('ecl','std')).reset_index().merge(pools[['pool_id','balance']],on='pool_id')
+summ['rate']=summ.ecl/summ.balance
+print(summ.to_string(float_format=lambda x:'%.4f'%x))
+summ['ecl']=np.clip(summ.ecl,0,summ.balance)
+summ['lo']=np.clip(summ.lo,0,summ.balance); summ['hi']=np.clip(summ.hi,0,summ.balance)
+summ[['pool_id','ecl','lo','hi']].rename(columns={'lo':'ecl_lower','hi':'ecl_upper'}).to_csv('/workspace/predictions.csv',index=False)
+print('\nportfolio allowance %.2f'%summ.ecl.sum(),' total bal %.0f'%summ.balance.sum())
+EOF
+python3 work/model2.py
 ```
 
 ## [30] tool
@@ -683,7 +979,17 @@ Converged (seed-to-seed SD <0.3%). Let me verify the final output file.
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && python3 -c "
+import pandas as pd,numpy as np
+p=pd.read_csv('predictions.csv'); b=pd.read_csv('data/pools.csv')
+assert list(p.columns)==['pool_id','ecl','ecl_lower','ecl_upper'], p.columns
+assert len(p)==12 and p.pool_id.is_unique and not p.isna().any().any()
+assert np.isfinite(p[['ecl','ecl_lower','ecl_upper']].values).all()
+m=p.merge(b,on='pool_id'); assert len(m)==12
+assert (m.ecl>=0).all() and (m.ecl<=m.balance).all()
+assert (m.ecl_lower>=0).all() and (m.ecl_lower<=m.ecl_upper).all() and (m.ecl_upper<=m.balance).all()
+print('ALL CHECKS PASS'); print('portfolio allowance \$%.2f  portfolio rate %.4f%%'%(m.ecl.sum(),100*m.ecl.sum()/m.balance.sum()))
+"
 ```
 
 ## [32] tool

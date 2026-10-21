@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd /data 2>/dev/null; cd ~; pwd; ls -la; ls -la data/ 2>/dev/null || find / -name "train.csv" 2>/dev/null
 ```
 
 ## [3] tool
@@ -71,7 +71,7 @@ drwxr-xr-x 1 root root 4096 Aug 11 05:04 ..
 **tool call: bash**
 
 ```
-
+cd /workspace/data; pwd; ls -la; head -50 train.csv; echo "---TEST---"; head -20 test.csv; echo; wc -l train.csv test.csv
 ```
 
 ## [5] tool
@@ -163,7 +163,7 @@ t
 **tool call: bash**
 
 ```
-
+cd /workspace/data; tail -20 train.csv; echo "---"; awk -F, 'NR>1{print $1}' train.csv | sort -n | head -1; awk -F, 'NR>1{print $1}' train.csv | sort -n | tail -1
 ```
 
 ## [7] tool
@@ -206,7 +206,14 @@ t
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+print(df.head())
+print(df.describe())
+print('any nan', df.isnull().sum())
+print(df.tail())
+"
 ```
 
 ## [9] tool
@@ -252,7 +259,11 @@ dtype: int64
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+print(df[['t','alpha','gamma']].to_string())
+" | head -120
 ```
 
 ## [11] tool
@@ -395,7 +406,18 @@ BrokenPipeError: [Errno 32] Broken pipe
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+g=df['gamma'].values; t=df['t'].values
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+plt.figure(figsize=(15,4))
+plt.plot(t,g)
+plt.savefig('g.png')
+print('min t',t.min(),'max',t.max())
+"
 ```
 
 ## [13] tool
@@ -411,7 +433,15 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+g=df['gamma'].values; t=df['t'].values
+for i in range(0,517,40):
+    print(t[i:i+40].tolist())
+    print(np.round(g[i:i+40],2).tolist())
+    print()
+"
 ```
 
 ## [15] tool
@@ -498,7 +528,11 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+print(df[['t','alpha','beta','gamma']].tail(30).to_string())
+"
 ```
 
 ## [17] tool
@@ -563,7 +597,14 @@ ModuleNotFoundError: No module named 'matplotlib'
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+print('alpha min/max',df.alpha.min(),df.alpha.max())
+print('beta min/max',df.beta.min(),df.beta.max())
+for i in range(0,517,50):
+    print(i, df.loc[df.t==i,['alpha','beta','gamma']].values)
+"
 ```
 
 ## [19] tool
@@ -618,7 +659,21 @@ beta min/max 1.0526 359.5911
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+# grid search period for single sinusoid
+best=None
+for P in np.arange(200,1200,2):
+    X=np.column_stack([np.ones_like(t), np.sin(2*np.pi*t/P), np.cos(2*np.pi*t/P)])
+    coef,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+    pred=X@coef
+    rss=np.sum((g-pred)**2)
+    if best is None or rss<best[0]: best=(rss,P,coef)
+print('best P',best[1],'rss',best[0])
+print(best[2])
+"
 ```
 
 ## [21] tool
@@ -715,7 +770,22 @@ best P 1198 rss 76580.71046157983
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+# sinusoid + linear trend
+results=[]
+for P in np.arange(200,2000,2):
+    X=np.column_stack([np.ones_like(t), t, np.sin(2*np.pi*t/P), np.cos(2*np.pi*t/P)])
+    coef,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+    pred=X@coef
+    rss=np.sum((g-pred)**2)
+    results.append((rss,P,coef))
+results.sort()
+for rss,P,c in results[:8]:
+    print('P',P,'rss',round(rss,1),'coef',np.round(c,3))
+"
 ```
 
 ## [23] tool
@@ -755,7 +825,23 @@ P 564 rss 44206.7 coef [ 47.371  -0.14  -15.97  -17.64 ]
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+for w in [30,60,90,120,150,180]:
+    idx=t>=(516-w)
+    tt=t[idx]; gg=g[idx]
+    A=np.polyfit(tt,gg,1)
+    print('window',w,'slope',round(A[0],4),'rss',round(np.sum((np.polyval(A,tt)-gg)**2),1))
+# also poly 2 last region
+for w in [80,120,160,200]:
+    idx=t>=(516-w)
+    tt=t[idx]; gg=g[idx]
+    A=np.polyfit(tt,gg,2)
+    pred=np.polyval(A,tt); rss=np.sum((pred-gg)**2); d=np.sqrt(rss/len(tt))
+    print('poly2 w',w,'coef',np.round(A,5),'std',round(d,3))
+"
 ```
 
 ## [25] tool
@@ -829,7 +915,22 @@ poly2 w 200 coef [ 3.300000e-04 -6.624100e-01  2.222211e+02] std 11.823
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+for w in [40,60,80,90,100]:
+    idx=t>=(516-w)
+    tt=t[idx]; gg=g[idx]
+    for deg in [1,2,3]:
+        A=np.polyfit(tt,gg,deg)
+        dA=np.polyder(A)
+        pred=np.polyval(A,tt); rss=np.sum((pred-gg)**2); sd=np.sqrt(rss/len(tt))
+        # extrapolate to 809
+        g809=np.polyval(A,809)
+        g519=np.polyval(A,519)
+        print('w',w,'deg',deg,'sd',round(sd,3),'g(519)',round(g519,2),'g(809)',round(g809,2))
+"
 ```
 
 ## [27] tool
@@ -876,7 +977,24 @@ w 100 deg 3 sd 0.409 g(519) -22.57 g(809) -693.74
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+def fit(P,harm=4):
+    X=np.column_stack([np.ones_like(t)]+[np.sin(2*np.pi*k*t/P) for k in range(1,harm+1)]+[np.cos(2*np.pi*k*t/P) for k in range(1,harm+1)])
+    coef,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+    pred=X@coef
+    rss=np.sum((g-pred)**2)
+    return rss,coef
+res=[]
+for P in np.arange(300,1500,3):
+    rss,c=fit(P)
+    res.append((rss,P))
+res.sort()
+for rss,P in res[:10]:
+    print('P',P,'rss',round(rss,1),'sd',round(np.sqrt(rss/len(t)),3))
+"
 ```
 
 ## [29] tool
@@ -920,7 +1038,20 @@ P 609 rss 11792.7 sd 4.776
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+def fit(P,harm):
+    X=np.column_stack([np.ones_like(t)]+[np.sin(2*np.pi*k*t/P) for k in range(1,harm+1)]+[np.cos(2*np.pi*k*t/P) for k in range(1,harm+1)])
+    coef,_,_,_=np.linalg.lstsq(X,g,rcond=None)
+    pred=X@coef
+    rss=np.sum((g-pred)**2)
+    return np.sqrt(rss/len(t))
+for P in [330,365,594,1198,1000]:
+    for h in [3,4,6]:
+        print('P',P,'h',h,'sd',round(fit(P,h),3))
+"
 ```
 
 ## [31] tool
@@ -993,7 +1124,21 @@ P 1000 h 6 sd 3.182
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+from scipy.interpolate import UnivariateSpline
+s=UnivariateSpline(t,g,k=3,s=None)
+print('default smooth param kx',s.get_knots())
+# compare spline fit residual
+pred=s(t)
+print('spline sd',np.sqrt(np.mean((pred-g)**2)))
+test=np.loadtxt('test.csv',delimiter=',',skiprows=1)
+print(test)
+pred_test=s(test)
+print(pred_test)
+"
 ```
 
 ## [33] tool
@@ -1022,7 +1167,18 @@ spline sd 0.9999741310903095
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+from scipy.interpolate import CubicSpline
+cs=CubicSpline(t,g,bc_type='natural')
+pred=cs(t); print('sd',np.sqrt(np.mean((pred-g)**2)))
+test=np.array([519,551,583,615,648,680,712,744,777,809.])
+print(np.round(cs(test),2))
+# boundary slope
+print('deriv end', cs(t[-1],1))
+"
 ```
 
 ## [35] tool
@@ -1071,7 +1227,23 @@ deriv end -1.2587797519330064
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); a=df.alpha.values; b=df.beta.values; g=df.gamma.values
+# is gamma a function of alpha? group by alpha modulo 360, check spread of gamma
+# Since alpha monotonic mostly, sort by alpha
+amod=a%360
+# check correlation between gamma and alpha
+print('corr gamma,alpha',np.corrcoef(g,a)[0,1])
+# Let's look at segments: does gamma vs alpha have hysteresis? 
+# Compare gamma at times where alpha is similar
+# print sorted by alpha
+order=np.argsort(a)
+print('t,alpha,gamma sorted by alpha (first 30)')
+for i in order[:30]:
+    print(int(t[i]),round(a[i],1),round(b[i],1),round(g[i],1))
+"
 ```
 
 ## [37] tool
@@ -1141,7 +1313,18 @@ t,alpha,gamma sorted by alpha (first 30)
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+test=np.array([519,551,583,615,648,680,712,744,777,809.])
+for w in [40,50,60,70,80,90]:
+    idx=t>=(516-w)
+    tt=t[idx]; gg=g[idx]
+    A=np.polyfit(tt,gg,1)
+    pv=np.polyval(A,test)
+    print('w',w,'slope',round(A[0],4),'g519',round(pv[0],2),'g809',round(pv[-1],2),np.round(pv,1).tolist())
+"
 ```
 
 ## [39] tool
@@ -1189,7 +1372,33 @@ w 90 slope -0.1136 g519 -22.71 g809 -55.64 [-22.7, -26.3, -30.0, -33.6, -37.4, -
 **tool call: bash**
 
 ```
-
+cd /workspace/data; python3 -c "
+import pandas as pd, numpy as np
+from scipy import stats
+df=pd.read_csv('train.csv')
+t=df.t.values.astype(float); g=df.gamma.values
+test=np.array([519,551,583,615,648,680,712,744,777,809.])
+w=60
+idx=t>=(516-w)
+tt=t[idx]; gg=g[idx]
+n=len(tt)
+A=np.polyfit(tt,gg,1)
+slope,inter=np.polyfit(tt,gg,1)
+pred=A[0]*tt+A[1]
+resid=gg-pred
+MSE=np.sum(resid**2)/(n-2)
+xbar=tt.mean(); Sxx=np.sum((tt-xbar)**2)
+# linreg confidence for slope/se
+slope_se=np.sqrt(MSE/Sxx)
+inter_se=np.sqrt(MSE*(1/n+xbar**2/Sxx))
+tcrit=stats.t.ppf(0.975,n-2)
+print('n',n,'MSE',round(MSE,5),'slope_se',round(slope_se,5),'inter',round(A[1],3),'slope',round(A[0],4))
+for x0 in test:
+    pred=A[0]*x0+A[1]
+    se=np.sqrt(MSE*(1+1/n+(x0-xbar)**2/Sxx))
+    half=tcrit*se
+    print(x0, round(pred,2), 'half', round(half,2))
+"
 ```
 
 ## [41] tool
@@ -1279,7 +1488,46 @@ n 61 MSE 0.14831 slope_se 0.0028 inter 27.565 slope -0.0959
 **tool call: bash**
 
 ```
+cd /workspace/data; cat > /workspace/predict.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+testdf = pd.read_csv('data/test.csv')
+t = train['t'].values.astype(float)
+g = train['gamma'].values
+test = testdf['t'].values.astype(float)
+
+# Fit linear model to the most recent tail (last 60 days)
+w = 60
+idx = t >= (t.max() - w)
+tt = t[idx]; gg = g[idx]
+n = len(tt)
+slope, inter = np.polyfit(tt, gg, 1)
+resid = gg - (slope*tt + inter)
+MSE = np.sum(resid**2)/(n-2)
+xbar = tt.mean(); Sxx = np.sum((tt-xbar)**2)
+tcrit = stats.t.ppf(0.975, n-2)
+
+tmax = t.max()
+rows = []
+for x0 in test:
+    pred = slope*x0 + inter
+    # statistical prediction interval under linear model
+    se = np.sqrt(MSE*(1 + 1/n + (x0-xbar)**2/Sxx))
+    lin_half = tcrit*se
+    # widen to reflect extrapolation uncertainty
+    half = 0.8 + 0.025*(x0 - tmax)
+    if half < lin_half:
+        half = lin_half
+    rows.append((x0, pred, pred-half, pred+half))
+
+out = pd.DataFrame(rows, columns=['t','y_pred','y_lower','y_upper'])
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+print('rows', len(out))
+EOF
+python3 /workspace/predict.py
 ```
 
 ## [43] tool
@@ -1312,7 +1560,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/train.csv'
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i "s#'data/train.csv'#'/workspace/data/train.csv'#; s#'data/test.csv'#'/workspace/data/test.csv'#; s#'predictions.csv'#'/workspace/predictions.csv'#" /workspace/predict.py && python3 /workspace/predict.py
 ```
 
 ## [45] tool
@@ -1362,7 +1610,43 @@ rows 10
 **tool call: bash**
 
 ```
+cd /workspace && cat > /workspace/predict.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+train = pd.read_csv('/workspace/data/train.csv')
+testdf = pd.read_csv('/workspace/data/test.csv')
+t = train['t'].values.astype(float)
+g = train['gamma'].values
+test = testdf['t'].values.astype(float)
+
+# Fit linear model to the most recent tail (last 60 days)
+w = 60
+idx = t >= (t.max() - w)
+tt = t[idx]; gg = g[idx]
+n = len(tt)
+slope, inter = np.polyfit(tt, gg, 1)
+resid = gg - (slope*tt + inter)
+MSE = np.sum(resid**2)/(n-2)
+xbar = tt.mean(); Sxx = np.sum((tt-xbar)**2)
+tcrit = stats.t.ppf(0.975, n-2)
+tmax = t.max()
+
+rows = []
+for x0 in test:
+    pred = slope*x0 + inter
+    se = np.sqrt(MSE*(1 + 1/n + (x0-xbar)**2/Sxx))
+    lin_half = tcrit*se
+    half = max(lin_half, 0.8 + 0.025*(x0 - tmax))
+    rows.append((int(x0), pred, pred-half, pred+half))
+
+out = pd.DataFrame(rows, columns=['t','y_pred','y_lower','y_upper'])
+out.to_csv('/workspace/predictions.csv', index=False)
+print(out.to_string())
+print('rows', len(out))
+EOF
+python3 /workspace/predict.py
+echo "---"; head -12 /workspace/predictions.csv; wc -l /workspace/predictions.csv
 ```
 
 ## [47] tool
@@ -1425,7 +1709,16 @@ I've created a valid `predictions.csv`. Let me do a final verification that it m
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+test=pd.read_csv('data/test.csv')
+print('columns:', list(p.columns))
+print('n test rows:', len(test), 'n pred rows:', len(p))
+print('t match:', (p['t'].astype(int).values==test['t'].astype(int).values).all())
+print('interval validity:', (p['y_lower']<p['y_pred']).all() and (p['y_pred']<p['y_upper']).all())
+print(p)
+"
 ```
 
 ## [49] tool

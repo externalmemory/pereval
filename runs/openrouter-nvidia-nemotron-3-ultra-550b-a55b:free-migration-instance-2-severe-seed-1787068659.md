@@ -109,7 +109,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -135,7 +135,7 @@ drwxr-xr-x 1 root root 4096 Oct 19 14:52 ..
 **tool call: bash**
 
 ```
-
+cat data/transitions.csv
 ```
 
 ## [5] tool
@@ -294,7 +294,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+cat data/macro_history.csv
 ```
 
 ## [7] tool
@@ -393,7 +393,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+cat data/scenario.csv
 ```
 
 ## [9] tool
@@ -421,7 +421,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cat data/portfolio.csv
 ```
 
 ## [11] tool
@@ -447,7 +447,7 @@ CCC/C,289
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [13] tool
@@ -3195,7 +3195,7 @@ The output files are correctly formatted and complete. Let me verify everything 
 **tool call: bash**
 
 ```
-
+ls -la *.csv
 ```
 
 ## [43] tool

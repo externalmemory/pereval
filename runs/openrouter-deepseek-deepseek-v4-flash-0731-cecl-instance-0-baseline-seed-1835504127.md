@@ -86,7 +86,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+cd /home/user 2>/dev/null || cd ~; ls -la; echo "---"; find . -maxdepth 3 -name "*.csv" -o -name "*.json" 2>/dev/null | head -50
 ```
 
 ## [3] tool
@@ -111,7 +111,7 @@ drwxr-xr-x 1 root root 4096 Oct 13 19:34 ..
 **tool call: bash**
 
 ```
-
+find / -name "history.csv" 2>/dev/null; echo "---"; find / -name "policy.json" 2>/dev/null; echo "---"; find / -name "pools.csv" 2>/dev/null; echo "---"; find / -name "forecast.csv" 2>/dev/null
 ```
 
 ## [5] tool
@@ -130,7 +130,7 @@ drwxr-xr-x 1 root root 4096 Oct 13 19:34 ..
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -la && echo "=== history.csv ===" && cat data/history.csv && echo "=== forecast.csv ===" && cat data/forecast.csv && echo "=== pools.csv ===" && cat data/pools.csv && echo "=== policy.json ===" && cat data/policy.json
 ```
 
 ## [7] tool
@@ -387,7 +387,14 @@ C4,C,9752120.0,40
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+print(h.shape)
+print(h['segment'].value_counts())
+print('B rows with odd quarters:')
+print(h[(h['segment']=='B') & ((h['quarter']<25)|(h['quarter']>65))])
+"
 ```
 
 ## [9] tool
@@ -452,7 +459,12 @@ B rows with odd quarters:
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+b = h[h['segment']=='B']
+print(b[['quarter']].values.ravel())
+"
 ```
 
 ## [11] tool
@@ -474,7 +486,7 @@ B rows with odd quarters:
 **tool call: bash**
 
 ```
-
+cd /workspace && grep -n "2B" data/history.csv; echo "---"; grep -n "B,25" data/history.csv | head
 ```
 
 ## [13] tool
@@ -1453,7 +1465,13 @@ C4 det=907838
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+print('unemp hist mean', h.unemployment.mean(), 'hpi hist mean', h.hpi_growth.mean())
+print(h.unemployment.describe())
+print(h.hpi_growth.describe())
+"
 ```
 
 ## [31] tool
@@ -1520,7 +1538,81 @@ The ECL estimates are consistent between deterministic recursion and Monte Carlo
 **tool call: bash**
 
 ```
+cat > /workspace/predict.py << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.stats import norm
 
+h = pd.read_csv('data/history.csv')
+f = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+pol = json.load(open('data/policy.json'))
+FQ = pol['forecast_quarters']; RQ = pol['reversion_quarters']
+RHO = pol['rho']; PERS = pol['persistence']; MAXT = 40
+
+def logit(x): return np.log(np.clip(x,1e-12,1-1e-12)/(1-np.clip(x,1e-12,1-1e-12)))
+def invlogit(x): return 1/(1+np.exp(-x))
+
+# Fit conditional mean rates (logit-linear in unemployment and hpi_growth) on full history;
+# predict the supplied forecast macro path; blend to historical mean over reversion window.
+rate_paths = {}
+for s in ['A','B','C']:
+    d = h[h.segment == s].reset_index(drop=True)
+    X = np.column_stack([np.ones(len(d)), d.unemployment, d.hpi_growth])
+    Xf = np.column_stack([np.ones(len(f)), f.unemployment, f.hpi_growth])
+    paths = {}
+    for var in ['pd','lgd','prepay']:
+        y = d[var].values
+        coef,*_ = np.linalg.lstsq(X, logit(y), rcond=None)
+        fc = invlogit(Xf @ coef)                       # forecast quarters 1..FQ
+        hm = y.mean()                                  # segment historical mean
+        path = np.concatenate([fc, np.full(MAXT-FQ, hm)])
+        for j in range(1, RQ+1):                       # post-forecast quarters: weight j/RQ on history
+            path[FQ+j-1] = (j/RQ)*hm + (1 - j/RQ)*fc[-1]
+        paths[var] = path
+    rate_paths[s] = paths
+
+NREP = 1_000_000
+rng = np.random.default_rng(20240618)
+ppf = {s: norm.ppf(rate_paths[s]['pd']) for s in ['A','B','C']}
+sq_rho, sq_1m, sq_1p = np.sqrt(RHO), np.sqrt(1-RHO), np.sqrt(1-PERS**2)
+
+def sim_segment(s):
+    Z = np.empty((NREP, MAXT))
+    Z[:,0] = rng.normal(size=NREP)
+    for t in range(1, MAXT):
+        Z[:,t] = PERS*Z[:,t-1] + sq_1p*rng.normal(size=NREP)
+    PD = norm.cdf((ppf[s][None,:] + sq_rho*Z)/sq_1m)   # realized aggregate PD, E[PD]=m
+    lgd = rate_paths[s]['lgd']; pp = rate_paths[s]['prepay']
+    res = {}
+    for T in [4,12,24,40]:
+        loss = np.zeros(NREP); a = np.ones(NREP)
+        for q in range(T):
+            begin = a*(1 - q/T)                        # beginning principal per $ (surviving loans)
+            loss += begin*PD[:,q]*lgd[q]               # default first on beginning principal
+            a = a*(1-PD[:,q])*(1-pp[q])                # nondefaulting may prepay; survivors amortize
+        res[T] = loss
+    return res
+
+seg_losses = {s: sim_segment(s) for s in ['A','B','C']}
+
+rows = []
+for _, r in pools.iterrows():
+    B, T, s = r['balance'], int(r['remaining_quarters']), r['segment']
+    loss = seg_losses[s][T]*B
+    ecl = loss.mean()
+    lo, up = np.percentile(loss, [2.5, 97.5])
+    rows.append((r['pool_id'], ecl, lo, up))
+
+out = pd.DataFrame(rows, columns=['pool_id','ecl','ecl_lower','ecl_upper'])
+out[['ecl','ecl_lower','ecl_upper']] = out[['ecl','ecl_lower','ecl_upper']].round(2)
+out.to_csv('predictions.csv', index=False)
+print(out.to_string(index=False))
+bal = pools.set_index('pool_id')['balance']
+assert (out.ecl >= 0).all() and (out.ecl <= bal.values).all()
+assert (out.ecl_lower >= 0).all() and (out.ecl_lower <= out.ecl_upper).all() and (out.ecl_upper <= bal.values).all()
+print('all bounds valid')
+EOF
+cd /workspace && python3 predict.py && cat predictions.csv
 ```
 
 ## [33] tool
@@ -1573,7 +1665,19 @@ C4,905694.71,694873.83,1154071.67
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+out = pd.read_csv('predictions.csv')
+pools = pd.read_csv('data/pools.csv')
+bal = pools.set_index('pool_id').balance
+assert len(out)==12
+assert out.pool_id.is_unique
+assert out.notna().all().all() and np.isfinite(out[['ecl','ecl_lower','ecl_upper']]).all().all()
+assert (out.ecl>=0).all() and (out.ecl<=bal.values).all()
+assert (out.ecl_lower>=0).all() and (out.ecl_lower<=out.ecl_upper).all() and (out.ecl_upper<=bal.values).all()
+print('OK: 12 rows, unique, finite, in-bounds')
+print('ECL sum (portfolio allowance): %.2f' % out.ecl.sum())
+"
 ```
 
 ## [35] tool
@@ -1766,7 +1870,52 @@ Separate per-segment fits clearly outperform pooled fits (segments have genuinel
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np, json
+from scipy.stats import norm
+h = pd.read_csv('data/history.csv'); f = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv'); pol = json.load(open('data/policy.json'))
+FQ=pol['forecast_quarters']; RQ=pol['reversion_quarters']; RHO=pol['rho']; PERS=pol['persistence']; MAXT=40
+def logit(x): return np.log(np.clip(x,1e-12,1-1e-12)/(1-np.clip(x,1e-12,1-1e-12)))
+def invlogit(x): return 1/(1+np.exp(-x))
+rate_paths={}
+for s in ['A','B','C']:
+    d=h[h.segment==s].reset_index(drop=True)
+    X=np.column_stack([np.ones(len(d)),d.unemployment,d.hpi_growth]); Xf=np.column_stack([np.ones(len(f)),f.unemployment,f.hpi_growth])
+    paths={}
+    for var in ['pd','lgd','prepay']:
+        y=d[var].values; coef,*_=np.linalg.lstsq(X,logit(y),rcond=None)
+        fc=invlogit(Xf@coef); hm=y.mean()
+        path=np.concatenate([fc,np.full(MAXT-FQ,hm)])
+        for j in range(1,RQ+1): path[FQ+j-1]=(j/RQ)*hm+(1-j/RQ)*fc[-1]
+        paths[var]=path
+    rate_paths[s]=paths
+NREP=1_000_000
+def run(seed):
+    rng=np.random.default_rng(seed)
+    ppf={s: norm.ppf(rate_paths[s]['pd']) for s in ['A','B','C']}
+    sq_rho,sq_1m,sq_1p=np.sqrt(RHO),np.sqrt(1-RHO),np.sqrt(1-PERS**2)
+    seg={}
+    for s in ['A','B','C']:
+        Z=np.empty((NREP,MAXT)); Z[:,0]=rng.normal(size=NREP)
+        for t in range(1,MAXT): Z[:,t]=PERS*Z[:,t-1]+sq_1p*rng.normal(size=NREP)
+        PD=norm.cdf((ppf[s][None,:]+sq_rho*Z)/sq_1m)
+        lgd=rate_paths[s]['lgd']; pp=rate_paths[s]['prepay']; res={}
+        for T in [4,12,24,40]:
+            loss=np.zeros(NREP); a=np.ones(NREP)
+            for q in range(T):
+                begin=a*(1-q/T); loss+=begin*PD[:,q]*lgd[q]; a=a*(1-PD[:,q])*(1-pp[q])
+            res[T]=loss
+        seg[s]=res
+    return seg
+seg1=run(20240618); seg2=run(999)
+old=pd.read_csv('predictions.csv').set_index('pool_id')
+for _,r in pools.iterrows():
+    B,T,s=r.balance,int(r.remaining_quarters),r.segment
+    l1=seg1[s][T]*B; l2=seg2[s][T]*B
+    row=old.loc[r.pool_id]
+    print(r.pool_id, 'ecl diff %.2f'%(l1.mean()-l2.mean()), 'lo diff %.2f'%(np.percentile(l1,2.5)-np.percentile(l2,2.5)), 'up diff %.2f'%(np.percentile(l1,97.5)-np.percentile(l2,97.5)))
+"
 ```
 
 ## [41] tool
@@ -1814,7 +1963,16 @@ Monte Carlo results are stable across seeds (ECL differences < $160, quantile di
 **tool call: bash**
 
 ```
-
+cd /workspace && echo "=== final predictions.csv ===" && cat predictions.csv && echo && echo "=== validation ===" && python3 -c "
+import pandas as pd, numpy as np
+out = pd.read_csv('predictions.csv'); pools = pd.read_csv('data/pools.csv')
+bal = pools.set_index('pool_id').balance
+assert len(out)==12 and out.pool_id.is_unique and out.notna().all().all()
+assert np.isfinite(out[['ecl','ecl_lower','ecl_upper']]).all().all()
+assert (out.ecl>=0).all() and (out.ecl<=bal.values).all()
+assert (out.ecl_lower>=0).all() and (out.ecl_lower<=out.ecl_upper).all() and (out.ecl_upper<=bal.values).all()
+print('All checks passed. Rows:', len(out), '| Portfolio allowance: $%.2f' % out.ecl.sum())
+"
 ```
 
 ## [43] tool

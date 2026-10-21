@@ -597,7 +597,7 @@ Script saved. Executing...
 **tool call: bash**
 
 ```
-
+cd /tmp && python ecl_model.py 2>&1 | head -100
 ```
 
 ## [13] tool
@@ -610,7 +610,7 @@ python: can't open file '/tmp/ecl_model.py': [Errno 2] No such file or directory
 **tool call: bash**
 
 ```
-
+pwd && ls -la data/
 ```
 
 ## [15] tool
@@ -630,7 +630,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 21:31 ..
 **tool call: bash**
 
 ```
-
+cd /workspace && python ecl_model.py
 ```
 
 ## [17] tool
@@ -945,7 +945,7 @@ with open('ecl_model.py', 'w') as f:
 **tool call: bash**
 
 ```
-
+cd /workspace && python ecl_model.py
 ```
 
 ## [23] tool
@@ -1224,7 +1224,7 @@ Good! The formula is correct. Now let me check the results more carefully and ve
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv
 ```
 
 ## [33] tool
@@ -2049,7 +2049,7 @@ Updated model with 5000 simulations. Running...
 **tool call: bash**
 
 ```
-
+cd /workspace && python ecl_model.py
 ```
 
 ## [51] tool
@@ -2079,7 +2079,7 @@ Perfect! Now let me verify the final output:
 **tool call: bash**
 
 ```
-
+cd /workspace && head -20 predictions.csv && echo "" && wc -l predictions.csv
 ```
 
 ## [53] tool
@@ -2262,6 +2262,85 @@ Perfect! Now let me create a summary document explaining the methodology:
 **tool call: bash**
 
 ```
+cat > /workspace/MODEL_SUMMARY.md << 'EOF'
+# ECL Model Summary
+
+## Overview
+This model estimates lifetime expected credit losses (ECL) and 95% prediction intervals for closed-end loan pools using:
+- Historical quarterly segment rates (PD, LGD, prepay)
+- Economic forecast path (unemployment, HPI growth)
+- Aggregate probit AR(1) shock dynamics
+- Monte Carlo simulation with 5000 paths per pool
+
+## Key Components
+
+### 1. Historical Rate Estimation
+- Extract quarterly segment means from history.csv
+  - Segment A: PD=1.79%, LGD=48.05%, Prepay=3.76%
+  - Segment B: PD=3.38%, LGD=37.95%, Prepay=9.29%
+  - Segment C: PD=2.38%, LGD=54.21%, Prepay=7.29%
+
+### 2. Forecast Period Rates (Quarters 1-8)
+- Fit linear regression of segment rates vs economic variables
+- Project rates using economic forecast path
+- Rates estimated as: E[rate] = β₀ + β₁*unemployment + β₂*HPI_growth
+
+### 3. Rate Reversion (Quarters 9-12)
+- Linear blend from forecast values to historical means
+- Weight on history increases from 1/4 to 4/4 over reversion period
+- After reversion: rates held at historical means
+
+### 4. Balance Progression
+- Beginning principal in quarter q: B*(1-(q-1)/T)
+  - B = initial pool balance
+  - T = remaining term (quarters)
+- Linear decline from B to 0 over the term
+- Applied uniformly regardless of historical defaults/prepays
+
+### 5. Stochastic Defaults (Systemic Shock Model)
+For each future quarter with mean PD = m:
+- Realized PD follows probit transformation:
+  - z ~ N(0,1) per-simulation
+  - z_{t+1} = 0.6*z_t + sqrt(1-0.6²)*ε_t, ε_t iid N(0,1)
+  - Realized_PD = Φ((Φ⁻¹(m) + √0.02*z) / √(1-0.02))
+  - Φ = standard normal CDF
+- This preserves marginal mean and captures systemic correlation (ρ=0.02)
+
+### 6. Pool Simulation
+Per simulation path:
+1. For each quarter q in remaining term:
+   - Beginning principal = B*(1-q/T)
+   - Apply realized PD → default_amount
+   - Loss = default_amount * LGD (deterministic)
+   - (Note: Prepay rate is deterministic; doesn't affect principal for loss calc)
+
+2. Aggregate losses across quarters to get one path's lifetime loss
+
+3. Repeat 5000 times, average for ECL
+
+### 7. Prediction Intervals
+- 95% interval: [2.5th percentile, 97.5th percentile] of loss distribution
+- Separately per pool (no portfolio aggregation)
+- Bounds ensured: 0 ≤ lower ≤ upper ≤ balance
+
+## Key Assumptions
+- No age effect within pools (all loans have same remaining term)
+- LGD and prepay remain deterministic conditional rates
+- Pools in same segment share systemic shocks; segments independent
+- AR(1) persistence coefficient: 0.6
+- Systemic correlation (rho): 0.02
+- No discounting, no accrued interest/fees
+
+## Results Summary
+- Portfolio ECL: $7,856,669 (12.69% loss rate)
+- Range by pool: 1.63% to 25.55% loss rates
+- Longer-term pools show higher loss rates due to extended exposure
+- B and C segments show higher loss rates than A (higher PD/LGD)
+
+## Output File
+`predictions.csv`: Contains pool_id, ecl, ecl_lower, ecl_upper for all 12 pools
+EOF
+cat /workspace/MODEL_SUMMARY.md
 
 ```
 
@@ -2352,7 +2431,7 @@ Perfect! Now let me verify the final predictions.csv file one more time:
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv
 ```
 
 ## [59] tool
@@ -2521,6 +2600,37 @@ Perfect! The model is complete and all validations pass. Let me create a final s
 **tool call: bash**
 
 ```
+cd /workspace && python << 'EOF'
+import pandas as pd
+
+# Display final predictions
+print("\n" + "="*80)
+print("LIFETIME EXPECTED CREDIT LOSS PREDICTIONS")
+print("="*80 + "\n")
+
+results = pd.read_csv('predictions.csv')
+pools = pd.read_csv('data/pools.csv')
+
+# Format nicely
+merged = results.merge(pools, on='pool_id')
+merged = merged[['pool_id', 'segment', 'remaining_quarters', 'balance', 'ecl', 'ecl_lower', 'ecl_upper']]
+
+for idx, row in merged.iterrows():
+    loss_rate = 100 * row['ecl'] / row['balance']
+    interval_width = row['ecl_upper'] - row['ecl_lower']
+    print(f"{row['pool_id']} (Seg {row['segment']}, {int(row['remaining_quarters'])}Q)")
+    print(f"  Balance:         ${row['balance']:>14,.0f}")
+    print(f"  ECL:             ${row['ecl']:>14,.0f}  ({loss_rate:>6.2f}%)")
+    print(f"  95% Interval:    [${row['ecl_lower']:>13,.0f}, ${row['ecl_upper']:>13,.0f}]")
+    print(f"  Interval Width:  ${interval_width:>14,.0f}\n")
+
+total_balance = merged['balance'].sum()
+total_ecl = merged['ecl'].sum()
+print("="*80)
+print(f"Portfolio Total:     ${total_balance:>14,.0f}")
+print(f"Portfolio ECL:       ${total_ecl:>14,.0f}  ({100*total_ecl/total_balance:>6.2f}%)")
+print("="*80 + "\n")
+EOF
 
 ```
 
@@ -2617,7 +2727,7 @@ Perfect! Let me verify the file exists and is ready:
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -lh predictions.csv && echo "" && file predictions.csv && echo "" && md5sum predictions.csv
 ```
 
 ## [65] tool
@@ -2633,7 +2743,7 @@ bash: line 1: file: command not found
 **tool call: bash**
 
 ```
-
+cd /workspace && wc -l predictions.csv && echo "" && head -1 predictions.csv && echo "..." && tail -1 predictions.csv
 ```
 
 ## [67] tool

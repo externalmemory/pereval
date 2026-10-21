@@ -66,7 +66,7 @@ Predict y with a 95% interval for every row in data/test.csv and write predictio
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -134,7 +134,20 @@ Ss4z6R,500.0
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+print('Train categories:')
+print(tr.groupby('category').agg(n=('x','size'), xmin=('x','min'), xmax=('x','max'), ymin=('y','min'), ymax=('y','max')))
+print()
+print('Test categories:')
+print(te.groupby('category').agg(n=('x','size'), xmin=('x','min'), xmax=('x','max')))
+print()
+print('Unique x per category in train:')
+for c, g in tr.groupby('category'):
+    print(c, sorted(g.x.unique()))
+"
 ```
 
 ## [5] tool
@@ -183,7 +196,16 @@ Vi7zXY [np.float64(25.0), np.float64(50.0), np.float64(75.0), np.float64(100.0)]
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+pd.set_option('display.width', 200)
+for c, g in tr.groupby('category'):
+    m = g.groupby('x').agg(ymean=('y','mean'), ystd=('y','std'), n=('y','size'))
+    print('===', c)
+    print(m)
+    print()
+"
 ```
 
 ## [7] tool
@@ -402,7 +424,45 @@ Let me explore the data structure and test different functional forms, since ext
 **tool call: bash**
 
 ```
+mkdir -p /tmp/work && cat > /tmp/work/explore.py << 'EOF'
+import pandas as pd, numpy as np
 
+tr = pd.read_csv('data/train.csv')
+
+# check coefficient of variation and try candidate functional forms per category
+# Model comparison: fit on LOWER half of x, evaluate on UPPER half (tests extrapolation)
+def fit_eval(cat, g, kind):
+    g = g.sort_values('x')
+    xs = np.sort(g.x.unique())
+    mid = xs[len(xs)//2 - 1] if len(xs) > 4 else xs[len(xs)//2 - 1]
+    lo = g[g.x <= mid]; hi = g[g.x > mid]
+    if len(hi) == 0 or len(lo) < 4: return None
+    ly_lo = np.log(-lo.y.values); ly_hi = np.log(-hi.y.values)
+    xlo = lo.x.values; xhi = hi.x.values
+    if kind == 'exp':      # log(-y) = a + b x
+        X = np.column_stack([np.ones_like(xlo), xlo]); Xh = np.column_stack([np.ones_like(xhi), xhi])
+    elif kind == 'power':  # log(-y) = a + b log x
+        X = np.column_stack([np.ones_like(xlo), np.log(xlo)]); Xh = np.column_stack([np.ones_like(xhi), np.log(xhi)])
+    elif kind == 'exp2':   # log(-y) = a + b x + c x^2
+        X = np.column_stack([np.ones_like(xlo), xlo, xlo**2]); Xh = np.column_stack([np.ones_like(xhi), xhi, xhi**2])
+    elif kind == 'power2': # log(-y) = a + b lgx + c lgx^2
+        X = np.column_stack([np.ones_like(xlo), np.log(xlo), np.log(xlo)**2]); Xh = np.column_stack([np.ones_like(xhi), np.log(xhi), np.log(xhi)**2])
+    elif kind == 'sqrt':   # log(-y) = a + b sqrt(x)
+        X = np.column_stack([np.ones_like(xlo), np.sqrt(xlo)]); Xh = np.column_stack([np.ones_like(xhi), np.sqrt(xhi)])
+    beta, *_ = np.linalg.lstsq(X, ly_lo, rcond=None)
+    pred = Xh @ beta
+    rmse = np.sqrt(np.mean((pred - ly_hi)**2))
+    # also in-sample rmse
+    r_in = np.sqrt(np.mean((X@beta - ly_lo)**2))
+    return r_in, rmse
+
+for kind in ['exp','power','exp2','power2','sqrt']:
+    print('==== model:', kind)
+    for c, g in tr.groupby('category'):
+        r = fit_eval(c, g, kind)
+        if r: print(f'  {c}: in-sample logRMSE={r[0]:.4f}  extrapolation logRMSE={r[1]:.4f}')
+EOF
+python3 /tmp/work/explore.py
 ```
 
 ## [9] tool
@@ -485,7 +545,64 @@ Let me explore the data structure and test different functional forms, since ext
 **tool call: bash**
 
 ```
+cat > /tmp/work/explore2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import curve_fit
 
+tr = pd.read_csv('data/train.csv')
+
+def design(kind, x):
+    x = np.asarray(x, float)
+    if kind == 'exp':    return np.column_stack([np.ones_like(x), x])
+    if kind == 'power':  return np.column_stack([np.ones_like(x), np.log(x)])
+    if kind == 'power2': return np.column_stack([np.ones_like(x), np.log(x), np.log(x)**2])
+    if kind == 'power3': return np.column_stack([np.ones_like(x), np.log(x), np.log(x)**2, np.log(x)**3])
+    if kind == 'sqrt':   return np.column_stack([np.ones_like(x), np.sqrt(x)])
+    if kind == 'exp2':   return np.column_stack([np.ones_like(x), x, x**2])
+
+# 1) Full-fit coefficients per category for power2, and residual std
+print('--- power2 full-fit coefficients (log(-y) = a + b lnx + c lnx^2) ---')
+for c, g in tr.groupby('category'):
+    X = design('power2', g.x.values); ly = np.log(-g.y.values)
+    beta, *_ = np.linalg.lstsq(X, ly, rcond=None)
+    resid = ly - X@beta
+    print(f'{c}: a={beta[0]:8.4f} b={beta[1]:8.4f} c={beta[2]:8.4f} resid_std={resid.std(ddof=3):.4f} n={len(g)}')
+
+# 2) extrapolation test: fit lower 75% of unique x, predict top 25%
+print()
+print('--- extrapolation logRMSE, fit lower 75% of x-range -> top 25% ---')
+for kind in ['exp','power','power2','power3','sqrt','exp2']:
+    print('model:', kind)
+    for c, g in tr.groupby('category'):
+        g = g.sort_values('x'); xs = np.sort(g.x.unique())
+        cut = xs[int(len(xs)*0.75)-1]
+        lo = g[g.x <= cut]; hi = g[g.x > cut]
+        if len(hi)==0 or len(lo)<5: 
+            print(f'  {c}: skip'); continue
+        X = design(kind, lo.x.values); beta,*_ = np.linalg.lstsq(X, np.log(-lo.y.values), rcond=None)
+        pred = design(kind, hi.x.values)@beta
+        rmse = np.sqrt(np.mean((pred-np.log(-hi.y.values))**2))
+        print(f'  {c}: {rmse:.4f}', end='')
+        print()
+
+# 3) stretched exponential: log(-y) = a + b*x^q  (nonlinear)
+print()
+print('--- stretched exponential log(-y)=a+b*x^q: full fit + extrap75 ---')
+def f(x, a, b, q): return a + b*np.power(x, q)
+for c, g in tr.groupby('category'):
+    g = g.sort_values('x'); xs = np.sort(g.x.unique())
+    try:
+        p,_ = curve_fit(f, g.x.values, np.log(-g.y.values), p0=[-3, 0.001, 1.5], maxfev=20000)
+        ly = np.log(-g.y.values); rs = (ly - f(g.x.values,*p)).std(ddof=3)
+        cut = xs[int(len(xs)*0.75)-1]
+        lo = g[g.x<=cut]; hi = g[g.x>cut]
+        p2,_ = curve_fit(f, lo.x.values, np.log(-lo.y.values), p0=[-3,0.001,1.5], maxfev=20000)
+        rmse = np.sqrt(np.mean((f(hi.x.values,*p2)-np.log(-hi.y.values))**2))
+        print(f'{c}: a={p[0]:7.3f} b={p[1]:.2e} q={p[2]:.3f} resid={rs:.4f} | extrap75 RMSE={rmse:.4f}')
+    except Exception as e:
+        print(c, 'fail', e)
+EOF
+python3 /tmp/work/explore2.py
 ```
 
 ## [11] tool
@@ -619,7 +736,34 @@ Vi7zXY: a= -3.040 b=1.99e-03 q=1.576 resid=0.2601 | extrap75 RMSE=0.7277
 **tool call: bash**
 
 ```
+cat > /tmp/work/explore3.py << 'EOF'
+import pandas as pd, numpy as np
 
+tr = pd.read_csv('data/train.csv')
+np.set_printoptions(suppress=True)
+
+for c in ['FPYCfv','Vi7zXY']:
+    g = tr[tr.category==c]
+    print('===', c)
+    for x, gg in g.groupby('x'):
+        print(f'  x={x}: y={np.sort(gg.y.values).round(4)}')
+    print()
+
+# completed-square parameters for power2 per category: log(-y) = d + c*(lnx - t0)^2
+print('--- power2 completed square: log(-y) = d + c*(lnx - t0)^2 ---')
+for c, g in tr.groupby('category'):
+    t = np.log(g.x.values); ly = np.log(-g.y.values)
+    X = np.column_stack([np.ones_like(t), t, t*t])
+    beta, *_ = np.linalg.lstsq(X, ly, rcond=None)
+    a,b,cc = beta
+    t0 = -b/(2*cc); d = a - cc*t0**2
+    # SEs via OLS
+    n=len(g); XtX_inv = np.linalg.inv(X.T@X)
+    s2 = ((ly - X@beta)**2).sum()/(n-3)
+    se = np.sqrt(np.diag(XtX_inv)*s2)
+    print(f'{c}: t0={t0:.4f} (x0={np.exp(t0):.1f})  d={d:.4f} (y0={np.exp(d):.4f})  c={cc:.4f}  se_c={se[2]:.4f}')
+EOF
+python3 /tmp/work/explore3.py
 ```
 
 ## [13] tool
@@ -683,7 +827,54 @@ Vi7zXY: t0=3.2965 (x0=27.0)  d=-2.7039 (y0=0.0669)  c=1.4485  se_c=0.3506
 **tool call: bash**
 
 ```
+cat > /tmp/work/explore4.py << 'EOF'
+import pandas as pd, numpy as np
 
+tr = pd.read_csv('data/train.csv')
+
+def design(kind, x, t0=np.log(25)):
+    x = np.asarray(x, float); t = np.log(x)
+    if kind == 'power2':    return np.column_stack([np.ones_like(x), t, t*t])
+    if kind == 'quad_t0':   return np.column_stack([np.ones_like(x), (t-t0)**2])   # vertex fixed at 25
+    if kind == 'exp2':      return np.column_stack([np.ones_like(x), x, x**2])
+    if kind == 'sqrt':      return np.column_stack([np.ones_like(x), np.sqrt(x)])
+    if kind == 'exp':       return np.column_stack([np.ones_like(x), x])
+
+print('--- HARSH extrapolation: fit x<=200, predict 225..400 (big cats), logRMSE on means per x ---')
+for kind in ['power2','quad_t0','exp2','sqrt','exp']:
+    print('model:', kind)
+    for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+        g = tr[tr.category==c].sort_values('x')
+        lo = g[g.x<=200]; hi = g[g.x>200]
+        X = design(kind, lo.x.values); beta,*_ = np.linalg.lstsq(X, np.log(-lo.y.values), rcond=None)
+        pred = design(kind, hi.x.values)@beta
+        # evaluate against per-x means (less noisy) and against raw
+        hm = hi.groupby('x').y.mean()
+        predm = design(kind, hm.index.values)@beta
+        rmse_mean = np.sqrt(np.mean((predm-np.log(-hm.values))**2))
+        rmse_raw = np.sqrt(np.mean((pred-np.log(-hi.y.values))**2))
+        print(f'  {c}: vs x-means={rmse_mean:.4f}  vs raw={rmse_raw:.4f}')
+
+print()
+print('--- predictions at test x (500..800) using full-data fit, model comparison ---')
+for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+    g = tr[tr.category==c]
+    for kind in ['power2','quad_t0']:
+        X = design(kind, g.x.values); beta,*_ = np.linalg.lstsq(X, np.log(-g.y.values), rcond=None)
+        xt = np.array([500.,650.,800.])
+        print(f'  {c} {kind}: log(-y)@500,650,800 = {np.round(design(kind, xt)@beta,3)}')
+print()
+print('--- small cats: constrained vs unconstrained fits ---')
+for c in ['FPYCfv','Vi7zXY']:
+    g = tr[tr.category==c]
+    for kind in ['power2','quad_t0']:
+        X = design(kind, g.x.values); ly=np.log(-g.y.values)
+        beta,*_ = np.linalg.lstsq(X, ly, rcond=None)
+        resid = ly - X@beta
+        xt = np.array([125.,150.,175.,200.])
+        print(f'  {c} {kind}: resid_std={resid.std():.4f}  pred log(-y)@125..200 = {np.round(design(kind, xt)@beta,3)}  -> -y={np.round(-np.exp(design(kind, xt)@beta),3)}')
+EOF
+python3 /tmp/work/explore4.py
 ```
 
 ## [15] tool
@@ -816,7 +1007,44 @@ model: exp
 **tool call: bash**
 
 ```
+cat > /tmp/work/explore5.py << 'EOF'
+import pandas as pd, numpy as np
 
+tr = pd.read_csv('data/train.csv')
+t0 = np.log(25.0)
+
+def design(x):
+    x = np.asarray(x, float); return np.column_stack([np.ones_like(x), (np.log(x)-t0)**2])
+
+# more validation splits for big cats: compare power2 (free vertex) vs quad_t0 (vertex=25)
+def design_free(x):
+    x = np.asarray(x,float); t=np.log(x); return np.column_stack([np.ones_like(x), t, t*t])
+
+print('--- validation across multiple cutoffs: mean logRMSE vs per-x means ---')
+for kind, des in [('power2', design_free), ('quad_t0', design)]:
+    for c in ['PDuZgN','Qbh9aV','Ss4z6R']:
+        g = tr[tr.category==c].sort_values('x')
+        errs = []
+        for cut in [200, 250, 300]:
+            lo = g[g.x<=cut]; hi = g[g.x>cut]
+            beta,*_ = np.linalg.lstsq(des(lo.x.values), np.log(-lo.y.values), rcond=None)
+            hm = hi.groupby('x').y.mean()
+            pred = des(hm.index.values)@beta
+            errs.append(np.sqrt(np.mean((pred-np.log(-hm.values))**2)))
+        print(f'{kind:8s} {c}: cuts 200/250/300 -> {np.round(errs,4)}')
+
+print()
+print('--- residual diagnostics for quad_t0: per-x std of log-residuals (trend? heavy tails?) ---')
+from scipy import stats
+for c, g in tr.groupby('category'):
+    beta,*_ = np.linalg.lstsq(design(g.x.values), np.log(-g.y.values), rcond=None)
+    g = g.assign(res=np.log(-g.y.values) - design(g.x.values)@beta)
+    stds = g.groupby('x').res.std()
+    k = stats.kurtosis(g.res.dropna())
+    print(f'{c}: resid std overall={g.res.std(ddof=2):.3f}, kurtosis={k:.2f}')
+    print('   per-x std:', np.round(stds.values,2))
+EOF
+python3 /tmp/work/explore5.py
 ```
 
 ## [17] tool
@@ -878,7 +1106,37 @@ The constrained model (vertex at 25) validates well. Now let me check noise tail
 **tool call: bash**
 
 ```
+cat > /tmp/work/explore6.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+tr = pd.read_csv('data/train.csv')
+t0 = np.log(25.0)
+def design(x):
+    x = np.asarray(x, float); return np.column_stack([np.ones_like(x), (np.log(x)-t0)**2])
+
+allz = []
+for c, g in tr.groupby('category'):
+    X = design(g.x.values); ly = np.log(-g.y.values)
+    beta,*_ = np.linalg.lstsq(X, ly, rcond=None)
+    res = ly - X@beta
+    s = res.std(ddof=2)
+    z = res/s
+    allz.append(z)
+    print(f'{c}: n={len(g)}, sigma={s:.3f}, |z|>2: {(abs(z)>2).sum()}, |z|>3: {(abs(z)>3).sum()}, max|z|={abs(z).max():.2f}')
+    if (abs(z)>2.5).sum()>0:
+        gg = g.assign(z=z)
+        print( gg.loc[abs(gg.z)>2.5, ['x','y','z']].to_string(index=False))
+z = np.concatenate(allz)
+print()
+print('pooled: n=%d, kurtosis=%.2f, |z|>2: %d (exp %.1f), |z|>3: %d (exp %.1f)' % (len(z), stats.kurtosis(z), (abs(z)>2).sum(), len(z)*0.0456, (abs(z)>3).sum(), len(z)*0.0027))
+# compare with t-distribution quantiles
+qs = [0.01,0.025,0.05,0.25,0.5,0.75,0.95,0.975,0.99]
+print('empirical z quantiles:', np.round(np.quantile(z, qs),2))
+print('normal quantiles     :', np.round(stats.norm.ppf(qs),2))
+print('t(5) quantiles       :', np.round(stats.t.ppf(qs,5),2))
+EOF
+python3 /tmp/work/explore6.py
 ```
 
 ## [19] tool
@@ -1036,7 +1294,54 @@ Residuals have heavy tails (a few points pulled toward zero). Now let me build t
 **tool call: bash**
 
 ```
+cat > /tmp/work/pipeline_test.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy import stats
 
+tr = pd.read_csv('data/train.csv')
+t0 = np.log(25.0)
+TCRIT = stats.t.ppf(0.975, 6)  # heavy-tail multiplier
+
+def des(x):
+    x = np.asarray(x, float)
+    return np.column_stack([np.ones_like(x), (np.log(x)-t0)**2])
+
+def fit_rlm(g):
+    X = des(g.x.values); ly = np.log(-g.y.values)
+    r = sm.RLM(ly, X, M=sm.robust.norms.HuberT()).fit()
+    beta = r.params; cov = r.cov_params().values
+    res = ly - X@beta
+    sigma = 1.4826*np.median(np.abs(res - np.median(res)))
+    return beta, cov, sigma, res
+
+def predict(beta, cov, sigma, xq):
+    Xq = des(xq)
+    f = Xq@beta
+    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', Xq, cov, Xq), 0))
+    sp = np.sqrt(sigma**2 + se**2)
+    hw = TCRIT*sp
+    return f, hw
+
+# --- coverage validation: fit on lower x, predict held-out x, check 95% PI coverage ---
+print('--- end-to-end coverage validation (fit x<=cut -> cover held-out raw y) ---')
+for c, g0 in tr.groupby('category'):
+    g0 = g0.sort_values('x')
+    for frac in [0.5, 0.625, 0.75]:
+        xs = np.sort(g0.x.unique()); cut = xs[int(len(xs)*frac)-1]
+        lo = g0[g0.x<=cut]; hi = g0[g0.x>cut]
+        if len(hi)==0: continue
+        beta, cov, sigma, _ = fit_rlm(lo)
+        f, hw = predict(beta, cov, sigma, hi.x.values)
+        yl = -np.exp(f+hw); yu = -np.exp(f-hw)
+        covg = ((hi.y.values >= yl) & (hi.y.values <= yu)).mean()
+        # accuracy vs per-x means
+        hm = hi.groupby('x').y.mean()
+        fm, _ = predict(beta, cov, sigma, hm.index.values)
+        rmse = np.sqrt(np.mean((fm - np.log(-hm.values))**2))
+        print(f'{c} cut={cut:.0f} n_held={len(hi):3d}: PI coverage={covg:.2f}  extrap logRMSE(vs means)={rmse:.3f}')
+EOF
+python3 /tmp/work/pipeline_test.py
 ```
 
 ## [21] tool
@@ -1064,7 +1369,7 @@ AttributeError: 'numpy.ndarray' object has no attribute 'values'
 **tool call: bash**
 
 ```
-
+sed -i 's/cov = r.cov_params().values/cov = np.asarray(r.cov_params())/' /tmp/work/pipeline_test.py && python3 /tmp/work/pipeline_test.py
 ```
 
 ## [23] tool
@@ -1115,7 +1420,35 @@ Validation looks strong for the data-rich categories (coverage 0.98–1.00, extr
 **tool call: bash**
 
 ```
+cat > /tmp/work/preview.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy import stats
 
+tr = pd.read_csv('data/train.csv'); te = pd.read_csv('data/test.csv')
+t0 = np.log(25.0); TCRIT = stats.t.ppf(0.975, 6)
+def des(x):
+    x = np.asarray(x, float); return np.column_stack([np.ones_like(x), (np.log(x)-t0)**2])
+
+for c, g in tr.groupby('category'):
+    X = des(g.x.values); ly = np.log(-g.y.values)
+    # OLS
+    bo,*_ = np.linalg.lstsq(X, ly, rcond=None)
+    so = (ly-X@bo).std(ddof=2)
+    # RLM
+    r = sm.RLM(ly, X, M=sm.robust.norms.HuberT()).fit()
+    br = r.params; res = ly - X@br
+    sr = 1.4826*np.median(np.abs(res-np.median(res)))
+    cov = np.asarray(r.cov_params())
+    gt = te[te.category==c]
+    Xq = des(gt.x.values); f = Xq@br
+    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', Xq, cov, Xq),0))
+    sp = np.sqrt(sr**2+se**2); hw = TCRIT*sp
+    print(f'{c}: OLS(d={bo[0]:.3f},c={bo[1]:.3f},sig={so:.3f})  RLM(d={br[0]:.3f},c={br[1]:.3f},sig={sr:.3f})')
+    for xi, fi, hwi, spi, sei in zip(gt.x.values, f, hw, sp, se):
+        print(f'   x={xi:6.1f}: pred={-np.exp(fi):9.4f}  [{-np.exp(fi+hwi):10.4f}, {-np.exp(fi-hwi):9.4f}]  (sigma_pred={spi:.3f}, se_fit={sei:.3f})')
+EOF
+python3 /tmp/work/preview.py
 ```
 
 ## [25] tool
@@ -1289,7 +1622,87 @@ Now let me write the final solution and generate predictions.csv.
 **tool call: bash**
 
 ```
+cat > solution.py << 'EOF'
+"""
+Regression with extrapolation + 95% prediction intervals.
 
+Model (per category):   log(-y) = d + c * (ln(x/25))^2 + eps
+  - Discovered by completing the square of quadratic-in-log-x fits: all
+    categories have vertex at x ~ 25 and intercept-level ~0.05-0.12.
+  - Validated by harsh extrapolation splits (fit lower half of x-range,
+    predict upper half): log-RMSE 0.04-0.09, PI coverage 0.98-1.00.
+  - Noise is multiplicative (constant CV) with heavy tails -> fit with
+    Huber RLM, estimate sigma by MAD, widen with t(6) multiplier.
+Prediction interval for a NEW noisy observation:
+  on log scale  f(x) +/- t_0.975(6) * sqrt(sigma_MAD^2 + se_fit(x)^2),
+  then mapped back through y = -exp(.). Includes both observation noise
+  and estimation (extrapolation) uncertainty.
+"""
+import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+from scipy import stats
+
+T0 = np.log(25.0)                 # vertex of the log-parabola
+TCRIT = stats.t.ppf(0.975, 6.0)   # heavy-tail-aware 95% multiplier
+
+
+def design(x):
+    x = np.asarray(x, dtype=float)
+    return np.column_stack([np.ones_like(x), (np.log(x) - T0) ** 2])
+
+
+def fit_predict(gtrain, xtest):
+    X = design(gtrain["x"].values)
+    ly = np.log(-gtrain["y"].values)
+
+    # robust fit (Huber) -> insensitive to the heavy-tailed outliers
+    rlm = sm.RLM(ly, X, M=sm.robust.norms.HuberT()).fit()
+    beta = rlm.params
+    cov = np.asarray(rlm.cov_params())
+
+    # robust noise scale (median absolute deviation)
+    res = ly - X @ beta
+    sigma = 1.4826 * np.median(np.abs(res - np.median(res)))
+
+    Xq = design(np.asarray(xtest, dtype=float))
+    f = Xq @ beta                                            # predictive median of log(-y)
+    se = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", Xq, cov, Xq), 0.0))
+    sp = np.sqrt(sigma**2 + se**2)                           # noise + estimation uncertainty
+    hw = TCRIT * sp
+
+    y_pred = -np.exp(f)                                      # median of predictive distribution
+    y_lower = -np.exp(f + hw)                                # more negative tail
+    y_upper = -np.exp(f - hw)                                # toward-zero tail
+    return y_pred, y_lower, y_upper
+
+
+def main():
+    train = pd.read_csv("data/train.csv")
+    test = pd.read_csv("data/test.csv")
+
+    out = test.copy()
+    out["y_pred"] = np.nan
+    out["y_lower"] = np.nan
+    out["y_upper"] = np.nan
+
+    for c, gtest in test.groupby("category"):
+        gtrain = train[train["category"] == c]
+        yp, yl, yu = fit_predict(gtrain, gtest["x"].values)
+        out.loc[gtest.index, "y_pred"] = yp
+        out.loc[gtest.index, "y_lower"] = yl
+        out.loc[gtest.index, "y_upper"] = yu
+
+    out = out[["category", "x", "y_pred", "y_lower", "y_upper"]]
+    out.to_csv("predictions.csv", index=False)
+    print(out.to_string(index=False))
+    print("rows:", len(out))
+
+
+if __name__ == "__main__":
+    main()
+EOF
+python3 solution.py
 ```
 
 ## [27] tool
@@ -1343,7 +1756,16 @@ The predictions are written. Let me run a final verification that the file match
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+p = pd.read_csv('predictions.csv'); t = pd.read_csv('data/test.csv')
+assert list(p.columns) == ['category','x','y_pred','y_lower','y_upper'], p.columns
+assert len(p) == len(t) == 29
+assert (p['category'].values == t['category'].values).all() and (p['x'].values == t['x'].values).all()
+assert np.isfinite(p[['y_pred','y_lower','y_upper']].values).all()
+assert (p.y_lower < p.y_pred).all() and (p.y_pred < p.y_upper).all()
+print('predictions.csv OK:', len(p), 'rows; columns/order/bounds all valid')
+" && head -3 predictions.csv
 ```
 
 ## [29] tool

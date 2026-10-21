@@ -49,7 +49,7 @@ Estimate the population tail quantiles for all 100 blocks described in data/task
 **tool call: bash**
 
 ```
-
+cd /data 2>/dev/null || cd ~; pwd; ls -la; cat data/task.txt 2>/dev/null || find . -name task.txt
 ```
 
 ## [3] tool
@@ -74,7 +74,7 @@ drwxr-xr-x 1 root root 4096 Aug 11 04:02 ..
 **tool call: bash**
 
 ```
-
+find / -name "task.txt" 2>/dev/null; find / -name "blocks.csv" 2>/dev/null
 ```
 
 ## [5] tool
@@ -88,7 +88,7 @@ drwxr-xr-x 1 root root 4096 Aug 11 04:02 ..
 **tool call: bash**
 
 ```
-
+cat /workspace/data/task.txt; echo "---"; head -20 /workspace/data/blocks.csv; echo "..."; wc -l /workspace/data/blocks.csv
 ```
 
 ## [7] tool
@@ -615,6 +615,20 @@ block,x
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/blocks.csv')
+g = df.groupby('block')['x']
+m = df.groupby('block')['x'].apply(lambda s: s.max())
+overall = []
+for b, grp in g:
+    s = grp.values
+    overall.append((b, len(s), s.min(), s.max(), np.mean(s), np.std(s), np.median(s)))
+import statistics
+print('n blocks', df.block.nunique())
+print('mean abs values, typical spread')
+print(df['x'].describe())
+"
 
 ```
 
@@ -819,6 +833,15 @@ Name: x, dtype: float64
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy import stats
+df = pd.read_csv('data/blocks.csv')
+# show some per-block stats
+for b in [1,4,20,23,25,30]:
+    x = df[df.block==b].x.values
+    print(b, 'm=?', 'min %.2f med %.2f max %.2f'%(x.min(),np.median(x),x.max()), 'std %.2f'%x.std())
+"
 
 ```
 
@@ -855,6 +878,17 @@ Name: x, dtype: float64
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import re
+txt=open('data/task.txt').read()
+m={}
+for mm in re.finditer(r'Block (\d+) \(population size m = (\d+)\)', txt):
+    m[int(mm.group(1))]=int(mm.group(2))
+print(len(m))
+for k in sorted(m)[:12]: print(k,m[k])
+import json
+json.dump(m, open('/tmp/m.json','w'))
+"
 
 ```
 
@@ -903,6 +937,15 @@ Name: x, dtype: float64
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy import stats
+df=pd.read_csv('data/blocks.csv')
+for b in [1,4,20,23,25,30,60,79,83]:
+    x=df[df.block==b].x.values
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    print('block',b,'med=%.2f mad=%.2f max=%.2f max/medAbs=%.2f'%(med,mad,max(x),max(x)/mad if mad>0 else float('nan')))
+"
 
 ```
 
@@ -961,6 +1004,26 @@ block 83 med=-173.95 mad=126.86 max=743.10 max/medAbs=5.86
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy import stats
+df=pd.read_csv('data/blocks.csv')
+for b in [4,20,23,25,30,79,83]:
+    x=df[df.block==b].x.values
+    s=sorted(x)
+    # t MLE
+    try:
+        dfit,loc,scale=stats.t.fit(x)
+    except Exception as e:
+        dfit,loc,scale=(np.nan,)*3
+    t4q=stats.t.ppf([.9,.95,.99],4); t3q=stats.t.ppf([.9,.95,.99],3); t5q=stats.t.ppf([.9,.95,.99],5)
+    # robust t4 with med, mad
+    med=np.median(x); 
+    mad=np.median(np.abs(x-med))
+    print('=== block',b,'m')
+    print('  max',max(x),'tfit df=%.2f loc=%.2f scale=%.2f'%(dfit,loc,scale))
+    print('  tfit q90/95/99', loc+scale*np.array([stats.t.ppf(.9,dfit),stats.t.ppf(.95,dfit),stats.t.ppf(.99,dfit)]) if dfit==dfit else 'NA')
+"
 
 ```
 
@@ -1057,6 +1120,34 @@ block 83 med=-173.95 mad=126.86 max=743.10 max/medAbs=5.86
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy import stats
+df=pd.read_csv('data/blocks.csv')
+def fit_fixeddf(x,dfit):
+    # MLE loc,scale with fixed df
+    def negll(params):
+        loc,scale=params
+        if scale<=0: return 1e9
+        return -np.sum(stats.t.logpdf(x,dfit,loc,scale))
+    from scipy.optimize import minimize
+    med=np.median(x); 
+    mad=np.median(np.abs(x-med)); scale0=max(mad/0.7,1e-9) if mad>0 else 1.0
+    # try a few seeds
+    best=None
+    for s0 in [scale0, scale0*2, scale0*5, np.std(x) if np.std(x)>0 else 1.0]:
+        r=minimize(negll,[med,s0],method='Nelder-Mead')
+        if best is None or r.fun<best.fun: best=r
+    loc,scale=best.x
+    return loc,scale
+for b in [4,20,23,25,30,79,83]:
+    x=df[df.block==b].x.values
+    for dfi in [3,4,5]:
+        loc,scale=fit_fixeddf(x,dfi)
+        q=loc+scale*np.array([stats.t.ppf(.90,dfi),stats.t.ppf(.95,dfi),stats.t.ppf(.99,dfi)])
+        print('block',b,'df',dfi,'loc=%.1f scale=%.1f'%(loc,scale),'q',['%.1f'%v for v in q])
+    print()
+"
 
 ```
 
@@ -1186,7 +1277,54 @@ block 83 df 5 loc=-127.1 scale=274.0 q ['277.2', '424.9', '794.7']
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/probe.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+from scipy.optimize import minimize
 
+df=pd.read_csv('data/blocks.csv')
+DF=4.0
+def fit(x):
+    def negll(p):
+        loc,scale=p
+        if scale<=0: return 1e9
+        return -np.sum(stats.t.logpdf(x,DF,loc,scale))
+    med=np.median(x)
+    mad=np.median(np.abs(x-med))
+    s0=mad/0.7 if mad>0 else 1.0
+    best=None
+    for seed in [s0,2*s0,5*s0, np.std(x)+1e-9]:
+        r=minimize(negll,[med,seed],method='Nelder-Mead')
+        if best is None or r.fun<best.fun: best=r
+    return best.x[0],best.x[1]
+
+def boot_q95(x, n=1500, seed=0):
+    rng=np.random.default_rng(seed)
+    loc,scale=fit(x)
+    qs=[]
+    for _ in range(n):
+        xs=stats.t.rvs(DF,loc,scale,size=10,random_state=rng)
+        l,s=fit(xs)
+        qs.append(l+s*stats.t.ppf(.95,DF))
+    qs=np.array(qs)
+    return np.percentile(qs,[2.5,97.5])
+
+rows=[]
+for b,grp in df.groupby('block'):
+    x=grp.x.values
+    loc,scale=fit(x)
+    q90=loc+scale*stats.t.ppf(.90,DF)
+    q95=loc+scale*stats.t.ppf(.95,DF)
+    q99=loc+scale*stats.t.ppf(.99,DF)
+    lo,hi=boot_q95(x, n=800)
+    rows.append((b,q90,q95,q99,lo,hi))
+for r in rows[:8]: print(r)
+print('--- sample of some')
+for b in [20,23,25,79,83]:
+    r=[x for x in rows if x[0]==b][0]
+    print(r)
+EOF
+python3 /tmp/probe.py
 ```
 
 ## [21] tool
@@ -1206,7 +1344,26 @@ block 83 df 5 loc=-127.1 scale=274.0 q ['277.2', '424.9', '794.7']
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/probe2.py << 'EOF'
+import pandas as pd, numpy as np, time
+from scipy import stats
+df=pd.read_csv('data/blocks.csv')
+DF=4.0
+x=df[df.block==25].x.values
+t=time.time()
+loc,scale=stats.t.fit(x, fdf=DF)[1:3]
+print('fit',loc,scale,time.time()-t)
+# test bootstrap speed
+t=time.time()
+rng=np.random.default_rng(1)
+qs=[]
+for _ in range(600):
+    xs=stats.t.rvs(DF,loc,scale,size=10,random_state=rng)
+    l,s=stats.t.fit(xs, fdf=DF)[1:3]
+    qs.append(l+s*stats.t.ppf(.95,DF))
+print('600 iters in', time.time()-t, 'median q95', np.median(qs))
+EOF
+python3 /tmp/probe2.py
 ```
 
 ## [23] tool
@@ -1301,7 +1458,48 @@ fit 72.9709643153397 163.08003798576334 0.023329973220825195
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/probe3.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+DF=4.0
+c95=stats.t.ppf(.95,DF)
 
+def fit(x):
+    return stats.t.fit(x, fdf=DF)[1:3]
+
+def nll(theta,x):
+    loc,scale=theta
+    if scale<=0: return 1e9
+    return -np.sum(stats.t.logpdf(x,DF,loc,scale))
+
+def hess(theta,x,eps=1e-4):
+    loc,scale=theta
+    H=np.zeros((2,2))
+    # d/dloc
+    f0=nll((loc,scale),x); fpl=nll((loc+eps,scale),x); fml=nll((loc-eps,scale),x)
+    H[0,0]=(fpl-2*f0+fml)/eps**2
+    fpps=nll((loc,scale+eps),x); fmms=nll((loc,scale-eps),x)
+    H[1,1]=(fpps-2*f0+fmms)/eps**2
+    fp=nll((loc+eps,scale+eps),x); fm=nll((loc-eps,scale-eps),x)
+    fp2=nll((loc+eps,scale-eps),x); fm2=nll((loc-eps,scale+eps),x)
+    H[0,1]=(fp-fp2-fm2+fm)/(4*eps**2)
+    H[1,0]=H[0,1]
+    return H
+
+df=pd.read_csv('data/blocks.csv')
+for b in [4,20,23,25,30,79,83]:
+    x=df[df.block==b].x.values
+    loc,scale=fit(x)
+    H=hess((loc,scale),x)
+    try:
+        V=np.linalg.inv(H)
+        se=np.sqrt(np.array([1.0,c95])@V@np.array([1.0,c95]))
+    except Exception as e:
+        se=np.nan
+    q95=loc+c95*scale
+    print('block',b,'loc=%.1f scale=%.1f q95=%.1f se=%.1f lo=%.1f hi=%.1f'%(loc,scale,q95,se,q95-1.96*se,q95+1.96*se))
+EOF
+python3 /tmp/probe3.py
 ```
 
 ## [25] tool
@@ -1348,7 +1546,51 @@ block 83 loc=-136.3 scale=254.4 q95=406.1 se=214.5 lo=-14.4 hi=826.5
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/make.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+DF=4.0
+c90=stats.t.ppf(.90,DF); c95=stats.t.ppf(.95,DF); c99=stats.t.ppf(.99,DF)
 
+def fit(x):
+    return stats.t.fit(x, fdf=DF)[1:3]
+def nll(theta,x):
+    loc,scale=theta
+    if scale<=0: return 1e9
+    return -np.sum(stats.t.logpdf(x,DF,loc,scale))
+def hess(theta,x,eps=1e-4):
+    loc,scale=theta
+    H=np.zeros((2,2))
+    f0=nll((loc,scale),x)
+    H[0,0]=(nll((loc+eps,scale),x)-2*f0+nll((loc-eps,scale),x))/eps**2
+    H[1,1]=(nll((loc,scale+eps),x)-2*f0+nll((loc,scale-eps),x))/eps**2
+    fp =nll((loc+eps,scale+eps),x); fm =nll((loc-eps,scale-eps),x)
+    fp2=nll((loc+eps,scale-eps),x); fm2=nll((loc-eps,scale+eps),x)
+    H[0,1]=(fp-fp2-fm2+fm)/(4*eps**2); H[1,0]=H[0,1]
+    return H
+
+df=pd.read_csv('data/blocks.csv')
+rows=[]
+for b,grp in df.groupby('block'):
+    x=grp.x.values
+    loc,scale=fit(x)
+    q90=loc+c90*scale; q95=loc+c95*scale; q99=loc+c99*scale
+    H=hess((loc,scale),x)
+    V=np.linalg.inv(H)
+    g=np.array([1.0,c95])
+    se=np.sqrt(g@V@g)
+    lo=q95-1.96*se; hi=q95+1.96*se
+    rows.append((int(b),q90,q95,q99,lo,hi))
+out=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+pd.set_option('display.width',200)
+print(out.head(20))
+print('...')
+# show all blocks with any anomaly (q99 max, etc)
+print(out[['block','q90','q95','q99']].describe())
+print('max hi', out.hi.max())
+out.to_csv('predictions.csv',index=False)
+EOF
+python3 /tmp/make.py
 ```
 
 ## [27] tool
@@ -1470,7 +1712,30 @@ max hi 826.5124443661936
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/cal.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+DF=4.0
+c95=stats.t.ppf(.95,DF)
+def fit(x): return stats.t.fit(x,fdf=DF)[1:3]
+for b in [14,23,25,79,100]:
+    x=df[df.block==b].x.values if 'df' in globals() else None
+df=pd.read_csv('data/blocks.csv')
+for b in [14,20,23,25,79]:
+    x=df[df.block==b].x.values
+    loc,scale=fit(x)
+    q95=loc+c95*scale
+    rng=np.random.default_rng(0)
+    qs=[]
+    for _ in range(400):
+        xs=stats.t.rvs(DF,loc,scale,size=10,random_state=rng)
+        l,s=fit(xs); qs.append(l+c95*s)
+    qs=np.array(qs)
+    p2,p97=np.percentile(qs,[2.5,97.5])
+    se=np.std(qs)
+    print('block',b,'q95=%.1f bs[2.5,97.5]=[%.1f,%.1f] se=%.1f; ratios %.2f %.2f'%(q95,p2,p97,se,(q95-p2)/se,(p97-q95)/se))
+EOF
+python3 /tmp/cal.py
 ```
 
 ## [29] tool
@@ -1533,7 +1798,23 @@ block 79 q95=176.0 bs[2.5,97.5]=[47.7,281.6] se=61.3; ratios 2.09 1.72
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/comp.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+df=pd.read_csv('data/blocks.csv')
+def getq(x,DF):
+    loc,scale=stats.t.fit(x,fdf=DF)[1:3]
+    return loc+np.array([stats.t.ppf(.9,DF),stats.t.ppf(.95,DF),stats.t.ppf(.99,DF)])*scale
+rows=[]
+for b,g in df.groupby('block'):
+    x=g.x.values
+    q3=getq(x,3.0); q4=getq(x,4.0); q5=getq(x,5.0)
+    rows.append((b,x.max(),q3[2],q4[2],q5[2],q4[0],q4[1]))
+r=pd.DataFrame(rows,columns=['b','max','q99_df3','q99_df4','q99_df5','q90_df4','q95_df4'])
+r['heavy']=r.max>100
+print(r[r.heavy].sort_values('max',ascending=False).to_string())
+EOF
+python3 /tmp/comp.py
 ```
 
 ## [31] tool
@@ -1551,7 +1832,23 @@ TypeError: '>' not supported between instances of 'method' and 'int'
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/comp.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+df=pd.read_csv('data/blocks.csv')
+def getq(x,DF):
+    loc,scale=stats.t.fit(x,fdf=DF)[1:3]
+    return loc+np.array([stats.t.ppf(.9,DF),stats.t.ppf(.95,DF),stats.t.ppf(.99,DF)])*scale
+rows=[]
+for b,g in df.groupby('block'):
+    x=g.x.values
+    q3=getq(x,3.0); q4=getq(x,4.0); q5=getq(x,5.0)
+    rows.append((int(b),float(x.max()),float(q3[2]),float(q4[2]),float(q5[2]),float(q4[0]),float(q4[1])))
+r=pd.DataFrame(rows,columns=['b','mx','q99_df3','q99_df4','q99_df5','q90_df4','q95_df4'])
+r=r.sort_values('mx',ascending=False)
+print(r.to_string())
+EOF
+python3 /tmp/comp.py
 ```
 
 ## [33] tool
@@ -1769,7 +2066,59 @@ TypeError: '>' not supported between instances of 'method' and 'int'
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/final.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+DF=4.0
+c90=stats.t.ppf(.90,DF); c95=stats.t.ppf(.95,DF); c99=stats.t.ppf(.99,DF)
+znorm=lambda t: stats.norm.ppf(t)
+print('c90,c95,c99 =',c90,c95,c99)
 
+def fit(x): return stats.t.fit(x,fdf=DF)[1:3]
+def nll(theta,x):
+    loc,scale=theta
+    if scale<=0: return 1e9
+    return -np.sum(stats.t.logpdf(x,DF,loc,scale))
+def hess(theta,x,eps=1e-4):
+    loc,scale=theta
+    H=np.zeros((2,2))
+    f0=nll((loc,scale),x)
+    H[0,0]=(nll((loc+eps,scale),x)-2*f0+nll((loc-eps,scale),x))/eps**2
+    H[1,1]=(nll((loc,scale+eps),x)-2*f0+nll((loc,scale-eps),x))/eps**2
+    fp =nll((loc+eps,scale+eps),x); fm =nll((loc-eps,scale-eps),x)
+    fp2=nll((loc+eps,scale-eps),x); fm2=nll((loc-eps,scale+eps),x)
+    H[0,1]=(fp-fp2-fm2+fm)/(4*eps**2); H[1,0]=H[0,1]
+    return H
+
+def stats_block(x):
+    loc,scale=fit(x)
+    V=np.linalg.inv(hess((loc,scale),x))
+    res={}
+    for name,c in [('90',c90),('95',c95),('99',c99)]:
+        g=np.array([1.0,c])
+        qhat=loc+c*scale
+        se=np.sqrt(g@V@g)
+        res[name]=(qhat,se)
+    return loc,scale,res
+
+df=pd.read_csv('data/blocks.csv')
+rows=[]
+for b,grp in df.groupby('block'):
+    x=grp.x.values
+    loc,scale,res=stats_block(x)
+    q90=res['90'][0]+znorm(.90)*res['90'][1]
+    q95=res['95'][0]+znorm(.95)*res['95'][1]
+    q99=res['99'][0]+znorm(.99)*res['99'][1]
+    lo=res['95'][0]-1.96*res['95'][1]
+    hi=res['95'][0]+1.96*res['95'][1]
+    rows.append((int(b),q90,q95,q99,lo,hi))
+out=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+pd.set_option('display.width',220)
+for b in [14,20,23,25,30,60,79,83]:
+    print(out[out.block==b].to_string(index=False))
+print(out.describe())
+EOF
+python3 /tmp/final.py
 ```
 
 ## [35] tool
@@ -1863,7 +2212,50 @@ max    100.000000  471.924254  758.908110  1613.735861  167.053070  826.512444
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/gen.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+DF=4.0
+c90=stats.t.ppf(.90,DF); c95=stats.t.ppf(.95,DF); c99=stats.t.ppf(.99,DF)
+znorm=lambda t: stats.norm.ppf(t)
+def fit(x): return stats.t.fit(x,fdf=DF)[1:3]
+def nll(theta,x):
+    loc,scale=theta
+    if scale<=0: return 1e9
+    return -np.sum(stats.t.logpdf(x,DF,loc,scale))
+def hess(theta,x,eps=1e-4):
+    loc,scale=theta
+    H=np.zeros((2,2))
+    f0=nll((loc,scale),x)
+    H[0,0]=(nll((loc+eps,scale),x)-2*f0+nll((loc-eps,scale),x))/eps**2
+    H[1,1]=(nll((loc,scale+eps),x)-2*f0+nll((loc,scale-eps),x))/eps**2
+    fp =nll((loc+eps,scale+eps),x); fm =nll((loc-eps,scale-eps),x)
+    fp2=nll((loc+eps,scale-eps),x); fm2=nll((loc-eps,scale+eps),x)
+    H[0,1]=(fp-fp2-fm2+fm)/(4*eps**2); H[1,0]=H[0,1]
+    return H
 
+df=pd.read_csv('data/blocks.csv')
+rows=[]
+for b,grp in df.groupby('block'):
+    x=grp.x.values
+    loc,scale=fit(x)
+    V=np.linalg.inv(hess((loc,scale),x))
+    g={}
+    for name,c in [('90',c90),('95',c95),('99',c99)]:
+        gg=np.array([1.0,c]); g[name]=(loc+c*scale, np.sqrt(gg@V@gg))
+    q90=g['90'][0]+znorm(.90)*g['90'][1]
+    q95=g['95'][0]+znorm(.95)*g['95'][1]
+    q99=g['99'][0]+znorm(.99)*g['99'][1]
+    lo=g['95'][0]-2.5*g['95'][1]
+    hi=g['95'][0]+3.0*g['95'][1]
+    rows.append((int(b),q90,q95,q99,lo,hi))
+out=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+assert len(out)==100 and out.block.nunique()==100
+out.to_csv('predictions.csv',index=False)
+print('written', len(out))
+print(out.head(3).to_string(index=False))
+EOF
+python3 /tmp/gen.py && echo "---" && head -4 /workspace/predictions.csv && wc -l /workspace/predictions.csv
 ```
 
 ## [37] tool
@@ -1894,6 +2286,16 @@ block,q90,q95,q99,lo,hi
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd
+d=pd.read_csv('predictions.csv')
+print('rows',len(d),'cols',list(d.columns))
+print('q90<q95<q99 all:', (d.q90<d.q95).all() and (d.q95<d.q99).all() and (d.lo<d.hi).all())
+print('q95 in [lo,hi] all:', ((d.q95>=d.lo)&(d.q95<=d.hi)).all())
+print(d.head(10).to_string(index=False))
+print('...')
+print(d.tail(5).to_string(index=False))
+"
 
 ```
 
@@ -1945,6 +2347,13 @@ q95 in [lo,hi] all: True
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('predictions.csv')
+print('any NaN:', d.isna().any().any())
+for b in [14,16,37,61,80,90,92]:
+    print(d[d.block==b].to_string(index=False))
+"
 
 ```
 
@@ -2008,6 +2417,15 @@ any NaN: False
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd
+d=pd.read_csv('predictions.csv')
+print(list(d.columns))
+print(len(d))
+print(d.block.min(), d.block.max(), d.block.is_unique)
+print('header line:')
+print(open('predictions.csv').readline().strip())
+"
 
 ```
 

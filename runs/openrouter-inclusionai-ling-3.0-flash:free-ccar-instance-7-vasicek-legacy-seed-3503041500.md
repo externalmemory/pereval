@@ -56,19 +56,19 @@ Let me start by examining the data files to understand their structure.
 **tool call: bash**
 
 ```
-
+head -50 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -50 data/scenario.csv
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/scenario.csv
 ```
 
 ## [3] tool
@@ -164,13 +164,23 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.describe())
+print()
+print('Missing values:')
+print(df.isnull().sum())
+print()
+print('Data types:')
+print(df.dtypes)
+"
 ```
 
 ## [7] tool
@@ -290,7 +300,29 @@ Now let me explore the data more and build the model.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+# Look at correlations with default_rate
+print('Correlations with default_rate:')
+cols = ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+print(df[cols + ['default_rate']].corr()['default_rate'].sort_values())
+print()
+
+# Look at how default_rate changes with key variables
+# Check if there are non-linear patterns
+print('Default rate by unemployment bins:')
+df['unemp_bin'] = pd.qcut(df['unemployment'], 5)
+print(df.groupby('unemp_bin')['default_rate'].mean())
+print()
+
+# Check bbb_spread
+print('Default rate by bbb_spread bins:')
+df['spread_bin'] = pd.qcut(df['bbb_spread'].dropna(), 5)
+print(df.groupby('spread_bin')['default_rate'].mean())
+"
 ```
 
 ## [10] tool
@@ -393,7 +425,32 @@ Name: default_rate, dtype: float64
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+# Look at the relationship more closely
+# Check if there's a non-linear pattern with bbb_spread
+for val in [1.5, 2.0, 2.5, 3.0, 3.5]:
+    subset = df[(df['bbb_spread'] >= val - 0.25) & (df['bbb_spread'] < val + 0.25)]
+    if len(subset) > 0:
+        print(f'bbb_spread ~{val}: mean default_rate = {subset[\"default_rate\"].mean():.4f}, n={len(subset)}')
+
+print()
+# Check vix
+for val in [10, 15, 20, 25, 30, 35, 40]:
+    subset = df[(df['vix'] >= val - 2) & (df['vix'] < val + 2)]
+    if len(subset) > 0:
+        print(f'vix ~{val}: mean default_rate = {subset[\"default_rate\"].mean():.4f}, n={len(subset)}')
+
+print()
+# Check unemployment
+for val in [4, 5, 6, 7, 8]:
+    subset = df[(df['unemployment'] >= val - 0.5) & (df['unemployment'] < val + 0.5)]
+    if len(subset) > 0:
+        print(f'unemp ~{val}: mean default_rate = {subset[\"default_rate\"].mean():.4f}, n={len(subset)}')
+"
 ```
 
 ## [12] tool
@@ -490,7 +547,229 @@ Now I have a good understanding of the data. Let me build the model and generate
 **tool call: bash**
 
 ```
+cat > build_model.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import cross_val_score, LeaveOneOut
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+print(f"Train shape: {train.shape}")
+print(f"Scenario shape: {scenario.shape}")
+print(f"Scenario quarters: {scenario['quarter'].tolist()}")
+
+# Feature engineering
+# Use features that are available in both train and scenario
+# Handle missing values in train by forward-filling then backward-filling for early quarters
+features_raw = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# For training, fill missing values with interpolation
+train_filled = train.copy()
+for col in features_raw:
+    train_filled[col] = train_filled[col].interpolate(method='linear').bfill().ffill()
+
+# For scenario, no missing values expected
+scenario_filled = scenario.copy()
+
+# Create feature set - use all 9 features
+X_train = train_filled[features_raw].values
+y_train = train_filled['default_rate'].values
+X_scenario = scenario_filled[features_raw].values
+
+print(f"\nX_train shape: {X_train.shape}")
+print(f"y_train range: [{y_train.min():.4f}, {y_train.max():.4f}]")
+print(f"X_scenario range:")
+for i, col in enumerate(features_raw):
+    print(f"  {col}: [{X_scenario[:, i].min():.2f}, {X_scenario[:, i].max():.2f}] (train: [{X_train[:, i].min():.2f}, {X_train[:, i].max():.2f}])")
+
+# Check which features are available in scenario
+print("\nFeature availability in scenario:")
+for col in features_raw:
+    n_missing = scenario_filled[col].isnull().sum()
+    print(f"  {col}: {n_missing} missing")
+
+# Try multiple models and select the best one
+
+# 1. Linear regression with statsmodels (for proper prediction intervals)
+print("\n=== Model 1: Linear Regression (statsmodels) ===")
+X_train_sm = sm.add_constant(X_train)
+model_ols = sm.OLS(y_train, X_train_sm).fit()
+print(f"R-squared: {model_ols.rsquared:.4f}")
+print(f"Adj R-squared: {model_ols.rsquared_adj:.4f}")
+print(f"AIC: {model_ols.aic:.2f}")
+print(f"BIC: {model_ols.bic:.2f}")
+
+# 2. Ridge regression with polynomial features
+print("\n=== Model 2: Ridge with Polynomial Features ===")
+best_score = -np.inf
+best_degree = 1
+best_alpha = 1.0
+
+for degree in [1, 2]:
+    for alpha in [0.001, 0.01, 0.1, 1.0, 10.0]:
+        poly = PolynomialFeatures(degree=degree, include_bias=False)
+        X_train_poly = poly.fit_transform(X_train)
+        X_scenario_poly = poly.transform(X_scenario)
+        
+        ridge = Ridge(alpha=alpha)
+        # Cross-validation
+        loo = LeaveOneOut()
+        scores = cross_val_score(ridge, X_train_poly, y_train, cv=loo, scoring='r2')
+        mean_score = scores.mean()
+        
+        if mean_score > best_score:
+            best_score = mean_score
+            best_degree = degree
+            best_alpha = alpha
+            best_poly = poly
+            best_X_scenario_poly = X_scenario_poly
+            best_X_train_poly = X_train_poly
+        
+        if degree == 2 and alpha in [0.01, 0.1, 1.0]:
+            print(f"  degree={degree}, alpha={alpha}: R2 CV = {mean_score:.4f}")
+
+print(f"Best: degree={best_degree}, alpha={best_alpha}, R2 CV = {best_score:.4f}")
+
+# Fit best ridge model
+ridge_best = Ridge(alpha=best_alpha)
+ridge_best.fit(best_X_train_poly, y_train)
+ridge_train_pred = ridge_best.predict(best_X_train_poly)
+ridge_train_rmse = np.sqrt(mean_squared_error(y_train, ridge_train_pred))
+print(f"Ridge train RMSE: {ridge_train_rmse:.6f}")
+
+# 3. Gradient Boosting
+print("\n=== Model 3: Gradient Boosting ===")
+gbr = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42)
+gbr.fit(X_train, y_train)
+gbr_train_pred = gbr.predict(X_train)
+gbr_train_rmse = np.sqrt(mean_squared_error(y_train, gbr_train_pred))
+print(f"GBR train RMSE: {gbr_train_rmse:.6f}")
+
+# Feature importances for GBR
+importances = gbr.feature_importances_
+for i, col in enumerate(features_raw):
+    print(f"  {col}: {importances[i]:.4f}")
+
+# 4. Random Forest
+print("\n=== Model 4: Random Forest ===")
+rf = RandomForestRegressor(n_estimators=200, max_depth=5, random_state=42)
+rf.fit(X_train, y_train)
+rf_train_pred = rf.predict(X_train)
+rf_train_rmse = np.sqrt(mean_squared_error(y_train, rf_train_pred))
+print(f"RF train RMSE: {rf_train_rmse:.6f}")
+
+# Feature importances for RF
+importances_rf = rf.feature_importances_
+for i, col in enumerate(features_raw):
+    print(f"  {col}: {importances_rf[i]:.4f}")
+
+# Compare models on training data
+print(f"\n=== Model Comparison (Train RMSE) ===")
+print(f"OLS: {np.sqrt(np.mean(model_ols.resid**2)):.6f}")
+print(f"Ridge (poly{best_degree}): {ridge_train_rmse:.6f}")
+print(f"GBR: {gbr_train_rmse:.6f}")
+print(f"RF: {rf_train_rmse:.6f}")
+
+# Use the model with best generalization
+# For prediction intervals, I'll use a bootstrap approach
+# and also the analytical prediction interval from the OLS model
+
+# Let's use a combined approach:
+# - Use Ridge (poly2) as the main model for point estimates
+# - Use bootstrap for prediction intervals
+# - Also use OLS analytical intervals as a check
+
+# But first, let me also try a model that uses only the most important features
+# to avoid overfitting and improve extrapolation
+
+# Feature selection: use bbb_spread, vix, unemployment, gdp (top 4 by correlation/importance)
+key_features = ['bbb_spread', 'vix', 'unemployment', 'gdp']
+key_idx = [features_raw.index(f) for f in key_features]
+
+print(f"\n=== Reduced Model (key features: {key_features}) ===")
+X_train_key = train_filled[key_features].values
+X_scenario_key = scenario_filled[key_features].values
+
+# OLS with key features
+X_key_sm = sm.add_constant(X_train_key)
+model_key = sm.OLS(y_train, X_key_sm).fit()
+print(f"R-squared: {model_key.rsquared:.4f}")
+print(f"Adj R-squared: {model_key.rsquared_adj:.4f}")
+
+# Ridge with key features and polynomial
+best_score_key = -np.inf
+best_degree_key = 1
+best_alpha_key = 1.0
+
+for degree in [1, 2]:
+    for alpha in [0.001, 0.01, 0.1, 1.0, 10.0]:
+        poly = PolynomialFeatures(degree=degree, include_bias=False)
+        X_train_key_poly = poly.fit_transform(X_train_key)
+        
+        ridge = Ridge(alpha=alpha)
+        loo = LeaveOneOut()
+        scores = cross_val_score(ridge, X_train_key_poly, y_train, cv=loo, scoring='r2')
+        mean_score = scores.mean()
+        
+        if mean_score > best_score_key:
+            best_score_key = mean_score
+            best_degree_key = degree
+            best_alpha_key = alpha
+            best_poly_key = poly
+            best_X_scenario_key_poly = poly.transform(X_scenario_key)
+            best_X_train_key_poly = X_train_key_poly
+        
+        if degree == 2 and alpha in [0.01, 0.1, 1.0]:
+            print(f"  degree={degree}, alpha={alpha}: R2 CV = {mean_score:.4f}")
+
+print(f"Best key features: degree={best_degree_key}, alpha={best_alpha_key}, R2 CV = {best_score_key:.4f}")
+
+# Fit best key features ridge
+ridge_key = Ridge(alpha=best_alpha_key)
+ridge_key.fit(best_X_train_key_poly, y_train)
+ridge_key_train_pred = ridge_key.predict(best_X_train_key_poly)
+ridge_key_train_rmse = np.sqrt(mean_squared_error(y_train, ridge_key_train_pred))
+print(f"Ridge key train RMSE: {ridge_key_train_rmse:.6f}")
+
+# Also try a GAM-like approach using statsmodels
+print("\n=== GAM Model ===")
+from statsmodels.gam.api import GLMGam, BSplines
+
+# Use bbb_spread, vix, unemployment as smooth terms
+gam_data = train_filled[['bbb_spread', 'vix', 'unemployment']].copy()
+gam_data['default_rate'] = y_train
+
+# Create splines
+bs = BSplines(gam_data[['bbb_spread', 'vix', 'unemployment']], df=[5, 5, 5], degree=[3, 3, 3])
+gam = GLMGam(y_train, bs).fit()
+print(f"GAM summary:")
+print(f"  Deviance: {gam.deviance:.6f}")
+print(f"  Scale: {gam.scale:.6f}")
+
+# Predictions
+gam_train_pred = gam.predict()
+gam_train_rmse = np.sqrt(mean_squared_error(y_train, gam_train_pred))
+print(f"GAM train RMSE: {gam_train_rmse:.6f}")
+
+# GAM predictions for scenario
+gam_scenario_pred = gam.predict(best_X_scenario_key_poly if False else None)  # Need proper spline transform for scenario
+# Actually, let me use the BSplines properly
+bs_scenario = BSplines(scenario_filled[['bbb_spread', 'vix', 'unemployment']], df=[5, 5, 5], degree=[3, 3, 3])
+gam_scenario_pred = gam.predict(bs_scenario)
+print(f"GAM scenario predictions: {gam_scenario_pred[:3]}")
+
+PYEOF
+python3 build_model.py
 ```
 
 ## [14] tool
@@ -557,7 +836,321 @@ Let me build a cleaner, more robust model with proper handling
 **tool call: bash**
 
 ```
+cat > build_model.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.model_selection import cross_val_score, LeaveOneOut
+from sklearn.metrics import mean_squared_error
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+features_raw = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# Fill missing values in train
+train_filled = train.copy()
+for col in features_raw:
+    train_filled[col] = train_filled[col].interpolate(method='linear').bfill().ffill()
+
+X_train_all = train_filled[features_raw].values
+y_train = train_filled['default_rate'].values
+X_scenario_all = scenario[features_raw].values
+
+# ============================================================
+# Approach: Use a model with proper prediction intervals
+# I'll use a Bayesian-like approach with bootstrap for intervals
+# ============================================================
+
+# Feature engineering: use transformations that make sense economically
+# Key insight: bbb_spread and vix are the strongest predictors
+# Let's try several feature sets and pick the best
+
+# Feature set 1: All 9 features, linear
+# Feature set 2: Key features (bbb_spread, vix, unemployment, gdp), linear
+# Feature set 3: Key features with some transformations
+
+# Let me try a comprehensive approach with statsmodels for proper intervals
+
+# First, let's try a model with bbb_spread, vix, unemployment, gdp
+# These are the most economically relevant and have the strongest correlations
+
+key_features = ['bbb_spread', 'vix', 'unemployment', 'gdp']
+X_train_key = train_filled[key_features].values
+X_scenario_key = scenario[key_features].values
+
+# Standardize features for numerical stability
+scaler = StandardScaler()
+X_train_key_scaled = scaler.fit_transform(X_train_key)
+X_scenario_key_scaled = scaler.transform(X_scenario_key)
+
+# Add constant for statsmodels
+X_train_key_scaled_const = sm.add_constant(X_train_key_scaled)
+
+# Fit OLS model
+model_ols = sm.OLS(y_train, X_train_key_scaled_const).fit()
+print("=== OLS Model (key features, standardized) ===")
+print(f"R-squared: {model_ols.rsquared:.4f}")
+print(f"Adj R-squared: {model_ols.rsquared_adj:.4f}")
+print(f"RMSE: {np.sqrt(model_ols.mse_resid):.6f}")
+print(f"\nCoefficients:")
+for name, coef in zip(['const'] + key_features, model_ols.params):
+    print(f"  {name}: {coef:.6f}")
+print(f"\nP-values:")
+for name, pval in zip(['const'] + key_features, model_ols.pvalues):
+    print(f"  {name}: {pval:.6f}")
+
+# Prediction intervals for training data
+y_pred_train = model_ols.predict(X_train_key_scaled_const)
+residuals = y_train - y_pred_train
+print(f"\nResidual stats: mean={residuals.mean():.6f}, std={residuals.std():.6f}")
+print(f"Min residual: {residuals.min():.6f}, Max residual: {residuals.max():.6f}")
+
+# Now let's also try with polynomial features for the key features
+# But keep it simple - just bbb_spread^2 and vix^2 since the relationship might be non-linear
+
+# Let me try a more flexible model
+# Use all 9 features with some transformations
+
+# Create a comprehensive feature set
+X_train_full = train_filled[features_raw].values.copy()
+X_scenario_full = scenario[features_raw].values.copy()
+
+# Standardize
+scaler_full = StandardScaler()
+X_train_full_scaled = scaler_full.fit_transform(X_train_full)
+X_scenario_full_scaled = scaler_full.transform(X_scenario_full)
+
+# OLS with all features
+X_train_full_const = sm.add_constant(X_train_full_scaled)
+model_full = sm.OLS(y_train, X_train_full_const).fit()
+print(f"\n=== OLS Model (all features, standardized) ===")
+print(f"R-squared: {model_full.rsquared:.4f}")
+print(f"Adj R-squared: {model_full.rsquared_adj:.4f}")
+print(f"RMSE: {np.sqrt(model_full.mse_resid):.6f}")
+
+# Now let's try Ridge regression with cross-validation to select alpha
+from sklearn.linear_model import RidgeCV
+
+alphas = np.logspace(-3, 3, 20)
+ridge_cv = RidgeCV(alphas=alphas, cv=LeaveOneOut(), scoring='r2')
+ridge_cv.fit(X_train_full_scaled, y_train)
+print(f"\n=== Ridge CV (all features) ===")
+print(f"Best alpha: {ridge_cv.alpha_:.6f}")
+print(f"R2 CV: {ridge_cv.score(X_train_full_scaled, y_train):.4f}")
+
+# Also try with key features only
+ridge_cv_key = RidgeCV(alphas=alphas, cv=LeaveOneOut(), scoring='r2')
+ridge_cv_key.fit(X_train_key_scaled, y_train)
+print(f"\n=== Ridge CV (key features) ===")
+print(f"Best alpha: {ridge_cv_key.alpha_:.6f}")
+print(f"R2 CV: {ridge_cv_key.score(X_train_key_scaled, y_train):.4f}")
+
+# Let's also try a non-linear model: Gradient Boosting
+from sklearn.ensemble import GradientBoostingRegressor
+
+gbr = GradientBoostingRegressor(
+    n_estimators=200, max_depth=3, learning_rate=0.05, 
+    subsample=0.8, random_state=42
+)
+gbr.fit(X_train_full_scaled, y_train)
+gbr_train_pred = gbr.predict(X_train_full_scaled)
+gbr_rmse = np.sqrt(mean_squared_error(y_train, gbr_train_pred))
+print(f"\n=== GBR (all features) ===")
+print(f"Train RMSE: {gbr_rmse:.6f}")
+
+# Feature importances
+importances_gbr = gbr.feature_importances_
+for i, col in enumerate(features_raw):
+    print(f"  {col}: {importances_gbr[i]:.4f}")
+
+# ============================================================
+# Now build the final model and generate predictions with intervals
+# ============================================================
+
+# I'll use a combination approach:
+# 1. Point estimates: Use the OLS model with key features (more interpretable, better for extrapolation)
+# 2. Prediction intervals: Bootstrap the residuals
+
+# Actually, let me think about this more carefully.
+# The OLS model with key features has R2=0.55, which is decent.
+# For prediction intervals, I need to account for:
+# a) Model uncertainty (epistemic) - captured by bootstrap
+# b) Irreducible noise (aleatoric) - captured by residual variance
+
+# Let me use the OLS model with key features as the base model
+# and bootstrap for prediction intervals
+
+# But first, let me also try a model that captures non-linearity better
+# Let me try adding bbb_spread^2 and vix^2 as features
+
+# Create non-linear features
+X_train_nl = np.column_stack([
+    X_train_key_scaled,
+    X_train_key_scaled[:, 0]**2,  # bbb_spread^2
+    X_train_key_scaled[:, 1]**2,  # vix^2
+    X_train_key_scaled[:, 0] * X_train_key_scaled[:, 1],  # interaction
+])
+
+X_scenario_nl = np.column_stack([
+    X_scenario_key_scaled,
+    X_scenario_key_scaled[:, 0]**2,
+    X_scenario_key_scaled[:, 1]**2,
+    X_scenario_key_scaled[:, 0] * X_scenario_key_scaled[:, 1],
+])
+
+# OLS with non-linear features
+X_train_nl_const = sm.add_constant(X_train_nl)
+model_nl = sm.OLS(y_train, X_train_nl_const).fit()
+print(f"\n=== OLS Model (key features + non-linear) ===")
+print(f"R-squared: {model_nl.rsquared:.4f}")
+print(f"Adj R-squared: {model_nl.rsquared_adj:.4f}")
+print(f"RMSE: {np.sqrt(model_nl.mse_resid):.6f}")
+print(f"Number of features: {X_train_nl.shape[1]}")
+
+# Check for overfitting: compare train and leave-one-out
+loo = LeaveOneOut()
+from sklearn.linear_model import LinearRegression as LR
+
+# Simple linear model with key features - LOO CV
+lr_key = LR()
+loo_scores_lr = cross_val_score(lr_key, X_train_key_scaled, y_train, cv=loo, scoring='r2')
+print(f"\nLinear (key features) LOO R2: {loo_scores_lr.mean():.4f} +/- {loo_scores_lr.std():.4f}")
+
+# Non-linear model - LOO CV (need to be careful with small sample)
+lr_nl = LR()
+loo_scores_nl = cross_val_score(lr_nl, X_train_nl, y_train, cv=loo, scoring='r2')
+print(f"Linear (non-linear features) LOO R2: {loo_scores_nl.mean():.4f} +/- {loo_scores_nl.std():.4f}")
+
+# Let me also try Ridge with non-linear features
+ridge_nl = Ridge(alpha=1.0)
+ridge_nl.fit(X_train_nl, y_train)
+ridge_nl_pred = ridge_nl.predict(X_train_nl)
+ridge_nl_rmse = np.sqrt(mean_squared_error(y_train, ridge_nl_pred))
+print(f"Ridge (non-linear) train RMSE: {ridge_nl_rmse:.6f}")
+
+# ============================================================
+# Final model selection and prediction
+# ============================================================
+
+# I'll use the OLS model with key features (bbb_spread, vix, unemployment, gdp)
+# as the primary model. It's the most interpretable and has the best balance
+# of fit and extrapolation capability.
+
+# For prediction intervals, I'll use a bootstrap approach:
+# 1. Resample residuals with replacement
+# 2. Add resampled residuals to predictions
+# 3. Compute 2.5th and 97.5th percentiles
+
+# But I also want to account for model uncertainty, not just residual variance
+# So I'll bootstrap the entire model fitting process
+
+np.random.seed(42)
+n_boot = 1000
+n_train = len(y_train)
+n_scenario = X_scenario_key_scaled.shape[0]
+
+# Bootstrap predictions
+boot_preds = np.zeros((n_boot, n_scenario))
+
+for b in range(n_boot):
+    # Resample indices
+    idx = np.random.choice(n_train, size=n_train, replace=True)
+    X_boot = X_train_key_scaled[idx]
+    y_boot = y_train[idx]
+    
+    # Fit model
+    X_boot_const = sm.add_constant(X_boot)
+    try:
+        model_boot = sm.OLS(y_boot, X_boot_const).fit()
+        X_scen_const = sm.add_constant(X_scenario_key_scaled)
+        boot_preds[b] = model_boot.predict(X_scen_const)
+    except:
+        # If singular, skip
+        boot_preds[b] = np.nan
+
+# Remove failed bootstrap samples
+valid = ~np.isnan(boot_preds).any(axis=1)
+boot_preds_valid = boot_preds[valid]
+print(f"\nValid bootstrap samples: {len(boot_preds_valid)}/{n_boot}")
+
+# Point estimates: use the full model predictions
+X_scen_const = sm.add_constant(X_scenario_key_scaled)
+y_pred = model_ols.predict(X_scen_const)
+
+# Prediction intervals from bootstrap
+y_lower = np.percentile(boot_preds_valid, 2.5, axis=0)
+y_upper = np.percentile(boot_preds_valid, 97.5, axis=0)
+
+print(f"\n=== Final Predictions ===")
+for i in range(n_scenario):
+    q = scenario.iloc[i]['quarter']
+    print(f"Quarter {q}: pred={y_pred[i]:.6f}, lower={y_lower[i]:.6f}, upper={y_upper[i]:.6f}")
+
+# Also compute analytical prediction intervals from OLS
+# These account for both model uncertainty and residual variance
+pred_summary = model_ols.get_prediction(X_scen_const)
+pred_int = pred_summary.summary_frame(alpha=0.05)
+y_lower_analytical = pred_int['obs_ci_lower'].values
+y_upper_analytical = pred_int['obs_ci_upper'].values
+
+print(f"\n=== Analytical Prediction Intervals ===")
+for i in range(n_scenario):
+    q = scenario.iloc[i]['quarter']
+    print(f"Quarter {q}: pred={y_pred[i]:.6f}, lower={y_lower_analytical[i]:.6f}, upper={y_upper_analytical[i]:.6f}")
+
+# Compare bootstrap vs analytical intervals
+print(f"\n=== Interval Width Comparison ===")
+for i in range(n_scenario):
+    q = scenario.iloc[i]['quarter']
+    boot_width = y_upper[i] - y_lower[i]
+    anal_width = y_upper_analytical[i] - y_lower_analytical[i]
+    print(f"Quarter {q}: bootstrap width={boot_width:.6f}, analytical width={anal_width:.6f}")
+
+# Use the wider of the two intervals (more conservative)
+# Or use the analytical intervals which are more principled for OLS
+
+# Let me use the analytical intervals as they properly account for both
+# model uncertainty and residual variance
+
+# Write predictions
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred,
+    'y_lower': y_lower_analytical,
+    'y_upper': y_upper_analytical
+})
+
+# Ensure y_pred is between 0 and 1 (default rate is a fraction)
+output['y_pred'] = output['y_pred'].clip(0, 1)
+output['y_lower'] = output['y_lower'].clip(0, 1)
+output['y_upper'] = output['y_upper'].clip(0, 1)
+
+# Ensure y_lower <= y_pred <= y_upper
+output['y_lower'] = output[['y_lower', 'y_pred']].min(axis=1)
+output['y_upper'] = output[['y_upper', 'y_pred']].max(axis=1)
+
+output.to_csv('predictions.csv', index=False)
+print(f"\n=== Predictions written to predictions.csv ===")
+print(output.to_string(index=False))
+
+# Verify
+print(f"\nVerification:")
+print(f"  Number of rows: {len(output)}")
+print(f"  Columns: {output.columns.tolist()}")
+print(f"  All quarters present: {output['quarter'].tolist()}")
+print(f"  All y_pred in [0,1]: {output['y_pred'].between(0, 1).all()}")
+print(f"  All y_lower <= y_pred: {(output['y_lower'] <= output['y_pred']).all()}")
+print(f"  All y_pred <= y_upper: {(output['y_pred'] <= output['y_upper']).all()}")
+
+PYEOF
+python3 build_model.py
 ```
 
 ## [16] tool
@@ -737,7 +1330,396 @@ Let me refine the model with better feature engineering and more appropriate pre
 **tool call: bash**
 
 ```
+cat > build_model_v2.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.model_selection import cross_val_score, LeaveOneOut
+from sklearn.metrics import mean_squared_error
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+features_raw = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# Fill missing values in train
+train_filled = train.copy()
+for col in features_raw:
+    train_filled[col] = train_filled[col].interpolate(method='linear').bfill().ffill()
+
+X_train_all = train_filled[features_raw].values
+y_train = train_filled['default_rate'].values
+X_scenario_all = scenario[features_raw].values
+
+# ============================================================
+# Feature Engineering
+# ============================================================
+
+# Key insight: bbb_spread is the dominant predictor
+# The relationship between credit spreads and default rates is typically
+# non-linear (accelerating at higher spreads)
+# Also, VIX and unemployment matter but less so
+
+# Let me create a richer feature set with transformations
+# and use a regularized model
+
+def create_features(X, feature_names):
+    """Create engineered features"""
+    features = []
+    feature_list = []
+    
+    # Original features
+    for i, name in enumerate(feature_names):
+        features.append(X[:, i])
+        feature_list.append(name)
+    
+    # Log transforms for positive features (bbb_spread, sp500, djia, nasdaq, hpi, cpi, gdp)
+    # Use log1p to handle values near zero
+    for i, name in enumerate(feature_names):
+        if name in ['bbb_spread', 'sp500', 'djia', 'nasdaq', 'hpi', 'cpi', 'gdp']:
+            val = X[:, i]
+            if np.all(val > 0):
+                features.append(np.log(val))
+                feature_list.append(f'log_{name}')
+    
+    # Squared terms for key features
+    for i, name in enumerate(feature_names):
+        if name in ['bbb_spread', 'vix', 'unemployment']:
+            features.append(X[:, i] ** 2)
+            feature_list.append(f'{name}_sq')
+    
+    # Interaction: bbb_spread * vix
+    bbb_idx = feature_names.index('bbb_spread')
+    vix_idx = feature_names.index('vix')
+    features.append(X[:, bbb_idx] * X[:, vix_idx])
+    feature_list.append('bbb_spread_x_vix')
+    
+    # Interaction: bbb_spread * unemployment
+    unemp_idx = feature_names.index('unemployment')
+    features.append(X[:, bbb_idx] * X[:, unemp_idx])
+    feature_list.append('bbb_spread_x_unemp')
+    
+    return np.column_stack(features), feature_list
+
+X_train_eng, feat_names = create_features(X_train_all, features_raw)
+X_scenario_eng, _ = create_features(X_scenario_all, features_raw)
+
+print(f"Engineered features: {X_train_eng.shape[1]} features")
+print(f"Feature names: {feat_names}")
+
+# Standardize
+scaler = StandardScaler()
+X_train_eng_scaled = scaler.fit_transform(X_train_eng)
+X_scenario_eng_scaled = scaler.transform(X_scenario_eng)
+
+# ============================================================
+# Model Selection with Cross-Validation
+# ============================================================
+
+# Try Ridge regression with different alpha values
+alphas = np.logspace(-4, 4, 30)
+best_alpha = None
+best_r2 = -np.inf
+
+for alpha in alphas:
+    ridge = Ridge(alpha=alpha)
+    loo = LeaveOneOut()
+    scores = cross_val_score(ridge, X_train_eng_scaled, y_train, cv=loo, scoring='r2')
+    mean_r2 = np.nanmean(scores)
+    if mean_r2 > best_r2:
+        best_r2 = mean_r2
+        best_alpha = alpha
+
+print(f"\nBest Ridge alpha: {best_alpha:.6f}, LOO R2: {best_r2:.4f}")
+
+# Fit final Ridge model
+ridge_final = Ridge(alpha=best_alpha)
+ridge_final.fit(X_train_eng_scaled, y_train)
+
+# Also fit OLS for comparison (with fewer features to avoid overfitting)
+# Use only the most important features
+key_features = ['bbb_spread', 'vix', 'unemployment', 'gdp']
+key_idx = [features_raw.index(f) for f in key_features]
+X_train_key = train_filled[key_features].values
+X_scenario_key = scenario[key_features].values
+
+# Standardize
+scaler_key = StandardScaler()
+X_train_key_scaled = scaler_key.fit_transform(X_train_key)
+X_scenario_key_scaled = scaler_key.transform(X_scenario_key)
+
+# OLS with key features
+X_train_key_const = sm.add_constant(X_train_key_scaled)
+model_ols_key = sm.OLS(y_train, X_train_key_const).fit()
+print(f"\nOLS (key features) R2: {model_ols_key.rsquared:.4f}, Adj R2: {model_ols_key.rsquared_adj:.4f}")
+
+# OLS with all features
+X_train_all_const = sm.add_constant(X_train_all)
+model_ols_all = sm.OLS(y_train, X_train_all_const).fit()
+print(f"OLS (all features) R2: {model_ols_all.rsquared:.4f}, Adj R2: {model_ols_all.rsquared_adj:.4f}")
+
+# ============================================================
+# Build the final model with proper prediction intervals
+# ============================================================
+
+# I'll use the OLS model with key features for point estimates
+# and bootstrap for prediction intervals that account for both
+# model uncertainty and residual variance
+
+# But first, let me also try a model with non-linear bbb_spread terms
+# since the relationship is likely non-linear
+
+# Create features with bbb_spread transformations
+X_train_nl = np.column_stack([
+    X_train_key_scaled,
+    X_train_key_scaled[:, 0] ** 2,  # bbb_spread^2
+    X_train_key_scaled[:, 0] ** 3,  # bbb_spread^3
+])
+
+X_scenario_nl = np.column_stack([
+    X_scenario_key_scaled,
+    X_scenario_key_scaled[:, 0] ** 2,
+    X_scenario_key_scaled[:, 0] ** 3,
+])
+
+model_ols_nl = sm.OLS(y_train, sm.add_constant(X_train_nl)).fit()
+print(f"\nOLS (key + cubic bbb_spread) R2: {model_ols_nl.rsquared:.4f}, Adj R2: {model_ols_nl.rsquared_adj:.4f}")
+
+# Also try with log(bbb_spread)
+# bbb_spread is always positive in our data
+bbb_train = X_train_key_scaled[:, 0]  # standardized bbb_spread
+# But log of standardized values can be negative, so let's use original scale
+bbb_orig = train_filled['bbb_spread'].values
+vix_orig = train_filled['vix'].values
+unemp_orig = train_filled['unemployment'].values
+gdp_orig = train_filled['gdp'].values
+
+# Standardize original values
+scaler_orig = StandardScaler()
+X_orig_scaled = scaler_orig.fit_transform(np.column_stack([bbb_orig, vix_orig, unemp_orig, gdp_orig]))
+
+# Log transform bbb_spread (original scale)
+bbb_log = np.log(bbb_orig)
+scaler_log = StandardScaler()
+bbb_log_scaled = scaler_log.fit_transform(bbb_log.reshape(-1, 1)).ravel()
+
+# Create feature set with log(bbb_spread)
+X_train_log = np.column_stack([
+    X_orig_scaled,
+    bbb_log_scaled,
+    bbb_log_scaled ** 2,
+])
+
+X_scenario_log = np.column_stack([
+    scaler_orig.transform(np.column_stack([
+        scenario['bbb_spread'].values,
+        scenario['vix'].values,
+        scenario['unemployment'].values,
+        scenario['gdp'].values,
+    ])),
+    scaler_log.transform(np.log(scenario['bbb_spread'].values).reshape(-1, 1)).ravel(),
+    scaler_log.transform(np.log(scenario['bbb_spread'].values).reshape(-1, 1)).ravel() ** 2,
+])
+
+model_ols_log = sm.OLS(y_train, sm.add_constant(X_train_log)).fit()
+print(f"OLS (log bbb_spread) R2: {model_ols_log.rsquared:.4f}, Adj R2: {model_ols_log.rsquared_adj:.4f}")
+
+# ============================================================
+# Choose the best model and generate predictions
+# ============================================================
+
+# Let me compare all models on training data
+models = {
+    'OLS_key': model_ols_key,
+    'OLS_all': model_ols_all,
+    'OLS_nl': model_ols_nl,
+    'OLS_log': model_ols_log,
+}
+
+print("\n=== Model Comparison ===")
+for name, model in models.items():
+    train_pred = model.predict()
+    rmse = np.sqrt(np.mean((y_train - train_pred) ** 2))
+    loo = LeaveOneOut()
+    # Manual LOO for OLS models
+    loo_errors = []
+    for i in range(len(y_train)):
+        mask = np.ones(len(y_train), dtype=bool)
+        mask[i] = False
+        model_loo = sm.OLS(y_train[mask], model.model.data.exog[mask]).fit()
+        pred_i = model_loo.predict(model.model.data.exog[i:i+1])
+        loo_errors.append((y_train[i] - pred_i[0]) ** 2)
+    loo_rmse = np.sqrt(np.mean(loo_errors))
+    print(f"{name}: Train RMSE={rmse:.6f}, LOO RMSE={loo_rmse:.6f}")
+
+# The OLS_log model looks promising. Let me use it as the base model.
+# But I need to be careful about extrapolation - log(bbb_spread) for bbb_spread values
+# beyond training range could be problematic.
+
+# Let me use the simpler OLS_key model as the primary model for robustness
+# and use bootstrap for prediction intervals
+
+# Actually, let me use a more sophisticated approach:
+# Use the Ridge model with engineered features for point estimates
+# and bootstrap for prediction intervals
+
+# Fit Ridge with engineered features
+ridge_eng = Ridge(alpha=best_alpha)
+ridge_eng.fit(X_train_eng_scaled, y_train)
+
+# Predictions
+y_pred_ridge = ridge_eng.predict(X_scenario_eng_scaled)
+y_pred_ols_key = model_ols_key.predict(sm.add_constant(X_scenario_key_scaled))
+y_pred_ols_log = model_ols_log.predict(sm.add_constant(X_scenario_log))
+
+print(f"\n=== Point Predictions Comparison ===")
+for i in range(9):
+    q = scenario.iloc[i]['quarter']
+    print(f"Q{q}: Ridge={y_pred_ridge[i]:.6f}, OLS_key={y_pred_ols_key[i]:.6f}, OLS_log={y_pred_ols_log[i]:.6f}")
+
+# ============================================================
+# Bootstrap Prediction Intervals
+# ============================================================
+
+# For the OLS_key model (most interpretable, good balance)
+# Bootstrap the entire model fitting process
+
+np.random.seed(42)
+n_boot = 2000
+n_train = len(y_train)
+n_scenario = X_scenario_key_scaled.shape[0]
+
+boot_preds_ols = np.zeros((n_boot, n_scenario))
+boot_preds_ridge = np.zeros((n_boot, n_scenario))
+boot_preds_log = np.zeros((n_boot, n_scenario))
+
+for b in range(n_boot):
+    idx = np.random.choice(n_train, size=n_train, replace=True)
+    
+    # OLS key model
+    X_boot = X_train_key_scaled[idx]
+    y_boot = y_train[idx]
+    X_boot_const = sm.add_constant(X_boot)
+    X_scen_const = sm.add_constant(X_scenario_key_scaled)
+    try:
+        model_boot = sm.OLS(y_boot, X_boot_const).fit()
+        boot_preds_ols[b] = model_boot.predict(X_scen_const)
+    except:
+        boot_preds_ols[b] = np.nan
+    
+    # Ridge engineered model
+    X_boot_eng = X_train_eng_scaled[idx]
+    ridge_boot = Ridge(alpha=best_alpha)
+    ridge_boot.fit(X_boot_eng, y_boot)
+    boot_preds_ridge[b] = ridge_boot.predict(X_scenario_eng_scaled)
+    
+    # OLS log model
+    X_boot_log = X_train_log[idx]
+    y_boot_log = y_train[idx]
+    X_boot_log_const = sm.add_constant(X_boot_log)
+    X_scen_log_const = sm.add_constant(X_scenario_log)
+    try:
+        model_boot_log = sm.OLS(y_boot_log, X_boot_log_const).fit()
+        boot_preds_log[b] = model_boot_log.predict(X_scen_log_const)
+    except:
+        boot_preds_log[b] = np.nan
+
+# Remove failed samples
+valid_ols = ~np.isnan(boot_preds_ols).any(axis=1)
+valid_ridge = ~np.isnan(boot_preds_ridge).any(axis=1)
+valid_log = ~np.isnan(boot_preds_log).any(axis=1)
+
+print(f"\nValid bootstrap samples: OLS={valid_ols.sum()}, Ridge={valid_ridge.sum()}, Log={valid_log.sum()}")
+
+# For prediction intervals, I need to include residual variance
+# The bootstrap only captures model uncertainty, not irreducible noise
+# So I should add residual noise to each bootstrap prediction
+
+# Approach: for each bootstrap sample, add a residual drawn from the empirical residual distribution
+residuals_ols = y_train - model_ols_key.predict(X_train_key_const)
+resid_std = residuals_ols.std(ddof=1)
+print(f"Residual std: {resid_std:.6f}")
+
+# Bootstrap with residual noise
+boot_preds_with_noise = np.zeros((n_boot, n_scenario))
+
+for b in range(n_boot):
+    idx = np.random.choice(n_train, size=n_train, replace=True)
+    X_boot = X_train_key_scaled[idx]
+    y_boot = y_train[idx]
+    X_boot_const = sm.add_constant(X_boot)
+    X_scen_const = sm.add_constant(X_scenario_key_scaled)
+    try:
+        model_boot = sm.OLS(y_boot, X_boot_const).fit()
+        pred = model_boot.predict(X_scen_const)
+        # Add residual noise
+        noise = np.random.choice(residuals_ols, size=n_scenario, replace=True)
+        boot_preds_with_noise[b] = pred + noise
+    except:
+        boot_preds_with_noise[b] = np.nan
+
+valid_noise = ~np.isnan(boot_preds_with_noise).any(axis=1)
+print(f"Valid bootstrap with noise samples: {valid_noise.sum()}/{n_boot}")
+
+# Compute intervals
+y_pred_final = y_pred_ols_key  # Use OLS key as point estimates
+y_lower_boot = np.percentile(boot_preds_with_noise[valid_noise], 2.5, axis=0)
+y_upper_boot = np.percentile(boot_preds_with_noise[valid_noise], 97.5, axis=0)
+
+# Also compute analytical prediction intervals
+pred_summary = model_ols_key.get_prediction(sm.add_constant(X_scenario_key_scaled))
+pred_int = pred_summary.summary_frame(alpha=0.05)
+y_lower_analytical = pred_int['obs_ci_lower'].values
+y_upper_analytical = pred_int['obs_ci_upper'].values
+
+print(f"\n=== Final Predictions (OLS key + bootstrap with noise) ===")
+for i in range(n_scenario):
+    q = scenario.iloc[i]['quarter']
+    print(f"Q{q}: pred={y_pred_final[i]:.6f}, boot_lower={y_lower_boot[i]:.6f}, boot_upper={y_upper_boot[i]:.6f}, anal_lower={y_lower_analytical[i]:.6f}, anal_upper={y_upper_analytical[i]:.6f}")
+
+# Use the wider intervals between bootstrap and analytical
+# (more conservative = better for stress scenario)
+y_lower = np.minimum(y_lower_boot, y_lower_analytical)
+y_upper = np.maximum(y_upper_boot, y_upper_analytical)
+
+# Ensure valid range
+y_pred_final = np.clip(y_pred_final, 0.001, 0.999)
+y_lower = np.clip(y_lower, 0.0001, 0.999)
+y_upper = np.clip(y_upper, 0.0001, 0.999)
+
+# Ensure ordering
+y_lower = np.minimum(y_lower, y_pred_final)
+y_upper = np.maximum(y_upper, y_pred_final)
+
+# Write predictions
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred_final,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\n=== Predictions written to predictions.csv ===")
+print(output.to_string(index=False))
+
+# Verify
+print(f"\nVerification:")
+print(f"  Number of rows: {len(output)}")
+print(f"  Columns: {output.columns.tolist()}")
+print(f"  All quarters present: {output['quarter'].tolist()}")
+print(f"  All y_pred in (0,1): {output['y_pred'].between(0, 1).all()}")
+print(f"  All y_lower <= y_pred: {(output['y_lower'] <= output['y_pred']).all()}")
+print(f"  All y_pred <= y_upper: {(output['y_pred'] <= output['y_upper']).all()}")
+
+PYEOF
+python3 build_model_v2.py
 ```
 
 ## [18] tool
@@ -770,7 +1752,258 @@ Let me take a cleaner, more robust approach.
 **tool call: bash**
 
 ```
+cat > build_model_v3.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+features_raw = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# Fill missing values in train
+train_filled = train.copy()
+for col in features_raw:
+    train_filled[col] = train_filled[col].interpolate(method='linear').bfill().ffill()
+
+y_train = train_filled['default_rate'].values
+
+# ============================================================
+# Feature Engineering
+# ============================================================
+
+# Key features based on domain knowledge and correlations:
+# 1. bbb_spread - strongest predictor (0.70 corr)
+# 2. vix - second strongest (0.47 corr)  
+# 3. unemployment - moderate (0.20 corr)
+# 4. gdp - weak but relevant
+
+# Add non-linear transformations of bbb_spread (the dominant predictor)
+# and interactions
+
+def engineer_features(df, is_scenario=False):
+    """Create engineered features from raw macro data"""
+    feats = {}
+    
+    # Raw key features
+    feats['bbb_spread'] = df['bbb_spread'].values
+    feats['vix'] = df['vix'].values
+    feats['unemployment'] = df['unemployment'].values
+    feats['gdp'] = df['gdp'].values
+    
+    # Log of bbb_spread (captures diminishing marginal effect)
+    feats['log_bbb'] = np.log(df['bbb_spread'].values)
+    
+    # Squared terms for non-linearity
+    feats['bbb_sq'] = df['bbb_spread'].values ** 2
+    feats['vix_sq'] = df['vix'].values ** 2
+    
+    # Interactions
+    feats['bbb_x_vix'] = df['bbb_spread'].values * df['vix'].values
+    feats['bbb_x_unemp'] = df['bbb_spread'].values * df['unemployment'].values
+    
+    # Credit stress indicator: bbb_spread * vix interaction
+    feats['stress_index'] = df['bbb_spread'].values * df['vix'].values / 10.0
+    
+    # GDP change proxy (use level since we don't have prior quarter)
+    feats['gdp_level'] = df['gdp'].values
+    
+    # Stock market stress: inverse of stock levels (lower stocks = more stress)
+    feats['sp500_inv'] = 1.0 / df['sp500'].values
+    feats['nasdaq_inv'] = 1.0 / df['nasdaq'].values
+    
+    # Housing stress
+    feats['hpi'] = df['hpi'].values
+    
+    return np.column_stack([feats[k] for k in sorted(feats.keys())]), list(feats.keys())
+
+X_train, feat_names = engineer_features(train_filled)
+X_scenario, _ = engineer_features(scenario)
+
+print(f"Engineered features ({len(feat_names)}): {feat_names}")
+print(f"X_train shape: {X_train.shape}")
+print(f"X_scenario shape: {X_scenario.shape}")
+
+# Standardize
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_scenario_scaled = scaler.transform(X_scenario)
+
+# ============================================================
+# Fit OLS model with key features (for proper prediction intervals)
+# ============================================================
+
+# Start with the simplest model that captures the main relationships
+# Use bbb_spread, vix, unemployment, gdp, and bbb_spread^2
+
+simple_features = ['bbb_spread', 'vix', 'unemployment', 'gdp', 'bbb_sq', 'bbb_x_vix']
+simple_idx = [feat_names.index(f) for f in simple_features]
+X_train_simple = X_train_scaled[:, simple_idx]
+X_scenario_simple = X_scenario_scaled[:, simple_idx]
+
+X_train_simple_const = sm.add_constant(X_train_simple)
+model_simple = sm.OLS(y_train, X_train_simple_const).fit()
+print(f"\n=== Simple OLS Model ===")
+print(f"R2: {model_simple.rsquared:.4f}, Adj R2: {model_simple.rsquared_adj:.4f}")
+print(f"RMSE: {np.sqrt(model_simple.mse_resid):.6f}")
+print(f"N features: {X_train_simple.shape[1]}")
+
+# Try adding more features
+medium_features = ['bbb_spread', 'vix', 'unemployment', 'gdp', 'bbb_sq', 'vix_sq', 
+                   'bbb_x_vix', 'bbb_x_unemp', 'stress_index', 'log_bbb']
+medium_idx = [feat_names.index(f) for f in medium_features]
+X_train_medium = X_train_scaled[:, medium_idx]
+X_scenario_medium = X_scenario_scaled[:, medium_idx]
+
+X_train_medium_const = sm.add_constant(X_train_medium)
+model_medium = sm.OLS(y_train, X_train_medium_const).fit()
+print(f"\n=== Medium OLS Model ===")
+print(f"R2: {model_medium.rsquared:.4f}, Adj R2: {model_medium.rsquared_adj:.4f}")
+print(f"RMSE: {np.sqrt(model_medium.mse_resid):.6f}")
+print(f"N features: {X_train_medium.shape[1]}")
+
+# Try with all engineered features
+X_train_all_eng_const = sm.add_constant(X_train_scaled)
+model_all_eng = sm.OLS(y_train, X_train_all_eng_const).fit()
+print(f"\n=== All Engineered OLS Model ===")
+print(f"R2: {model_all_eng.rsquared:.4f}, Adj R2: {model_all_eng.rsquared_adj:.4f}")
+print(f"RMSE: {np.sqrt(model_all_eng.mse_resid):.6f}")
+
+# ============================================================
+# Select the best model
+# ============================================================
+
+# The simple model has the best adjusted R2, which means it's the best
+# tradeoff between fit and complexity. Let's use it.
+
+# But let me also check if adding log_bbb helps
+test_features = ['bbb_spread', 'vix', 'unemployment', 'gdp', 'bbb_sq', 'bbb_x_vix', 'log_bbb']
+test_idx = [feat_names.index(f) for f in test_features]
+X_train_test = X_train_scaled[:, test_idx]
+X_scenario_test = X_scenario_scaled[:, test_idx]
+
+X_train_test_const = sm.add_constant(X_train_test)
+model_test = sm.OLS(y_train, X_train_test_const).fit()
+print(f"\n=== Test OLS Model (with log_bbb) ===")
+print(f"R2: {model_test.rsquared:.4f}, Adj R2: {model_test.rsquared_adj:.4f}")
+print(f"RMSE: {np.sqrt(model_test.mse_resid):.6f}")
+
+# ============================================================
+# Final model: Simple OLS with bbb_spread, vix, unemployment, gdp, bbb_sq, bbb_x_vix
+# ============================================================
+
+final_model = model_simple
+final_X_train = X_train_simple_const
+final_X_scenario = sm.add_constant(X_scenario_simple)
+
+# Point predictions
+y_pred = final_model.predict(final_X_scenario)
+
+# Residuals for prediction interval calibration
+residuals = y_train - final_model.predict(final_X_train)
+resid_std = np.sqrt(np.mean(residuals ** 2))
+print(f"\nResidual std (RMSE): {resid_std:.6f}")
+
+# ============================================================
+# Prediction Intervals via Bootstrap
+# ============================================================
+
+np.random.seed(42)
+n_boot = 2000
+n_train = len(y_train)
+n_scenario = X_scenario_simple.shape[0]
+
+# Bootstrap that captures both model uncertainty and residual variance
+boot_preds = np.zeros((n_boot, n_scenario))
+
+for b in range(n_boot):
+    # Resample with replacement
+    idx = np.random.choice(n_train, size=n_train, replace=True)
+    X_boot = X_train_simple[idx]
+    y_boot = y_train[idx]
+    
+    X_boot_const = sm.add_constant(X_boot)
+    X_scen_const = final_X_scenario
+    
+    try:
+        model_boot = sm.OLS(y_boot, X_boot_const).fit()
+        pred = model_boot.predict(X_scen_const)
+        # Add residual noise (draw from empirical residual distribution)
+        noise = np.random.choice(residuals, size=n_scenario, replace=True)
+        boot_preds[b] = pred + noise
+    except Exception as e:
+        boot_preds[b] = np.nan
+
+# Remove failed samples
+valid = ~np.isnan(boot_preds).any(axis=1)
+print(f"Valid bootstrap samples: {valid.sum()}/{n_boot}")
+
+# Compute intervals
+y_lower = np.percentile(boot_preds[valid], 2.5, axis=0)
+y_upper = np.percentile(boot_preds[valid], 97.5, axis=0)
+
+# Also compute analytical prediction intervals from the final model
+pred_summary = final_model.get_prediction(final_X_scenario)
+pred_int = pred_summary.summary_frame(alpha=0.05)
+y_lower_analytical = pred_int['obs_ci_lower'].values
+y_upper_analytical = pred_int['obs_ci_upper'].values
+
+print(f"\n=== Predictions ===")
+print(f"{'Quarter':>8} {'Pred':>10} {'Boot_Lower':>12} {'Boot_Upper':>12} {'Anal_Lower':>12} {'Anal_Upper':>12}")
+for i in range(n_scenario):
+    q = scenario.iloc[i]['quarter']
+    print(f"{int(q):>8} {y_pred[i]:>10.6f} {y_lower[i]:>12.6f} {y_upper[i]:>12.6f} {y_lower_analytical[i]:>12.6f} {y_upper_analytical[i]:>12.6f}")
+
+# Use the wider of bootstrap and analytical intervals
+# This is more conservative and appropriate for a stress scenario
+y_lower_final = np.minimum(y_lower, y_lower_analytical)
+y_upper_final = np.maximum(y_upper, y_upper_analytical)
+
+# Ensure valid range
+y_pred_clipped = np.clip(y_pred, 0.001, 0.999)
+y_lower_final = np.clip(y_lower_final, 0.0001, 0.999)
+y_upper_final = np.clip(y_upper_final, 0.0001, 0.999)
+
+# Ensure ordering
+y_lower_final = np.minimum(y_lower_final, y_pred_clipped)
+y_upper_final = np.maximum(y_upper_final, y_pred_clipped)
+
+# Write predictions
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred_clipped,
+    'y_lower': y_lower_final,
+    'y_upper': y_upper_final
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\n=== predictions.csv written ===")
+print(output.to_string(index=False))
+
+# Verify
+print(f"\nVerification:")
+print(f"  Rows: {len(output)}")
+print(f"  Columns: {output.columns.tolist()}")
+print(f"  Quarters: {output['quarter'].tolist()}")
+print(f"  All y_pred in (0,1): {output['y_pred'].between(0, 1).all()}")
+print(f"  All y_lower <= y_pred: {(output['y_lower'] <= output['y_pred']).all()}")
+print(f"  All y_pred <= y_upper: {(output['y_pred'] <= output['y_upper']).all()}")
+
+# Also compute and print the width of prediction intervals
+print(f"\nPrediction interval widths:")
+for i in range(n_scenario):
+    q = scenario.iloc[i]['quarter']
+    width = y_upper_final[i] - y_lower_final[i]
+    print(f"  Q{int(q)}: width={width:.6f}")
+
+PYEOF
+python3 build_model_v3.py
 ```
 
 ## [20] tool
@@ -942,7 +2175,7 @@ The model looks good. Let me verify the output file and also try a few refinemen
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [22] tool
@@ -1010,7 +2243,266 @@ Let me try a few more model improvements, particularly using a Gamma GLM which i
 **tool call: bash**
 
 ```
+cat > build_model_v4.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.genmod.families import Gamma
+from statsmodels.genmod.families.links import Log, Identity
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+features_raw = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# Fill missing values in train
+train_filled = train.copy()
+for col in features_raw:
+    train_filled[col] = train_filled[col].interpolate(method='linear').bfill().ffill()
+
+y_train = train_filled['default_rate'].values
+
+# ============================================================
+# Feature Engineering
+# ============================================================
+
+# Create features
+def engineer_features(df):
+    feats = {}
+    feats['bbb_spread'] = df['bbb_spread'].values
+    feats['vix'] = df['vix'].values
+    feats['unemployment'] = df['unemployment'].values
+    feats['gdp'] = df['gdp'].values
+    feats['log_bbb'] = np.log(df['bbb_spread'].values)
+    feats['bbb_sq'] = df['bbb_spread'].values ** 2
+    feats['bbb_x_vix'] = df['bbb_spread'].values * df['vix'].values
+    feats['bbb_x_unemp'] = df['bbb_spread'].values * df['unemployment'].values
+    feats['vix_sq'] = df['vix'].values ** 2
+    feats['unemp_sq'] = df['unemployment'].values ** 2
+    feats['gdp_sq'] = df['gdp'].values ** 2
+    feats['hpi'] = df['hpi'].values
+    feats['sp500'] = df['sp500'].values
+    feats['djia'] = df['djia'].values
+    feats['nasdaq'] = df['nasdaq'].values
+    feats['cpi'] = df['cpi'].values
+    return np.column_stack([feats[k] for k in sorted(feats.keys())]), list(feats.keys())
+
+X_train, feat_names = engineer_features(train_filled)
+X_scenario, _ = engineer_features(scenario)
+
+print(f"Features ({len(feat_names)}): {feat_names}")
+
+# Standardize
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_scenario_scaled = scaler.transform(X_scenario)
+
+# ============================================================
+# Model 1: OLS with key features (baseline)
+# ============================================================
+key_idx = [feat_names.index(f) for f in ['bbb_spread', 'vix', 'unemployment', 'gdp', 'bbb_sq', 'bbb_x_vix']]
+X_train_key = sm.add_constant(X_train_scaled[:, key_idx])
+model_ols_key = sm.OLS(y_train, X_train_key).fit()
+
+# ============================================================
+# Model 2: Gamma GLM with log link (more appropriate for positive outcomes)
+# ============================================================
+print("\n=== Gamma GLM with Log Link ===")
+X_train_glm = sm.add_constant(X_train_scaled)
+gamma_model = sm.GLM(y_train, X_train_glm, family=Gamma(link=Log())).fit()
+print(f"Deviance: {gamma_model.deviance:.6f}")
+print(f"Scale: {gamma_model.scale:.6f}")
+print(f"Pearson chi2: {gamma_model.pearson_chi2:.6f}")
+
+# Predictions
+y_pred_glm = gamma_model.predict(sm.add_constant(X_scenario_scaled))
+print(f"GLM predictions: {y_pred_glm}")
+
+# ============================================================
+# Model 3: Gamma GLM with key features only
+# ============================================================
+print("\n=== Gamma GLM with Key Features ===")
+X_train_glm_key = sm.add_constant(X_train_scaled[:, key_idx])
+gamma_model_key = sm.GLM(y_train, X_train_glm_key, family=Gamma(link=Log())).fit()
+print(f"Deviance: {gamma_model_key.deviance:.6f}")
+print(f"Scale: {gamma_model_key.scale:.6f}")
+
+y_pred_glm_key = gamma_model_key.predict(sm.add_constant(X_scenario_scaled[:, key_idx]))
+print(f"GLM key predictions: {y_pred_glm_key}")
+
+# ============================================================
+# Model 4: OLS with all features + regularization check
+# ============================================================
+from sklearn.linear_model import RidgeCV
+alphas = np.logspace(-3, 3, 20)
+ridge_all = RidgeCV(alphas=alphas, cv=5)
+ridge_all.fit(X_train_scaled, y_train)
+print(f"\n=== Ridge (all features) ===")
+print(f"Best alpha: {ridge_all.alpha_:.6f}")
+print(f"R2: {ridge_all.score(X_train_scaled, y_train):.4f}")
+
+y_pred_ridge = ridge_all.predict(X_scenario_scaled)
+
+# ============================================================
+# Compare all models
+# ============================================================
+print("\n=== Model Comparison ===")
+models_dict = {
+    'OLS_key': (model_ols_key, X_train_key),
+    'Gamma_GLM_all': (gamma_model, X_train_glm),
+    'Gamma_GLM_key': (gamma_model_key, X_train_glm_key),
+}
+
+for name, (model, X_tr) in models_dict.items():
+    train_pred = model.predict()
+    rmse = np.sqrt(np.mean((y_train - train_pred) ** 2))
+    print(f"{name}: Train RMSE = {rmse:.6f}")
+
+# ============================================================
+# Generate predictions with intervals using the best model
+# ============================================================
+
+# I'll use the OLS model with key features as the primary model
+# because it has the best adjusted R2 and is the most interpretable
+# For prediction intervals, I'll use bootstrap with residual noise
+
+final_model = model_ols_key
+final_X_train = X_train_key
+final_X_scenario = sm.add_constant(X_scenario_scaled[:, key_idx])
+
+# Point predictions
+y_pred = final_model.predict(final_X_scenario)
+
+# Residuals
+residuals = y_train - final_model.predict(final_X_train)
+resid_std = np.sqrt(np.mean(residuals ** 2))
+print(f"\nResidual std: {resid_std:.6f}")
+
+# ============================================================
+# Bootstrap prediction intervals
+# ============================================================
+np.random.seed(42)
+n_boot = 2000
+n_train = len(y_train)
+n_scenario = X_scenario_scaled[:, key_idx].shape[0]
+
+boot_preds = np.zeros((n_boot, n_scenario))
+
+for b in range(n_boot):
+    idx = np.random.choice(n_train, size=n_train, replace=True)
+    X_boot = X_train_scaled[idx][:, key_idx]
+    y_boot = y_train[idx]
+    
+    X_boot_const = sm.add_constant(X_boot)
+    X_scen_const = final_X_scenario
+    
+    try:
+        model_boot = sm.OLS(y_boot, X_boot_const).fit()
+        pred = model_boot.predict(X_scen_const)
+        # Add residual noise
+        noise = np.random.choice(residuals, size=n_scenario, replace=True)
+        boot_preds[b] = pred + noise
+    except:
+        boot_preds[b] = np.nan
+
+valid = ~np.isnan(boot_preds).any(axis=1)
+print(f"Valid bootstrap samples: {valid.sum()}/{n_boot}")
+
+# Compute intervals
+y_lower_boot = np.percentile(boot_preds[valid], 2.5, axis=0)
+y_upper_boot = np.percentile(boot_preds[valid], 97.5, axis=0)
+
+# Analytical prediction intervals
+pred_summary = final_model.get_prediction(final_X_scenario)
+pred_int = pred_summary.summary_frame(alpha=0.05)
+y_lower_analytical = pred_int['obs_ci_lower'].values
+y_upper_analytical = pred_int['obs_ci_upper'].values
+
+# Also compute GLM-based prediction intervals
+# For Gamma GLM, the prediction interval can be computed from the posterior predictive distribution
+# Using the deviance residual approach
+
+# GLM prediction intervals (using bootstrap)
+boot_preds_glm = np.zeros((n_boot, n_scenario))
+
+for b in range(n_boot):
+    idx = np.random.choice(n_train, size=n_train, replace=True)
+    X_boot_glm = sm.add_constant(X_train_scaled[idx][:, key_idx])
+    y_boot = y_train[idx]
+    
+    try:
+        model_boot_glm = sm.GLM(y_boot, X_boot_glm, family=Gamma(link=Log())).fit()
+        pred = model_boot_glm.predict(sm.add_constant(X_scenario_scaled[:, key_idx]))
+        # Add Gamma-distributed noise
+        # For Gamma GLM, the variance is proportional to the mean squared
+        # Use deviance residuals for noise
+        noise = np.random.choice(residuals, size=n_scenario, replace=True)
+        boot_preds_glm[b] = pred + noise
+    except:
+        boot_preds_glm[b] = np.nan
+
+valid_glm = ~np.isnan(boot_preds_glm).any(axis=1)
+print(f"Valid GLM bootstrap samples: {valid_glm.sum()}/{n_boot}")
+
+y_lower_glm = np.percentile(boot_preds_glm[valid_glm], 2.5, axis=0)
+y_upper_glm = np.percentile(boot_preds_glm[valid_glm], 97.5, axis=0)
+
+# ============================================================
+# Combine intervals - use the wider of OLS and GLM bootstrap
+# ============================================================
+y_lower_final = np.minimum(
+    np.minimum(y_lower_boot, y_lower_analytical),
+    y_lower_glm
+)
+y_upper_final = np.maximum(
+    np.maximum(y_upper_boot, y_upper_analytical),
+    y_upper_glm
+)
+
+# Also try using only the GLM intervals (they might be better calibrated)
+# Let me compare the two approaches
+
+print(f"\n=== Final Predictions (OLS + GLM bootstrap, wider intervals) ===")
+for i in range(n_scenario):
+    q = scenario.iloc[i]['quarter']
+    print(f"Q{int(q)}: pred={y_pred[i]:.6f}, lower={y_lower_final[i]:.6f}, upper={y_upper_final[i]:.6f}")
+
+# Ensure valid range
+y_pred_clipped = np.clip(y_pred, 0.001, 0.999)
+y_lower_final = np.clip(y_lower_final, 0.0001, 0.999)
+y_upper_final = np.clip(y_upper_final, 0.0001, 0.999)
+
+# Ensure ordering
+y_lower_final = np.minimum(y_lower_final, y_pred_clipped)
+y_upper_final = np.maximum(y_upper_final, y_pred_clipped)
+
+# Write predictions
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred_clipped,
+    'y_lower': y_lower_final,
+    'y_upper': y_upper_final
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\n=== predictions.csv written ===")
+print(output.to_string(index=False))
+
+# Verify
+print(f"\nVerification:")
+print(f"  Rows: {len(output)}")
+print(f"  Columns: {output.columns.tolist()}")
+print(f"  All y_pred in (0,1): {output['y_pred'].between(0, 1).all()}")
+print(f"  All y_lower <= y_pred: {(output['y_lower'] <= output['y_pred']).all()}")
+print(f"  All y_pred <= y_upper: {(output['y_pred'] <= output['y_upper']).all()}")
+
+PYEOF
+python3 build_model_v4.py
 ```
 
 ## [24] tool
@@ -1152,7 +2644,162 @@ Let me finalize with the best model. The OLS model with key features is the most
 **tool call: bash**
 
 ```
+cat > final_model.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+features_raw = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# Fill missing values in train
+train_filled = train.copy()
+for col in features_raw:
+    train_filled[col] = train_filled[col].interpolate(method='linear').bfill().ffill()
+
+y_train = train_filled['default_rate'].values
+
+# ============================================================
+# Feature Engineering
+# ============================================================
+
+# Use key features with non-linear transformations
+# bbb_spread is the dominant predictor - add quadratic and interaction terms
+# vix and unemployment are secondary predictors
+# gdp is a tertiary predictor
+
+# Create feature matrix
+X_train = np.column_stack([
+    train_filled['bbb_spread'].values,
+    train_filled['vix'].values,
+    train_filled['unemployment'].values,
+    train_filled['gdp'].values,
+    train_filled['bbb_spread'].values ** 2,
+    train_filled['bbb_spread'].values * train_filled['vix'].values,
+])
+
+X_scenario = np.column_stack([
+    scenario['bbb_spread'].values,
+    scenario['vix'].values,
+    scenario['unemployment'].values,
+    scenario['gdp'].values,
+    scenario['bbb_spread'].values ** 2,
+    scenario['bbb_spread'].values * scenario['vix'].values,
+])
+
+# Standardize
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_scenario_scaled = scaler.transform(X_scenario)
+
+# Add constant
+X_train_const = sm.add_constant(X_train_scaled)
+X_scenario_const = sm.add_constant(X_scenario_scaled)
+
+# ============================================================
+# Fit OLS model
+# ============================================================
+model = sm.OLS(y_train, X_train_const).fit()
+print(f"OLS Model Summary:")
+print(f"R2: {model.rsquared:.4f}")
+print(f"Adj R2: {model.rsquared_adj:.4f}")
+print(f"RMSE: {np.sqrt(model.mse_resid):.6f}")
+print(f"N: {len(y_train)}")
+print(f"K: {X_train_const.shape[1]}")
+
+# Point predictions
+y_pred = model.predict(X_scenario_const)
+
+# ============================================================
+# Prediction Intervals via Bootstrap
+# ============================================================
+np.random.seed(42)
+n_boot = 5000
+n_train = len(y_train)
+n_scenario = X_scenario_scaled.shape[0]
+
+# Bootstrap with residual noise (captures both model uncertainty and irreducible noise)
+residuals = y_train - model.predict(X_train_const)
+
+boot_preds = np.zeros((n_boot, n_scenario))
+for b in range(n_boot):
+    idx = np.random.choice(n_train, size=n_train, replace=True)
+    X_boot = X_train_scaled[idx]
+    y_boot = y_train[idx]
+    
+    X_boot_const = sm.add_constant(X_boot)
+    try:
+        model_boot = sm.OLS(y_boot, X_boot_const).fit()
+        pred = model_boot.predict(X_scenario_const)
+        # Add residual noise
+        noise = np.random.choice(residuals, size=n_scenario, replace=True)
+        boot_preds[b] = pred + noise
+    except:
+        boot_preds[b] = np.nan
+
+valid = ~np.isnan(boot_preds).any(axis=1)
+print(f"Valid bootstrap samples: {valid.sum()}/{n_boot}")
+
+# Bootstrap prediction intervals
+y_lower_boot = np.percentile(boot_preds[valid], 2.5, axis=0)
+y_upper_boot = np.percentile(boot_preds[valid], 97.5, axis=0)
+
+# Analytical prediction intervals
+pred_summary = model.get_prediction(X_scenario_const)
+pred_int = pred_summary.summary_frame(alpha=0.05)
+y_lower_analytical = pred_int['obs_ci_lower'].values
+y_upper_analytical = pred_int['obs_ci_upper'].values
+
+# Use the wider of bootstrap and analytical intervals
+# This is more conservative and appropriate for a stress scenario
+y_lower = np.minimum(y_lower_boot, y_lower_analytical)
+y_upper = np.maximum(y_upper_boot, y_upper_analytical)
+
+# Ensure valid range
+y_pred_clipped = np.clip(y_pred, 0.001, 0.999)
+y_lower = np.clip(y_lower, 0.0001, 0.999)
+y_upper = np.clip(y_upper, 0.0001, 0.999)
+
+# Ensure ordering
+y_lower = np.minimum(y_lower, y_pred_clipped)
+y_upper = np.maximum(y_upper, y_pred_clipped)
+
+# Write predictions
+output = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred_clipped,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\n=== Final Predictions ===")
+print(output.to_string(index=False))
+
+# Verify
+print(f"\nVerification:")
+print(f"  Rows: {len(output)}")
+print(f"  Columns: {output.columns.tolist()}")
+print(f"  All y_pred in (0,1): {output['y_pred'].between(0, 1).all()}")
+print(f"  All y_lower <= y_pred: {(output['y_lower'] <= output['y_pred']).all()}")
+print(f"  All y_pred <= y_upper: {(output['y_pred'] <= output['y_upper']).all()}")
+print(f"  All intervals valid: {((output['y_lower'] < output['y_upper']) & (output['y_upper'] > 0)).all()}")
+
+# Print summary statistics
+print(f"\nPrediction summary:")
+print(f"  Default rate range: [{y_pred_clipped.min():.4f}, {y_pred_clipped.max():.4f}]")
+print(f"  Interval width range: [{(y_upper - y_lower).min():.4f}, {(y_upper - y_lower).max():.4f}]")
+print(f"  Mean interval width: {(y_upper - y_lower).mean():.4f}")
+
+PYEOF
+python3 final_model.py
 ```
 
 ## [26] tool
@@ -1236,7 +2883,7 @@ The model is working well. Let me verify the final output file and submit.
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [28] tool
@@ -1276,7 +2923,47 @@ The predictions look good. Let me do a final verification and submit.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+# Verify predictions.csv
+pred = pd.read_csv('predictions.csv')
+print('Shape:', pred.shape)
+print('Columns:', pred.columns.tolist())
+print('Expected columns: [quarter, y_pred, y_lower, y_upper]')
+print()
+
+# Check one row per scenario quarter
+scenario = pd.read_csv('data/scenario.csv')
+print('Scenario quarters:', scenario['quarter'].tolist())
+print('Prediction quarters:', pred['quarter'].tolist())
+print('Match:', pred['quarter'].tolist() == scenario['quarter'].tolist())
+print()
+
+# Check values are fractions
+print('y_pred range:', pred['y_pred'].min(), '-', pred['y_pred'].max())
+print('y_lower range:', pred['y_lower'].min(), '-', pred['y_lower'].max())
+print('y_upper range:', pred['y_upper'].min(), '-', pred['y_upper'].max())
+print()
+
+# Check ordering
+print('All y_lower < y_pred:', (pred['y_lower'] < pred['y_pred']).all())
+print('All y_pred < y_upper:', (pred['y_pred'] < pred['y_upper']).all())
+print()
+
+# Check that intervals are reasonable (not too wide or too narrow)
+widths = pred['y_upper'] - pred['y_lower']
+print('Interval widths:', widths.tolist())
+print('Mean width:', widths.mean())
+print()
+
+# Verify all values are valid fractions
+print('All values in [0,1]:', 
+      pred['y_pred'].between(0, 1).all() and 
+      pred['y_lower'].between(0, 1).all() and 
+      pred['y_upper'].between(0, 1).all())
+"
 ```
 
 ## [30] tool

@@ -54,7 +54,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -115,7 +115,10 @@ t
 **tool call: bash**
 
 ```
-
+cd /tmp && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('/data/train.csv') if False else pd.read_csv('data/train.csv')
+" 2>/dev/null; pwd; ls
 ```
 
 ## [5] tool
@@ -134,7 +137,7 @@ t
 **tool call: bash**
 
 ```
-
+find / -name "train.csv" -path "*data*" 2>/dev/null; echo "---"; ls ~ 2>/dev/null; echo "HOME=$HOME"
 ```
 
 ## [7] tool
@@ -149,7 +152,19 @@ HOME=/root
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+print(tr.describe())
+print('t range train:', tr.t.min(), tr.t.max(), 'n=', len(tr))
+print('t test:', te.t.values)
+print('alpha range:', tr.alpha.min(), tr.alpha.max())
+print('beta range:', tr.beta.min(), tr.beta.max())
+# check for missing t
+print('missing t:', sorted(set(range(int(tr.t.max())+1)) - set(tr.t.astype(int)))[:20])
+print('dtypes:', tr.dtypes)
+"
 ```
 
 ## [9] tool
@@ -187,7 +202,26 @@ dtype: object
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values); b = np.deg2rad(tr.beta.values)
+au = np.rad2deg(np.unwrap(a)); bu = np.rad2deg(np.unwrap(b))
+t = tr.t.values
+# overall rates
+print('alpha total change:', au[-1]-au[0], 'over', t[-1]-t[0], 'days -> rate', (au[-1]-au[0])/(t[-1]-t[0]))
+print('beta total change:', bu[-1]-bu[0], '-> rate', (bu[-1]-bu[0])/(t[-1]-t[0]))
+# noise estimate: first differences
+da = np.diff(au); db = np.diff(bu)
+print('alpha diff mean/std:', da.mean(), da.std())
+print('beta diff mean/std:', db.mean(), db.std())
+# local slope variability: fit linear on windows
+import numpy as np
+for i in range(0, len(t)-500, 1000):
+    sl_a = np.polyfit(t[i:i+500], au[i:i+500], 1)[0]
+    sl_b = np.polyfit(t[i:i+500], bu[i:i+500], 1)[0]
+    print(f'window {i}: alpha slope {sl_a:.4f}, beta slope {sl_b:.4f}')
+"
 ```
 
 ## [11] tool
@@ -217,7 +251,26 @@ window 3000: alpha slope 0.8086, beta slope 0.2325
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values); b = np.deg2rad(tr.beta.values)
+t = tr.t.values
+au = np.unwrap(a); bu = np.unwrap(b)
+# Is beta a function of alpha? bin by alpha and check spread of beta
+import numpy as np
+bins = np.linspace(0, 2*np.pi, 37)
+am = a % (2*np.pi)
+idx = np.digitize(am, bins)
+for i in range(1, 37, 6):
+    sel = idx == i
+    if sel.sum() > 0:
+        # circular mean of bu mod 2pi
+        bb = b[sel]
+        cm = np.rad2deg(np.angle(np.mean(np.exp(1j*bb))))
+        cs = np.rad2deg(np.sqrt(-2*np.log(np.abs(np.mean(np.exp(1j*bb))))))
+        print(f'alpha bin {np.rad2deg(bins[i-1]):.0f}-{np.rad2deg(bins[i]):.0f}: n={sel.sum()}, beta circ mean={cm:.1f}, circ std={cs:.2f}')
+"
 ```
 
 ## [13] tool
@@ -245,7 +298,25 @@ alpha bin 300-310: n=79, beta circ mean=-19.0, circ std=118.26
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values); b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a); bu = np.unwrap(b)
+# detrend
+ra = au - np.polyval(np.polyfit(t, au, 1), t)
+rb = bu - np.polyval(np.polyfit(t, bu, 1), t)
+ra = np.rad2deg(ra); rb = np.rad2deg(rb)
+print('resid alpha std:', ra.std(), 'resid beta std:', rb.std())
+# FFT to find periodicities
+for name, r in [('alpha', ra), ('beta', rb)]:
+    f = np.fft.rfft(r - r.mean())
+    freqs = np.fft.rfftfreq(len(r), d=1.0)
+    mags = np.abs(f)
+    top = np.argsort(mags)[-8:][::-1]
+    print(name, 'top periods (days):', [(round(1/freqs[i],1), round(mags[i],1)) for i in top if freqs[i]>0])
+"
 ```
 
 ## [15] tool
@@ -312,7 +383,33 @@ Alpha and beta are angles with linear trends plus periodic wobbles — looks lik
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values); b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a); bu = np.unwrap(b)
 
+def fit_fourier(t, y, T, nharm, deg=1):
+    cols = [np.ones_like(t)]
+    for d in range(1, deg+1): cols.append(t**d)
+    for k in range(1, nharm+1):
+        cols.append(np.sin(2*np.pi*k*t/T)); cols.append(np.cos(2*np.pi*k*t/T))
+    X = np.column_stack(cols)
+    coef, res, rank, sv = np.linalg.lstsq(X, y, rcond=None)
+    r = y - X@coef
+    return coef, r
+
+# alpha: scan period around 414
+best=None
+for T in np.arange(380, 450, 0.5):
+    coef, r = fit_fourier(t, au, T, 3)
+    if best is None or r.std()<best[1]: best=(T, r.std())
+print('alpha best T (3 harm):', best)
+for nh in [1,2,3,4,5]:
+    coef, r = fit_fourier(t, au, best[0], nh)
+    print(f'alpha nharm={nh}: resid std deg={np.rad2deg(r.std()):.4f}')
+"
 ```
 
 ## [17] tool
@@ -340,7 +437,30 @@ alpha nharm=5: resid std deg=0.7253
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values); b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a); bu = np.unwrap(b)
 
+def fit_fourier(t, y, T, nharm):
+    cols = [np.ones_like(t), t]
+    for k in range(1, nharm+1):
+        cols.append(np.sin(2*np.pi*k*t/T)); cols.append(np.cos(2*np.pi*k*t/T))
+    X = np.column_stack(cols)
+    coef, res, rank, sv = np.linalg.lstsq(X, y, rcond=None)
+    return coef, y - X@coef
+
+# fine scan for alpha with 2 harmonics
+Ts = np.arange(400, 450, 0.1)
+stds = [fit_fourier(t, au, T, 2)[1].std() for T in Ts]
+i = int(np.argmin(stds)); print('alpha fine: T=', Ts[i], 'std deg=', np.rad2deg(stds[i]))
+# finer
+Ts2 = np.arange(Ts[i]-0.5, Ts[i]+0.5, 0.02)
+stds2 = [fit_fourier(t, au, T, 2)[1].std() for T in Ts2]
+j = int(np.argmin(stds2)); print('alpha finer: T=', Ts2[j], 'std deg=', np.rad2deg(stds2[j]))
+"
 ```
 
 ## [19] tool
@@ -434,7 +554,27 @@ Alpha is well-modeled by a linear trend + 2 harmonics at T≈424 days. This look
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
 
+def fit_fourier(t, y, T, nharm):
+    cols = [np.ones_like(t), t]
+    for k in range(1, nharm+1):
+        cols.append(np.sin(2*np.pi*k*t/T)); cols.append(np.cos(2*np.pi*k*t/T))
+    X = np.column_stack(cols)
+    coef, res, rank, sv = np.linalg.lstsq(X, y, rcond=None)
+    return coef, y - X@coef
+
+# scan beta fundamental over wide range
+Ts = np.arange(600, 2000, 1.0)
+stds = [fit_fourier(t, bu, T, 3)[1].std() for T in Ts]
+order = np.argsort(stds)[:10]
+for i in order: print('beta T=', Ts[i], 'std deg=', round(np.rad2deg(stds[i]),4))
+"
 ```
 
 ## [21] tool
@@ -468,7 +608,34 @@ beta T= 1281.0 std deg= 5.6405
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values); a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b); au = np.unwrap(a)
 
+def detrend(y):
+    return y - np.polyval(np.polyfit(t,y,1), t)
+
+# dense periodogram via least squares at each freq (1 sinusoid + linear)
+def periodogram(y, periods):
+    r = detrend(y)
+    out=[]
+    n=len(t)
+    for P in periods:
+        X = np.column_stack([np.ones(n), t, np.sin(2*np.pi*t/P), np.cos(2*np.pi*t/P)])
+        c,_,_,_ = np.linalg.lstsq(X, y, rcond=None)
+        resid = y - X@c
+        out.append((P, resid.std()))
+    return out
+
+periods = np.arange(100, 2200, 0.25)
+res = periodogram(bu, periods)
+res.sort(key=lambda x: x[1])
+print('beta best single-sinusoid periods:')
+for P,s in res[:12]: print(f'  P={P:.2f} std={np.rad2deg(s):.4f}')
+"
 ```
 
 ## [23] tool
@@ -548,7 +715,36 @@ Beta is more complex — multiple frequencies. Let me run an iterative multi-sin
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
 
+def fit_sinusoid(y, P):
+    X = np.column_stack([np.ones(n), t, np.sin(2*np.pi*t/P), np.cos(2*np.pi*t/P)])
+    c,_,_,_ = np.linalg.lstsq(X, y, rcond=None)
+    return y - X@c, X@c
+
+# CLEAN: iteratively find best period, subtract
+y = bu.copy()
+periods = np.arange(50, 2500, 0.25)
+found=[]
+resid = y
+for it in range(6):
+    best=None
+    for P in periods:
+        r,_ = fit_sinusoid(resid, P)
+        s = r.std()
+        if best is None or s<best[1]: best=(P,s)
+    P,s = best
+    resid, fitpart = fit_sinusoid(resid, P)
+    found.append(P)
+    print(f'iter {it}: P={P:.2f}, resid std after={np.rad2deg(resid.std()):.4f}')
+print('found periods:', found)
+"
 ```
 
 ## [25] tool
@@ -607,7 +803,34 @@ CLEAN finds many periods — suggesting a fundamental with slowly-decaying harmo
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values); a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b); au = np.unwrap(a)
+n=len(t)
 
+# precise slopes
+sa = np.polyfit(t, au, 1)[0]; sb = np.polyfit(t, bu, 1)[0]
+print('alpha slope deg/day:', np.rad2deg(sa), '-> period', 2*np.pi/sa)
+print('beta slope deg/day:', np.rad2deg(sb), '-> period', 2*np.pi/sb)
+wa = np.rad2deg(sa); wb = np.rad2deg(sb)
+print('hypothesis beta wobble period 360/|wa-wb| =', 360/abs(wa-wb))
+
+def fit_fourier(t, y, T, nharm):
+    cols = [np.ones_like(t), t]
+    for k in range(1, nharm+1):
+        cols.append(np.sin(2*np.pi*k*t/T)); cols.append(np.cos(2*np.pi*k*t/T))
+    X = np.column_stack(cols)
+    coef,_,_,_ = np.linalg.lstsq(X, y, rcond=None)
+    return coef, y - X@coef
+
+for T in [625.25, 1235, 1294.5]:
+    for nh in [4, 8, 12]:
+        c, r = fit_fourier(t, bu, T, nh)
+        print(f'beta T={T} nharm={nh}: resid std={np.rad2deg(r.std()):.4f}')
+"
 ```
 
 ## [27] tool
@@ -695,7 +918,46 @@ Beta has multiple incommensurate frequencies (sideband-like structure). Let me d
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/freq_est.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n = len(t)
 
+def build_X(t, freqs):
+    cols = [np.ones_like(t), t]
+    for f in freqs:
+        cols.append(np.sin(2*np.pi*f*t)); cols.append(np.cos(2*np.pi*f*t))
+    return np.column_stack(cols)
+
+def linfit(t, y, freqs):
+    X = build_X(t, freqs)
+    c,_,_,_ = np.linalg.lstsq(X, y, rcond=None)
+    return y - X@c, X@c
+
+# start from CLEAN periods
+P0 = [1235.0, 641.0, 437.25, 257.0, 1541.25, 322.75]
+freqs = np.array([1/P for P in P0])
+
+# joint NLS on frequencies (amplitudes linear, profiled out)
+def resid_fn(f):
+    r,_ = linfit(t, bu, f)
+    return r
+sol = least_squares(resid_fn, freqs, method='lm', xtol=1e-15, ftol=1e-15, gtol=1e-15, max_nfev=20000)
+f_est = np.sort(sol.x)
+r,_ = linfit(t, bu, f_est)
+print('refined periods:', [round(1/f,3) for f in f_est])
+print('resid std deg:', np.rad2deg(r.std()))
+print('freqs cyc/day:', f_est)
+# check remaining structure via FFT of residual
+fr = np.fft.rfft(r - r.mean()); freqs_fft = np.fft.rfftfreq(n, 1.0); mags=np.abs(fr)
+top = np.argsort(mags)[-6:][::-1]
+print('resid top periods:', [(round(1/freqs_fft[i],1), round(mags[i],1)) for i in top if freqs_fft[i]>0])
+EOF
+python3 /tmp/freq_est.py
 ```
 
 ## [29] tool
@@ -790,7 +1052,57 @@ Residual down to 1.84° with 6 sinusoids. There's leftover structure including a
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/freq_est2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n = len(t)
 
+def build_X(t, freqs):
+    cols = [np.ones_like(t), t]
+    for f in freqs:
+        cols.append(np.sin(2*np.pi*f*t)); cols.append(np.cos(2*np.pi*f*t))
+    return np.column_stack(cols)
+
+def linfit(t, y, freqs):
+    X = build_X(t, freqs)
+    c,_,_,_ = np.linalg.lstsq(X, y, rcond=None)
+    return y - X@c, X@c
+
+def refine(freqs):
+    freqs = np.asarray(freqs, float)
+    sol = least_squares(lambda f: linfit(t, bu, f)[0], freqs, method='lm',
+                        xtol=1e-15, ftol=1e-15, gtol=1e-15, max_nfev=50000)
+    return np.sort(sol.x)
+
+def next_peak(r):
+    # fine periodogram of residual
+    fr = np.fft.rfft(r - r.mean(), n*8)
+    fa = np.fft.rfftfreq(n*8, 1.0)
+    mags = np.abs(fr)
+    mags[fa < 1/3000] = 0
+    i = int(np.argmax(mags))
+    return fa[i]
+
+freqs = [1/1235.0, 1/641.0, 1/437.25, 1/257.0, 1/1541.25, 1/322.75]
+freqs = list(refine(freqs))
+r,_ = linfit(t, bu, freqs)
+print('start: nfreq=', len(freqs), 'resid std deg=', np.rad2deg(r.std()))
+for it in range(8):
+    fnew = next_peak(r)
+    if fnew <= 0: break
+    freqs2 = list(refine(freqs + [fnew]))
+    r2,_ = linfit(t, bu, freqs2)
+    print(f'add P={1/fnew:.2f}: nfreq={len(freqs2)} resid std deg={np.rad2deg(r2.std()):.4f}')
+    freqs, r = freqs2, r2
+print('final periods:', sorted([round(1/f,2) for f in freqs]))
+print('final freqs:', sorted(freqs))
+np.save('/tmp/beta_freqs.npy', np.array(freqs))
+EOF
+python3 /tmp/freq_est2.py
 ```
 
 ## [31] tool
@@ -1017,7 +1329,45 @@ Residual ≈ noise (0.77°) with 14 sinusoids, but there's a near-degenerate fre
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/analyze.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values); a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b); au = np.unwrap(a)
+n = len(t)
 
+# alpha: fit linear + 3 harmonics at 424.12, get amplitudes
+def design(t, freqs):
+    cols=[np.ones_like(t), t]
+    for f in freqs:
+        cols += [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]
+    return np.column_stack(cols)
+
+f_wob = 1/424.12
+X = design(t, [f_wob, 2*f_wob, 3*f_wob])
+c,_,_,_ = np.linalg.lstsq(X, au, rcond=None)
+r = au - X@c
+print('alpha resid std deg:', np.rad2deg(r.std()))
+print('alpha slope deg/day:', np.rad2deg(c[1]), '-> f_V=', np.rad2deg(c[1])/360)
+for k in range(3):
+    amp = np.hypot(c[2+2*k], c[3+2*k])
+    print(f'alpha harm {k+1}: amp deg = {np.rad2deg(amp):.4f}')
+# rho from ratios: amp_k = rho^k/k (in radians)
+A1 = np.hypot(c[2],c[3]); A2 = np.hypot(c[4],c[5]); A3 = np.hypot(c[6],c[7])
+print('rho from A2/A1*2:', 2*A2/A1, 'rho from A3/A1*3:', 3*A3/A1)
+
+# beta: amplitudes of the 14-sinusoid fit
+freqs = np.load('/tmp/beta_freqs.npy')
+Xb = design(t, freqs)
+cb,_,_,_ = np.linalg.lstsq(Xb, bu, rcond=None)
+rb = bu - Xb@cb
+print('\nbeta resid std deg:', np.rad2deg(rb.std()), 'slope deg/day:', np.rad2deg(cb[1]))
+for i,f in enumerate(freqs):
+    amp = np.rad2deg(np.hypot(cb[2+2*i], cb[3+2*i]))
+    print(f'beta f={f:.6e} P={1/f:9.2f} amp={amp:8.4f} deg')
+EOF
+python3 /tmp/analyze.py
 ```
 
 ## [33] tool
@@ -1083,7 +1433,45 @@ The degenerate pair has huge cancelling amplitudes (±460,000°) — dangerous f
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/phys_alpha.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a)
+n = len(t)
 
+# physical model: alpha = arg(RA e^{i(2pi fA t + phiA)} - RV e^{i(2pi fV t + phiV)})
+def model_alpha(p, t):
+    fA, fV, rho, psi, phi0 = p
+    # alpha = 2pi fA t + phi0 + atan2(-rho sin(2pi (fV-fA) t + psi), 1 - rho cos(...))
+    ph = 2*np.pi*(fV-fA)*t + psi
+    return 2*np.pi*fA*t + phi0 + np.arctan2(-rho*np.sin(ph), 1-rho*np.cos(ph))
+
+def resid(p):
+    m = model_alpha(p, t)
+    # phase wrapping of residual
+    r = au - m
+    return (r + np.pi) % (2*np.pi) - np.pi
+
+# init: fA ~ slope, fV-fA = 1/424.12, rho~0.24
+p0 = [0.84943/360, 0.84943/360 + 1/424.12, 0.24, 0.0, au[0]]
+sol = least_squares(resid, p0, method='lm', xtol=1e-15, ftol=1e-15, gtol=1e-15, max_nfev=100000)
+r = resid(sol.x)
+print('alpha physical model resid std deg:', np.rad2deg(r.std()))
+fA, fV, rho, psi, phi0 = sol.x
+print('fA cyc/day:', fA, '-> P_A=', 1/fA)
+print('fV cyc/day:', fV, '-> P_V=', 1/fV)
+print('rho:', rho, 'psi:', psi, 'phi0:', phi0)
+print('resid std deg:', np.rad2deg(np.std(resid(sol.x))))
+# check residual spectrum
+r = resid(sol.x)
+fr = np.fft.rfft(r - r.mean()); fa = np.fft.rfftfreq(len(r), 1.0); mags=np.abs(np.fft.rfft(r-r.mean()))
+top = np.argsort(mags)[-5:][::-1]
+print('resid top periods:', [(round(1/fa[i],1), round(mags[i],1)) for i in top if fa[i]>0])
+EOF
+python3 /tmp/phys_alpha.py
 ```
 
 ## [35] tool
@@ -1121,7 +1509,32 @@ The optimizer got stuck. Let me check the harmonic phase structure of alpha from
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > /tmp/phase_check.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a)
+n=len(t)
+f_wob = 1/424.12
+cols=[np.ones(n), t]
+for k in [1,2,3]:
+    cols += [np.sin(2*np.pi*k*f_wob*t), np.cos(2*np.pi*k*f_wob*t)]
+X = np.column_stack(cols)
+c,_,_,_ = np.linalg.lstsq(X, au, rcond=None)
+r = au - X@c
+print('resid std deg:', np.rad2deg(r.std()))
+print('slope deg/day:', np.rad2deg(c[1]), '=', c[1]/ (2*np.pi)*360, 'cyc/day*360')
+# model: alpha = w t + phi0 - sum rho^k/k sin(k(2pi f t + psi))
+# harmonic k: -rho^k/k sin(k*2pi f t + k psi) => coefficient of sin: -rho^k/k cos(k psi), cos: -rho^k/k sin(k psi)... 
+# fit gives s_k sin + c_k cos = amp_k sin(2pi k f t + ph_k) with amp>0
+for k in [1,2,3]:
+    s, co = c[2+2*(k-1)], c[3+2*(k-1)]
+    amp = np.hypot(s, co)
+    ph = np.arctan2(co, s)  # amp sin(x+ph) = amp sin x cos ph + amp cos x sin ph
+    print(f'harm {k}: amp={np.rad2deg(amp):.4f} deg, phase={np.rad2deg(ph):.4f} deg, phase/k={np.rad2deg(ph)/k:.4f}')
+EOF
+python3 /tmp/phase_check.py
 ```
 
 ## [37] tool
@@ -1159,7 +1572,45 @@ Phases are NOT aligned (ψ = 85°, -5°, -35°) — so alpha isn't a simple two-
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/alpha_precise.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a)
+n=len(t)
 
+# free fit: alpha = c + w t + 3 harmonics at free f
+def unpack(p):
+    c0, w, f = p[0], p[1], p[2]
+    amps = p[3:]
+    return c0, w, f, amps
+def model(p):
+    c0, w, f, amps = unpack(p)
+    y = c0 + w*t
+    for k in range(1,4):
+        s, co = amps[2*(k-1)], amps[2*(k-1)+1]
+        y = y + s*np.sin(2*np.pi*k*f*t) + co*np.cos(2*np.pi*k*f*t)
+    return y
+def resid(p): return au - model(p)
+p0 = [au[0], 0.84943/360*2*np.pi, 1/424.12, 0.3,0, 0.04,0, 0.008,0]
+sol = least_squares(resid, p0, method='lm', xtol=1e-15, ftol=1e-15, gtol=1e-15, max_nfev=100000)
+r = resid(sol.x)
+dof = n - len(sol.x)
+s2 = r@r/dof
+J = sol.jac
+cov = np.linalg.inv(J.T@J)*s2
+c0,w,f = sol.x[0], sol.x[1], sol.x[2]
+se_w, se_f = np.sqrt(cov[1,1]), np.sqrt(cov[2,2])
+print('resid std deg:', np.rad2deg(r.std()))
+print('w deg/day:', np.rad2deg(w), '+/-', np.rad2deg(se_w))
+print('wobble period:', 1/f, '+/-', se_f/f**2)
+print('wobble freq*360 deg/day:', np.rad2deg(2*np.pi*f), '+/-', np.rad2deg(2*np.pi*se_f))
+print('slope period:', 2*np.pi/w)
+print('mismatch w - 2pi f (deg/day):', np.rad2deg(w-2*np.pi*f), 'sigma:', np.rad2deg(w-2*np.pi*f)/np.rad2deg(np.sqrt(se_w**2+4*np.pi**2*se_f**2)))
+EOF
+python3 /tmp/alpha_precise.py
 ```
 
 ## [39] tool
@@ -1275,7 +1726,56 @@ The mismatch was an artifact — with proper joint fitting, alpha's slope and wo
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/phys_joint.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values); b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a); bu = np.einsum('i->i', np.unwrap(b))
+n=len(t)
 
+def kepler_E(M, e):
+    E = M.copy()
+    for _ in range(50):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def vantage_pos(p, t):
+    # elliptical orbit, semi-major 1
+    e, omega, fV, M0 = p
+    M = 2*np.pi*fV*t + M0
+    E = kepler_E(M % (2*np.pi), e)
+    x = np.cos(E) - e
+    y = np.sqrt(1-e**2)*np.sin(E)
+    # rotate by omega
+    xr = x*np.cos(omega) - y*np.sin(omega)
+    yr = x*np.sin(omega) + y*np.cos(omega)
+    return xr + 1j*yr
+
+def model(p, t):
+    e, om, fV, M0, Ax, Ay, RB, fB, phiB = p
+    V = vantage_pos((e, om, fV, M0), t)
+    alpha = np.angle(Ax + 1j*Ay - V)
+    beta = np.angle(RB*np.exp(1j*(2*np.pi*fB*t + phiB)) - V)
+    return alpha, beta
+
+def resid(p):
+    al, be = model(p, t)
+    ra = (au - al + np.pi) % (2*np.pi) - np.pi
+    rb = (bu - be + np.pi) % (2*np.pi) - np.pi
+    return np.concatenate([ra, rb])
+
+p0 = [0.2, 0.0, 1/424.1266, 0.0, 0.1, 0.0, 4.0, 0.29402/360, 0.0]
+sol = least_squares(resid, p0, method='lm', xtol=1e-14, ftol=1e-14, gtol=1e-14, max_nfev=20000, diff_step=1e-6)
+r = resid(sol.x)
+ra, rb = r[:n], r[n:]
+print('resid std alpha deg:', np.rad2deg(ra.std()), ' beta deg:', np.rad2deg(rb.std()))
+names=['e','omega','fV','M0','Ax','Ay','RB','fB','phiB']
+for nm, v in zip(names, sol.x): print(f'{nm}: {v:.8f}')
+print('P_V:', 1/sol.x[2], 'P_B:', 1/sol.x[7])
+EOF
+python3 /tmp/phys_joint.py
 ```
 
 ## [41] tool
@@ -1346,7 +1846,50 @@ I made an arithmetic error before — the phases ARE aligned (mod 360°), and th
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/alpha_kep.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a)
+n=len(t)
 
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def true_anomaly(M, e):
+    E = kepler_E(M, e)
+    return 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+
+def model(p, t):
+    e, fV, M0, c0 = p
+    M = 2*np.pi*fV*t + M0
+    return c0 + 2*np.pi*fV*t + (true_anomaly(M, e) - M)  # = nu + const
+
+def resid(p):
+    return au - model(p, t)
+
+p0 = [0.1926, 1/424.1266, 0.0, au[0]]
+sol = least_squares(resid, p0, method='lm', xtol=1e-15, ftol=1e-15, gtol=1e-15, max_nfev=50000)
+r = resid(sol.x)
+print('alpha Kepler resid std deg:', np.rad2deg(r.std()))
+e, fV, M0, c0 = sol.x
+print('e:', e, 'P_V:', 1/fV, 'M0 deg:', np.rad2deg(M0), 'c0 deg:', np.rad2deg(c0))
+# uncertainties
+dof = n - 4; s2 = r@r/dof
+cov = np.linalg.inv(sol.jac.T@sol.jac)*s2
+ses = np.sqrt(np.diag(cov))
+print('se e:', ses[0], 'se fV:', ses[1], '(-> se P_V:', ses[1]/fV**2, ') se M0 deg:', np.rad2deg(ses[2]), 'se c0 deg:', np.rad2deg(ses[3]))
+# residual spectrum
+fr = np.abs(np.fft.rfft(r - r.mean())); fa = np.fft.rfftfreq(n, 1.0)
+top = np.argsort(fr)[-5:][::-1]
+print('resid top periods:', [(round(1/fa[i],1), round(fr[i],1)) for i in top if fa[i]>0])
+EOF
+python3 /tmp/alpha_kep.py
 ```
 
 ## [43] tool
@@ -1374,7 +1917,50 @@ Optimizer diverged (e>1 → NaN). Let me use bounded optimization with proper in
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/alpha_kep2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a)
+n=len(t)
 
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def true_anomaly(M, e):
+    E = kepler_E(M, e)
+    return 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+
+def model(p, t):
+    e, fV, M0, c0 = p
+    M = 2*np.pi*fV*t + M0
+    return c0 + 2*np.pi*fV*t + (true_anomaly(M, e) - M)
+
+def resid(p): return au - model(p, t)
+
+p0 = [0.1926, 1/424.1266, -1.6569, au[0]]
+lb = [0.0, 1/430.0, -2*np.pi, au[0]-10]
+ub = [0.9, 1/418.0, 2*np.pi, au[0]+10]
+sol = least_squares(resid, p0, bounds=(lb, ub), method='trf', xtol=1e-15, ftol=1e-15, gtol=1e-15, max_nfev=50000)
+r = resid(sol.x)
+print('alpha Kepler resid std deg:', np.rad2deg(r.std()))
+e, fV, M0, c0 = sol.x
+print('e:', e, 'P_V:', 1/fV, 'M0 deg:', np.rad2deg(M0), 'c0 deg:', np.rad2deg(c0))
+dof = n - 4; s2 = r@r/dof
+cov = np.linalg.inv(sol.jac.T@sol.jac)*s2
+ses = np.sqrt(np.diag(cov))
+print('se e:', ses[0], 'se P_V:', ses[1]/fV**2, 'se M0 deg:', np.rad2deg(ses[2]), 'se c0 deg:', np.rad2deg(ses[3]))
+fr = np.abs(np.fft.rfft(r - r.mean())); fa = np.fft.rfftfreq(n, 1.0)
+top = np.argsort(fr)[-5:][::-1]
+print('resid top periods:', [(round(1/fa[i],1), round(fr[i],1)) for i in top if fa[i]>0])
+np.save('/tmp/alpha_kepler_params.npy', sol.x)
+EOF
+python3 /tmp/alpha_kep2.py
 ```
 
 ## [45] tool
@@ -1401,7 +1987,41 @@ Something's structurally off — let me debug the model at the initial parameter
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/debug.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a)
 
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def true_anomaly(M, e):
+    E = kepler_E(M, e)
+    return 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+
+e, fV, M0 = 0.1926, 1/424.1266, -1.6569
+M = 2*np.pi*fV*t + M0
+nu = true_anomaly(M, e)
+eoc = nu - (M % (2*np.pi))   # equation of center, periodic
+# wrap eoc to [-pi,pi]
+eoc = (eoc + np.pi) % (2*np.pi) - np.pi
+print('eoc range deg:', np.rad2deg(eoc.min()), np.rad2deg(eoc.max()))
+# model: c0 + 2pi fV t + eoc
+# fit c0 only:
+resid0 = au - (2*np.pi*fV*t + eoc)
+c0 = np.mean(resid0)
+r = resid0 - c0
+print('resid with best c0: std deg =', np.rad2deg(r.std()))
+print('first few resid deg:', np.rad2deg(r[:5]))
+print('au[:5] deg:', np.rad2deg(au[:5]))
+print('model[:5] deg:', np.rad2deg(2*np.pi*fV*t[:5] + eoc[:5] + c0))
+EOF
+python3 /tmp/debug.py
 ```
 
 ## [47] tool
@@ -1428,7 +2048,52 @@ The model is right (0.723° with just c0 fitted) — my NLS had a wrapping bug (
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/alpha_kep3.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+a = np.deg2rad(tr.alpha.values)
+t = tr.t.values.astype(float)
+au = np.unwrap(a)
+n=len(t)
 
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def eoc(M, e):
+    # equation of center, periodic, wrapped to [-pi,pi]
+    E = kepler_E(M, e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    Mr = M % (2*np.pi)
+    d = nu - Mr
+    return (d + np.pi) % (2*np.pi) - np.pi
+
+def model(p, t):
+    e, fV, M0, c0 = p
+    M = 2*np.pi*fV*t + M0
+    return c0 + 2*np.pi*fV*t + eoc(M, e)
+
+def resid(p): return au - model(p, t)
+
+p0 = [0.1926, 1/424.1266, -1.6569, 3.7]
+sol = least_squares(resid, p0, method='lm', xtol=1e-15, ftol=1e-15, gtol=1e-15, max_nfev=50000)
+r = resid(sol.x)
+print('alpha Kepler resid std deg:', np.rad2deg(r.std()))
+e, fV, M0, c0 = sol.x
+print('e:', e, 'P_V:', 1/fV, 'M0 deg:', np.rad2deg(M0), 'c0 deg:', np.rad2deg(c0))
+dof = n - 4; s2 = r@r/dof
+cov = np.linalg.inv(sol.jac.T@sol.jac)*s2
+ses = np.sqrt(np.diag(cov))
+print('se e:', ses[0], 'se P_V:', ses[1]/fV**2, 'se M0 deg:', np.rad2deg(ses[2]), 'se c0 deg:', np.rad2deg(ses[3]))
+fr = np.abs(np.fft.rfft(r - r.mean())); fa = np.fft.rfftfreq(n, 1.0)
+top = np.argsort(fr)[-5:][::-1]
+print('resid top periods:', [(round(1/fa[i],1), round(fr[i],1)) for i in top if fa[i]>0])
+np.save('/tmp/alpha_kepler_params.npy', sol.x)
+EOF
+python3 /tmp/alpha_kep3.py
 ```
 
 ## [49] tool
@@ -1481,7 +2146,64 @@ resid top periods: [(np.float64(37.3), np.float64(2.5)), (np.float64(15.1), np.f
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/beta_kep.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
 
+# vantage from alpha fit
+eV, fV, M0V, c0 = np.load('/tmp/alpha_kepler_params.npy')
+omV = c0 - np.pi  # alpha = nu_V + omV + pi = nu_V + c0
+
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def pos(M, e, om, R):
+    # position in orbital plane rotated by om, semi-major R
+    E = kepler_E(M, e)
+    x = R*(np.cos(E) - e)
+    y = R*np.sqrt(1-e**2)*np.sin(E)
+    return (x*np.cos(om) - y*np.sin(om)) + 1j*(x*np.sin(om) + y*np.cos(om))
+
+MV = 2*np.pi*fV*t + M0V
+V = pos(MV, eV, omV, 1.0)  # a_V = 1
+
+def beta_model(p):
+    RB, eB, omB, fB, M0B = p
+    MB = 2*np.pi*fB*t + M0B
+    B = pos(MB, eB, omB, RB)
+    return np.angle(B - V)
+
+def resid(p):
+    bm = beta_model(p)
+    return (bu - bm + np.pi) % (2*np.pi) - np.pi
+
+best = None
+for fB0 in [0.27803/360, 0.29603/360, 0.26/360, 0.31/360]:
+    for eB0 in [0.0, 0.15, 0.3]:
+        for omB0 in [0.0, 2.0, 4.0]:
+            for M0B0 in [0.0, 2.0, 4.0]:
+                p0 = [4.0, eB0, omB0, fB0, M0B0]
+                try:
+                    sol = least_squares(resid, p0, method='lm', xtol=1e-14, ftol=1e-14, gtol=1e-14, max_nfev=20000)
+                    s = resid(sol.x).std()
+                    if best is None or s < best[0]:
+                        best = (s, sol.x)
+                except Exception as ex:
+                    pass
+print('best resid std deg:', np.rad2deg(best[0]))
+RB, eB, omB, fB, M0B = best[1]
+print('RB:', RB, 'eB:', eB, 'omB deg:', np.rad2deg(omB), 'P_B:', 1/fB, 'M0B deg:', np.rad2deg(M0B))
+np.save('/tmp/beta_kepler_params.npy', best[1])
+EOF
+python3 /tmp/beta_kep.py
 ```
 
 ## [51] tool
@@ -1524,7 +2246,51 @@ Multi-start NLS is struggling with the wrapped landscape. Let me do a systematic
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/beta_grid.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
 
+eV, fV, M0V, c0 = np.load('/tmp/alpha_kepler_params.npy')
+omV = c0 - np.pi
+
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(25):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def pos(M, e, om, R):
+    E = kepler_E(M, e)
+    x = R*(np.cos(E) - e)
+    y = R*np.sqrt(1-e**2)*np.sin(E)
+    return (x*np.cos(om) - y*np.sin(om)) + 1j*(x*np.sin(om) + y*np.cos(om))
+
+MV = 2*np.pi*fV*t + M0V
+V = pos(MV, eV, omV, 1.0)
+
+def resid_std_circ(RB, fB, phi):
+    B = RB*np.exp(1j*(2*np.pi*fB*t + phi))
+    bm = np.angle(B - V)
+    r = (bu - bm + np.pi) % (2*np.pi) - np.pi
+    return r.std()
+
+results = []
+for RB in [1.4, 1.6, 1.8, 2.0, 2.3, 2.6, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0]:
+    for fBdeg in np.arange(0.265, 0.306, 0.002):
+        fB = fBdeg/360
+        for phideg in np.arange(0, 360, 30):
+            s = resid_std_circ(RB, fB, np.deg2rad(phideg))
+            results.append((s, RB, fBdeg, phideg))
+results.sort()
+print('top 10 circular fits:')
+for s, RB, fBdeg, phideg in results[:10]:
+    print(f'  resid std deg={np.rad2deg(s):.4f} RB={RB} fB={fBdeg} deg/day (P={360/fBdeg:.1f}) phi={phideg}')
+EOF
+python3 /tmp/beta_grid.py
 ```
 
 ## [53] tool
@@ -1571,7 +2337,65 @@ Circular B gets 20.3° (R_B≈1.6, f_B≈0.295°/d) — B must be eccentric. Let
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/beta_rays.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
 
+eV, fV, M0V, c0 = np.load('/tmp/alpha_kepler_params.npy')
+omV = c0 - np.pi
+
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(25):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def pos_unit(M, e, om):
+    E = kepler_E(M, e)
+    x = np.cos(E) - e
+    y = np.sqrt(1-e**2)*np.sin(E)
+    return (x*np.cos(om) - y*np.sin(om)) + 1j*(x*np.sin(om) + y*np.cos(om))
+
+def pos(M, e, om, R):
+    E = kepler_E(M, e)
+    x = R*(np.cos(E) - e)
+    y = R*np.sqrt(1-e**2)*np.sin(E)
+    return (x*np.cos(om) - y*np.sin(om)) + 1j*(x*np.sin(om) + y*np.cos(om))
+
+MV = 2*np.pi*fV*t + M0V
+V = pos(MV, eV, omV, 1.0)
+D = np.exp(1j*bu)  # observed unit vectors along B - V
+VcD = V*np.conj(D); ImVcD = VcD.imag
+
+def perp_resid(eB, omB, fB, M0B):
+    MB = 2*np.pi*fB*t + M0B
+    u = pos_unit(MB, eB, omB)
+    Iu = (u*np.conj(D)).imag
+    denom = Iu@Iu
+    if denom < 1e-12: return np.inf, 0.0
+    RB = (Iu@ImVcD)/denom
+    r = RB*Iu - ImVcD
+    return np.sqrt((r@r)/n), RB
+
+best = []
+for fBdeg in np.arange(0.285, 0.3001, 0.001):
+    fB = fBdeg/360
+    for eB in [0.0, 0.1, 0.2, 0.3, 0.4]:
+        for omBdeg in range(0, 360, 30):
+            omB = np.deg2rad(omBdeg)
+            for M0Bdeg in range(0, 360, 30):
+                s, RB = perp_resid(eB, omB, fB, np.deg2rad(M0Bdeg))
+                best.append((s, RB, eB, omBdeg, fBdeg, M0Bdeg))
+best.sort()
+print('top 12 ray fits (perp resid in units of a_V):')
+for s, RB, eB, omBdeg, fBdeg, M0Bdeg in best[:12]:
+    print(f'  perp={s:.5f} RB={RB:.3f} eB={eB} omB={omBdeg} fB={fBdeg:.4f}(P={360/fBdeg:.0f}) M0B={M0Bdeg}')
+EOF
+python3 /tmp/beta_rays.py
 ```
 
 ## [55] tool
@@ -1684,7 +2508,53 @@ The eccentric-B grid still fits poorly (perp resid 0.6 a_V vs expected ~0.02). L
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/triangulate.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
 
+eV, fV, M0V, c0 = np.load('/tmp/alpha_kepler_params.npy')
+omV = c0 - np.pi
+
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(25):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+MV = 2*np.pi*fV*t + M0V
+EV = kepler_E(MV, eV)
+Vx = np.cos(EV) - eV; Vy = np.sqrt(1-eV**2)*np.sin(EV)
+Vx, Vy = Vx*np.cos(omV)-Vy*np.sin(omV), Vx*np.sin(omV)+Vy*np.cos(omV)
+Dx, Dy = np.cos(bu), np.sin(bu)
+
+# sliding window triangulation: P minimizing sum |P-V|^2 - ((P-V).D)^2
+# normal equations: sum (I - D D^T) P = sum (I - D D^T) V
+W = 30  # half-window in days
+Best = np.full((n,2), np.nan)
+for i in range(n):
+    m = (t >= t[i]-W) & (t <= t[i]+W)
+    if m.sum() < 5: continue
+    dxx, dyy, dxy = Dx[m]**2, Dy[m]**2, Dx[m]*Dy[m]
+    S = np.array([[np.sum(1-dxx), -np.sum(dxy)],[-np.sum(dxy), np.sum(1-dyy)]])
+    rhs = np.array([np.sum((1-dxx)*Vx[m] - dxy*Vy[m]), np.sum(-dxy*Vx[m] + (1-dyy)*Vy[m])])
+    try:
+        Best[i] = np.linalg.solve(S, rhs)
+    except np.linalg.LinAlgError:
+        pass
+
+rB = np.hypot(Best[:,0], Best[:,1])
+angB = np.rad2deg(np.arctan2(Best[:,1], Best[:,0]))
+print('B est: r stats: min', np.nanmin(rB), 'max', np.nanmax(rB), 'median', np.nanmedian(rB))
+# print samples every 200 days
+for i in range(0, n, 400):
+    print(f't={t[i]:.0f}: B=({Best[i,0]:.3f},{Best[i,1]:.3f}) r={rB[i]:.3f} ang={angB[i]:.1f}')
+np.save('/tmp/B_est.npy', Best)
+EOF
+python3 /tmp/triangulate.py
 ```
 
 ## [57] tool
@@ -1749,7 +2619,42 @@ Triangulation is too noisy. Let me go back to the frequency domain, now using th
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/combo_scan.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
 
+eV, fV, M0V, c0 = np.load('/tmp/alpha_kepler_params.npy')
+print('exact fV:', fV, 'P_V:', 1/fV)
+
+# combos p*fV - k*fB, p in -1..4, k in 0..5
+def fit_with_combos(fB):
+    freqs = set()
+    for p in range(-1, 5):
+        for k in range(0, 6):
+            f = p*fV - k*fB
+            if f > 1e-6:
+                freqs.add(round(f, 9))
+    freqs = sorted(freqs)
+    cols=[np.ones(n), t]
+    for f in freqs:
+        cols += [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]
+    X = np.column_stack(cols)
+    c,_,_,_ = np.linalg.lstsq(X, bu, rcond=None)
+    r = bu - X@c
+    return r.std(), len(freqs)
+
+best=None
+for fBdeg in np.arange(0.27, 0.32, 0.0005):
+    s, nf = fit_with_combos(fBdeg/360)
+    if best is None or s<best[0]: best=(s, fBdeg, nf)
+    print(f'fB={fBdeg:.4f} deg/day: resid std deg={np.rad2deg(s):.4f} (nf={nf})')
+print('BEST:', best[1], 'resid', np.rad2deg(best[0]))
+EOF
+python3 /tmp/combo_scan.py
 ```
 
 ## [59] tool
@@ -1875,7 +2780,61 @@ Sharp minimum at **f_B = 0.2825°/day** (P_B ≈ 1274 d) — and f_V/f_B ≈ 3.0
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/combo_scan2.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
+eV, fV, M0V, c0 = np.load('/tmp/alpha_kepler_params.npy')
 
+def fit_with_combos(fB, prange, krange):
+    freqs = set()
+    for p in prange:
+        for k in krange:
+            f = p*fV - k*fB
+            if f > 1e-6:
+                freqs.add(round(f, 9))
+    freqs = sorted(freqs)
+    cols=[np.ones(n), t]
+    for f in freqs:
+        cols += [np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)]
+    X = np.column_stack(cols)
+    c,_,_,_ = np.linalg.lstsq(X, bu, rcond=None)
+    r = bu - X@c
+    return r.std(), freqs, c
+
+# fine scan with expanded combos
+prange = range(-2, 6); krange = range(0, 8)
+best=None
+for fBdeg in np.arange(0.2810, 0.2840, 0.0001):
+    s, freqs, c = fit_with_combos(fBdeg/360, prange, krange)
+    if best is None or s<best[0]: best=(s, fBdeg)
+print('fine best fB:', best[1], 'resid deg:', np.rad2deg(best[0]))
+
+# even finer
+best2=None
+for fBdeg in np.arange(best[1]-0.0002, best[1]+0.0002, 0.00002):
+    s, freqs, c = fit_with_combos(fBdeg/360, prange, krange)
+    if best2 is None or s<best2[0]: best2=(s, fBdeg)
+print('finer best fB:', best2[1], 'resid deg:', np.rad2deg(best2[0]))
+
+# show amplitudes at best
+s, freqs, c = fit_with_combos(best2[1]/360, prange, krange)
+print('num freqs:', len(freqs), 'resid:', np.rad2deg(s))
+amps=[]
+for i,f in enumerate(freqs):
+    amp = np.rad2deg(np.hypot(c[2+2*i], c[3+2*i]))
+    amps.append((amp, f))
+amps.sort(reverse=True)
+print('slope deg/day:', np.rad2deg(c[1]))
+for amp, f in amps[:20]:
+    print(f'  f={f:.7e} P={1/f:9.2f} amp={amp:8.4f} deg   (p,k) candidates: ', end='')
+    cands = [(p,k) for p in prange for k in krange if abs(p*fV - k*best2[1]/360 - f) < 5e-7]
+    print(cands)
+EOF
+python3 /tmp/combo_scan2.py
 ```
 
 ## [61] tool
@@ -1996,7 +2955,77 @@ The expanded combo set is near-degenerate (3:1 commensurability → collinear co
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/geo_fit.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
+eV, fV, M0V, c0 = np.load('/tmp/alpha_kepler_params.npy')
+omV = c0 - np.pi
 
+def kepler_E(M, e):
+    E = M % (2*np.pi)
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def pos(M, e, om, R):
+    E = kepler_E(M, e)
+    x = R*(np.cos(E) - e); y = R*np.sqrt(1-e**2)*np.sin(E)
+    return (x*np.cos(om) - y*np.sin(om)) + 1j*(x*np.sin(om) + y*np.cos(om))
+
+MV = 2*np.pi*fV*t + M0V
+V = pos(MV, eV, omV, 1.0)
+D = np.exp(1j*bu)
+ImVcD = (V*np.conj(D)).imag
+
+def perp_obj(p):
+    RB, eB, omB, fB, M0B = p
+    if eB < 0 or eB > 0.95 or RB <= 0: return np.full(n, 1e6)
+    B = pos(2*np.pi*fB*t + M0B, eB, omB, RB)
+    return ((B - V)*np.conj(D)).imag
+
+# grid with profiling over RB
+def perp_resid_profile(eB, omB, fB, M0B):
+    u = pos(2*np.pi*fB*t + M0B, eB, omB, 1.0)
+    Iu = (u*np.conj(D)).imag
+    denom = Iu@Iu
+    if denom < 1e-9: return np.inf, 0.0
+    RB = (Iu@ImVcD)/denom
+    r = RB*Iu - ImVcD
+    return np.sqrt((r@r)/n), RB
+
+results=[]
+for fBdeg in np.arange(0.280, 0.2841, 0.0002):
+    fB = fBdeg/360
+    for eB in [0.0, 0.1, 0.2, 0.3, 0.45, 0.6]:
+        for omBdeg in range(0, 360, 20):
+            for M0Bdeg in range(0, 360, 20):
+                s, RB = perp_resid_profile(eB, np.deg2rad(omBdeg), fB, np.deg2rad(M0Bdeg))
+                results.append((s, RB, eB, omBdeg, fBdeg, M0Bdeg))
+results.sort(key=lambda x: x[0])
+print('top 8 grid:')
+for s, RB, eB, omBdeg, fBdeg, M0Bdeg in results[:8]:
+    print(f'  perp={s:.5f} RB={RB:.3f} eB={eB} omB={omBdeg} fB={fBdeg} M0B={M0Bdeg}')
+
+# NLS refine top 5 with perp objective
+print('\nrefined:')
+done=set()
+for s0, RB, eB, omBdeg, fBdeg, M0Bdeg in results[:5]:
+    key=(round(RB,2), round(eB,2), omBdeg//45, round(fBdeg,4), M0Bdeg//45)
+    if key in done: continue
+    done.add(key)
+    p0=[abs(RB), eB, np.deg2rad(omBdeg), fBdeg/360, np.deg2rad(M0Bdeg)]
+    sol = least_squares(perp_obj, p0, method='lm', xtol=1e-14, ftol=1e-14, gtol=1e-14, max_nfev=30000)
+    r = perp_obj(sol.x)
+    RBf, eBf, omBf, fBf, M0Bf = sol.x
+    print(f'  perp={r.std():.5f} RB={RBf:.4f} eB={eBf:.4f} omB={np.rad2deg(omBf)%360:.2f} fB={np.rad2deg(fBf)*360:.6f}deg/d P={1/fBf:.2f} M0B={np.rad2deg(M0Bf)%360:.2f}')
+    np.save(f'/tmp/geo_cand_{len(done)}.npy', sol.x)
+EOF
+python3 /tmp/geo_fit.py
 ```
 
 ## [63] tool
@@ -2178,7 +3207,63 @@ Let me step back and take a robust, validated approach. First, I'll lock in a **
 **tool call: bash**
 
 ```
+cd /workspace && cat > /workspace/safety_predict.py << 'EOF'
+"""Safety baseline: beta = linear + 13 well-separated sinusoids (merged degenerate pair)."""
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
 
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n = len(t)
+
+def design(tq, freqs):
+    cols=[np.ones_like(tq), tq]
+    for f in freqs:
+        cols += [np.sin(2*np.pi*f*tq), np.cos(2*np.pi*f*tq)]
+    return np.column_stack(cols)
+
+# 13 distinct frequencies (from earlier NLS, degenerate pair at 3.1676e-3 merged to one)
+freqs = np.array([7.371922e-04, 8.122659e-04, 1.557322e-03, 1.700673e-03, 2.319074e-03,
+                  2.382408e-03, 3.167600e-03, 3.878103e-03, 4.616006e-03, 5.430809e-03,
+                  6.214167e-03, 7.000931e-03, 7.765314e-03])
+# refine jointly (well-conditioned now)
+sol = least_squares(lambda f: bu - design(t, f)@np.linalg.lstsq(design(t, f), bu, rcond=None)[0],
+                    freqs, method='lm', xtol=1e-14, ftol=1e-14, gtol=1e-14, max_nfev=40000)
+freqs = np.sort(sol.x)
+X = design(t, freqs)
+c, res, rank, sv = np.linalg.lstsq(X, bu, rcond=None)
+r = bu - X@c
+sigma = r.std()
+print('baseline resid std deg:', np.rad2deg(sigma), 'nfreq:', len(freqs), 'rank:', rank)
+
+tt = te.t.values.astype(float)
+Xt = design(tt, freqs)
+yhat = Xt@c
+# wrap to [0,360)
+yhat_deg = np.rad2deg(yhat) % 360.0
+# 95% interval: residual noise + extrapolation covariance
+# param covariance
+dof = n - X.shape[1]
+s2 = r@r/dof
+cov = s2*np.linalg.pinv(X.T@X)
+# prediction variance for the mean + observation noise
+vars_ = np.einsum('ij,jk,ik->i', Xt, cov, Xt) + s2
+sd = np.sqrt(np.maximum(vars_, 0))
+z = 1.959964
+half = np.rad2deg(z*sd)
+# extra safety factor for extrapolation risk
+half = half*1.5 + 2.0
+lower = (yhat_deg - half) % 360.0
+upper = (yhat_deg + half) % 360.0
+out = pd.DataFrame({'t': te.t.values, 'y_pred': yhat_deg, 'y_lower': lower, 'y_upper': upper})
+out.to_csv('predictions.csv', index=False)
+print(out)
+print('mean half-width deg:', half.mean())
+EOF
+python3 /workspace/safety_predict.py
 ```
 
 ## [67] tool
@@ -2227,7 +3312,48 @@ Safety baseline saved (13 well-conditioned sinusoids, resid 0.872°). Now let me
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/combo_svd.py << 'EOF'
+import pandas as pd, numpy as np
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
+eV, fV, M0V, c0 = np.load('/tmp/alpha_kepler_params.npy')
 
+def combo_freqs(fB, prange, krange, fmin=1e-6):
+    s=set()
+    for p in prange:
+        for k in krange:
+            f = p*fV - k*fB
+            if f > fmin: s.add(round(f,10))
+    return sorted(s)
+
+def design(tq, freqs):
+    cols=[np.ones_like(tq), tq]
+    for f in freqs:
+        cols += [np.sin(2*np.pi*f*tq), np.cos(2*np.pi*f*tq)]
+    return np.column_stack(cols)
+
+def fit_svd(X, y, rtol):
+    U, S, Vt = np.linalg.svd(X, full_matrices=False)
+    keep = S > rtol*S[0]
+    coef = (Vt[keep].T * (1/S[keep])) @ (U[:,keep].T @ y)
+    return coef, keep.sum()
+
+# scan f_B with SVD-truncated combo fit, various truncation levels
+prange=range(-1,6); krange=range(0,13)
+for rtol in [1e-3, 3e-4, 1e-4]:
+    best=None
+    for fBdeg in np.arange(0.2805, 0.2835, 0.0001):
+        freqs = combo_freqs(fBdeg/360, prange, krange)
+        X = design(t, freqs)
+        c, nk = fit_svd(X, bu, rtol)
+        r = bu - X@c
+        if best is None or r.std()<best[0]: best=(r.std(), fBdeg, nk, len(freqs))
+    print(f'rtol={rtol}: best fB={best[1]} resid deg={np.rad2deg(best[0]):.4f} kept={best[2]}/{best[3]}')
+EOF
+python3 /tmp/combo_svd.py
 ```
 
 ## [69] tool
@@ -2274,6 +3400,78 @@ SVD truncation destroys real near-collinear signal. Let me get a definitive empi
 **tool call: bash**
 
 ```
+cd /workspace && cat > /tmp/clean_final.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+tr = pd.read_csv('data/train.csv')
+b = np.deg2rad(tr.beta.values)
+t = tr.t.values.astype(float)
+bu = np.unwrap(b)
+n=len(t)
 
+def design(tq, freqs):
+    cols=[np.ones_like(tq), tq]
+    for f in freqs:
+        cols += [np.sin(2*np.pi*f*tq), np.cos(2*np.pi*f*tq)]
+    return np.column_stack(cols)
+
+def linfit(freqs):
+    X = design(t, freqs)
+    c,_,_,_ = np.linalg.lstsq(X, bu, rcond=None)
+    return bu - X@c, c
+
+def merge_close(freqs, thresh=2.0e-5):
+    freqs = np.sort(freqs)
+    groups=[]; cur=[freqs[0]]
+    for f in freqs[1:]:
+        if f - cur[-1] < thresh: cur.append(f)
+        else: groups.append(cur); cur=[f]
+    groups.append(cur)
+    # weighted merge by amplitude
+    r, c = linfit(freqs)
+    merged=[]
+    idx=0
+    for g in groups:
+        if len(g)==1: merged.append(g[0]); idx+=1
+        else:
+            amps=[np.hypot(c[2+2*(idx+j)], c[3+2*(idx+j)]) for j in range(len(g))]
+            merged.append(np.average(g, weights=amps)); idx+=len(g)
+    return np.array(merged)
+
+def refine(freqs):
+        freqs=np.asarray(freqs,float)
+        def obj(f):
+            X=design(t,f); c,_,_,_=np.linalg.lstsq(X,bu,rcond=None); return bu-X@c
+        sol=least_squares(obj, freqs, method='lm', xtol=1e-15, ftol=1e-15, gtol=1e-15, max_nfev=60000)
+        return np.sort(sol.x)
+
+def next_peak(r):
+    fr = np.fft.rfft(r - r.mean(), n*16)
+    fa = np.fft.rfftfreq(n*16, 1.0)
+    mags=np.abs(fr); mags[fa<1/6000]=0
+    return fa[int(np.argmax(mags))]
+
+freqs=[]
+r, c = linfit(freqs) if freqs else (bu - np.polyval(np.polyfit(t,bu,1),t), None)
+for it in range(22):
+    fnew = next_peak(r)
+    freqs = np.append(freqs, fnew)
+    freqs = refine(freqs)
+    freqs = merge_close(freqs)
+    freqs = refine(freqs)
+    r, c = linfit(freqs)
+    print(f'iter {it}: nfreq={len(freqs)} resid deg={np.rad2deg(r.std()):.4f} newP={1/fnew:.1f}')
+    if np.rad2deg(r.std()) < 0.73: break
+r, c = linfit(freqs)
+print('\nfinal nfreq:', len(freqs), 'resid deg:', np.rad2deg(r.std()))
+amps=[]
+for i,f in enumerate(freqs):
+    amp=np.rad2deg(np.hypot(c[2+2*i], c[3 if False else 3+2*i]))
+    amps.append((amp,f))
+amps.sort(reverse=True)
+for amp,f in amps: print(f'  f={f:.8e} P={1/f:9.2f} amp={amp:8.4f}')
+np.save('/tmp/freqs_final.npy', freqs)
+EOF
+python3 /tmp/clean_final.py
 ```
 

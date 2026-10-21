@@ -56,19 +56,19 @@ Let me start by examining the data files.
 **tool call: bash**
 
 ```
-
+head -50 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -50 data/scenario.csv
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/scenario.csv
 ```
 
 ## [3] tool
@@ -164,13 +164,21 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cat data/train.csv | head -1 && cat data/train.csv | tail -40
 ```
 
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.shape)
+print(df.dtypes)
+print(df.isnull().sum())
+print()
+print(df.describe())
+"
 ```
 
 ## [7] tool
@@ -276,7 +284,26 @@ Let me explore the data more deeply to understand missing value patterns and rel
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('data/train.csv')
+
+# Check when each series starts having data
+for col in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    first_valid = df[df[col].notna()]['quarter'].min()
+    last_valid = df[df[col].notna()]['quarter'].max()
+    n_valid = df[col].notna().sum()
+    print(f'{col:15s}: first={first_valid:3d}, last={last_valid:3d}, n_valid={n_valid:2d}, total=80')
+
+# Check correlations with default_rate
+print()
+print('Correlations with default_rate:')
+for col in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    c = df[[col, 'default_rate']].dropna().corr().iloc[0,1]
+    print(f'{col:15s}: {c:.4f}')
+"
 ```
 
 ## [10] tool
@@ -338,7 +365,23 @@ Let me explore the scenario data and build the model.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+print('Scenario data:')
+print(scenario.to_string())
+print()
+
+# Check scenario values vs training ranges
+for col in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    s_min, s_max = scenario[col].min(), scenario[col].max()
+    t_min, t_max = train[col].min(), train[col].max()
+    print(f'{col:15s}: scenario [{s_min:.2f}, {s_max:.2f}], train [{t_min:.2f}, {t_max:.2f}]')
+"
 ```
 
 ## [12] tool
@@ -462,7 +505,227 @@ Now let me build the model. I'll write a comprehensive script.
 **tool call: bash**
 
 ```
+cat > model.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# ============================================================
+# 1. Feature Engineering
+# ============================================================
+
+# Impute missing values in training data using forward fill then backward fill
+# (macroeconomic series that started later - fill early blanks)
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+train_imputed = train.copy()
+for col in macro_cols:
+    train_imputed[col] = train_imputed[col].fillna(method='ffill').fillna(method='bfill')
+
+# Create derived features
+# Credit spread is the most important predictor of default rates
+# Use log transforms for variables that are multiplicative in nature
+# Use growth rates for variables that trend
+
+# GDP growth (quarter-over-quarter)
+train_imputed['gdp_growth'] = train_imputed['gdp'].pct_change()
+
+# Credit spread changes
+train_imputed['bbb_spread_change'] = train_imputed['bbb_spread'].diff()
+
+# VIX level and change
+train_imputed['vix_change'] = train_imputed['vix'].diff()
+
+# HPI growth
+train_imputed['hpi_growth'] = train_imputed['hpi'].pct_change()
+
+# Stock market indices - use average of normalized indices
+# Normalize each index to its mean to get relative levels
+for col in ['sp500', 'djia', 'nasdaq']:
+    train_imputed[f'{col}_rel'] = train_imputed[col] / train_imputed[col].mean()
+
+# Composite market stress indicator (inverse of market levels)
+train_imputed['market_stress'] = (
+    1.0 / train_imputed['sp500_rel'] + 
+    1.0 / train_imputed['djia_rel'] + 
+    1.0 / train_imputed['nasdaq_rel']
+) / 3.0
+
+# Interaction: credit spread * market stress
+train_imputed['spread_stress'] = train_imputed['bbb_spread'] * train_imputed['market_stress']
+
+# Unemployment squared (nonlinear effect)
+train_imputed['unemp_sq'] = train_imputed['unemployment'] ** 2
+
+# CPI growth
+train_imputed['cpi_growth'] = train_imputed['cpi'].pct_change()
+
+# ============================================================
+# 2. Define feature set and target
+# ============================================================
+feature_cols = [
+    'bbb_spread',
+    'gdp',
+    'unemployment', 
+    'hpi',
+    'vix',
+    'cpi',
+    'gdp_growth',
+    'bbb_spread_change',
+    'vix_change',
+    'hpi_growth',
+    'market_stress',
+    'spread_stress',
+    'unemp_sq',
+    'cpi_growth',
+    'sp500_rel',
+    'djia_rel',
+    'nasdaq_rel',
+]
+
+target_col = 'default_rate'
+
+# Drop rows with NaN in features (from differencing etc.)
+train_model = train_imputed.dropna(subset=feature_cols + [target_col]).copy()
+
+X = train_model[feature_cols]
+y = train_model[target_col]
+
+print(f"Training samples: {len(X)}")
+print(f"Features: {len(feature_cols)}")
+print(f"Feature names: {feature_cols}")
+
+# ============================================================
+# 3. Fit OLS model with statsmodels for prediction intervals
+# ============================================================
+X_const = sm.add_constant(X)
+model = sm.OLS(y, X_const).fit()
+
+print("\n" + "="*60)
+print("OLS Model Summary")
+print("="*60)
+print(f"R-squared: {model.rsquared:.4f}")
+print(f"Adj R-squared: {model.rsquared_adj:.4f}")
+print(f"F-statistic: {model.fvalue:.4f}, p-value: {model.f_pvalue:.6f}")
+print(f"N observations: {model.nobs}")
+
+# Print significant features
+print("\nSignificant features (p < 0.1):")
+for name, coef, pval in zip(model.params.index, model.params, model.pvalues):
+    if pval < 0.1 and name != 'const':
+        print(f"  {name:25s}: coef={coef:8.4f}, p={pval:.4f}")
+
+# ============================================================
+# 4. Prepare scenario data with same features
+# ============================================================
+scenario_df = scenario.copy()
+
+# Impute missing values in scenario (shouldn't have any, but just in case)
+for col in macro_cols:
+    scenario_df[col] = scenario_df[col].fillna(method='ffill').fillna(method='bfill')
+
+# Create same derived features for scenario
+scenario_df['gdp_growth'] = scenario_df['gdp'].pct_change()
+scenario_df['bbb_spread_change'] = scenario_df['bbb_spread'].diff()
+scenario_df['vix_change'] = scenario_df['vix'].diff()
+scenario_df['hpi_growth'] = scenario_df['hpi'].pct_change()
+
+for col in ['sp500', 'djia', 'nasdaq']:
+    scenario_df[f'{col}_rel'] = scenario_df[col] / train_imputed[col].mean()
+
+scenario_df['market_stress'] = (
+    1.0 / scenario_df['sp500_rel'] + 
+    1.0 / scenario_df['djia_rel'] + 
+    1.0 / scenario_df['nasdaq_rel']
+) / 3.0
+
+scenario_df['spread_stress'] = scenario_df['bbb_spread'] * scenario_df['market_stress']
+scenario_df['unemp_sq'] = scenario_df['unemployment'] ** 2
+scenario_df['cpi_growth'] = scenario_df['cpi'].pct_change()
+
+# Handle NaN in first row of scenario (from pct_change and diff)
+# For the first scenario quarter, use the last training quarter's values as reference
+last_train = train_imputed.iloc[-1]
+
+# Fill first scenario row's derived features
+for col in ['gdp_growth', 'bbb_spread_change', 'vix_change', 'hpi_growth', 'cpi_growth']:
+    if pd.isna(scenario_df.iloc[0][col]):
+        # Use the last training value's growth rate as approximation
+        scenario_df.loc[scenario_df.index[0], col] = last_train[col] if not pd.isna(last_train[col]) else 0.0
+
+# Fill first scenario row's market_stress, spread_stress, etc.
+if pd.isna(scenario_df.iloc[0]['market_stress']):
+    scenario_df.loc[scenario_df.index[0], 'market_stress'] = (
+        1.0 / scenario_df.loc[scenario_df.index[0], 'sp500_rel'] + 
+        1.0 / scenario_df.loc[scenario_df.index[0], 'djia_rel'] + 
+        1.0 / scenario_df.loc[scenario_df.index[0], 'nasdaq_rel']
+    ) / 3.0
+
+if pd.isna(scenario_df.iloc[0]['spread_stress']):
+    scenario_df.loc[scenario_df.index[0], 'spread_stress'] = (
+        scenario_df.loc[scenario_df.index[0], 'bbb_spread'] * 
+        scenario_df.loc[scenario_df.index[0], 'market_stress']
+    )
+
+if pd.isna(scenario_df.iloc[0]['unemp_sq']):
+    scenario_df.loc[scenario_df.index[0], 'unemp_sq'] = scenario_df.loc[scenario_df.index[0], 'unemployment'] ** 2
+
+# ============================================================
+# 5. Predict with prediction intervals
+# ============================================================
+X_scenario = scenario_df[feature_cols]
+X_scenario_const = sm.add_constant(X_scenario, has_constant='add')
+
+# Get predictions
+y_pred = model.get_prediction(X_scenario_const)
+pred_summary = y_pred.summary_frame(alpha=0.05)  # 95% interval
+
+# Extract point estimates and intervals
+y_pred_values = pred_summary['mean'].values
+y_lower = pred_summary['mean_ci_lower'].values  # This is confidence interval for mean
+y_upper = pred_summary['mean_ci_upper'].values
+
+# For prediction intervals (individual forecasts), use obs_ci_lower/obs_ci_upper
+y_lower_pi = pred_summary['obs_ci_lower'].values
+y_upper_pi = pred_summary['obs_ci_upper'].values
+
+print("\n" + "="*60)
+print("Scenario Predictions")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i, row in scenario_df.iterrows():
+    q = row['quarter']
+    print(f"{int(q):>8d} {y_pred_values[i]:>10.6f} {y_lower_pi[i]:>12.6f} {y_upper_pi[i]:>12.6f}")
+
+# ============================================================
+# 6. Write predictions to CSV
+# ============================================================
+output = pd.DataFrame({
+    'quarter': scenario_df['quarter'].astype(int),
+    'y_pred': y_pred_values,
+    'y_lower': y_lower_pi,
+    'y_upper': y_upper_pi,
+})
+
+# Ensure default rate is a fraction (between 0 and 1)
+output['y_pred'] = output['y_pred'].clip(0, 1)
+output['y_lower'] = output['y_lower'].clip(0, 1)
+output['y_upper'] = output['y_upper'].clip(0, 1)
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nPredictions written to predictions.csv")
+print(f"Shape: {output.shape}")
+print(output.to_string())
+
+PYEOF
+python3 model.py
 ```
 
 ## [14] tool
@@ -489,7 +752,202 @@ Let me fix the pandas compatibility issue and rerun.
 **tool call: bash**
 
 ```
+cat > model.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# ============================================================
+# 1. Feature Engineering
+# ============================================================
+
+# Impute missing values in training data using forward fill then backward fill
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+train_imputed = train.copy()
+for col in macro_cols:
+    train_imputed[col] = train_imputed[col].ffill().bfill()
+
+# Create derived features
+train_imputed['gdp_growth'] = train_imputed['gdp'].pct_change()
+train_imputed['bbb_spread_change'] = train_imputed['bbb_spread'].diff()
+train_imputed['vix_change'] = train_imputed['vix'].diff()
+train_imputed['hpi_growth'] = train_imputed['hpi'].pct_change()
+
+# Normalize stock indices by training mean
+for col in ['sp500', 'djia', 'nasdaq']:
+    train_imputed[f'{col}_rel'] = train_imputed[col] / train_imputed[col].mean()
+
+# Composite market stress indicator
+train_imputed['market_stress'] = (
+    1.0 / train_imputed['sp500_rel'] + 
+    1.0 / train_imputed['djia_rel'] + 
+    1.0 / train_imputed['nasdaq_rel']
+) / 3.0
+
+# Interaction: credit spread * market stress
+train_imputed['spread_stress'] = train_imputed['bbb_spread'] * train_imputed['market_stress']
+
+# Unemployment squared
+train_imputed['unemp_sq'] = train_imputed['unemployment'] ** 2
+
+# CPI growth
+train_imputed['cpi_growth'] = train_imputed['cpi'].pct_change()
+
+# ============================================================
+# 2. Define feature set and target
+# ============================================================
+feature_cols = [
+    'bbb_spread',
+    'gdp',
+    'unemployment', 
+    'hpi',
+    'vix',
+    'cpi',
+    'gdp_growth',
+    'bbb_spread_change',
+    'vix_change',
+    'hpi_growth',
+    'market_stress',
+    'spread_stress',
+    'unemp_sq',
+    'cpi_growth',
+    'sp500_rel',
+    'djia_rel',
+    'nasdaq_rel',
+]
+
+target_col = 'default_rate'
+
+# Drop rows with NaN in features (from differencing etc.)
+train_model = train_imputed.dropna(subset=feature_cols + [target_col]).copy()
+
+X = train_model[feature_cols]
+y = train_model[target_col]
+
+print(f"Training samples: {len(X)}")
+print(f"Features: {len(feature_cols)}")
+
+# ============================================================
+# 3. Fit OLS model with statsmodels for prediction intervals
+# ============================================================
+X_const = sm.add_constant(X)
+model = sm.OLS(y, X_const).fit()
+
+print(f"\nR-squared: {model.rsquared:.4f}")
+print(f"Adj R-squared: {model.rsquared_adj:.4f}")
+print(f"N observations: {model.nobs}")
+
+# Print significant features
+print("\nSignificant features (p < 0.1):")
+for name, coef, pval in zip(model.params.index, model.params, model.pvalues):
+    if pval < 0.1 and name != 'const':
+        print(f"  {name:25s}: coef={coef:8.4f}, p={pval:.4f}")
+
+# ============================================================
+# 4. Prepare scenario data with same features
+# ============================================================
+scenario_df = scenario.copy()
+
+# Impute missing values in scenario (shouldn't have any, but just in case)
+for col in macro_cols:
+    scenario_df[col] = scenario_df[col].ffill().bfill()
+
+# Create same derived features for scenario
+scenario_df['gdp_growth'] = scenario_df['gdp'].pct_change()
+scenario_df['bbb_spread_change'] = scenario_df['bbb_spread'].diff()
+scenario_df['vix_change'] = scenario_df['vix'].diff()
+scenario_df['hpi_growth'] = scenario_df['hpi'].pct_change()
+
+for col in ['sp500', 'djia', 'nasdaq']:
+    scenario_df[f'{col}_rel'] = scenario_df[col] / train_imputed[col].mean()
+
+scenario_df['market_stress'] = (
+    1.0 / scenario_df['sp500_rel'] + 
+    1.0 / scenario_df['djia_rel'] + 
+    1.0 / scenario_df['nasdaq_rel']
+) / 3.0
+
+scenario_df['spread_stress'] = scenario_df['bbb_spread'] * scenario_df['market_stress']
+scenario_df['unemp_sq'] = scenario_df['unemployment'] ** 2
+scenario_df['cpi_growth'] = scenario_df['cpi'].pct_change()
+
+# Handle NaN in first row of scenario (from pct_change and diff)
+last_train = train_imputed.iloc[-1]
+
+for col in ['gdp_growth', 'bbb_spread_change', 'vix_change', 'hpi_growth', 'cpi_growth']:
+    if pd.isna(scenario_df.iloc[0][col]):
+        scenario_df.loc[scenario_df.index[0], col] = last_train[col] if not pd.isna(last_train[col]) else 0.0
+
+# Fill first scenario row's market_stress, spread_stress, etc.
+if pd.isna(scenario_df.iloc[0]['market_stress']):
+    scenario_df.loc[scenario_df.index[0], 'market_stress'] = (
+        1.0 / scenario_df.loc[scenario_df.index[0], 'sp500_rel'] + 
+        1.0 / scenario_df.loc[scenario_df.index[0], 'djia_rel'] + 
+        1.0 / scenario_df.loc[scenario_df.index[0], 'nasdaq_rel']
+    ) / 3.0
+
+if pd.isna(scenario_df.iloc[0]['spread_stress']):
+    scenario_df.loc[scenario_df.index[0], 'spread_stress'] = (
+        scenario_df.loc[scenario_df.index[0], 'bbb_spread'] * 
+        scenario_df.loc[scenario_df.index[0], 'market_stress']
+    )
+
+if pd.isna(scenario_df.iloc[0]['unemp_sq']):
+    scenario_df.loc[scenario_df.index[0], 'unemp_sq'] = scenario_df.loc[scenario_df.index[0], 'unemployment'] ** 2
+
+# ============================================================
+# 5. Predict with prediction intervals
+# ============================================================
+X_scenario = scenario_df[feature_cols]
+X_scenario_const = sm.add_constant(X_scenario, has_constant='add')
+
+# Get predictions with prediction intervals
+y_pred = model.get_prediction(X_scenario_const)
+pred_summary = y_pred.summary_frame(alpha=0.05)  # 95% interval
+
+# Extract point estimates and prediction intervals
+y_pred_values = pred_summary['mean'].values
+y_lower_pi = pred_summary['obs_ci_lower'].values
+y_upper_pi = pred_summary['obs_ci_upper'].values
+
+print("\n" + "="*60)
+print("Scenario Predictions")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i, row in scenario_df.iterrows():
+    q = row['quarter']
+    print(f"{int(q):>8d} {y_pred_values[i]:>10.6f} {y_lower_pi[i]:>12.6f} {y_upper_pi[i]:>12.6f}")
+
+# ============================================================
+# 6. Write predictions to CSV
+# ============================================================
+output = pd.DataFrame({
+    'quarter': scenario_df['quarter'].astype(int),
+    'y_pred': y_pred_values,
+    'y_lower': y_lower_pi,
+    'y_upper': y_upper_pi,
+})
+
+# Ensure default rate is a fraction (between 0 and 1)
+output['y_pred'] = output['y_pred'].clip(0, 1)
+output['y_lower'] = output['y_lower'].clip(0, 1)
+output['y_upper'] = output['y_upper'].clip(0, 1)
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nPredictions written to predictions.csv")
+print(f"Shape: {output.shape}")
+print(output.to_string())
+
+PYEOF
+python3 model.py
 ```
 
 ## [16] tool
@@ -641,7 +1099,192 @@ The model works but I want to improve it. Let me refine with better feature engi
 **tool call: bash**
 
 ```
+cat > model2.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# ============================================================
+# 1. Impute training data
+# ============================================================
+train_imp = train.copy()
+for col in macro_cols:
+    train_imp[col] = train_imp[col].ffill().bfill()
+
+# ============================================================
+# 2. Feature Engineering - focus on economically meaningful features
+# ============================================================
+# Key insight: default rates are driven by credit conditions and economic stress
+
+# Credit spread (most important)
+# Use log transform for spread (multiplicative relationship)
+train_imp['ln_bbb'] = np.log(train_imp['bbb_spread'])
+
+# GDP growth (quarter-over-quarter)
+train_imp['gdp_g'] = train_imp['gdp'].pct_change()
+
+# GDP level (relative to trend) - detrend by dividing by first value
+train_imp['gdp_level'] = train_imp['gdp'] / train_imp['gdp'].iloc[0]
+
+# Unemployment level and squared
+train_imp['unemp'] = train_imp['unemployment']
+train_imp['unemp2'] = train_imp['unemployment'] ** 2
+
+# HPI growth
+train_imp['hpi_g'] = train_imp['hpi'].pct_change()
+
+# Stock market decline (relative to peak)
+for col in ['sp500', 'djia', 'nasdaq']:
+    train_imp[f'{col}_peak'] = train_imp[col] / train_imp[col].cummax()
+
+# Composite market weakness
+train_imp['mkt_weak'] = (
+    (1.0 - train_imp['sp500_peak']) + 
+    (1.0 - train_imp['djia_peak']) + 
+    (1.0 - train_imp['nasdaq_peak'])
+) / 3.0
+
+# VIX level (market fear)
+train_imp['vix_level'] = train_imp['vix']
+
+# Credit spread * market stress interaction
+train_imp['spread_weak'] = train_imp['bbb_spread'] * train_imp['mkt_weak']
+
+# Inflation (CPI growth)
+train_imp['cpi_g'] = train_imp['cpi'].pct_change()
+
+# ============================================================
+# 3. Feature selection - use only complete-case features
+# ============================================================
+feature_cols = [
+    'ln_bbb',
+    'gdp_g',
+    'unemp',
+    'unemp2',
+    'hpi_g',
+    'mkt_weak',
+    'vix_level',
+    'spread_weak',
+    'cpi_g',
+    'sp500_peak',
+    'djia_peak',
+    'nasdaq_peak',
+]
+
+target_col = 'default_rate'
+
+# Drop rows with NaN
+train_m = train_imp.dropna(subset=feature_cols + [target_col]).copy()
+X = train_m[feature_cols]
+y = train_m[target_col]
+
+print(f"Training samples: {len(X)}, Features: {len(feature_cols)}")
+
+# ============================================================
+# 4. Fit OLS model
+# ============================================================
+Xc = sm.add_constant(X)
+model = sm.OLS(y, Xc).fit()
+
+print(f"\nR-squared: {model.rsquared:.4f}")
+print(f"Adj R-squared: {model.rsquared_adj:.4f}")
+print(f"N: {model.nobs}")
+
+print("\nAll coefficients:")
+for name, coef, pval in zip(model.params.index, model.params, model.pvalues):
+    sig = "***" if pval < 0.01 else "**" if pval < 0.05 else "*" if pval < 0.1 else ""
+    print(f"  {name:20s}: coef={coef:8.4f}, p={pval:.4f} {sig}")
+
+# ============================================================
+# 5. Prepare scenario features
+# ============================================================
+sc = scenario.copy()
+for col in macro_cols:
+    sc[col] = sc[col].ffill().bfill()
+
+sc['ln_bbb'] = np.log(sc['bbb_spread'])
+sc['gdp_g'] = sc['gdp'].pct_change()
+sc['gdp_level'] = sc['gdp'] / train_imp['gdp'].iloc[0]
+sc['unemp'] = sc['unemployment']
+sc['unemp2'] = sc['unemployment'] ** 2
+sc['hpi_g'] = sc['hpi'].pct_change()
+
+for col in ['sp500', 'djia', 'nasdaq']:
+    sc[f'{col}_peak'] = sc[col] / train_imp[col].cummax().iloc[-1]  # Use training peak
+
+sc['mkt_weak'] = (
+    (1.0 - sc['sp500_peak']) + 
+    (1.0 - sc['djia_peak']) + 
+    (1.0 - sc['nasdaq_peak'])
+) / 3.0
+
+sc['vix_level'] = sc['vix']
+sc['spread_weak'] = sc['bbb_spread'] * sc['mkt_weak']
+sc['cpi_g'] = sc['cpi'].pct_change()
+
+# Handle NaN in first row
+last_train_vals = train_imp.iloc[-1]
+for col in ['gdp_g', 'hpi_g', 'cpi_g']:
+    if pd.isna(sc.iloc[0][col]):
+        sc.loc[sc.index[0], col] = last_train_vals[col] if not pd.isna(last_train_vals[col]) else 0.0
+
+# Fill first row's mkt_weak, spread_weak, etc.
+if pd.isna(sc.iloc[0]['mkt_weak']):
+    sc.loc[sc.index[0], 'mkt_weak'] = (
+        (1.0 - sc.loc[sc.index[0], 'sp500_peak']) + 
+        (1.0 - sc.loc[sc.index[0], 'djia_peak']) + 
+        (1.0 - sc.loc[sc.index[0], 'nasdaq_peak'])
+    ) / 3.0
+
+if pd.isna(sc.iloc[0]['spread_weak']):
+    sc.loc[sc.index[0], 'spread_weak'] = sc.loc[sc.index[0], 'bbb_spread'] * sc.loc[sc.index[0], 'mkt_weak']
+
+# ============================================================
+# 6. Predict with prediction intervals
+# ============================================================
+X_sc = sc[feature_cols]
+X_sc_const = sm.add_constant(X_sc, has_constant='add')
+
+y_pred = model.get_prediction(X_sc_const)
+pred_summary = y_pred.summary_frame(alpha=0.05)
+
+y_pred_values = pred_summary['mean'].values
+y_lower_pi = pred_summary['obs_ci_lower'].values
+y_upper_pi = pred_summary['obs_ci_upper'].values
+
+print("\n" + "="*60)
+print("Scenario Predictions")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i, row in sc.iterrows():
+    q = row['quarter']
+    print(f"{int(q):>8d} {y_pred_values[i]:>10.6f} {y_lower_pi[i]:>12.6f} {y_upper_pi[i]:>12.6f}")
+
+# ============================================================
+# 7. Write predictions
+# ============================================================
+output = pd.DataFrame({
+    'quarter': sc['quarter'].astype(int),
+    'y_pred': y_pred_values,
+    'y_lower': np.clip(y_lower_pi, 0, None),
+    'y_upper': np.clip(y_upper_pi, None, 1),
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nWritten predictions.csv with {len(output)} rows")
+print(output.to_string())
+
+PYEOF
+python3 model2.py
 ```
 
 ## [18] tool
@@ -750,7 +1393,236 @@ Let me try a more refined approach with better feature engineering and model
 **tool call: bash**
 
 ```
+cat > model3.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from sklearn.linear_model import Ridge, Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import LeaveOneOut, cross_val_score
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# ============================================================
+# 1. Impute training data
+# ============================================================
+train_imp = train.copy()
+for col in macro_cols:
+    train_imp[col] = train_imp[col].ffill().bfill()
+
+# ============================================================
+# 2. Feature Engineering
+# ============================================================
+# Credit spread - most important predictor
+train_imp['ln_bbb'] = np.log(train_imp['bbb_spread'])
+
+# GDP growth
+train_imp['gdp_g'] = train_imp['gdp'].pct_change()
+
+# Unemployment level
+train_imp['unemp'] = train_imp['unemployment']
+
+# HPI growth
+train_imp['hpi_g'] = train_imp['hpi'].pct_change()
+
+# Market decline from peak (stock market weakness)
+for col in ['sp500', 'djia', 'nasdaq']:
+    train_imp[f'{col}_peak'] = train_imp[col] / train_imp[col].cummax()
+
+train_imp['mkt_weak'] = (1.0 - train_imp['sp500_peak'] + 1.0 - train_imp['djia_peak'] + 1.0 - train_imp['nasdaq_peak']) / 3.0
+
+# VIX level
+train_imp['vix_lvl'] = train_imp['vix']
+
+# Credit spread * market weakness interaction
+train_imp['spread_weak'] = train_imp['bbb_spread'] * train_imp['mkt_weak']
+
+# CPI growth
+train_imp['cpi_g'] = train_imp['cpi'].pct_change()
+
+# ============================================================
+# 3. Try different models and select the best
+# ============================================================
+feature_cols = [
+    'ln_bbb', 'gdp_g', 'unemp', 'hpi_g', 'mkt_weak', 
+    'vix_lvl', 'spread_weak', 'cpi_g', 'sp500_peak', 'djia_peak', 'nasdaq_peak',
+]
+
+target_col = 'default_rate'
+
+# Drop rows with NaN
+train_m = train_imp.dropna(subset=feature_cols + [target_col]).copy()
+X = train_m[feature_cols].values
+y = train_m[target_col].values
+
+print(f"Training samples: {len(X)}, Features: {len(feature_cols)}")
+
+# Standardize features for Ridge/Lasso
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Try Ridge regression with cross-validation
+from sklearn.linear_model import RidgeCV
+alphas = np.logspace(-3, 3, 50)
+ridge = RidgeCV(alphas=alphas, cv=5).fit(X_scaled, y)
+print(f"\nRidge best alpha: {ridge.alpha_:.4f}")
+print(f"Ridge R²: {ridge.score(X_scaled, y):.4f}")
+
+# Try OLS
+Xc = sm.add_constant(X)
+ols = sm.OLS(y, Xc).fit()
+print(f"OLS R²: {ols.rsquared:.4f}")
+
+# Try Lasso
+lasso = Lasso(alpha=0.01, max_iter=10000).fit(X_scaled, y)
+print(f"Lasso R²: {lasso.score(X_scaled, y):.4f}")
+print(f"Lasso coefficients: {lasso.coef_}")
+
+# ============================================================
+# 4. Use OLS with log-transformed target for better extrapolation
+# ============================================================
+# Log-transform target to handle the bounded [0,1] range better
+# Add small constant to avoid log(0)
+y_log = np.log(y + 0.001)
+
+ols_log = sm.OLS(y_log, Xc).fit()
+print(f"\nOLS (log target) R²: {ols_log.rsquared:.4f}")
+
+# ============================================================
+# 5. Prepare scenario features
+# ============================================================
+sc = scenario.copy()
+for col in macro_cols:
+    sc[col] = sc[col].ffill().bfill()
+
+sc['ln_bbb'] = np.log(sc['bbb_spread'])
+sc['gdp_g'] = sc['gdp'].pct_change()
+sc['unemp'] = sc['unemployment']
+sc['hpi_g'] = sc['hpi'].pct_change()
+
+for col in ['sp500', 'djia', 'nasdaq']:
+    sc[f'{col}_peak'] = sc[col] / train_imp[col].cummax().iloc[-1]
+
+sc['mkt_weak'] = (1.0 - sc['sp500_peak'] + 1.0 - sc['djia_peak'] + 1.0 - sc['nasdaq_peak']) / 3.0
+sc['vix_lvl'] = sc['vix']
+sc['spread_weak'] = sc['bbb_spread'] * sc['mkt_weak']
+sc['cpi_g'] = sc['cpi'].pct_change()
+
+# Handle NaN in first row
+last_train_vals = train_imp.iloc[-1]
+for col in ['gdp_g', 'hpi_g', 'cpi_g']:
+    if pd.isna(sc.iloc[0][col]):
+        sc.loc[sc.index[0], col] = last_train_vals[col] if not pd.isna(last_train_vals[col]) else 0.0
+
+if pd.isna(sc.iloc[0]['mkt_weak']):
+    sc.loc[sc.index[0], 'mkt_weak'] = (
+        (1.0 - sc.loc[sc.index[0], 'sp500_peak']) + 
+        (1.0 - sc.loc[sc.index[0], 'djia_peak']) + 
+        (1.0 - sc.loc[sc.index[0], 'nasdaq_peak'])
+    ) / 3.0
+
+if pd.isna(sc.iloc[0]['spread_weak']):
+    sc.loc[sc.index[0], 'spread_weak'] = sc.loc[sc.index[0], 'bbb_spread'] * sc.loc[sc.index[0], 'mkt_weak']
+
+X_sc = sc[feature_cols].values
+X_sc_scaled = scaler.transform(X_sc)
+X_sc_const = sm.add_constant(X_sc)
+
+# ============================================================
+# 6. Predict with OLS (original target) and prediction intervals
+# ============================================================
+y_pred_ols = ols.get_prediction(X_sc_const)
+pred_ols = y_pred_ols.summary_frame(alpha=0.05)
+
+# Also try OLS with log target
+y_pred_log = ols_log.get_prediction(X_sc_const)
+pred_log = y_pred_log.summary_frame(alpha=0.05)
+
+# Transform back from log
+y_pred_log_values = np.exp(pred_log['mean'].values) - 0.001
+y_lower_log = np.exp(pred_log['obs_ci_lower'].values) - 0.001
+y_upper_log = np.exp(pred_log['obs_ci_upper'].values) - 0.001
+
+# Clip to [0, 1]
+y_pred_log_values = np.clip(y_pred_log_values, 0, 1)
+y_lower_log = np.clip(y_lower_log, 0, 1)
+y_upper_log = np.clip(y_upper_log, 0, 1)
+
+print("\n" + "="*60)
+print("OLS Predictions (original target)")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i in range(len(sc)):
+    q = sc.iloc[i]['quarter']
+    print(f"{int(q):>8d} {pred_ols['mean'].values[i]:>10.6f} {pred_ols['obs_ci_lower'].values[i]:>12.6f} {pred_ols['obs_ci_upper'].values[i]:>12.6f}")
+
+print("\n" + "="*60)
+print("OLS Predictions (log target)")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i in range(len(sc)):
+    q = sc.iloc[i]['quarter']
+    print(f"{int(q):>8d} {y_pred_log_values[i]:>10.6f} {y_lower_log[i]:>12.6f} {y_upper_log[i]:>12.6f}")
+
+# ============================================================
+# 7. Use Ridge regression for more stable predictions
+# ============================================================
+# For Ridge, compute prediction intervals using residual std
+y_ridge_pred = ridge.predict(X_scaled)
+residuals = y - y_ridge_pred
+resid_std = np.std(residuals, ddof=len(ridge.coef_))
+
+# For Ridge, we need to compute the prediction interval differently
+# Use the standard error from the Ridge model
+# Approximate: use the residual std and the leverage of each prediction point
+
+# For simplicity, use a bootstrap-like approach for Ridge intervals
+# Or use the OLS prediction intervals as a baseline
+
+# Let's use the OLS model with log transform as our primary model
+# since it handles the bounded nature of default rates better
+
+# ============================================================
+# 8. Write final predictions
+# ============================================================
+# Use the OLS log model as primary, but also consider the original OLS
+# Let's use a weighted average or just the log model
+
+# Actually, let me use the original OLS model since it's simpler and more interpretable
+# The log model might have issues with the -0.001 offset
+
+# Let me use the original OLS model
+y_pred_final = pred_ols['mean'].values
+y_lower_final = np.clip(pred_ols['obs_ci_lower'].values, 0, None)
+y_upper_final = np.clip(pred_ols['obs_ci_upper'].values, None, 1)
+
+print("\n" + "="*60)
+print("Final Predictions (OLS, original target)")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i in range(len(sc)):
+    q = sc.iloc[i]['quarter']
+    print(f"{int(q):>8d} {y_pred_final[i]:>10.6f} {y_lower_final[i]:>12.6f} {y_upper_final[i]:>12.6f}")
+
+output = pd.DataFrame({
+    'quarter': sc['quarter'].astype(int),
+    'y_pred': y_pred_final,
+    'y_lower': y_lower_final,
+    'y_upper': y_upper_final,
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nWritten predictions.csv with {len(output)} rows")
+print(output.to_string())
+
+PYEOF
+python3 model3.py
 ```
 
 ## [20] tool
@@ -886,7 +1758,257 @@ Let me take a more careful approach with better model specification and validati
 **tool call: bash**
 
 ```
+cat > model_final.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# ============================================================
+# 1. Impute training data
+# ============================================================
+train_imp = train.copy()
+for col in macro_cols:
+    train_imp[col] = train_imp[col].ffill().bfill()
+
+# ============================================================
+# 2. Feature Engineering - focus on key economic relationships
+# ============================================================
+# Credit spread is the dominant predictor of default rates
+# GDP decline increases defaults
+# Unemployment increases defaults
+# Stock market decline increases defaults
+# VIX increases (fear) increases defaults
+
+# Credit spread (log transform - spreads are multiplicative)
+train_imp['ln_bbb'] = np.log(train_imp['bbb_spread'])
+
+# GDP growth (quarter-over-quarter)
+train_imp['gdp_g'] = train_imp['gdp'].pct_change()
+
+# Unemployment (level - non-linear effect expected)
+train_imp['unemp'] = train_imp['unemployment']
+
+# HPI growth
+train_imp['hpi_g'] = train_imp['hpi'].pct_change()
+
+# Stock market weakness: distance from peak
+for col in ['sp500', 'djia', 'nasdaq']:
+    train_imp[f'{col}_dist'] = 1.0 - train_imp[col] / train_imp[col].cummax()
+
+# Composite market weakness
+train_imp['mkt_weak'] = (train_imp['sp500_dist'] + train_imp['djia_dist'] + train_imp['nasdaq_dist']) / 3.0
+
+# VIX (market fear gauge)
+train_imp['vix_lvl'] = train_imp['vix']
+
+# Credit spread * market weakness (interaction)
+train_imp['spread_x_weak'] = train_imp['bbb_spread'] * train_imp['mkt_weak']
+
+# CPI growth (inflation pressure)
+train_imp['cpi_g'] = train_imp['cpi'].pct_change()
+
+# ============================================================
+# 3. Feature selection using correlation with target
+# ============================================================
+feature_cols = [
+    'ln_bbb', 'gdp_g', 'unemp', 'hpi_g', 
+    'mkt_weak', 'vix_lvl', 'spread_x_weak', 'cpi_g',
+    'sp500_dist', 'djia_dist', 'nasdaq_dist',
+]
+
+target_col = 'default_rate'
+
+# Drop rows with NaN
+train_m = train_imp.dropna(subset=feature_cols + [target_col]).copy()
+X = train_m[feature_cols]
+y = train_m[target_col]
+
+print(f"Training samples: {len(X)}, Features: {len(feature_cols)}")
+
+# Check correlations
+print("\nCorrelations with default_rate:")
+for col in feature_cols:
+    c = train_m[[col, target_col]].corr().iloc[0,1]
+    print(f"  {col:20s}: {c:.4f}")
+
+# ============================================================
+# 4. Fit OLS model
+# ============================================================
+Xc = sm.add_constant(X)
+model = sm.OLS(y, Xc).fit()
+
+print(f"\nR-squared: {model.rsquared:.4f}")
+print(f"Adj R-squared: {model.rsquared_adj:.4f}")
+print(f"N: {model.nobs}")
+
+# Print all coefficients with significance
+print("\nCoefficients:")
+for name, coef, pval in zip(model.params.index, model.params, model.pvalues):
+    sig = "***" if pval < 0.01 else "**" if pval < 0.05 else "*" if pval < 0.1 else ""
+    print(f"  {name:20s}: coef={coef:8.4f}, p={pval:.4f} {sig}")
+
+# ============================================================
+# 5. Prepare scenario features
+# ============================================================
+sc = scenario.copy()
+for col in macro_cols:
+    sc[col] = sc[col].ffill().bfill()
+
+sc['ln_bbb'] = np.log(sc['bbb_spread'])
+sc['gdp_g'] = sc['gdp'].pct_change()
+sc['unemp'] = sc['unemployment']
+sc['hpi_g'] = sc['hpi'].pct_change()
+
+for col in ['sp500', 'djia', 'nasdaq']:
+    sc[f'{col}_dist'] = 1.0 - sc[col] / train_imp[col].cummax().iloc[-1]
+
+sc['mkt_weak'] = (sc['sp500_dist'] + sc['djia_dist'] + sc['nasdaq_dist']) / 3.0
+sc['vix_lvl'] = sc['vix']
+sc['spread_x_weak'] = sc['bbb_spread'] * sc['mkt_weak']
+sc['cpi_g'] = sc['cpi'].pct_change()
+
+# Handle NaN in first row of scenario
+last_train = train_imp.iloc[-1]
+for col in ['gdp_g', 'hpi_g', 'cpi_g']:
+    if pd.isna(sc.iloc[0][col]):
+        sc.loc[sc.index[0], col] = last_train[col] if not pd.isna(last_train[col]) else 0.0
+
+# Fill first row's derived features that depend on other scenario rows
+if pd.isna(sc.iloc[0]['mkt_weak']):
+    sc.loc[sc.index[0], 'mkt_weak'] = (
+        sc.loc[sc.index[0], 'sp500_dist'] + 
+        sc.loc[sc.index[0], 'djia_dist'] + 
+        sc.loc[sc.index[0], 'nasdaq_dist']
+    ) / 3.0
+
+if pd.isna(sc.iloc[0]['spread_x_weak']):
+    sc.loc[sc.index[0], 'spread_x_weak'] = sc.loc[sc.index[0], 'bbb_spread'] * sc.loc[sc.index[0], 'mkt_weak']
+
+# ============================================================
+# 6. Predict with prediction intervals
+# ============================================================
+X_sc = sc[feature_cols]
+X_sc_const = sm.add_constant(X_sc, has_constant='add')
+
+# Get prediction with intervals
+y_pred = model.get_prediction(X_sc_const)
+pred_summary = y_pred.summary_frame(alpha=0.05)
+
+y_pred_values = pred_summary['mean'].values
+y_lower_pi = pred_summary['obs_ci_lower'].values
+y_upper_pi = pred_summary['obs_ci_upper'].values
+
+# Clip to valid range [0, 1]
+y_pred_values = np.clip(y_pred_values, 0, 1)
+y_lower_pi = np.clip(y_lower_pi, 0, 1)
+y_upper_pi = np.clip(y_upper_pi, 0, 1)
+
+print("\n" + "="*60)
+print("Scenario Predictions (OLS with prediction intervals)")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i in range(len(sc)):
+    q = sc.iloc[i]['quarter']
+    print(f"{int(q):>8d} {y_pred_values[i]:>10.6f} {y_lower_pi[i]:>12.6f} {y_upper_pi[i]:>12.6f}")
+
+# ============================================================
+# 7. Also compute bootstrap-based prediction intervals for robustness
+# ============================================================
+# Bootstrap residuals to get more robust intervals
+np.random.seed(42)
+n_boot = 2000
+residuals = y - model.fittedvalues
+resid_std = np.std(residuals, ddof=len(model.params))
+
+# For each bootstrap sample, refit and predict
+boot_preds = np.zeros((n_boot, len(sc)))
+for b in range(n_boot):
+    # Resample residuals
+    boot_resid = np.random.choice(residuals, size=len(residuals), replace=True)
+    boot_y = model.fittedvalues + boot_resid
+    
+    # Refit
+    try:
+        boot_model = sm.OLS(boot_y, Xc).fit()
+        boot_preds[b] = boot_model.predict(X_sc_const)
+    except:
+        boot_preds[b] = np.nan
+
+# Remove NaN rows
+boot_preds = boot_preds[~np.isnan(boot_preds).any(axis=1)]
+
+# Compute bootstrap prediction intervals
+boot_lower = np.percentile(boot_preds, 2.5, axis=0)
+boot_upper = np.percentile(boot_preds, 97.5, axis=0)
+boot_mean = np.mean(boot_preds, axis=0)
+
+print("\n" + "="*60)
+print("Bootstrap Prediction Intervals (2000 reps)")
+print("="*60)
+print(f"{'Quarter':>8s} {'OLS Pred':>10s} {'Boot Pred':>10s} {'Boot Lower':>12s} {'Boot Upper':>12s}")
+for i in range(len(sc)):
+    q = sc.iloc[i]['quarter']
+    print(f"{int(q):>8d} {y_pred_values[i]:>10.6f} {boot_mean[i]:>10.6f} {boot_lower[i]:>12.6f} {boot_upper[i]:>12.6f}")
+
+# ============================================================
+# 8. Use bootstrap intervals (more robust for extrapolation)
+# ============================================================
+# Combine OLS point estimates with bootstrap intervals
+# Or use bootstrap point estimates with bootstrap intervals
+
+# Let's use the OLS point estimates (more stable) with bootstrap intervals
+y_final_pred = y_pred_values
+y_final_lower = np.clip(boot_lower, 0, 1)
+y_final_upper = np.clip(boot_upper, 0, 1)
+
+# Ensure lower < upper
+for i in range(len(y_final_pred)):
+    if y_final_lower[i] > y_final_pred[i]:
+        y_final_lower[i] = max(0, y_final_pred[i] - (y_final_upper[i] - y_final_pred[i]))
+    if y_final_upper[i] < y_final_pred[i]:
+        y_final_upper[i] = min(1, y_final_pred[i] + (y_final_pred[i] - y_final_lower[i]))
+
+print("\n" + "="*60)
+print("Final Predictions")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i in range(len(sc)):
+    q = sc.iloc[i]['quarter']
+    print(f"{int(q):>8d} {y_final_pred[i]:>10.6f} {y_final_lower[i]:>12.6f} {y_final_upper[i]:>12.6f}")
+
+# ============================================================
+# 9. Write predictions
+# ============================================================
+output = pd.DataFrame({
+    'quarter': sc['quarter'].astype(int),
+    'y_pred': y_final_pred,
+    'y_lower': y_final_lower,
+    'y_upper': y_final_upper,
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nWritten predictions.csv with {len(output)} rows")
+print(output.to_string())
+
+# Verify
+print(f"\nVerification:")
+print(f"  Rows: {len(output)}")
+print(f"  Columns: {list(output.columns)}")
+print(f"  All quarters present: {list(output['quarter'])}")
+print(f"  All y_pred in [0,1]: {(output['y_pred'] >= 0).all() and (output['y_pred'] <= 1).all()}")
+print(f"  All y_lower <= y_pred <= y_upper: {all(output['y_lower'] <= output['y_pred']) and all(output['y_pred'] <= output['y_upper'])}")
+
+PYEOF
+python3 model_final.py
 ```
 
 ## [22] tool
@@ -1041,7 +2163,237 @@ Let me try a more robust approach with better model selection and validation
 **tool call: bash**
 
 ```
+cat > model_v2.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# ============================================================
+# 1. Impute training data
+# ============================================================
+train_imp = train.copy()
+for col in macro_cols:
+    train_imp[col] = train_imp[col].ffill().bfill()
+
+# ============================================================
+# 2. Feature Engineering
+# ============================================================
+# Credit spread - dominant predictor
+train_imp['ln_bbb'] = np.log(train_imp['bbb_spread'])
+
+# GDP growth
+train_imp['gdp_g'] = train_imp['gdp'].pct_change()
+
+# Unemployment
+train_imp['unemp'] = train_imp['unemployment']
+
+# HPI growth
+train_imp['hpi_g'] = train_imp['hpi'].pct_change()
+
+# Market weakness (distance from peak)
+for col in ['sp500', 'djia', 'nasdaq']:
+    train_imp[f'{col}_dist'] = 1.0 - train_imp[col] / train_imp[col].cummax()
+
+train_imp['mkt_weak'] = (train_imp['sp500_dist'] + train_imp['djia_dist'] + train_imp['nasdaq_dist']) / 3.0
+
+# VIX
+train_imp['vix_lvl'] = train_imp['vix']
+
+# Credit spread * market weakness
+train_imp['spread_x_weak'] = train_imp['bbb_spread'] * train_imp['mkt_weak']
+
+# CPI growth
+train_imp['cpi_g'] = train_imp['cpi'].pct_change()
+
+# ============================================================
+# 3. Try multiple models and compare
+# ============================================================
+feature_cols = [
+    'ln_bbb', 'gdp_g', 'unemp', 'hpi_g', 
+    'mkt_weak', 'vix_lvl', 'spread_x_weak', 'cpi_g',
+    'sp500_dist', 'djia_dist', 'nasdaq_dist',
+]
+
+target_col = 'default_rate'
+train_m = train_imp.dropna(subset=feature_cols + [target_col]).copy()
+X = train_m[feature_cols].values
+y = train_m[target_col].values
+
+Xc = sm.add_constant(X)
+
+# Model 1: OLS with all features
+ols_full = sm.OLS(y, Xc).fit()
+print(f"OLS Full R²: {ols_full.rsquared:.4f}, Adj: {ols_full.rsquared_adj:.4f}")
+
+# Model 2: OLS with only significant features (p < 0.1)
+sig_features = [f for f, p in zip(feature_cols, ols_full.pvalues[1:]) if p < 0.1]
+print(f"\nSignificant features (p<0.1): {sig_features}")
+
+# Model 3: OLS with just ln_bbb (most significant)
+X_lnbbb = sm.add_constant(train_imp['ln_bbb'].values[train_m.index])
+ols_bbb = sm.OLS(y, X_lnbbb).fit()
+print(f"OLS (ln_bbb only) R²: {ols_bbb.rsquared:.4f}")
+
+# Model 4: OLS with ln_bbb + mkt_weak + unemp
+X_sub = train_m[['ln_bbb', 'mkt_weak', 'unemp']].values
+X_sub_c = sm.add_constant(X_sub)
+ols_sub = sm.OLS(y, X_sub_c).fit()
+print(f"OLS (ln_bbb+mkt_weak+unemp) R²: {ols_sub.rsquared:.4f}, Adj: {ols_sub.rsquared_adj:.4f}")
+
+# Model 5: OLS with ln_bbb + mkt_weak + unemp + gdp_g
+X_sub2 = train_m[['ln_bbb', 'mkt_weak', 'unemp', 'gdp_g']].values
+X_sub2_c = sm.add_constant(X_sub2)
+ols_sub2 = sm.OLS(y, X_sub2_c).fit()
+print(f"OLS (ln_bbb+mkt_weak+unemp+gdp_g) R²: {ols_sub2.rsquared:.4f}, Adj: {ols_sub2.rsquared_adj:.4f}")
+
+# Model 6: OLS with ln_bbb + mkt_weak + unemp + gdp_g + vix_lvl + hpi_g
+X_sub3 = train_m[['ln_bbb', 'mkt_weak', 'unemp', 'gdp_g', 'vix_lvl', 'hpi_g']].values
+X_sub3_c = sm.add_constant(X_sub3)
+ols_sub3 = sm.OLS(y, X_sub3_c).fit()
+print(f"OLS (6 features) R²: {ols_sub3.rsquared:.4f}, Adj: {ols_sub3.rsquared_adj:.4f}")
+
+# ============================================================
+# 7. Use the best model - let's use the full OLS model
+#    but with bootstrap prediction intervals
+# ============================================================
+# Actually, let me use a model that balances fit and parsimony
+# I'll use the 6-feature model (ln_bbb + mkt_weak + unemp + gdp_g + vix_lvl + hpi_g)
+# which has the best adjusted R²
+
+# But actually, let me use the full model since the adjusted R² differences are small
+# and we want to capture as much signal as possible
+
+# Use the full OLS model
+model = ols_full
+
+# ============================================================
+# 8. Prepare scenario features
+# ============================================================
+sc = scenario.copy()
+for col in macro_cols:
+    sc[col] = sc[col].ffill().bfill()
+
+sc['ln_bbb'] = np.log(sc['bbb_spread'])
+sc['gdp_g'] = sc['gdp'].pct_change()
+sc['unemp'] = sc['unemployment']
+sc['hpi_g'] = sc['hpi'].pct_change()
+
+for col in ['sp500', 'djia', 'nasdaq']:
+    sc[f'{col}_dist'] = 1.0 - sc[col] / train_imp[col].cummax().iloc[-1]
+
+sc['mkt_weak'] = (sc['sp500_dist'] + sc['djia_dist'] + sc['nasdaq_dist']) / 3.0
+sc['vix_lvl'] = sc['vix']
+sc['spread_x_weak'] = sc['bbb_spread'] * sc['mkt_weak']
+sc['cpi_g'] = sc['cpi'].pct_change()
+
+# Handle NaN in first row
+last_train = train_imp.iloc[-1]
+for col in ['gdp_g', 'hpi_g', 'cpi_g']:
+    if pd.isna(sc.iloc[0][col]):
+        sc.loc[sc.index[0], col] = last_train[col] if not pd.isna(last_train[col]) else 0.0
+
+if pd.isna(sc.iloc[0]['mkt_weak']):
+    sc.loc[sc.index[0], 'mkt_weak'] = (
+        sc.loc[sc.index[0], 'sp500_dist'] + 
+        sc.loc[sc.index[0], 'djia_dist'] + 
+        sc.loc[sc.index[0], 'nasdaq_dist']
+    ) / 3.0
+
+if pd.isna(sc.iloc[0]['spread_x_weak']):
+    sc.loc[sc.index[0], 'spread_x_weak'] = sc.loc[sc.index[0], 'bbb_spread'] * sc.loc[sc.index[0], 'mkt_weak']
+
+# ============================================================
+# 9. Predict with prediction intervals
+# ============================================================
+X_sc = sc[feature_cols]
+X_sc_const = sm.add_constant(X_sc, has_constant='add')
+
+# OLS prediction intervals
+y_pred_ols = model.get_prediction(X_sc_const)
+pred_ols = y_pred_ols.summary_frame(alpha=0.05)
+
+# Bootstrap prediction intervals
+np.random.seed(42)
+n_boot = 5000
+residuals = y - model.fittedvalues
+
+boot_preds = np.zeros((n_boot, len(sc)))
+for b in range(n_boot):
+    boot_resid = np.random.choice(residuals, size=len(residuals), replace=True)
+    boot_y = model.fittedvalues + boot_resid
+    try:
+        boot_model = sm.OLS(boot_y, Xc).fit()
+        boot_preds[b] = boot_model.predict(X_sc_const)
+    except:
+        boot_preds[b] = np.nan
+
+boot_preds = boot_preds[~np.isnan(boot_preds).any(axis=1)]
+boot_lower = np.percentile(boot_preds, 2.5, axis=0)
+boot_upper = np.percentile(boot_preds, 97.5, axis=0)
+boot_mean = np.mean(boot_preds, axis=0)
+
+# Also compute in-sample residuals for scale
+resid_std = np.std(residuals, ddof=len(model.params))
+print(f"\nResidual std: {resid_std:.6f}")
+
+# ============================================================
+# 10. Combine: OLS point estimates + bootstrap intervals
+# ============================================================
+# For the prediction intervals, use the bootstrap intervals
+# which better capture model uncertainty
+y_final_pred = np.clip(pred_ols['mean'].values, 0, 1)
+y_final_lower = np.clip(boot_lower, 0, 1)
+y_final_upper = np.clip(boot_upper, 0, 1)
+
+# Ensure ordering
+for i in range(len(y_final_pred)):
+    if y_final_lower[i] > y_final_pred[i]:
+        y_final_lower[i] = max(0, y_final_pred[i] - (y_final_upper[i] - y_final_pred[i]) * 0.5)
+    if y_final_upper[i] < y_pred[i]:
+        y_final_upper[i] = min(1, y_final_pred[i] + (y_final_pred[i] - y_final_lower[i]) * 0.5)
+
+print("\n" + "="*60)
+print("Final Predictions")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i in range(len(sc)):
+    q = sc.iloc[i]['quarter']
+    print(f"{int(q):>8d} {y_final_pred[i]:>10.6f} {y_final_lower[i]:>12.6f} {y_final_upper[i]:>12.6f}")
+
+# ============================================================
+# 11. Write predictions
+# ============================================================
+output = pd.DataFrame({
+    'quarter': sc['quarter'].astype(int),
+    'y_pred': y_final_pred,
+    'y_lower': y_final_lower,
+    'y_upper': y_final_upper,
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nWritten predictions.csv with {len(output)} rows")
+print(output.to_string())
+
+# Verify
+print(f"\nVerification:")
+print(f"  Rows: {len(output)}")
+print(f"  Columns: {list(output.columns)}")
+print(f"  All quarters: {list(output['quarter'])}")
+print(f"  All y_pred in [0,1]: {(output['y_pred'] >= 0).all() and (output['y_pred'] <= 1).all()}")
+print(f"  All y_lower <= y_pred: {(output['y_lower'] <= output['y_pred']).all()}")
+print(f"  All y_pred <= y_upper: {(output['y_pred'] <= output['y_upper']).all()}")
+
+PYEOF
+python3 model_v2.py
 ```
 
 ## [24] tool
@@ -1096,7 +2448,202 @@ Let me fix the bug and refine
 **tool call: bash**
 
 ```
+cat > model_final2.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# ============================================================
+# 1. Impute training data
+# ============================================================
+train_imp = train.copy()
+for col in macro_cols:
+    train_imp[col] = train_imp[col].ffill().bfill()
+
+# ============================================================
+# 2. Feature Engineering
+# ============================================================
+# Credit spread - dominant predictor
+train_imp['ln_bbb'] = np.log(train_imp['bbb_spread'])
+
+# GDP growth
+train_imp['gdp_g'] = train_imp['gdp'].pct_change()
+
+# Unemployment
+train_imp['unemp'] = train_imp['unemployment']
+
+# HPI growth
+train_imp['hpi_g'] = train_imp['hpi'].pct_change()
+
+# Market weakness (distance from peak)
+for col in ['sp500', 'djia', 'nasdaq']:
+    train_imp[f'{col}_dist'] = 1.0 - train_imp[col] / train_imp[col].cummax()
+
+train_imp['mkt_weak'] = (train_imp['sp500_dist'] + train_imp['djia_dist'] + train_imp['nasdaq_dist']) / 3.0
+
+# VIX
+train_imp['vix_lvl'] = train_imp['vix']
+
+# Credit spread * market weakness
+train_imp['spread_x_weak'] = train_imp['bbb_spread'] * train_imp['mkt_weak']
+
+# CPI growth
+train_imp['cpi_g'] = train_imp['cpi'].pct_change()
+
+# ============================================================
+# 3. Feature set
+# ============================================================
+feature_cols = [
+    'ln_bbb', 'gdp_g', 'unemp', 'hpi_g', 
+    'mkt_weak', 'vix_lvl', 'spread_x_weak', 'cpi_g',
+    'sp500_dist', 'djia_dist', 'nasdaq_dist',
+]
+
+target_col = 'default_rate'
+
+# Drop rows with NaN
+train_m = train_imp.dropna(subset=feature_cols + [target_col]).copy()
+X = train_m[feature_cols].values
+y = train_m[target_col].values
+
+Xc = sm.add_constant(X)
+
+# Fit OLS model
+model = sm.OLS(y, Xc).fit()
+print(f"OLS R²: {model.rsquared:.4f}, Adj: {model.rsquared_adj:.4f}")
+print(f"N: {model.nobs}")
+
+# ============================================================
+# 4. Prepare scenario features
+# ============================================================
+sc = scenario.copy()
+for col in macro_cols:
+    sc[col] = sc[col].ffill().bfill()
+
+sc['ln_bbb'] = np.log(sc['bbb_spread'])
+sc['gdp_g'] = sc['gdp'].pct_change()
+sc['unemp'] = sc['unemployment']
+sc['hpi_g'] = sc['hpi'].pct_change()
+
+for col in ['sp500', 'djia', 'nasdaq']:
+    sc[f'{col}_dist'] = 1.0 - sc[col] / train_imp[col].cummax().iloc[-1]
+
+sc['mkt_weak'] = (sc['sp500_dist'] + sc['djia_dist'] + sc['nasdaq_dist']) / 3.0
+sc['vix_lvl'] = sc['vix']
+sc['spread_x_weak'] = sc['bbb_spread'] * sc['mkt_weak']
+sc['cpi_g'] = sc['cpi'].pct_change()
+
+# Handle NaN in first row
+last_train = train_imp.iloc[-1]
+for col in ['gdp_g', 'hpi_g', 'cpi_g']:
+    if pd.isna(sc.iloc[0][col]):
+        sc.loc[sc.index[0], col] = last_train[col] if not pd.isna(last_train[col]) else 0.0
+
+if pd.isna(sc.iloc[0]['mkt_weak']):
+    sc.loc[sc.index[0], 'mkt_weak'] = (
+        sc.loc[sc.index[0], 'sp500_dist'] + 
+        sc.loc[sc.index[0], 'djia_dist'] + 
+        sc.loc[sc.index[0], 'nasdaq_dist']
+    ) / 3.0
+
+if pd.isna(sc.iloc[0]['spread_x_weak']):
+    sc.loc[sc.index[0], 'spread_x_weak'] = sc.loc[sc.index[0], 'bbb_spread'] * sc.loc[sc.index[0], 'mkt_weak']
+
+# ============================================================
+# 5. Predict with OLS prediction intervals
+# ============================================================
+X_sc = sc[feature_cols]
+X_sc_const = sm.add_constant(X_sc, has_constant='add')
+
+y_pred_ols = model.get_prediction(X_sc_const)
+pred_ols = y_pred_ols.summary_frame(alpha=0.05)
+
+y_ols_pred = pred_ols['mean'].values
+y_ols_lower = pred_ols['obs_ci_lower'].values
+y_ols_upper = pred_ols['obs_ci_upper'].values
+
+# ============================================================
+# 6. Bootstrap prediction intervals for robustness
+# ============================================================
+np.random.seed(42)
+n_boot = 5000
+residuals = y - model.fittedvalues
+
+boot_preds = np.zeros((n_boot, len(sc)))
+for b in range(n_boot):
+    boot_resid = np.random.choice(residuals, size=len(residuals), replace=True)
+    boot_y = model.fittedvalues + boot_resid
+    try:
+        boot_model = sm.OLS(boot_y, Xc).fit()
+        boot_preds[b] = boot_model.predict(X_sc_const)
+    except:
+        boot_preds[b] = np.nan
+
+boot_preds = boot_preds[~np.isnan(boot_preds).any(axis=1)]
+boot_lower = np.percentile(boot_preds, 2.5, axis=0)
+boot_upper = np.percentile(boot_preds, 97.5, axis=0)
+boot_mean = np.mean(boot_preds, axis=0)
+
+# ============================================================
+# 7. Combine: OLS point estimates + wider of (OLS interval, bootstrap interval)
+#    Use bootstrap intervals as they better capture model uncertainty
+# ============================================================
+y_final_pred = np.clip(y_ols_pred, 0, 1)
+y_final_lower = np.clip(boot_lower, 0, 1)
+y_final_upper = np.clip(boot_upper, 0, 1)
+
+# Ensure ordering
+for i in range(len(y_final_pred)):
+    if y_final_lower[i] > y_final_pred[i]:
+        y_final_lower[i] = max(0, y_final_pred[i] - (y_final_upper[i] - y_final_pred[i]) * 0.5)
+    if y_final_upper[i] < y_final_pred[i]:
+        y_final_upper[i] = min(1, y_final_pred[i] + (y_final_pred[i] - y_final_lower[i]) * 0.5)
+
+print("\n" + "="*60)
+print("Final Predictions")
+print("="*60)
+print(f"{'Quarter':>8s} {'Predicted':>10s} {'Lower(95%)':>12s} {'Upper(95%)':>12s}")
+for i in range(len(sc)):
+    q = sc.iloc[i]['quarter']
+    print(f"{int(q):>8d} {y_final_pred[i]:>10.6f} {y_final_lower[i]:>12.6f} {y_final_upper[i]:>12.6f}")
+
+# ============================================================
+# 8. Write predictions
+# ============================================================
+output = pd.DataFrame({
+    'quarter': sc['quarter'].astype(int),
+    'y_pred': y_final_pred,
+    'y_lower': y_final_lower,
+    'y_upper': y_final_upper,
+})
+
+output.to_csv('predictions.csv', index=False)
+print(f"\nWritten predictions.csv with {len(output)} rows")
+
+# Verify
+print(f"\nVerification:")
+print(f"  Rows: {len(output)}")
+print(f"  Columns: {list(output.columns)}")
+print(f"  All quarters: {list(output['quarter'])}")
+print(f"  All y_pred in [0,1]: {(output['y_pred'] >= 0).all() and (output['y_pred'] <= 1).all()}")
+print(f"  All y_lower <= y_pred: {(output['y_lower'] <= output['y_pred']).all()}")
+print(f"  All y_pred <= y_upper: {(output['y_pred'] <= output['y_upper']).all()}")
+
+# Also print the file content
+print("\nFile content:")
+print(pd.read_csv('predictions.csv').to_string())
+
+PYEOF
+python3 model_final2.py
 ```
 
 ## [26] tool
@@ -1165,7 +2712,7 @@ Let me verify the final output file is correct.
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [28] tool
@@ -1232,7 +2779,25 @@ The predictions look good. Let me verify everything is correct and submit.
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Shape:', df.shape)
+print('Columns:', list(df.columns))
+print('Dtypes:', dict(df.dtypes))
+print()
+print(df.to_string())
+print()
+# Verify exactly 9 rows, one per scenario quarter
+assert len(df) == 9, f'Expected 9 rows, got {len(df)}'
+assert list(df.columns) == ['quarter', 'y_pred', 'y_lower', 'y_upper'], f'Wrong columns: {list(df.columns)}'
+assert (df['y_pred'] >= 0).all() and (df['y_pred'] <= 1).all(), 'y_pred out of range'
+assert (df['y_lower'] >= 0).all(), 'y_lower out of range'
+assert (df['y_upper'] <= 1).all(), 'y_upper out of range'
+assert (df['y_lower'] <= df['y_pred']).all(), 'y_lower > y_pred'
+assert (df['y_pred'] <= df['y_upper']).all(), 'y_pred > y_upper'
+print('All checks passed!')
+"
 ```
 
 ## [30] tool

@@ -88,7 +88,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -113,7 +113,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 19:16 ..
 **tool call: bash**
 
 ```
-
+head data/history.csv
 ```
 
 ## [5] tool
@@ -141,7 +141,7 @@ A,9,7.002681463164512,-0.011635459036739883,0.0466,0.6777530053721394,0.0249
 **tool call: bash**
 
 ```
-
+cat data/forecast.csv
 ```
 
 ## [7] tool
@@ -168,7 +168,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+cat data/pools.csv
 ```
 
 ## [9] tool
@@ -199,7 +199,7 @@ C4,C,9752120.0,40
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [11] tool
@@ -219,7 +219,7 @@ C4,C,9752120.0,40
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/history.csv | sort -u
 ```
 
 ## [13] tool
@@ -1018,7 +1018,11 @@ Processing segment A...
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+pools = pd.read_csv('data/pools.csv')
+print(pools.groupby('segment')['remaining_quarters'].max())
+"
 ```
 
 ## [21] tool
@@ -1583,7 +1587,7 @@ Segment C:
 **tool call: bash**
 
 ```
-
+head -5 predictions.csv
 ```
 
 ## [31] tool
@@ -1676,7 +1680,7 @@ A4,777713.1711031841,607841.8516223712,973404.7399511536
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [33] tool

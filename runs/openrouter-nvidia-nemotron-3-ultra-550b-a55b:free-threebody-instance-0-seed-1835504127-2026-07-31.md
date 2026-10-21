@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv
 ```
 
 ## [3] tool
@@ -93,7 +93,7 @@ t,alpha,beta
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/test.csv && head -20 data/test.csv
 ```
 
 ## [5] tool
@@ -2704,7 +2704,7 @@ Let me verify the file is correctly formatted and submit.
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [39] tool

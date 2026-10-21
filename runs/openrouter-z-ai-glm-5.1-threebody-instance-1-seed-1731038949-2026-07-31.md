@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -109,7 +109,7 @@ t
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv && echo "---" && cat data/test.csv
 ```
 
 ## [5] tool
@@ -7092,7 +7092,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [115] tool
@@ -7427,7 +7427,7 @@ Train end=3000:
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv && head -1 predictions.csv && tail -1 predictions.csv
 ```
 
 ## [121] tool
@@ -8532,7 +8532,7 @@ Saved predictions.csv
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [135] tool
@@ -8579,7 +8579,7 @@ The predictions look good. Let me verify the file format one final time and subm
 **tool call: bash**
 
 ```
-
+echo "=== Test data ===" && head -5 data/test.csv && echo "=== Predictions ===" && head -5 predictions.csv && echo "=== Row counts ===" && wc -l data/test.csv predictions.csv
 ```
 
 ## [137] tool

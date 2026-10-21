@@ -86,7 +86,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la data/ && echo "---" && head -20 data/history.csv && echo "---" && head -20 data/forecast.csv && echo "---" && head -20 data/pools.csv && echo "---" && cat data/policy.json
 ```
 
 ## [3] tool
@@ -157,7 +157,12 @@ C4,C,9752120.0,40
 **tool call: bash**
 
 ```
-
+wc -l data/history.csv && cut -d, -f1 data/history.csv | sort | uniq -c && echo "---" && python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+print(h.groupby('segment').agg(n=('quarter','count'), pd_mean=('pd','mean'), lgd_mean=('lgd','mean'), prepay_mean=('prepay','mean')))
+print(h.groupby('segment')['quarter'].max())
+"
 ```
 
 ## [5] tool
@@ -275,7 +280,16 @@ Let me explore the data structure and relationships before building the model.
 **tool call: bash**
 
 ```
-
+cd /root 2>/dev/null; python3 -c "
+import pandas as pd, numpy as np
+h = pd.read_csv('data/history.csv')
+for s in ['A','B','C']:
+    d = h[h.segment==s]
+    print('=== segment', s)
+    print(d[['unemployment','hpi_growth','pd','lgd','prepay']].describe().loc[['mean','std','min','max']].round(4))
+    print('corr:')
+    print(d[['unemployment','hpi_growth','pd','lgd','prepay']].corr().round(3))
+"
 ```
 
 ## [7] tool
@@ -312,7 +326,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/history.csv'
 **tool call: bash**
 
 ```
-
+pwd && ls && ls data/
 ```
 
 ## [9] tool
@@ -336,7 +350,16 @@ pools.csv
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+h = pd.read_csv('data/history.csv')
+for s in ['A','B','C']:
+    d = h[h.segment==s]
+    print('=== segment', s)
+    print(d[['unemployment','hpi_growth','pd','lgd','prepay']].describe().loc[['mean','std','min','max']].round(4))
+    print('corr:')
+    print(d[['unemployment','hpi_growth','pd','lgd','prepay']].corr().round(3))
+"
 ```
 
 ## [11] tool
@@ -397,7 +420,14 @@ prepay              -0.757       0.922 -0.894 -0.921   1.000
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+h = pd.read_csv('data/history.csv')
+# check econ drivers identical across segments
+for q in [1,2,50,80]:
+    sub = h[h.quarter==q]
+    print(q, sub.unemployment.nunique(), sub.hpi_growth.nunique())
+"
 ```
 
 ## [13] tool
@@ -427,7 +457,36 @@ Economic drivers are shared across segments. Now let me test functional forms fo
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy.special import logit, expit
+h = pd.read_csv('data/history.csv')
 
+def r2(y, yhat):
+    ss = ((y-yhat)**2).sum()
+    return 1 - ss/((y-y.mean())**2).sum()
+
+for s in ['A','B','C']:
+    d = h[h.segment==s]
+    u, g = d.unemployment.values, d.hpi_growth.values
+    X1 = np.c_[u, g]
+    X2 = np.c_[u, g, u*g]
+    X3 = np.c_[u, g, u*u, g*g, u*g]
+    for rate in ['pd','lgd','prepay']:
+        y = d[rate].values
+        out = []
+        for name, X in [('lin',X1),('int',X2),('quad',X3)]:
+            m = LinearRegression().fit(X, y)
+            out.append(f'{name}:{r2(y, m.predict(X)):.4f}')
+        # logit
+        m = LinearRegression().fit(X1, logit(y))
+        out.append(f'logitlin:{r2(y, expit(m.predict(X1))):.4f}')
+        # log
+        m = LinearRegression().fit(X1, np.log(y))
+        out.append(f'loglin:{r2(y, np.exp(m.predict(X1))):.4f}')
+        print(s, rate, ' '.join(out))
+EOF
 ```
 
 ## [15] tool
@@ -464,7 +523,46 @@ C prepay lin:0.9546 int:0.9700 quad:0.9732 logitlin:0.9727 loglin:0.9727
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import LeaveOneOut
+from scipy.special import logit, expit, ndtri, ndf
+h = pd.read_csv('data/history.csv')
 
+def loocv_rmse(X, y, link=None):
+    loo = LeaveOneOut(); errs = []
+    for tr, te in loo.split(X):
+        yt = y[tr] if link is None else link(y[tr])
+        m = LinearRegression().fit(X[tr], yt)
+        p = m.predict(X[te])
+        if link is logit: p = expit(p)
+        elif link is np.log: p = np.exp(p)
+        elif link is ndtri: p = ndf(p)
+        errs.append((y[te]-p)**2)
+    return np.sqrt(np.mean(errs))
+
+feats = {
+ 'lin': lambda u,g: np.c_[u,g],
+ 'int': lambda u,g: np.c_[u,g,u*g],
+ 'quad': lambda u,g: np.c_[u,g,u*u,g*g,u*g],
+ 'cubic': lambda u,g: np.c_[u,g,u*u,g*g,u*g,u**3,g**3,u*u*g,u*g*g],
+}
+links = {'id':None,'logit':logit,'log':np.log,'probit':ndtri}
+for rate in ['pd','lgd','prepay']:
+    print('===', rate)
+    for s in ['A','B','C']:
+        d = h[h.segment==s]; u,g = d.unemployment.values, d.hpi_growth.values
+        y = d[rate].values
+        res = {}
+        for fn, ff in feats.items():
+            X = ff(u,g)
+            for ln, lf in links.items():
+                if ln in ('logit','log','probit') and (y<=0).any(): continue
+                res[f'{fn}-{ln}'] = loocv_rmse(X, y, lf)
+        best = sorted(res.items(), key=lambda kv: kv[1])[:4]
+        print(s, ', '.join(f'{k}:{v:.5f}' for k,v in best))
+EOF
 ```
 
 ## [17] tool
@@ -487,7 +585,46 @@ ImportError: cannot import name 'ndf' from 'scipy.special' (/usr/local/lib/pytho
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import LeaveOneOut
+from scipy.special import logit, expit
+from scipy.stats import norm
+h = pd.read_csv('data/history.csv')
 
+def loocv_rmse(X, y, link=None):
+    loo = LeaveOneOut(); errs = []
+    for tr, te in loo.split(X):
+        yt = y[tr] if link is None else link(y[tr])
+        m = LinearRegression().fit(X[tr], yt)
+        p = m.predict(X[te])
+        if link is logit: p = expit(p)
+        elif link is np.log: p = np.exp(p)
+        elif link is norm.ppf: p = norm.cdf(p)
+        errs.append((y[te]-p)**2)
+    return np.sqrt(np.mean(errs))
+
+feats = {
+ 'lin': lambda u,g: np.c_[u,g],
+ 'int': lambda u,g: np.c_[u,g,u*g],
+ 'quad': lambda u,g: np.c_[u,g,u*u,g*g,u*g],
+ 'cubic': lambda u,g: np.c_[u,g,u*u,g*g,u*g,u**3,g**3,u*u*g,u*g*g],
+}
+links = {'id':None,'logit':logit,'log':np.log,'probit':norm.ppf}
+for rate in ['pd','lgd','prepay']:
+    print('===', rate)
+    for s in ['A','B','C']:
+        d = h[h.segment==s]; u,g = d.unemployment.values, d.hpi_growth.values
+        y = d[rate].values
+        res = {}
+        for fn, ff in feats.items():
+            X = ff(u,g)
+            for ln, lf in links.items():
+                res[f'{fn}-{ln}'] = loocv_rmse(X, y, lf)
+        best = sorted(res.items(), key=lambda kv: kv[1])[:4]
+        print(s, ', '.join(f'{k}:{v:.6f}' for k,v in best))
+EOF
 ```
 
 ## [19] tool
@@ -626,7 +763,134 @@ C lin-log:0.002892, lin-logit:0.002893, int-logit:0.002919, int-log:0.002925
 **tool call: bash**
 
 ```
+cat > /workspace/solution.py << 'EOF'
+import json
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
+from scipy.special import logit, expit
+from sklearn.linear_model import LinearRegression
 
+# ---------------- load ----------------
+hist = pd.read_csv('data/history.csv')
+fc   = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+pol  = json.load(open('data/policy.json'))
+
+F = int(pol['forecast_quarters'])       # 8
+R = int(pol['reversion_quarters'])      # 4
+rho = float(pol['rho'])                 # 0.02
+pers = float(pol['persistence'])        # 0.6
+
+Tmax = int(pools.remaining_quarters.max())
+segments = sorted(hist.segment.unique())
+
+# ---------------- fit conditional-mean models ----------------
+# PD, prepay: OLS on logit(rate) ~ u + g  (best LOOCV).  LGD: OLS on rate ~ u + g.
+models = {}   # models[(seg, rate)] = fitted LinearRegression on transformed scale
+hist_mean = {}  # hist_mean[(seg, rate)] = simple mean of observed rates
+for s in segments:
+    d = hist[hist.segment == s]
+    X = np.c_[d.unemployment.values, d.hpi_growth.values]
+    for rate in ['pd', 'lgd', 'prepay']:
+        y = d[rate].values
+        hist_mean[(s, rate)] = y.mean()
+        if rate in ('pd', 'prepay'):
+            m = LinearRegression().fit(X, logit(y))
+        else:
+            m = LinearRegression().fit(X, y)
+        models[(s, rate)] = m
+
+# ---------------- build mean rate paths ----------------
+def predict_rate(seg, rate, X):
+    m = models[(seg, rate)]
+    p = m.predict(X)
+    if rate in ('pd', 'prepay'):
+        p = expit(p)
+    return np.clip(p, 1e-8, 1 - 1e-8)
+
+paths = {}   # paths[seg] = dict of arrays len Tmax for pd, lgd, prepay
+Xf = np.c_[fc.unemployment.values, fc.hpi_growth.values]  # len F
+for s in segments:
+    paths[s] = {}
+    for rate in ['pd', 'lgd', 'prepay']:
+        fcst_vals = predict_rate(s, rate, Xf)          # F values
+        hm = hist_mean[(s, rate)]
+        vals = np.empty(Tmax)
+        vals[:F] = fcst_vals
+        last = fcst_vals[-1]
+        for j in range(1, R + 1):                      # reversion quarters
+            w = j / R                                  # weight on history
+            vals[F + j - 1] = (1 - w) * last + w * hm
+        vals[F + R:] = hm                              # afterward hold historical mean
+        paths[s][rate] = vals
+
+# ---------------- Monte Carlo simulation ----------------
+N_SIM = 400_000
+CHUNK = 100_000
+rng = np.random.default_rng(20240521)
+sr = np.sqrt(rho)
+s1r = np.sqrt(1 - rho)
+sp = np.sqrt(1 - pers ** 2)
+
+results = {}
+for s in segments:
+    m_pd = paths[s]['pd']
+    lgd = paths[s]['lgd']
+    pp  = paths[s]['prepay']
+    c = norm.ppf(m_pd)                      # inverse probit of mean PD path
+    seg_pools = pools[pools.segment == s]
+    # accumulate per-pool sums / samples
+    loss_sums = {pid: 0.0 for pid in seg_pools.pool_id}
+    loss_samples = {pid: [] for pid in seg_pools.pool_id}   # store chunked samples for percentiles
+    done = 0
+    while done < N_SIM:
+        n = min(CHUNK, N_SIM - done)
+        eps = rng.standard_normal((n, Tmax))
+        z = np.empty((n, Tmax))
+        z[:, 0] = eps[:, 0]
+        for q in range(1, Tmax):
+            z[:, q] = pers * z[:, q - 1] + sp * eps[:, q]
+        pi = norm.cdf((c[None, :] + sr * z) / s1r)    # realized aggregate PD path
+        for _, row in seg_pools.iterrows():
+            T = int(row.remaining_quarters)
+            N = np.ones(n)
+            loss = np.zeros(n)
+            for q in range(T):
+                beg = 1.0 - q / T                     # 1-based quarter q+1: 1-((q+1)-1)/T
+                loss += pi[:, q] * N * beg * lgd[q]
+                N = N * (1 - pi[:, q]) * (1 - pp[q])
+            loss_sums[row.pool_id] += loss.sum()
+            loss_samples[row.pool_id].append(loss)
+        done += n
+    for _, row in seg_pools.iterrows():
+        pid = row.pool_id
+        B = row.balance
+        samp = np.concatenate(loss_samples[pid])
+        ecl_rate = loss_sums[pid] / N_SIM
+        lo, hi = np.percentile(samp, [2.5, 97.5])
+        results[pid] = (ecl_rate * B, lo * B, hi * B)
+
+# ---------------- write ----------------
+out = pools[['pool_id']].copy()
+out['ecl'] = out.pool_id.map(lambda p: results[p][0])
+out['ecl_lower'] = out.pool_id.map(lambda p: results[p][1])
+out['ecl_upper'] = out.pool_id.map(lambda p: results[p][2])
+# enforce bounds
+bal = pools.set_index('pool_id').balance
+for col in ['ecl', 'ecl_lower', 'ecl_upper']:
+    out[col] = np.clip(out[col], 0.0, out.pool_id.map(bal))
+out['ecl_lower'] = np.minimum(out.ecl_lower, out.ecl_upper)
+out.to_csv('predictions.csv', index=False)
+print(out.to_string(index=False))
+print('\nportfolio allowance:', out.ecl.sum())
+# diagnostics: loss rates
+chk = out.merge(pools, on='pool_id')
+chk['ecl_rate'] = chk.ecl / chk.balance
+chk['width_rate'] = (chk.ecl_upper - chk.ecl_lower) / chk.balance
+print(chk[['pool_id','segment','remaining_quarters','ecl_rate','width_rate']].to_string(index=False))
+EOF
+python3 /workspace/solution.py
 ```
 
 ## [21] tool
@@ -694,7 +958,69 @@ The pipeline runs. Let me validate: MC convergence, deterministic vs simulated m
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import json, numpy as np, pandas as pd
+from scipy.stats import norm
+from scipy.special import logit, expit
+from sklearn.linear_model import LinearRegression
 
+hist = pd.read_csv('data/history.csv'); fc = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv'); pol = json.load(open('data/policy.json'))
+F, R, rho, pers = pol['forecast_quarters'], pol['reversion_quarters'], pol['rho'], pol['persistence']
+Tmax = 40
+models, hist_mean = {}, {}
+for s in ['A','B','C']:
+    d = hist[hist.segment==s]; X = np.c_[d.unemployment, d.hpi_growth]
+    for rate in ['pd','lgd','prepay']:
+        y = d[rate].values; hist_mean[(s,rate)] = y.mean()
+        models[(s,rate)] = LinearRegression().fit(X, logit(y) if rate!='lgd' else y)
+Xf = np.c_[fc.unemployment, fc.hpi_growth]
+paths = {}
+for s in ['A','B','C']:
+    paths[s] = {}
+    for rate in ['pd','lgd','prepay']:
+        p = models[(s,rate)].predict(Xf)
+        fv = expit(p) if rate!='lgd' else p
+        hm = hist_mean[(s,rate)]
+        v = np.empty(Tmax); v[:F] = fv
+        for j in range(1,R+1): v[F+j-1] = (1-j/R)*fv[-1] + (j/R)*hm
+        v[F+R:] = hm
+        paths[s][rate] = v
+    print(f'seg {s}: fcst pd {np.round(paths[s]["pd"][:8],4)}')
+    print(f'      fcst lgd {np.round(paths[s]["lgd"][:8],3)}  hist lgd {hist_mean[(s,"lgd")]:.3f}')
+    print(f'      fcst pp  {np.round(paths[s]["prepay"][:8],4)} hist pd {hist_mean[(s,"pd")]:.4f} hist pp {hist_mean[(s,"prepay")]:.4f}')
+
+# deterministic (no shock) loss vs simulated mean, per pool
+def det_loss(s, T):
+    pd_, lg, pp = paths[s]['pd'], paths[s]['lgd'], paths[s]['prepay']
+    N=1.0; loss=0.0
+    for q in range(T):
+        loss += pd_[q]*N*(1-q/T)*lg[q]
+        N *= (1-pd_[q])*(1-pp[q])
+    return loss
+
+def sim(s, T, n=400000, seed=7):
+    c = norm.ppf(paths[s]['pd']); lg = paths[s]['lgd']; pp = paths[s]['prepay']
+    rng = np.random.default_rng(seed)
+    tot = 0.0; qs = []
+    for _ in range(4):
+        eps = rng.standard_normal((n, Tmax)); z = np.empty((n, Tmax)); z[:,0]=eps[:,0]
+        for q in range(1,Tmax): z[:,q]=pers*z[:,q-1]+np.sqrt(1-pers**2)*eps[:,q]
+        pi = norm.cdf((c[None,:]+np.sqrt(rho)*z)/np.sqrt(1-rho))
+        N=np.ones(n); loss=np.zeros(n)
+        for q in range(T):
+            loss += pi[:,q]*N*(1-q/T)*lg[q]
+            N *= (1-pi[:,q])*(1-pp[q])
+        tot += loss.sum(); qs.append(loss)
+    samp = np.concatenate(qs)
+    return tot/(4*n), np.percentile(samp,2.5), np.percentile(samp,97.5)
+
+print('\npool  det_rate   sim_rate   lo       hi')
+for _,r in pools.iterrows():
+    s,T,B = r.segment, int(r.remaining_quarters), r.balance
+    d = det_loss(s,T); m,lo,hi = sim(s,T)
+    print(f'{r.pool_id}  {d:.5f}  {m:.5f}  {lo:.5f}  {hi:.5f}  (sim-det={m-d:+.5f})')
+EOF
 ```
 
 ## [23] tool
@@ -764,7 +1090,68 @@ Simulation matches the deterministic path (small convexity gap, as expected) and
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import json, numpy as np, pandas as pd
+from scipy.special import logit, expit
+from sklearn.linear_model import LinearRegression
 
+hist = pd.read_csv('data/history.csv'); fc = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv'); pol = json.load(open('data/policy.json'))
+F, R = pol['forecast_quarters'], pol['reversion_quarters']
+Tmax = 40
+Xf = np.c_[fc.unemployment, fc.hpi_growth]
+
+def build_paths(spec):
+    # spec: dict rate -> (features, link)
+    paths = {}
+    for s in ['A','B','C']:
+        d = hist[hist.segment==s]
+        u, g = d.unemployment.values, d.hpi_growth.values
+        paths[s] = {}
+        for rate in ['pd','lgd','prepay']:
+            feat, link = spec[rate]
+            def F_(u,g):
+                if feat=='lin': return np.c_[u,g]
+                if feat=='int': return np.c_[u,g,u*g]
+                if feat=='quad': return np.c_[u,g,u*u,g*g,u*g]
+            X = F_(u,g); y = d[rate].values
+            m = LinearRegression().fit(X, logit(y) if link=='logit' else (np.log(y) if link=='log' else y))
+            pf = m.predict(F_(fc.unemployment.values, fc.hpi_growth.values))
+            fv = expit(pf) if link=='logit' else (np.exp(pf) if link=='log' else pf)
+            fv = np.clip(fv, 1e-8, 1-1e-8)
+            hm = y.mean()
+            v = np.empty(Tmax); v[:F]=fv
+            for j in range(1,R+1): v[F+j-1]=(1-j/R)*fv[-1]+(j/R)*hm
+            v[F+R:]=hm
+            paths[s][rate]=v
+    return paths
+
+def det_loss(paths, s, T):
+    pd_, lg, pp = paths[s]['pd'], paths[s]['lgd'], paths[s]['prepay']
+    N=1.0; loss=0.0
+    for q in range(T):
+        loss += pd_[q]*N*(1-q/T)*lg[q]
+        N *= (1-pd_[q])*(1-pp[q])
+    return loss
+
+specs = {
+ 'base (logit/logit/lin)':      {'pd':('lin','logit'),'lgd':('lin','id'),'prepay':('lin','logit')},
+ 'log for pd':                  {'pd':('lin','log'),'lgd':('lin','id'),'prepay':('lin','logit')},
+ 'all linear':                  {'pd':('lin','id'),'lgd':('lin','id'),'prepay':('lin','id')},
+ 'all logit':                   {'pd':('lin','logit'),'lgd':('lin','logit'),'prepay':('lin','logit')},
+ 'interactions':                {'pd':('int','logit'),'lgd':('int','id'),'prepay':('int','logit')},
+ 'quad':                        {'pd':('quad','logit'),'lgd':('quad','id'),'prepay':('quad','logit')},
+}
+base = None
+for name, spec in specs.items():
+    paths = build_paths(spec)
+    rates = [det_loss(paths, r.segment, int(r.remaining_quarters)) for _,r in pools.iterrows()]
+    rates = np.array(rates)
+    if base is None: base = rates
+    diff = rates - base
+    print(f'{name:32s} rates={np.round(rates,5)}')
+    print(f'   max abs diff vs base: {np.abs(diff).max():.5f}  rel: {(np.abs(diff)/base).max()*100:.2f}%')
+EOF
 ```
 
 ## [25] tool
@@ -838,7 +1225,39 @@ Spec choice is robust (all reasonable specs within ~1%). Let me check for additi
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import numpy as np, pandas as pd
+from scipy.special import logit, expit
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import LeaveOneOut
 
+hist = pd.read_csv('data/history.csv')
+
+def loocv(X, y, link):
+    loo = LeaveOneOut(); errs=[]
+    for tr, te in loo.split(X):
+        yt = logit(y[tr]) if link else y[tr]
+        m = LinearRegression().fit(X[tr], yt)
+        p = m.predict(X[te]); p = expit(p) if link else p
+        errs.append((y[te]-p)**2)
+    return np.sqrt(np.mean(errs))
+
+for rate, link in [('pd',True),('prepay',True),('lgd',False)]:
+    print('===', rate)
+    for s in ['A','B','C']:
+        d = hist[hist.segment==s].reset_index(drop=True)
+        u,g = d.unemployment.values, d.hpi_growth.values
+        y = d[rate].values
+        ul = np.roll(u,1); gl = np.roll(g,1); ul[0]=u[0]; gl[0]=g[0]  # lag (crude at boundary)
+        X0 = np.c_[u,g]
+        X1 = np.c_[u,g,ul,gl]
+        r0, r1 = loocv(X0,y,link), loocv(X1,y,link)
+        # residual autocorrelation from full fit
+        m = LinearRegression().fit(X0, logit(y) if link else y)
+        res = (logit(y) if link else y) - m.predict(X0)
+        ac1 = np.corrcoef(res[:-1],res[1:])[0,1]
+        print(f'{s}: loocv base={r0:.6f} +lags={r1:.6f}  resid ac1={ac1:+.3f}')
+EOF
 ```
 
 ## [27] tool
@@ -900,7 +1319,7 @@ No extra structure — lagged drivers don't help and residuals are roughly iid. 
 **tool call: bash**
 
 ```
-
+sed -i 's/N_SIM = 400_000/N_SIM = 1_000_000/; s/CHUNK = 100_000/CHUNK = 250_000/' /workspace/solution.py && time python3 /workspace/solution.py
 ```
 
 ## [29] tool
@@ -961,7 +1380,24 @@ Results are stable across sim counts. Final validation of the output file:
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 << 'EOF'
+import pandas as pd, numpy as np
+p = pd.read_csv('predictions.csv')
+pools = pd.read_csv('data/pools.csv')
+print(p.to_string(index=False))
+assert list(p.columns) == ['pool_id','ecl','ecl_lower','ecl_upper']
+assert len(p) == len(pools) and p.pool_id.is_unique and set(p.pool_id)==set(pools.pool_id)
+m = p.merge(pools, on='pool_id')
+assert np.isfinite(p[['ecl','ecl_lower','ecl_upper']].values).all()
+assert (p.ecl_lower <= p.ecl_upper).all()
+assert (p.ecl >= 0).all() and (p.ecl <= m.balance).all()
+assert (p.ecl_lower >= 0).all() and (p.ecl_upper <= m.balance).all()
+assert (p.ecl >= p.ecl_lower).all() and (p.ecl <= p.ecl_upper).all()
+print('\nAll checks passed. Rows:', len(p))
+print('Portfolio allowance: $%.2f' % p.ecl.sum())
+print('Weighted mean lifetime loss rate: %.4f' % (p.ecl.sum()/m.balance.sum()))
+EOF
+cat /workspace/predictions.csv
 ```
 
 ## [31] tool

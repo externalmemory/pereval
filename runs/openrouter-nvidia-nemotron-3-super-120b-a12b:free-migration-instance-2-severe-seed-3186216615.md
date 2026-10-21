@@ -119,7 +119,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -145,7 +145,7 @@ drwxr-xr-x 1 root root 4096 Oct 19 14:52 ..
 **tool call: bash**
 
 ```
-
+head -20 data/transitions.csv
 ```
 
 ## [5] tool
@@ -183,7 +183,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+cat data/transitions.csv | cut -d, -f1 | sort -u
 ```
 
 ## [7] tool
@@ -224,7 +224,7 @@ year
 **tool call: bash**
 
 ```
-
+tail -n +2 data/transitions.csv | cut -d, -f1 | sort -u | head -30
 ```
 
 ## [9] tool
@@ -264,7 +264,7 @@ year
 **tool call: bash**
 
 ```
-
+head -5 data/macro_history.csv
 ```
 
 ## [11] tool
@@ -313,7 +313,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+tail -5 data/macro_history.csv
 ```
 
 ## [13] tool
@@ -340,7 +340,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+cat data/scenario.csv
 ```
 
 ## [15] tool
@@ -370,7 +370,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cat data/portfolio.csv
 ```
 
 ## [17] tool
@@ -1072,7 +1072,7 @@ KeyError: "['D'] not in index"
 **tool call: bash**
 
 ```
-
+cut -d, -f2 data/transitions.csv | sort -u
 ```
 
 ## [39] tool
@@ -2969,7 +2969,7 @@ Matrices.csv saved.
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [73] tool
@@ -2990,7 +2990,7 @@ Matrices.csv saved.
 **tool call: bash**
 
 ```
-
+head -5 predictions.csv
 ```
 
 ## [75] tool
@@ -3013,7 +3013,7 @@ quarter,state,share
 **tool call: bash**
 
 ```
-
+wc -l matrices.csv
 ```
 
 ## [77] tool
@@ -3032,7 +3032,7 @@ quarter,state,share
 **tool call: bash**
 
 ```
-
+head -20 matrices.csv
 ```
 
 ## [79] tool
@@ -3086,7 +3086,7 @@ quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC/C,to_D
 **tool call: bash**
 
 ```
-
+head -5 backtest.csv
 ```
 
 ## [81] tool
@@ -3284,7 +3284,7 @@ Matrices.csv rows: 63
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [85] tool
@@ -3313,7 +3313,7 @@ Matrices.csv rows: 63
 **tool call: bash**
 
 ```
-
+ls -l *.csv
 ```
 
 ## [87] tool

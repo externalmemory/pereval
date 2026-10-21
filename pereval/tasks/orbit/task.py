@@ -249,4 +249,9 @@ def hyperbolic(
         solver=solver,
         scorer=make_interval_scorer("hyperbolic", ["t"], None, _hyp.truth_to_points),
         sandbox=("docker", COMPOSE),
+        # Without this the `repeats` argument above is accepted and discarded, and
+        # the run still reports `runs` 1 and `regret_spread` 0, which reads as
+        # perfect stability rather than as a single draw. Two-body and three-body
+        # get it from _build; this task builds its Task inline and so needs its own.
+        epochs=_epochs(repeats),
     )

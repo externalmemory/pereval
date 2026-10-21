@@ -133,7 +133,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -159,7 +159,7 @@ drwxr-xr-x 1 root root 4096 Oct 19 16:53 ..
 **tool call: bash**
 
 ```
-
+head -20 data/transitions.csv
 ```
 
 ## [5] tool
@@ -197,7 +197,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+wc -l data/transitions.csv
 ```
 
 ## [7] tool
@@ -218,7 +218,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/transitions.csv | sort -u | head -5
 ```
 
 ## [9] tool
@@ -241,7 +241,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/transitions.csv | sort -un
 ```
 
 ## [11] tool
@@ -282,7 +282,7 @@ year
 **tool call: bash**
 
 ```
-
+head data/macro_history.csv
 ```
 
 ## [13] tool
@@ -314,7 +314,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+head data/scenario.csv
 ```
 
 ## [15] tool
@@ -344,7 +344,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cat data/portfolio.csv
 ```
 
 ## [17] tool
@@ -370,7 +370,7 @@ CCC/C,284
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [19] tool
@@ -734,7 +734,7 @@ Backtest saved:
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [23] tool
@@ -755,7 +755,7 @@ Backtest saved:
 **tool call: bash**
 
 ```
-
+wc -l matrices.csv
 ```
 
 ## [25] tool
@@ -1319,7 +1319,7 @@ Implied annual default rate for portfolio: 0.015281397939878889
 **tool call: bash**
 
 ```
-
+ls -l *.csv
 ```
 
 ## [37] tool
@@ -1340,7 +1340,7 @@ Implied annual default rate for portfolio: 0.015281397939878889
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [39] tool
@@ -1409,7 +1409,7 @@ quarter,state,share
 **tool call: bash**
 
 ```
-
+echo 'Task completed. predictions.csv ready.'
 ```
 
 ## [41] tool

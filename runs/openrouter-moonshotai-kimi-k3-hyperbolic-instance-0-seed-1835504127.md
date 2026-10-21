@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -112,6 +112,30 @@ t
 **tool call: bash**
 
 ```
+cat data/test.csv && echo "---" && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.describe())
+print('t range:', df.t.min(), df.t.max())
+print('alpha non-null:', df.alpha.notna().sum())
+print('beta non-null:', df.beta.notna().sum())
+print('gamma non-null:', df.gamma.notna().sum())
+print()
+# Find contiguous segments where gamma is present
+g = df.gamma.notna().values
+t = df.t.values
+import numpy as np
+# find runs
+runs = []
+in_run = False
+for i in range(len(g)):
+    if g[i] and not in_run:
+        start = i; in_run = True
+    elif not g[i] and in_run:
+        runs.append((t[start], t[i-1])); in_run = False
+if in_run: runs.append((t[start], t[-1]))
+print('gamma present runs:', runs)
+"
 
 ```
 
@@ -167,6 +191,25 @@ All 517 training rows have complete data (no blanks), spanning t=0..516, and the
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+a = df.alpha.values; b = df.beta.values; g = df.gamma.values
+# check diffs
+da = np.diff(a); db = np.diff(b)
+print('alpha diffs: min %.3f max %.3f' % (da.min(), da.max()))
+# unwrap
+au = np.rad2deg(np.unwrap(np.deg2rad(a)))
+bu = np.rad2deg(np.unwrap(np.deg2rad(b)))
+print('alpha unwrapped range: %.2f to %.2f, total drift %.2f over %d days -> %.4f deg/day' % (au[0], au[-1], au[-1]-au[0], len(t)-1, (au[-1]-au[0])/(len(t)-1)))
+print('beta unwrapped range: %.2f to %.2f, drift %.4f deg/day' % (bu[0], bu[-1], (bu[-1]-bu[0])/(len(t)-1)))
+print()
+# gamma stats per segment
+for lo,hi in [(0,100),(100,200),(200,300),(300,400),(400,517)]:
+    m = (t>=lo)&(t<hi)
+    print('t in [%d,%d): gamma mean %.2f std %.2f min %.2f max %.2f' % (lo,hi,g[m].mean(),g[m].std(),g[m].min(),g[m].max()))
+"
 
 ```
 
@@ -202,6 +245,24 @@ t in [400,517): gamma mean -14.41 std 6.32 min -22.28 max 4.23
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values; a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = df.gamma.values
+au = np.unwrap(a); bu = np.unwrap(b)
+# correlations
+for name, x in [('t',t),('alpha_u',np.rad2deg(au)),('beta_u',np.rad2deg(bu)),('a-b diff deg', np.rad2deg((a-b+np.pi)%(2*np.pi)-np.pi))]:
+    print(name, 'corr with gamma:', np.corrcoef(x, g)[0,1])
+print()
+# gamma vs sin/cos of various angles
+import numpy as np
+cands = {
+ 'sin(a)': np.sin(a), 'cos(a)': np.cos(a), 'sin(b)': np.sin(b), 'cos(b)': np.cos(b),
+ 'sin(a-b)': np.sin(a-b), 'cos(a-b)': np.cos(a-b),
+}
+for name,x in cands.items():
+    print(name, np.corrcoef(x,g)[0,1])
+"
 
 ```
 
@@ -237,6 +298,21 @@ cos(a-b) -0.3763082083702949
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values; a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = df.gamma.values
+X = np.column_stack([np.sin(a), np.cos(a), np.sin(b), np.cos(b), np.ones_like(t)])
+coef, res, rank, sv = np.linalg.lstsq(X, g, rcond=None)
+pred = X@coef
+r = g - pred
+print('coef:', coef)
+print('R2:', 1 - r.var()/g.var(), 'resid std:', r.std())
+# residual structure over time
+for lo,hi in [(0,100),(100,200),(200,300),(300,400),(400,517)]:
+    m=(t>=lo)&(t<hi)
+    print('t[%d,%d): resid mean %.3f std %.3f'%(lo,hi,r[m].mean(),r[m].std()))
+"
 
 ```
 
@@ -308,6 +384,28 @@ R²=0.935 already with sin/cos features — this smells like spherical astronomy
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = np.deg2rad(df.gamma.values)
+# linearity of alpha, beta (unwrapped)
+au = np.unwrap(a); bu = np.unwrap(b)
+for name, x in [('alpha',au),('beta',bu)]:
+    c = np.polyfit(t, x, 1); r = x - np.polyval(c, t)
+    print(name, 'rate %.5f deg/day, resid std %.4f deg, max %.4f' % (np.rad2deg(c[0]), np.rad2deg(r.std()), np.rad2deg(np.abs(r).max())))
+# physical model: sin(g) = c1 cos b cos a + c2 sin b sin a + c3 sin b
+X = np.column_stack([np.cos(b)*np.cos(a), np.sin(b)*np.sin(a), np.sin(b)])
+y = np.sin(g)
+coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+pred = X@coef
+resid = y - pred
+print()
+print('coef:', coef, ' norm check c1^2+c2^2+c3^2=', (coef**2).sum())
+print('R2 on sin(g):', 1 - resid.var()/y.var(), 'resid std (sin units):', resid.std())
+gr = g - np.arcsin(np.clip(pred,-1,1))
+print('resid std in deg:', np.rad2deg(gr.std()), 'max abs deg:', np.rad2deg(np.abs(gr).max()))
+"
 
 ```
 
@@ -338,6 +436,16 @@ Alpha and beta are strongly nonlinear in t. Let me look at their shapes directly
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+a = df.alpha.values; b = df.beta.values; g = df.gamma.values
+au = np.rad2deg(np.unwrap(np.deg2rad(a)))
+bu = np.rad2deg(np.unwrap(np.deg2rad(b)))
+for i in range(0, 517, 16):
+    print('t=%3d alpha=%7.2f au=%8.2f beta=%7.2f bu=%8.2f gamma=%7.2f' % (t[i], a[i], au[i], b[i], bu[i], g[i]))
+"
 
 ```
 
@@ -479,6 +587,23 @@ Fascinating — alpha advances ~1.08°/day with wobbles; beta has a retrograde-s
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = df.gamma.values
+au = np.unwrap(a); bu = np.unwrap(b)
+# detrend and periodogram
+for name, x in [('alpha',au),('beta',bu)]:
+    c = np.polyfit(t,x,1); r = x - np.polyval(c,t)
+    n = len(r)
+    R = np.fft.rfft(r*np.hanning(n))
+    freqs = np.fft.rfftfreq(n, d=1.0)
+    P = 1/freqs[1:]
+    amp = np.abs(R)[1:]
+    idx = np.argsort(amp)[::-1][:6]
+    print(name, 'top periods (days):', [(round(P[i],1), round(np.rad2deg(amp[i])*2/n,3)) for i in idx])
+"
 
 ```
 
@@ -506,6 +631,34 @@ Long-period dominance suggests near-window-scale periodicity or leakage. Let me 
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+def best_scan(x, Ps):
+    best = []
+    for P in Ps:
+        w = 2*np.pi/P
+        X = np.column_stack([t, np.ones_like(t), np.sin(w*t), np.cos(w*t)])
+        c,*_ = np.linalg.lstsq(X, x, rcond=None)
+        r = x - X@c
+        best.append((r.std(), P))
+    best.sort()
+    return best[:5]
+Ps = np.linspace(30, 3000, 6000)
+ba = best_scan(au, Ps); bb = best_scan(bu, Ps)
+print('alpha best (resid deg, P):', [(round(np.rad2deg(s),4), round(P,1)) for s,P in ba])
+print('beta  best (resid deg, P):', [(round(np.rad2deg(s),4), round(P,1)) for s,P in bb])
+# refine alpha near its best with 2 harmonics
+for P in [ba[0][1]]:
+    for nh in [1,2,3]:
+        cols=[t,np.ones_like(t)]
+        for k in range(1,nh+1):
+            cols += [np.sin(2*np.pi*k*t/P), np.cos(2*np.pi*k*t/P)]
+        X=np.column_stack(cols); c,*_=np.linalg.lstsq(X,au,rcond=None); r=au-X@c
+        print('alpha P=%.1f nh=%d resid std=%.4f deg max=%.3f'%(P,nh,np.rad2deg(r.std()),np.rad2deg(abs(r).max())))
+"
 
 ```
 
@@ -593,6 +746,46 @@ Alpha is well fit by linear + 2 harmonics at P≈326 d (Keplerian-like). Beta ne
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))  # home planet heliocentric longitude (proxy)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+
+# Model: body heliocentric longitude L2 = n2*t + c, radius ratio rho; geocentric longitude:
+# beta = atan2(rho sin L2 - sin L1, rho cos L2 - cos L1), L1 = au (optionally smoothed)
+def model_beta(p, L1, t):
+    rho, n2, c = p
+    L2 = n2*t + c
+    x = rho*np.cos(L2) - np.cos(L1)
+    y = rho*np.sin(L2) - np.sin(L1)
+    return np.arctan2(y, x)
+
+def resid(p):
+    mb = model_beta(p, au, t)
+    d = (mb - bu + np.pi) % (2*np.pi) - np.pi
+    return d
+
+best = None
+for n2g in np.deg2rad(np.linspace(-3, 3, 25)):
+    for rhog in [0.3, 0.5, 0.72, 1.0, 1.5, 2.5, 4.0]:
+        for cg in [0, 2, 4]:
+            try:
+                sol = least_squares(resid, [rhog, n2g, cg], method='lm', max_nfev=2000)
+            except Exception:
+                continue
+            s = sol.fun.std()
+            if best is None or s < best[0]:
+                best = (s, sol.x.copy())
+print('best resid std deg:', np.rad2deg(best[0]), 'max deg:', np.rad2deg(np.abs(resid(best[1])).max()))
+rho, n2, c = best[1]
+print('rho=%.4f n2=%.5f deg/day period2=%.1f d c=%.2f deg' % (rho, np.rad2deg(n2), 360/np.rad2deg(n2) if n2!=0 else np.inf, np.rad2deg(c)%360))
+# synodic check: n1 from alpha rate
+n1 = np.polyfit(t, au, 1)[0]
+print('n1=%.5f deg/day P1=%.1f, synodic=%.1f' % (np.rad2deg(n1), 360/np.rad2deg(n1), 360/abs(np.rad2deg(n1)-np.rad2deg(n2))))
+EOF
 
 ```
 
@@ -643,6 +836,41 @@ The simple circular geocentric model degenerates. Let me instead attack the actu
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = np.deg2rad(df.gamma.values)
+
+def model_gamma(p, a, b):
+    eps, phi, C, dl = p   # obliquity, latitude, hour-angle offset, sun-lon offset
+    lam_s = a + dl        # sun geocentric ecliptic longitude ~ alpha + offset
+    RA_s = np.arctan2(np.cos(eps)*np.sin(lam_s), np.cos(lam_s))
+    RA_b = np.arctan2(np.cos(eps)*np.sin(b), np.cos(b))
+    dec_b = np.arcsin(np.clip(np.sin(eps)*np.sin(b), -1, 1))
+    H = RA_s + C - RA_b
+    return np.arcsin(np.clip(np.sin(phi)*np.sin(dec_b) + np.cos(phi)*np.cos(dec_b)*np.cos(H), -1, 1))
+
+def resid(p):
+    return model_gamma(p, a, b) - g
+
+best = None
+for epsg in np.deg2rad([10, 23.5, 30, 45]):
+    for phig in np.deg2rad([-60, -30, 0, 30, 60]):
+        for Cg in [0, 1.5, 3, 4.5]:
+            for dlg in [0, np.pi]:
+                try:
+                    sol = least_squares(resid, [epsg, phig, Cg, dlg], method='lm', max_nfev=3000)
+                except Exception:
+                    continue
+                s = np.std(sol.fun)
+                if best is None or s < best[0]:
+                    best = (s, sol.x.copy())
+print('best resid std deg:', np.rad2deg(best[0]), 'max:', np.rad2deg(np.abs(resid(best[1])).max()))
+eps, phi, C, dl = best[1]
+print('eps=%.2f phi=%.2f C=%.2f dl=%.2f' % tuple(np.rad2deg([eps, phi, C, dl])))
+EOF
 
 ```
 
@@ -667,6 +895,48 @@ Not that either. Let me go data-driven: how well is gamma determined by (alpha, 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = df.gamma.values
+
+# noise estimate from second differences in a smooth region (t=0..150)
+for lo,hi in [(0,150),(430,516)]:
+    m=(t>=lo)&(t<hi)
+    d2 = np.diff(g[m],2)
+    print('t[%d,%d) 2nd-diff std=%.4f -> noise~%.4f deg'%(lo,hi,d2.std(), d2.std()/np.sqrt(6)))
+
+# Kernel ridge on (sin a, cos a, sin b, cos b)
+from sklearn.kernel_ridge import KernelRidge
+from sklearn.model_selection import KFold
+X = np.column_stack([np.sin(a),np.cos(a),np.sin(b),np.cos(b)])
+# scale features: pairwise distances on torus
+D2 = None
+from sklearn.metrics.pairwise import euclidean_distances
+gam = 1.0
+K = lambda X,Y: np.exp(-gam*euclidean_distances(X,Y)**2)
+kf = KFold(5, shuffle=True, random_state=0)
+for gam in [0.5,1,2,4]:
+    errs=[]
+    for tr,te in kf.split(X):
+        Ktr = K(X[tr],X[tr]); Kte = K(X[te],X[tr])
+        m = KernelRidge(alpha=1e-3, kernel='precomputed').fit(Ktr, g[tr])
+        p = m.predict(Kte)
+        errs.append(np.sqrt(np.mean((p-g[te])**2)))
+    print('gamma~f(a,b) RBF gam=%.1f CV RMSE=%.3f'% (gam, np.mean(errs)))
+
+# add t
+Xt = np.column_stack([X, (t-t.mean())/t.std()])
+for gam in [0.5,1,2]:
+    errs=[]
+    for tr,te in kf.split(Xt):
+        Ktr = K(Xt[tr],Xt[tr]); Kte = K(Xt[te],Xt[tr])
+        m = KernelRidge(alpha=1e-3, kernel='precomputed').fit(Ktr, g[tr])
+        p = m.predict(Kte)
+        errs.append(np.sqrt(np.mean((p-g[te])**2)))
+    print('gamma~f(a,b,t) RBF gam=%.1f CV RMSE=%.3f'% (gam, np.mean(errs)))
+EOF
 
 ```
 
@@ -745,6 +1015,57 @@ Huge insight: gamma is a deterministic smooth function of (alpha, beta) + noise 
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+
+# Smooth L1 from alpha: linear + 2 harmonics at P=326.1 (refit quickly)
+P1 = 326.1
+cols=[t,np.ones_like(t)]
+for k in (1,2):
+    cols += [np.sin(2*np.pi*k*t/P1), np.cos(2*np.pi*k*t/P1)]
+X1=np.column_stack(cols); c1,*_=np.linalg.lstsq(X1,au,rcond=None)
+L1s = X1@c1
+print('alpha smooth resid std deg:', np.rad2deg((au-L1s).std()))
+
+def kepler_nu(M, e):
+    E = M.copy()
+    for _ in range(50):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+
+def model_beta(p, L1, t):
+    rho, n2, M0, e2, w2 = p
+    M = M0 + n2*t
+    L2 = w2 + kepler_nu(M, e2)
+    x = rho*np.cos(L2) - np.cos(L1)
+    y = rho*np.sin(L2) - np.sin(L1)
+    return np.arctan2(y, x)
+
+def resid(p):
+    mb = model_beta(p, au, t)   # use raw au (includes wobble)
+    return (mb - bu + np.pi) % (2*np.pi) - np.pi
+
+best = None
+for rhog in [0.4, 0.6, 0.72, 0.9, 1.3, 1.6, 2.0, 3.0]:
+    for n2g in np.deg2rad([0.3, 0.5, 0.62, 0.8, 1.0, 1.5]):
+        for e2g in [0.0, 0.1, 0.3, 0.5]:
+            for M0g in [0, 2, 4]:
+                try:
+                    sol = least_squares(resid, [rhog, n2g, M0g, e2g, 0.0], method='lm', max_nfev=3000)
+                except Exception:
+                    continue
+                s = sol.fun.std()
+                if best is None or s < best[0]:
+                    best = (s, sol.x.copy())
+print('best resid std deg:', np.rad2deg(best[0]), 'max:', np.rad2deg(np.abs(resid(best[1])).max()))
+rho,n2,M0,e2,w2 = best[1]
+print('rho=%.4f n2=%.4f deg/d P2=%.1f d M0=%.1f e2=%.3f w2=%.1f' % (rho, np.rad2deg(n2), 360/np.rad2deg(n2), np.rad2deg(M0)%360, e2, np.rad2deg(w2)%360))
+EOF
 
 ```
 
@@ -764,6 +1085,36 @@ Huge insight: gamma is a deterministic smooth function of (alpha, beta) + noise 
 **tool call: bash**
 
 ```
+timeout 280 python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+
+def kepler_nu(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+
+def resid(p):
+    rho, n2, M0, e2 = p
+    L2 = kepler_nu(M0 + n2*t, e2)
+    mb = np.arctan2(rho*np.sin(L2) - np.sin(au), rho*np.cos(L2) - np.cos(au))
+    return (mb - bu + np.pi) % (2*np.pi) - np.pi
+
+results = []
+for rhog in [0.5, 0.72, 1.5, 2.5]:
+    for n2g in np.deg2rad([0.4, 0.62, 0.9]):
+        for e2g in [0.0, 0.2, 0.45]:
+            sol = least_squares(resid, [rhog, n2g, 0.0, e2g], method='lm', max_nfev=1500)
+            results.append((sol.fun.std(), sol.x.copy()))
+results.sort(key=lambda r: r[0])
+for s, x in results[:5]:
+    print('std=%.3f deg  rho=%.3f n2=%.4f P2=%.0f M0=%.1f e2=%.3f' % (np.rad2deg(s), x[0], np.rad2deg(x[1]), 360/np.rad2deg(x[1]), np.rad2deg(x[2])%360, x[3]))
+EOF
 
 ```
 
@@ -838,6 +1189,25 @@ Keplerian geocentric fits fail. Let me characterize beta's rate profile empirica
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g = df.gamma.values
+# smoothed derivative via local linear fit, window 21
+def smooth_rate(x, w=21):
+    r = np.full(len(x), np.nan)
+    h = w//2
+    for i in range(h, len(x)-h):
+        c = np.polyfit(t[i-h:i+h+1], x[i-h:i+h+1], 1)
+        r[i] = c[0]
+    return r
+rb = smooth_rate(bu); ra = smooth_rate(au)
+for i in range(10, 507, 12):
+    print('t=%3d  bu=%8.2f rate_b=%6.3f  au=%8.2f rate_a=%6.3f  gamma=%7.2f' % (t[i], bu[i], rb[i], au[i], ra[i], g[i]))
+EOF
 
 ```
 
@@ -980,6 +1350,92 @@ Now the picture is clearer: alpha's rate varies 0.86↔1.49°/day (home planet e
 **tool call: bash**
 
 ```
+timeout 280 python3 << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(40):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+# ---- Home orbit from alpha: au = w1 + nu1(M01 + n1 t, e1)
+def home_resid(p):
+    w1, n1, M01, e1 = p
+    E1 = kepE(M01 + n1*t, e1)
+    nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+    return (w1 + nu1 - au + np.pi)%(2*np.pi) - np.pi
+best=None
+for n1g in np.deg2rad([1.05, 1.10, 1.15]):
+    for e1g in [0.05, 0.14, 0.25]:
+        for M0g in [0, 2, 4]:
+            sol = least_squares(home_resid, [0.0, n1g, M0g, e1g], method='lm', max_nfev=2000)
+            s = sol.fun.std()
+            if best is None or s < best[0]: best = (s, sol.x.copy())
+w1, n1, M01, e1 = best[1]
+print('HOME: resid=%.4f deg  w1=%.2f n1=%.5f deg/d (P1=%.1f) M01=%.2f e1=%.4f' % (
+    np.rad2deg(best[0]), np.rad2deg(w1)%360, np.rad2deg(n1), 360/np.rad2deg(n1), np.rad2deg(M01)%360, e1))
+
+def home_pos(tt):
+    E1 = kepE(M01 + n1*tt, e1)
+    nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+    r1 = 1 - e1*np.cos(E1)
+    L1 = w1 + nu1
+    return r1*np.cos(L1), r1*np.sin(L1), np.zeros_like(L1)
+
+# ---- Body orbit fit to (beta, gamma) as geocentric lon/lat (G1)
+def body_model(p, tt):
+    a2, e2, w2, M02, i2, Om2 = p
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*tt, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    # orbital plane position rotated by (Om2, i2, w2): here w2 = argument of periapsis
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo; z1 = np.zeros_like(xo)
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    xh, yh, zh = home_pos(tt)
+    dx, dy, dz = xb-xh, yb-yh, zb-zh
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.sqrt(dx*dx+dy*dy))
+    return lon, lat
+
+def body_resid(p):
+    lon, lat = body_model(p, t)
+    rb_ = (lon - bu + np.pi)%(2*np.pi) - np.pi
+    rg = lat - g
+    return np.concatenate([rb_, rg])
+
+best2=None
+rng = np.random.default_rng(1)
+for k in range(60):
+    a2g = np.exp(rng.uniform(np.log(0.4), np.log(15)))
+    e2g = rng.uniform(0.2, 0.9)
+    w2g = rng.uniform(0, 2*np.pi)
+    M0g = rng.uniform(0, 2*np.pi)
+    i2g = rng.uniform(-1.2, 1.2)
+    Omg = rng.uniform(0, 2*np.pi)
+    try:
+        sol = least_squares(body_resid, [a2g,e2g,w2g,M0g,i2g,Omg], method='lm', max_nfev=2000)
+    except Exception:
+        continue
+    s = sol.fun.std()
+    if best2 is None or s < best2[0]: best2 = (s, sol.x.copy())
+s2, p2 = best2
+print('BODY G1: resid=%.4f deg' % np.rad2deg(s2))
+print('a2=%.3f e2=%.4f w2=%.2f M02=%.2f i2=%.2f Om2=%.2f' % (p2[0], p2[1], np.rad2deg(p2[2])%360, np.rad2deg(p2[3])%360, np.rad2deg(p2[4]), np.rad2deg(p2[5])%360))
+print('P2 = %.1f days' % (360/(np.rad2deg(n1)*p2[0]**(-1.5))))
+EOF
 
 ```
 
@@ -1008,6 +1464,36 @@ Timed out — too many restarts. Let me stage this: fit home first (fast), save 
 **tool call: bash**
 
 ```
+mkdir -p work && timeout 280 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(40):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def home_resid(p):
+    w1, n1, M01, e1 = p
+    E1 = kepE(M01 + n1*t, e1)
+    nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+    return (w1 + nu1 - au + np.pi)%(2*np.pi) - np.pi
+
+best=None
+for n1g in np.deg2rad([1.05, 1.10, 1.15]):
+    for e1g in [0.05, 0.14, 0.25]:
+        sol = least_squares(home_resid, [0.0, n1g, 0.0, e1g], method='lm', max_nfev=800)
+        s = sol.fun.std()
+        if best is None or s < best[0]: best = (s, sol.x.copy())
+w1, n1, M01, e1 = best[1]
+print('HOME: resid=%.4f deg  w1=%.3f n1=%.6f deg/d (P1=%.2f) M01=%.3f e1=%.5f' % (
+    np.rad2deg(best[0]), np.rad2deg(w1)%360, np.rad2deg(n1), 360/np.rad2deg(n1), np.rad2deg(M01)%360, e1))
+json.dump({'w1':w1,'n1':n1,'M01':M01,'e1':e1,'resid':float(best[0])}, open('work/home.json','w'))
+EOF
 
 ```
 
@@ -1031,6 +1517,71 @@ Home orbit nailed: P1=323.6 d, e1=0.126, residual 0.39° ≈ noise. Now the body
 **tool call: bash**
 
 ```
+timeout 290 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+H = json.load(open('work/home.json'))
+w1, n1, M01, e1 = H['w1'], H['n1'], H['M01'], H['e1']
+
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def home_pos(tt):
+    E1 = kepE(M01 + n1*tt, e1)
+    nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+    r1 = 1 - e1*np.cos(E1)
+    L1 = w1 + nu1
+    return r1*np.cos(L1), r1*np.sin(L1)
+
+xh, yh = home_pos(t)
+
+def body_resid(p):
+    a2, e2, w2, M02, i2, Om2 = p
+    if a2 <= 0.05 or e2 < 0 or e2 >= 0.999: return np.full(2*len(t), 10.0)
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.sqrt(dx*dx+dy*dy))
+    rb_ = (lon - bu + np.pi)%(2*np.pi) - np.pi
+    rg = lat - g
+    return np.concatenate([rb_, rg])
+
+best=None
+rng = np.random.default_rng(7)
+for k in range(22):
+    a2g = np.exp(rng.uniform(np.log(0.4), np.log(12)))
+    p0 = [a2g, rng.uniform(0.1,0.9), rng.uniform(0,6.28), rng.uniform(0,6.28), rng.uniform(-1.2,1.2), rng.uniform(0,6.28)]
+    try:
+        sol = least_squares(body_resid, p0, method='lm', max_nfev=500)
+    except Exception:
+        continue
+    s = sol.fun.std()
+    if best is None or s < best[0]:
+        best = (s, sol.x.copy())
+        print('restart %d: resid %.4f deg, a2=%.3f e2=%.3f' % (k, np.rad2deg(s), sol.x[0], sol.x[1]))
+s2, p2 = best
+print('BEST G1 resid=%.4f deg' % np.rad2deg(s2))
+print('a2=%.4f e2=%.4f w2=%.2f M02=%.2f i2=%.3f Om2=%.2f P2=%.1f d' % (
+    p2[0], p2[1], np.rad2deg(p2[2])%360, np.rad2deg(p2[3])%360, np.rad2deg(p2[4]), np.rad2deg(p2[5])%360, 360/(np.rad2deg(n1)*p2[0]**-1.5)))
+json.dump({'a2':p2[0],'e2':p2[1],'w2':p2[2],'M02':p2[3],'i2':p2[4],'Om2':p2[5],'resid':float(s2)}, open('work/body_G1.json','w'))
+EOF
 
 ```
 
@@ -1110,6 +1661,26 @@ G1 fails (17.5°). New hypothesis: beta/gamma are **azimuth/elevation** in the o
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+b = np.deg2rad(df.beta.values); g = np.deg2rad(df.gamma.values)
+# horizontal unit vectors (az from x-axis, el up)
+u = np.column_stack([np.cos(g)*np.cos(b), np.cos(g)*np.sin(b), np.sin(g)])
+# planarity check via SVD
+U, S, Vt = np.linalg.svd(u - u.mean(0), full_matrices=False)
+print('centered singular values:', S)
+U2, S2, Vt2 = np.linalg.svd(u, full_matrices=False)
+print('uncentered singular values:', S2)
+# distance of each point from best plane through origin
+n = Vt2[2]
+d = u @ n
+print('dist from origin-plane: std=%.4f max=%.4f' % (d.std(), np.abs(d).max()))
+print('plane normal (ecliptic-ish frame of az/el):', n)
+# check angular step sizes
+steps = np.arccos(np.clip((u[:-1]*u[1:]).sum(1), -1, 1))
+print('daily angular step deg: min %.3f med %.3f max %.3f' % tuple(np.rad2deg([steps.min(), np.median(steps), steps.max()])))
+EOF
 
 ```
 
@@ -1184,6 +1755,66 @@ Not planar — expected, since the horizon frame winds ~575° over the window. L
 **tool call: bash**
 
 ```
+timeout 290 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+b  = np.deg2rad(df.beta.values)
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+lam_s = w1 + nu1 + np.pi   # sun geocentric ecliptic longitude
+
+def model(p):
+    i_m, Om, lam0, nm, eps, phi, C = p
+    lam = lam0 + nm*t
+    bm = np.arcsin(np.clip(np.sin(i_m)*np.sin(lam - Om), -1, 1))  # body ecliptic latitude
+    ue = np.column_stack([np.cos(bm)*np.cos(lam), np.cos(bm)*np.sin(lam), np.sin(bm)])
+    ce, se = np.cos(eps), np.sin(eps)
+    ueq = np.column_stack([ue[:,0], ce*ue[:,1]-se*ue[:,2], se*ue[:,1]+ce*ue[:,2]])
+    RA_s = np.arctan2(ce*np.sin(lam_s), np.cos(lam_s))
+    theta = RA_s + C
+    east = np.column_stack([-np.sin(theta), np.cos(theta), np.zeros_like(theta)])
+    north = np.column_stack([-np.sin(phi)*np.cos(theta), -np.sin(phi)*np.sin(theta), np.full_like(theta, np.cos(phi))])
+    zen = np.column_stack([np.cos(phi)*np.cos(theta), np.cos(phi)*np.sin(theta), np.full_like(theta, np.sin(phi))])
+    el = np.arcsin(np.clip((ueq*zen).sum(1), -1, 1))
+    az = np.arctan2((ueq*east).sum(1), (ueq*north).sum(1))
+    return az, el
+
+def resid(p):
+    az, el = model(p)
+    rb_ = (az - b + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, el - g])
+
+best=None
+rng = np.random.default_rng(3)
+for k in range(40):
+    p0 = [rng.uniform(-1.4,1.4), rng.uniform(0,6.28), rng.uniform(0,6.28),
+          np.deg2rad(rng.uniform(0.05, 5.0)), rng.uniform(0.05, 1.2), rng.uniform(-1.4,1.4), rng.uniform(0,6.28)]
+    try:
+        sol = least_squares(resid, p0, method='lm', max_nfev=600)
+    except Exception:
+        continue
+    s = sol.fun.std()
+    if best is None or s < best[0]:
+        best = (s, sol.x.copy())
+        print('k=%d resid=%.4f deg' % (k, np.rad2deg(s)), flush=True)
+s, p = best
+print('BEST az/el resid = %.4f deg' % np.rad2deg(s))
+names = ['i_m','Om','lam0','nm','eps','phi','C']
+for nm_, v in zip(names, p):
+    print(' %s = %.4f (%.2f deg)' % (nm_, v, np.rad2deg(v)))
+json.dump({'p':list(p),'resid':float(s)}, open('work/azel.json','w'))
+EOF
 
 ```
 
@@ -1257,6 +1888,75 @@ Circular az/el fails too. The flyby narrative ("present during its passage", wil
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def body_xyz(p, tt, E1v=None):
+    a2, e2, w2, M02, i2, Om2 = p
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*tt, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    return cO*x2 - sO*y2, sO*x2 + cO*y2, z2
+
+def resid(p):
+    if p[0] <= 0.03 or p[1] < 0 or p[1] >= 0.999: return np.full(2*len(t), 5.0)
+    xb, yb, zb = body_xyz(p, t)
+    dx, dy, dz = xb-xh, yb-yh, zb
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.hypot(dx, dy))
+    rb_ = (lon - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, lat - g])
+
+rng = np.random.default_rng(11)
+cands = []
+for k in range(160):
+    p0 = [np.exp(rng.uniform(np.log(0.2), np.log(20))), rng.uniform(0.0,0.93),
+          rng.uniform(0,6.28), rng.uniform(0,6.28), rng.uniform(-3.14,3.14), rng.uniform(0,6.28)]
+    try:
+        sol = least_squares(resid, p0, method='lm', max_nfev=350)
+    except Exception:
+        continue
+    cands.append((sol.fun.std(), sol.x.copy()))
+cands.sort(key=lambda c: c[0])
+print('top 5 after stage 1:')
+for s, x in cands[:5]:
+    print('  %.4f deg  a2=%.3f e2=%.3f i2=%.1f' % (np.rad2deg(s), x[0], x[1], np.rad2deg(x[4])))
+# polish top 3
+best=None
+for s, x in cands[:3]:
+    sol = least_squares(resid, x, method='lm', max_nfev=5000)
+    ss = sol.fun.std()
+    if best is None or ss < best[0]: best = (ss, sol.x.copy())
+s, p = best
+print('BEST G1v2 resid = %.4f deg' % np.rad2deg(s))
+print('a2=%.4f e2=%.4f w2=%.2f M02=%.2f i2=%.2f Om2=%.2f P2=%.1f' % (
+    p[0], p[1], np.rad2deg(p[2])%360, np.rad2deg(p[3])%360, np.rad2deg(p[4]), np.rad2deg(p[5])%360, 360/(np.rad2deg(n1)*p2[0]**-1.5) if False else 360/(np.rad2deg(n1)*p[0]**-1.5)))
+json.dump({'p':list(p),'resid':float(s)}, open('work/body_G1v2.json','w'))
+EOF
 
 ```
 
@@ -1340,6 +2040,40 @@ All restarts hit the same 17.5° local optimum — the two-coplanar-orbits famil
 **tool call: bash**
 
 ```
+timeout 280 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+b = np.deg2rad(df.beta.values); g = np.deg2rad(df.gamma.values)
+# horizontal unit vectors, az from north clockwise: (east, north, up)
+u = np.column_stack([np.cos(g)*np.sin(b), np.cos(g)*np.cos(b), np.sin(g)])
+
+def min_sv(phi, rate, th0):
+    # R_tilt about east axis by (90-phi): maps zenith to pole
+    c = np.cos(np.pi/2 - phi); s = np.sin(np.pi/2 - phi)
+    Rt = np.array([[1,0,0],[0,c,-s],[0,s,c]])
+    w = u @ Rt.T
+    th = th0 + rate*t
+    ce, se = np.cos(-th), np.sin(-th)
+    x = ce*w[:,0] - se*w[:,1]
+    y = se*w[:,0] + ce*w[:,1]
+    z = w[:,2]
+    Ueq = np.column_stack([x,y,z])
+    return np.linalg.svd(Ueq, compute_uv=False)[-1]
+
+best = (1e9, None)
+phis = np.deg2rad(np.linspace(-88, 88, 45))
+rates = np.deg2rad(np.linspace(0.2, 3.0, 57))
+th0s = np.deg2rad(np.linspace(0, 360, 24, endpoint=False))
+for phi in phis:
+    for rate in rates:
+        for th0 in th0s:
+            s = min_sv(phi, rate, th0)
+            if s < best[0]: best = (s, (phi, rate, th0))
+print('best min singular value: %.5f (noise would be ~0.007)' % best[0])
+phi, rate, th0 = best[1]
+print('phi=%.1f deg rate=%.3f deg/day th0=%.1f' % (np.rad2deg(phi), np.rad2deg(rate), np.rad2deg(th0)))
+EOF
 
 ```
 
@@ -1374,6 +2108,60 @@ Satellite hypothesis decisively rejected (σ_min = 1.68, not ~0.007). Back to he
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import differential_evolution, least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def resid_vec(p):
+    a2, n2, e2, w2, M02, i2, Om2 = p
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.hypot(dx, dy))
+    rb_ = (lon - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, lat - g])
+
+def obj(p):
+    if p[0] <= 0.02 or not (0 <= p[2] < 0.995): return 1e6
+    r = resid_vec(p)
+    return np.mean(r**2)
+
+bounds = [(0.1, 30.0), (-0.06, 0.06), (0.0, 0.97), (0, 2*np.pi), (0, 2*np.pi), (0, np.pi), (0, 2*np.pi)]
+sol = differential_evolution(obj, bounds, seed=5, popsize=18, maxiter=120, tol=1e-10, polish=False, workers=1)
+print('DE obj (rad^2):', sol.fun, '-> std deg:', np.rad2deg(np.sqrt(sol.fun)))
+p0 = sol.x
+s2 = least_squares(resid_vec, p0, method='lm', max_nfev=8000)
+r = resid_vec(s2.x)
+print('polished resid std = %.4f deg, max = %.3f deg' % (np.rad2deg(r.std()), np.rad2deg(np.abs(r).max())))
+p = s2.x
+print('a2=%.4f n2=%.5f deg/d e2=%.4f w2=%.2f M02=%.2f i2=%.2f Om2=%.2f' % (
+    p[0], np.rad2deg(p[1]), p[2], np.rad2deg(p[3])%360, np.rad2deg(p[4])%360, np.rad2deg(p[5]), np.rad2deg(p[6])%360))
+json.dump({'p':list(p),'resid':float(r.std())}, open('work/body_G1v3.json','w'))
+EOF
 
 ```
 
@@ -1433,6 +2221,53 @@ The pattern (latitude peak then crash through zero, longitude whip) screams **cl
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+m = (t>=300)&(t<=450)
+tm = t[m]
+def resid(p):
+    p0x, p0y, p0z, vx, vy, vz = p
+    dx = p0x + vx*(tm-375) 
+    dy = p0y + vy*(tm-375)
+    dz = p0z + vz*(tm-375)
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.hypot(dx, dy))
+    rb_ = (lon - bu[m] + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, lat - g[m]])
+
+best=None
+rng = np.random.default_rng(0)
+for k in range(30):
+    p0 = np.concatenate([rng.normal(0,1,3), rng.normal(0,0.02,3)])
+    sol = least_squares(resid, p0, method='lm', max_nfev=1500)
+    s = sol.fun.std()
+    if best is None or s < best[0]: best = (s, sol.x.copy())
+s, p = best
+print('straight-line flyby fit t[300,450]: resid std = %.4f deg, max = %.3f deg' % (np.rad2deg(s), np.rad2deg(np.abs(resid(p)).max())))
+print('p0 (closest-approach-ish rel pos at t=375):', np.round(p[:3],4), ' |p0|=%.4f' % np.linalg.norm(p[:3]))
+print('v  (rel velocity per day):', np.round(p[3:],5), ' |v|=%.5f' % np.linalg.norm(p[3:]))
+# implied closest approach time
+tca = 375 - np.dot(p[:3], p[3:])/np.dot(p[3:],p[3:])
+dca = np.linalg.norm(p[:3] + p[3:]*(tca-375))
+print('closest approach at t=%.1f, distance=%.4f (home-radius units)' % (tca, dca))
+EOF
 
 ```
 
@@ -1497,6 +2332,25 @@ Straight-line flyby is poor too. Let me stop guessing and directly diagnose the 
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+b = np.deg2rad(df.beta.values); g = np.deg2rad(df.gamma.values)
+u = np.column_stack([np.cos(g)*np.cos(b), np.cos(g)*np.sin(b), np.sin(g)])
+k = 15  # step for axis estimation
+n = np.cross(u[:-k], u[k:])
+n = n / np.linalg.norm(n, axis=1, keepdims=True)
+tmid = t[:-k] + k/2
+# print axis evolution (in ecliptic lon/lat of the normal)
+lon = np.degrees(np.arctan2(n[:,1], n[:,0]))
+lat = np.degrees(np.arcsin(np.clip(n[:,2],-1,1)))
+for i in range(0, len(n), 25):
+    print('t=%3d axis lon=%7.1f lat=%6.1f' % (tmid[i], lon[i], lat[i]))
+# angular step rate
+steps = np.degrees(np.arccos(np.clip((u[:-1]*u[1:]).sum(1),-1,1)))
+print('angular rate deg/day at t=0,130,250,370,500:', [round(steps[j],3) for j in [0,130,250,370,500]])
+EOF
 
 ```
 
@@ -1592,6 +2446,86 @@ The axis wanders — not a precessing plane. Key realization: my unwinding test 
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+lam_s = L1 + np.pi
+
+def model_azel(p):
+    a2, e2, w2, M02, i2, Om2, eps, phi, C = p
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    rr = np.sqrt(dx*dx+dy*dy+dz*dz)
+    ux, uy, uz = dx/rr, dy/rr, dz/rr
+    ce, se = np.cos(eps), np.sin(eps)
+    # ecliptic -> equatorial
+    qx = ux; qy = ce*uy - se*uz; qz = se*uy + ce*uz
+    RA = np.arctan2(qy, qx); dec = np.arcsin(np.clip(qz,-1,1))
+    RA_s = np.arctan2(ce*np.sin(lam_s), np.cos(lam_s))
+    H = RA_s + C - RA
+    sinel = np.sin(phi)*np.sin(dec) + np.cos(phi)*np.cos(dec)*np.cos(H)
+    el = np.arcsin(np.clip(sinel,-1,1))
+    az = np.arctan2(-np.sin(H)*np.cos(dec), np.sin(dec)*np.cos(phi) - np.cos(dec)*np.sin(phi)*np.cos(H))
+    return az, el
+
+def resid(p):
+    az, el = model_azel(p)
+    rb_ = (az - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, el - g])
+
+rng = np.random.default_rng(42)
+cands=[]
+for k in range(120):
+    p0 = [np.exp(rng.uniform(np.log(0.3), np.log(15))), rng.uniform(0,0.9),
+          rng.uniform(0,6.28), rng.uniform(0,6.28), rng.uniform(-3.1,3.1), rng.uniform(0,6.28),
+          rng.uniform(0.05,1.3), rng.uniform(-1.4,1.4), rng.uniform(0,6.28)]
+    try:
+        sol = least_squares(resid, p0, method='lm', max_nfev=300)
+    except Exception:
+        continue
+    cands.append((sol.fun.std(), sol.x.copy()))
+cands.sort(key=lambda c: c[0])
+print('top3 stage1:', [round(np.rad2deg(c[0]),3) for c in cands[:3]])
+best=None
+for s,x in cands[:6]:
+    try:
+        sol = least_squares(resid, x, method='lm', max_nfev=6000)
+    except Exception:
+        continue
+    ss = sol.fun.std()
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+s,p = best
+print('BEST az/el-heliocentric resid = %.4f deg' % np.rad2deg(s))
+print('a2=%.3f e2=%.3f w2=%.1f M02=%.1f i2=%.1f Om2=%.1f eps=%.2f phi=%.2f C=%.1f' % (
+    p[0], p[1], np.rad2deg(p[2])%360, np.rad2deg(p[3])%360, np.rad2deg(p[4]), np.rad2deg(p[5])%360,
+    np.rad2deg(p[6]), np.rad2deg(p[7]), np.rad2deg(p[8])%360))
+json.dump({'p':list(p),'resid':float(s)}, open('work/azel_helio.json','w'))
+EOF
 
 ```
 
@@ -1681,6 +2615,78 @@ Still 8.6°. Let me try the equatorial interpretation: (beta, gamma) = (RA, decl
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def model_radec(p):
+    a2, e2, w2, M02, i2, Om2, eps = p
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    rr = np.sqrt(dx*dx+dy*dy+dz*dz)
+    ux, uy, uz = dx/rr, dy/rr, dz/rr
+    ce, se = np.cos(eps), np.sin(eps)
+    qy = ce*uy - se*uz; qz = se*uy + ce*uz
+    RA = np.arctan2(qy, ux); dec = np.arcsin(np.clip(qz,-1,1))
+    return RA, dec
+
+def resid(p):
+    RA, dec = model_radec(p)
+    rb_ = (RA - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, dec - g])
+
+rng = np.random.default_rng(9)
+cands=[]
+for k in range(140):
+    p0 = [np.exp(rng.uniform(np.log(0.3), np.log(15))), rng.uniform(0,0.92),
+          rng.uniform(0,6.28), rng.uniform(0,6.28), rng.uniform(-3.1,3.1), rng.uniform(0,6.28),
+          rng.uniform(-1.4,1.4)]
+    try:
+        sol = least_squares(resid, p0, method='lm', max_nfev=300)
+    except Exception:
+        continue
+    cands.append((sol.fun.std(), sol.x.copy()))
+cands.sort(key=lambda c: c[0])
+print('top3 stage1:', [round(np.rad2deg(c[0]),3) for c in cands[:3]])
+best=None
+for s,x in cands[:8]:
+    try:
+        sol = least_squares(resid, x, method='lm', max_nfev=8000)
+    except Exception:
+        continue
+    ss = sol.fun.std()
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+s,p = best
+print('BEST RA/dec resid = %.4f deg' % np.rad2deg(s))
+print('a2=%.3f e2=%.3f w2=%.1f M02=%.1f i2=%.1f Om2=%.1f eps=%.2f' % (
+    p[0], p[1], np.rad2deg(p[2])%360, np.rad2deg(p[3])%360, np.rad2deg(p[4]), np.rad2deg(p[5])%360, np.rad2deg(p[6])))
+json.dump({'p':list(p),'resid':float(s)}, open('work/radec.json','w'))
+EOF
 
 ```
 
@@ -1723,6 +2729,42 @@ All standard interpretations fail. Time for a purely empirical study of f: fit a
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = df.gamma.values
+
+def fourier_design(a, b, J, K):
+    cols = [np.ones_like(a)]
+    names = ['1']
+    for j in range(0, J+1):
+        for k in range(-K, K+1):
+            if j==0 and k<=0: continue
+            if j==0:
+                cols += [np.sin(k*b), np.cos(k*b)]; names += [f's{0}{k}', f'c{0}{k}']
+            else:
+                cols += [np.sin(j*a+k*b), np.cos(j*a+k*b)]; names += [f's{j}{k}', f'c{j}{k}']
+    return np.column_stack(cols), names
+
+for J,K in [(1,1),(2,2),(3,3),(2,3),(3,2),(4,4)]:
+    X, names = fourier_design(a,b,J,K)
+    c,*_ = np.linalg.lstsq(X, g, rcond=None)
+    r = g - X@c
+    print('J=%d K=%d: npar=%d resid std=%.4f max=%.3f' % (J,K,X.shape[1],r.std(),abs(r).max()))
+
+X, names = fourier_design(a,b,3,3)
+c,*_ = np.linalg.lstsq(X, g, rcond=None)
+r = g - X@c
+print()
+print('J=3,K=3 resid by segment:')
+for lo,hi in [(0,150),(150,300),(300,400),(400,517)]:
+    m=(t>=lo)&(t<hi); print('  [%d,%d): std=%.3f'%(lo,hi,r[m].std()))
+# largest coefficients
+idx = np.argsort(np.abs(c))[::-1][:12]
+print('top coefficients:')
+for i in idx: print('  %s: %.3f' % (names[i], c[i]))
+EOF
 
 ```
 
@@ -1794,6 +2836,25 @@ J=2,K=2 2D-Fourier hits noise (0.40°). The geometry has second harmonics. Let m
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = df.gamma.values
+t = df.t.values.astype(float)
+
+def fit(x, nh, y=g):
+    cols=[np.ones_like(x)]
+    for k in range(1,nh+1):
+        cols += [np.sin(k*x), np.cos(k*x)]
+    X=np.column_stack(cols); c,*_=np.linalg.lstsq(X,y,rcond=None); r=y-X@c
+    return r.std(), r
+
+for name, x in [('b', b), ('a', a), ('a-b', a-b), ('a+b', a+b), ('2b', 2*b)]:
+    for nh in [1,2,3,4]:
+        s,_ = fit(x, nh)
+        print('gamma ~ Fourier(%s, %d harm): resid %.4f' % (name, nh, s))
+    print()
+EOF
 
 ```
 
@@ -1855,6 +2916,31 @@ Beta is the main driver (1.16° with 4 harmonics alone); alpha adds corrections.
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = df.gamma.values
+t = df.t.values.astype(float)
+# Build explicit feature list for J<=2,K<=2 with separable interpretation
+feats = {}
+feats['1'] = np.ones_like(a)
+for k in [1,2]:
+    feats[f'sin{k}b'] = np.sin(k*b); feats[f'cos{k}b'] = np.cos(k*b)
+for j in [1,2]:
+    feats[f'sin{j}a'] = np.sin(j*a); feats[f'cos{j}a'] = np.cos(j*a)
+# interactions: sin/cos a * sin/cos b up to total order 2
+for (fn, fa) in [('sin', np.sin), ('cos', np.cos)]:
+    for (gm, gb) in [('sin', np.sin), ('cos', np.cos)]:
+        feats[f'{fn}a{gm}b'] = fa(a)*gb(b)
+names = list(feats)
+X = np.column_stack([feats[n] for n in names])
+c,*_ = np.linalg.lstsq(X, g, rcond=None)
+r = g - X@c
+print('separable (2,2) resid: %.4f max %.3f' % (r.std(), abs(r).max()))
+idx = np.argsort(np.abs(c))[::-1]
+for i in idx:
+    if abs(c[i]) > 0.3: print('  %-10s %9.3f' % (names[i], c[i]))
+EOF
 
 ```
 
@@ -1937,6 +3023,54 @@ Strong structure: dominant terms cos b, cos a, and sin(a−b)-type interactions.
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+# smooth home longitude (true, unwrapped)
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+L1 = w1 + 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+
+# Model: bu = L2_helio(t) + parallax in L1.  L2 Keplerian (M0 + n2 t, e2); parallax: Fourier in L1 up to nh
+def make_X(p, tt, L1v, nh=2):
+    M0, n2, e2 = p[:3]
+    L2h = M0 + n2*tt
+    # Kepler equation of center approx to 2nd order
+    Ec = 2*e2*np.sin(L2h) + 1.25*e2**2*np.sin(2*L2h)
+    cols = [L2h + Ec, np.ones_like(tt)]
+    for k in range(1, nh+1):
+        cols += [np.sin(k*L1v), np.cos(k*L1v)]
+    return np.column_stack(cols)
+
+def fit_bu(nh):
+    def resid(p):
+        X = make_X(p, t, L1, nh)
+        c_lin, *_ = np.linalg.lstsq(X[:,1:], bu - X[:,0], rcond=None)
+        pred = X[:,0] + X[:,1:]@c_lin
+        return bu - pred
+    best=None
+    for n2g in np.deg2rad(np.linspace(0.05, 2.5, 20)):
+        for e2g in [0.0, 0.1, 0.3, 0.5, 0.7]:
+            sol = least_squares(resid, [0.0, n2g, e2g], method='lm', max_nfev=800)
+            s = sol.fun.std()
+            if best is None or s < best[0]: best = (s, sol.x.copy())
+    return best
+
+for nh in [1,2,3]:
+    s, p = fit_bu(nh)
+    print('nh=%d: resid %.4f deg, n2=%.4f deg/d (P2=%.0f d) e2=%.3f M0=%.1f' % (
+        nh, np.rad2deg(s), np.rad2deg(p[1]), 360/np.rad2deg(p[1]), p[2], np.rad2deg(p[0])%360))
+EOF
 
 ```
 
@@ -1978,6 +3112,80 @@ e₂ blowing past 1.0 is a clue: the body may be **hyperbolic** — a one-time f
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def hyp_nu(M, e):
+    # solve e*sinh F - F = M
+    F = np.sign(M)*np.log1p(2*np.abs(M)/e + 1.8)
+    for _ in range(50):
+        F = F - (e*np.sinh(F) - F - M)/(e*np.cosh(F) - 1)
+    return 2*np.arctan(np.sqrt((e+1)/(e-1))*np.tanh(F/2))
+
+def body_xyz(p, tt):
+    q, e2, T, i2, Om2, w2 = p
+    n = n1*((e2-1)/q)**1.5
+    M = n*(tt - T)
+    nu = hyp_nu(M, e2)
+    r2 = q*(1+e2)/(1+e2*np.cos(nu))
+    xo, yo = r2*np.cos(nu), r2*np.sin(nu)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    return cO*x2 - sO*y2, sO*x2 + cO*y2, z2
+
+def resid(p):
+    if p[0] <= 0.01 or p[1] <= 1.001 or p[1] > 50: return np.full(2*len(t), 3.0)
+    xb, yb, zb = body_xyz(p, t)
+    dx, dy, dz = xb-xh, yb-yh, zb
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.hypot(dx, dy))
+    rb_ = (lon - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, lat - g])
+
+rng = np.random.default_rng(17)
+cands=[]
+for k in range(150):
+    p0 = [np.exp(rng.uniform(np.log(0.03), np.log(3))), rng.uniform(1.02, 4.0),
+          rng.uniform(320, 430), rng.uniform(-3.1, 3.1), rng.uniform(0, 6.28), rng.uniform(0, 6.28)]
+    try:
+        sol = least_squares(resid, p0, method='lm', max_nfev=400)
+    except Exception:
+        continue
+    cands.append((sol.fun.std(), sol.x.copy()))
+cands.sort(key=lambda c: c[0])
+print('top3 stage1:', [round(np.rad2deg(c[0]),3) for c in cands[:3]])
+best=None
+for s,x in cands[:6]:
+    try:
+        sol = least_squares(resid, x, method='lm', max_nfev=8000)
+    except Exception:
+        continue
+    ss = sol.fun.std()
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+s,p = best
+print('BEST hyperbolic G1 resid = %.4f deg' % np.rad2deg(s))
+print('q=%.4f e=%.4f T=%.2f i=%.2f Om=%.2f w=%.2f' % (p[0], p[1], p[2], np.rad2deg(p[3]), np.rad2deg(p[4])%360, np.rad2deg(p[5])%360))
+json.dump({'p':list(p),'resid':float(s)}, open('work/hyp_G1.json','w'))
+EOF
 
 ```
 
@@ -2032,6 +3240,17 @@ Hyperbolic flyby also fails. Let me examine the whip region in fine detail — t
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+bu = np.rad2deg(np.unwrap(np.deg2rad(df.beta.values)))
+g = df.gamma.values
+for i in range(330, 430, 4):
+    print('t=%3d au=%7.2f bu=%8.2f dbu=%6.2f gamma=%7.2f dg=%6.2f' % (
+        t[i], au[i]%360, bu[i]%360, bu[i+1]-bu[i] if i+1<len(bu) else np.nan, g[i], g[i+1]-g[i] if i+1<len(g) else np.nan))
+EOF
 
 ```
 
@@ -2113,6 +3332,64 @@ The whip peaks at 5.6°/day exactly at gamma's peak. Let me isolate the problem:
 **tool call: bash**
 
 ```
+timeout 290 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def resid_beta(p):
+    a2, n2fac, e2, w2, M02, i2, Om2 = p
+    if a2<=0.02 or e2<0 or e2>=0.999: return np.full(len(t), 2.0)
+    n2 = n1 * a2**(-1.5) * n2fac
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2
+    lon = np.arctan2(yb-yh, xb-xh)
+    return (lon - bu + np.pi)%(2*np.pi) - np.pi
+
+rng = np.random.default_rng(23)
+cands=[]
+for k in range(200):
+    p0 = [np.exp(rng.uniform(np.log(0.1), np.log(25))), rng.uniform(0.3,3.0), rng.uniform(0,0.93),
+          rng.uniform(0,6.28), rng.uniform(0,6.28), rng.uniform(-3.1,3.1), rng.uniform(0,6.28)]
+    try:
+        sol = least_squares(resid_beta, p0, method='lm', max_nfev=350)
+    except Exception:
+        continue
+    cands.append((sol.fun.std(), sol.x.copy()))
+cands.sort(key=lambda c: c[0])
+print('top5 beta-only:', [round(np.rad2deg(c[0]),3) for c in cands[:5]])
+best=None
+for s,x in cands[:6]:
+    sol = least_squares(resid_beta, x, method='lm', max_nfev=8000)
+    ss = sol.fun.std()
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+s,p = best
+print('BEST beta-only resid = %.4f deg' % np.rad2deg(s))
+print('a2=%.3f n2fac=%.3f e2=%.3f w2=%.1f M02=%.1f i2=%.1f Om2=%.1f' % (
+    p[0], p[1], p[2], np.rad2deg(p[3])%360, np.rad2deg(p[4])%360, np.rad2deg(p[5]), np.rad2deg(p[6])%360))
+json.dump({'p':list(p),'resid':float(s)}, open('work/beta_only.json','w'))
+EOF
 
 ```
 
@@ -2194,6 +3471,60 @@ Beta alone is fit exactly but with degenerate params — the joint fit is what c
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import differential_evolution, least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def resid_vec(p):
+    a2, n2, e2, w2, M02, i2, Om2 = p
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.hypot(dx, dy))
+    rb_ = (lon - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, lat - g])
+
+def obj(p):
+    if p[0] <= 0.02 or p[2] < 0 or p[2] >= 0.999: return 1e8
+    r = resid_vec(p)
+    if np.any(np.isnan(r)): return 1e8
+    return np.mean(r**2)
+
+bounds = [(0.05, 40.0), (-0.08, 0.08), (0.0, 0.985), (0, 2*np.pi), (0, 2*np.pi), (-np.pi, np.pi), (0, 2*np.pi)]
+sol = differential_evolution(obj, bounds, seed=11, popsize=25, maxiter=250, tol=1e-11, polish=False, mutation=(0.3,1.2), recombination=0.8)
+print('DE: std deg =', np.rad2deg(np.sqrt(sol.fun)))
+sols = least_squares(resid_vec, sol.x, method='lm', max_nfev=10000)
+r = resid_vec(sols.x)
+print('polished resid std = %.4f deg max %.3f' % (np.rad2deg(r.std()), np.rad2deg(np.abs(r).max())))
+p = sols.x
+print('a2=%.4f n2=%.5f deg/d e2=%.4f w2=%.2f M02=%.2f i2=%.2f Om2=%.2f' % (
+    p[0], np.rad2deg(p[1]), p[2], np.rad2deg(p[3])%360, np.rad2deg(p[4])%360, np.rad2deg(p[5]), np.rad2deg(p[6])%360))
+json.dump({'p':list(p),'resid':float(r.std())}, open('work/joint_DE.json','w'))
+EOF
 
 ```
 
@@ -2286,6 +3617,75 @@ The landscape is pathological. Let me throw a big differential-evolution budget 
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import differential_evolution, least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+lam_s = L1 + np.pi
+
+def model(p):
+    a2, n2, e2, w2, M02, i2, Om2, eps, phi, C, Hr = p
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    rr = np.sqrt(dx*dx+dy*dy+dz*dz)
+    ux, uy, uz = dx/rr, dy/rr, dz/rr
+    ce, se = np.cos(eps), np.sin(eps)
+    qy = ce*uy - se*uz; qz = se*uy + ce*uz
+    RA = np.arctan2(qy, ux); dec = np.arcsin(np.clip(qz,-1,1))
+    RA_s = np.arctan2(ce*np.sin(lam_s), np.cos(lam_s))
+    H = RA_s + C + (Hr - n1)*t - RA   # Hr near n1 => fixed solar time
+    el = np.arcsin(np.clip(np.sin(phi)*np.sin(dec) + np.cos(phi)*np.cos(dec)*np.cos(H),-1,1))
+    az = np.arctan2(-np.sin(H)*np.cos(dec), np.sin(dec)*np.cos(phi) - np.cos(dec)*np.sin(phi)*np.cos(H))
+    return az, el
+
+def resid_vec(p):
+    az, el = model(p)
+    rb_ = (az - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, el - g])
+
+def obj(p):
+    a2, n2, e2 = p[0], p[1], p[2]
+    if a2<=0.02 or e2<0 or e2>=0.99: return 1e8
+    r = resid_vec(p)
+    if np.any(np.isnan(r)): return 1e8
+    return np.mean(r**2)
+
+bounds = [(0.1,30.0), (-0.07,0.07), (0.0,0.98), (0,2*np.pi), (0,2*np.pi), (-np.pi,np.pi), (0,2*np.pi),
+          (-1.55,1.55), (-1.55,1.55), (0,2*np.pi), (0.7*n1, 1.3*n1)]
+sol = differential_evolution(obj, bounds, seed=1, popsize=20, maxiter=200, tol=1e-11, polish=False, mutation=(0.3,1.1), recombination=0.85)
+print('DE std deg:', np.rad2deg(np.sqrt(sol.fun)))
+sols = least_squares(resid_vec, sol.x, method='lm', max_nfev=12000)
+r = resid_vec(sols.x)
+print('polished: %.4f deg max %.3f' % (np.rad2deg(r.std()), np.rad2deg(np.abs(r).max())))
+p = sols.x
+labels = ['a2','n2','e2','w2','M02','i2','Om2','eps','phi','C','Hr']
+for l, v in zip(labels, p):
+    print(' %s = %.4f (%.2f deg)' % (l, v, np.rad2deg(v)))
+json.dump({'p':list(p),'resid':float(r.std())}, open('work/general_azel.json','w'))
+EOF
 
 ```
 
@@ -2344,6 +3744,31 @@ polished: 4.7222 deg max 21.679
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = df.gamma.values
+
+# Empirical F(beta): 5 harmonics
+cols=[np.ones_like(b)]
+for k in range(1,6): cols += [np.sin(k*b), np.cos(k*b)]
+X=np.column_stack(cols); c,*_=np.linalg.lstsq(X,g,rcond=None)
+F = X@c; res_ab = g - F
+print('F(beta,5harm) resid: %.4f' % res_ab.std())
+bg = np.linspace(0, 2*np.pi, 37)
+Xg = np.column_stack([np.ones_like(bg)] + sum([[np.sin(k*bg), np.cos(k*bg)] for k in range(1,6)], []))
+Fg = Xg@c
+print('F(beta) over circle:')
+for i in range(0, 37, 3):
+    print('  beta=%3d  F=%7.2f' % (np.rad2deg(bg[i]), Fg[i]))
+# residual vs alpha: harmonics?
+cols2=[np.ones_like(a)]
+for k in range(1,4): cols2 += [np.sin(k*a), np.cos(k*a)]
+X2=np.column_stack(cols2); c2,*_=np.linalg.lstsq(X2,res_ab,rcond=None)
+print('resid(beta-only) ~ Fourier(alpha,3): std %.4f -> %.4f' % (res_ab.std(), (res_ab-X2@c2).std()))
+print('alpha coeffs:', np.round(c2,3))
+EOF
 
 ```
 
@@ -2421,6 +3846,56 @@ Let me diagnose the best (4.72°) model's residuals over time — structured vs 
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json')); G = json.load(open('work/general_azel.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+p = G['p']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1); lam_s = L1 + np.pi
+a2, n2, e2, w2, M02, i2, Om2, eps, phi, C, Hr = p
+E2 = kepE(M02 + n2*t, e2)
+nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+r2 = a2*(1 - e2*np.cos(E2))
+xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+cw, sw = np.cos(w2), np.sin(w2)
+x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+ci, si = np.cos(i2), np.sin(i2)
+y2 = ci*y1; z2 = si*y1; x2 = x1
+cO, sO = np.cos(Om2), np.sin(Om2)
+xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+dx, dy, dz = xb-xh, yb-yh, zb
+rr = np.sqrt(dx*dx+dy*dy+dz*dz)
+ux, uy, uz = dx/rr, dy/rr, dz/rr
+ce, se = np.cos(eps), np.sin(eps)
+qy = ce*uy - se*uz; qz = se*uy + ce*uz
+RA = np.arctan2(qy, ux); dec = np.arcsin(np.clip(qz,-1,1))
+RA_s = np.arctan2(ce*np.sin(lam_s), np.cos(lam_s))
+H = RA_s + C + (Hr - n1)*t - RA
+el = np.rad2deg(np.arcsin(np.clip(np.sin(phi)*np.sin(dec) + np.cos(phi)*np.cos(dec)*np.cos(H),-1,1)))
+az = np.arctan2(-np.sin(H)*np.cos(dec), np.sin(dec)*np.cos(phi) - np.cos(dec)*np.sin(phi)*np.cos(H))
+rb_ = np.rad2deg((az - bu + np.pi)%(2*np.pi) - np.pi)
+rg = el - np.rad2deg(g)
+gd = np.rad2deg(g)
+print('segment    beta_resid   gamma_resid   gamma range')
+for lo,hi in [(0,100),(100,200),(200,300),(300,360),(360,400),(400,450),(450,517)]:
+    m=(t>=lo)&(t<hi)
+    print('[%3d,%3d):  %7.2f      %7.2f     [%6.1f,%6.1f]' % (lo,hi,rb_[m].std(),rg[m].std(),gd[m].min(),gd[m].max()))
+# correlation of gamma residual with geometric quantities
+d_geo = rr  # geocentric distance
+print('corr(gamma resid, geo distance):', np.corrcoef(rg, d_geo)[0,1])
+print('corr(gamma resid, t):', np.corrcoef(rg, t)[0,1])
+EOF
 
 ```
 
@@ -2487,6 +3962,37 @@ The 4.72° model fails mainly at the retrograde (t=0–96) and the whip — clos
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+L1 = w1 + 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+
+# trend + parallax harmonics in L1
+def design(tt, L1v, nh, deg):
+    cols = [np.ones_like(tt), tt, tt**2] if deg==2 else [np.ones_like(tt), tt]
+    for k in range(1, nh+1):
+        cols += [np.sin(k*L1v), np.cos(k*L1v)]
+    return np.column_stack(cols)
+
+for deg in [1,2]:
+    for nh in [1,2,3,4]:
+        X = design(t, L1, nh, deg)
+        c,*_ = np.linalg.lstsq(X, bu, rcond=None)
+        r = bu - X@c
+        print('deg=%d nh=%d: resid std=%.4f deg max=%.3f' % (deg, nh, np.rad2deg(r.std()), np.rad2deg(abs(r).max())))
+EOF
 
 ```
 
@@ -2520,6 +4026,36 @@ Parallax-in-L1 fails over the full window because the whip isn't periodic in hom
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+L1 = w1 + 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+
+def design(tt, L1v, nh):
+    cols = [np.ones_like(tt), tt]
+    for k in range(1, nh+1):
+        cols += [np.sin(k*L1v), np.cos(k*L1v)]
+    return np.column_stack(cols)
+
+for lo,hi in [(0,300),(0,250),(420,517),(100,300)]:
+    m=(t>=lo)&(t<hi)
+    for nh in [1,2,3]:
+        X = design(t[m], L1[m], nh)
+        c,*_ = np.linalg.lstsq(X, bu[m], rcond=None)
+        r = bu[m] - X@c
+        print('[%d,%d) nh=%d: resid std=%.4f deg' % (lo,hi,nh,np.rad2deg(r.std())))
+    print()
+EOF
 
 ```
 
@@ -2586,6 +4122,38 @@ Excellent — on quiet segments, beta = linear trend + 1 parallax harmonic of ho
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+L1 = w1 + 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+
+for lo,hi in [(0,250),(100,300),(420,517),(0,516)]:
+    m=(t>=lo)&(t<hi)
+    X = np.column_stack([np.ones_like(t[m]), t[m], np.sin(L1[m]), np.cos(L1[m])])
+    c,*_ = np.linalg.lstsq(X, bu[m], rcond=None)
+    r = bu[m]-X@c
+    A = np.hypot(c[2], c[3])
+    ph = np.arctan2(c[2], c[3])
+    print('[%3d,%3d): slope=%.4f deg/d, parallax amp=%.3f deg (phase %.1f), resid=%.3f' % (
+        lo,hi, np.rad2deg(c[1]), np.rad2deg(A), np.rad2deg(ph)%360, np.rad2deg(r.std())))
+# also mid-segment rates via local slope at quiet times
+def local_rate(tt, x, w=31):
+    h=w//2; r=[]
+    for i in range(h, len(x)-h):
+        c=np.polyfit(tt[i-h:i+h+1], x[i-h:i+h+1],1); r.append(c[0])
+    return np.array(r)
+rb = local_rate(t, bu)
+print('rate at t=60: %.3f, t=150: %.3f, t=250: %.3f, t=460: %.3f, t=510: %.3f (deg/d)' % tuple(np.rad2deg([rb[60], rb[150], rb[250], rb[460], rb[505]])))
+EOF
 
 ```
 
@@ -2641,6 +4209,32 @@ Parallax amplitude **grew** from 11° (early) to 53° (late) — the body is get
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+L1 = w1 + 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+
+def seg(lo, hi):
+    m=(t>=lo)&(t<hi)
+    X = np.column_stack([np.ones_like(t[m]), t[m], np.sin(L1[m]), np.cos(L1[m])])
+    c,*_ = np.linalg.lstsq(X, bu[m], rcond=None)
+    r = bu[m]-X@c
+    A = np.hypot(c[2], c[3])
+    return np.rad2deg(c[1]), np.rad2deg(A), np.rad2deg(r.std())
+
+for lo,hi in [(0,80),(80,160),(160,240),(240,320),(420,460),(460,500),(500,517),(440,480),(480,516)]:
+    s,A,r = seg(lo,hi)
+    print('[%3d,%3d): slope=%7.4f deg/d  parallax amp=%7.3f deg  resid=%.3f' % (lo,hi,s,A,r))
+EOF
 
 ```
 
@@ -2703,6 +4297,60 @@ The parallax amplitude exploded after the whip — the body makes a close approa
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def resid_beta(p):
+    a2, e2, w2, M02, i2, Om2 = p
+    if a2<=0.03 or e2<0 or e2>=0.995: return np.full(len(t), 2.0)
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2
+    lon = np.arctan2(yb-yh, xb-xh)
+    return (lon - bu + np.pi)%(2*np.pi) - np.pi
+
+rng = np.random.default_rng(31)
+sols=[]
+for k in range(300):
+    p0 = [np.exp(rng.uniform(np.log(0.2), np.log(30))), rng.uniform(0,0.95),
+          rng.uniform(0,6.28), rng.uniform(0,6.28), rng.uniform(-3.14,3.14), rng.uniform(0,6.28)]
+    try:
+        sol = least_squares(resid_beta, p0, method='lm', max_nfev=500)
+    except Exception:
+        continue
+    s = sol.fun.std()
+    if s < np.deg2rad(1.0):
+        sols.append((s, sol.x.copy()))
+print('solutions with resid<1deg:', len(sols))
+sols.sort(key=lambda c: c[0])
+for s, x in sols[:8]:
+    print('resid=%.4f a2=%.3f e2=%.3f w2=%.1f M02=%.1f i2=%.1f Om2=%.1f' % (
+        np.rad2deg(s), x[0], x[1], np.rad2deg(x[2])%360, np.rad2deg(x[3])%360, np.rad2deg(x[4]), np.rad2deg(x[5])%360))
+import pickle
+pickle.dump(sols, open('work/beta_sols.pkl','wb'))
+EOF
 
 ```
 
@@ -2798,6 +4446,44 @@ Beta-only is hopelessly degenerate. Let me test whether **sin γ** is the natura
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = np.deg2rad(df.gamma.values)
+t = df.t.values.astype(float)
+
+def fourier_design(a, b, J, K):
+    cols = [np.ones_like(a)]
+    for j in range(0, J+1):
+        for k in range(-K, K+1):
+            if j==0 and k<=0: continue
+            cols += [np.sin(j*a+k*b), np.cos(j*a+k*b)]
+    return np.column_stack(cols)
+
+X = fourier_design(a,b,2,2)
+for name, y in [('g', g), ('sin g', np.sin(g)), ('cos g', np.cos(g)), ('tan g', np.tan(g))]:
+    c,*_ = np.linalg.lstsq(X, y, rcond=None)
+    r = y - X@c
+    print('%8s ~ J2K2: resid std=%.5f' % (name, r.std()))
+
+# also fit sin g with separable terms and show dominant
+feats = {'1':np.ones_like(a)}
+for k in [1,2]:
+    feats[f'sin{k}b']=np.sin(k*b); feats[f'cos{k}b']=np.cos(k*b)
+for j in [1,2]:
+    feats[f'sin{j}a']=np.sin(j*a); feats[f'cos{j}a']=np.cos(j*a)
+for (fn, fa) in [('sin', np.sin), ('cos', np.cos)]:
+    for (gm, gb) in [('sin', np.sin), ('cos', np.cos)]:
+        feats[f'{fn}a{gm}b'] = fa(a)*gb(b)
+names = list(feats); Xs = np.column_stack([feats[n] for n in names])
+y = np.sin(g)
+c,*_ = np.linalg.lstsq(Xs, y, rcond=None)
+r = y - Xs@c
+print('\nsin g separable resid: %.5f' % r.std())
+idx = np.argsort(np.abs(c))[::-1]
+for i in idx:
+    if abs(c[i])>0.02: print('  %-10s %8.4f' % (names[i], c[i]))
+EOF
 
 ```
 
@@ -2849,6 +4535,31 @@ sin g separable resid: 0.01224
 **tool call: bash**
 
 ```
+timeout 120 python3 << 'EOF'
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values); g = np.deg2rad(df.gamma.values)
+feats = {'1':np.ones_like(a)}
+for k in [1,2]:
+    feats[f'sin{k}b']=np.sin(k*b); feats[f'cos{k}b']=np.cos(k*b)
+for j in [1,2]:
+    feats[f'sin{j}a']=np.sin(j*a); feats[f'cos{j}a']=np.cos(j*a)
+for (fn, fa) in [('sin', np.sin), ('cos', np.cos)]:
+    for (gm, gb) in [('sin', np.sin), ('cos', np.cos)]:
+        feats[f'{fn}a{gm}b'] = fa(a)*gb(b)
+names = list(feats); Xs = np.column_stack([feats[n] for n in names])
+y = np.cos(g)
+c,*_ = np.linalg.lstsq(Xs, y, rcond=None)
+r = y - Xs@c
+print('cos g separable resid: %.5f' % r.std())
+idx = np.argsort(np.abs(c))[::-1]
+for i in idx: print('  %-10s %9.5f' % (names[i], c[i]))
+# compare with ONLY the 4 cross terms + const
+keep = ['1','cosacosb','cosasinb','sinacosb','sinasinb']
+Xk = np.column_stack([feats[n] for n in keep])
+ck,*_ = np.linalg.lstsq(Xk, y, rcond=None)
+print('only cross terms resid: %.5f, coefs:' % (y-Xk@ck).std(), dict(zip(keep, np.round(ck,4))))
+EOF
 
 ```
 
@@ -3012,6 +4723,57 @@ I've learned a lot but haven't cracked the exact physics yet. Let me get a **val
 **tool call: bash**
 
 ```
+timeout 200 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+df = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+Hh = json.load(open('work/home.json')); G = json.load(open('work/general_azel.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+p = G['p']; resid_model = G['resid']  # rad
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def predict(tt):
+    E1 = kepE(M01 + n1*tt, e1)
+    nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+    r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+    xh, yh = r1*np.cos(L1), r1*np.sin(L1); lam_s = L1 + np.pi
+    a2, n2, e2, w2, M02, i2, Om2, eps, phi, C, Hr = p
+    E2 = kepE(M02 + n2*tt, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    rr = np.sqrt(dx*dx+dy*dy+dz*dz)
+    ux, uy, uz = dx/rr, dy/rr, dz/rr
+    ce, se = np.cos(eps), np.sin(eps)
+    qy = ce*uy - se*uz; qz = se*uy + ce*uz
+    RA = np.arctan2(qy, ux); dec = np.arcsin(np.clip(qz,-1,1))
+    RA_s = np.arctan2(ce*np.sin(lam_s), np.cos(lam_s))
+    H = RA_s + C + (Hr - n1)*tt - RA
+    el = np.arcsin(np.clip(np.sin(phi)*np.sin(dec) + np.cos(phi)*np.cos(dec)*np.cos(H),-1,1))
+    az = np.arctan2(-np.sin(H)*np.cos(dec), np.sin(dec)*np.cos(phi) - np.cos(dec)*np.sin(phi)*np.cos(H))
+    return np.rad2deg(az)%360.0, np.rad2deg(el), np.rad2deg(np.arctan2(dy,dx))%360.0
+
+tt = test.t.values.astype(float)
+az_p, el_p, lon_p = predict(tt)
+sigma = np.rad2deg(resid_model) + 0.4  # model residual + measurement noise
+# widen with horizon
+hor = (tt - 516)/30.0
+sig = sigma*(1.0 + 0.3*np.abs(hor))
+out = pd.DataFrame({'t': test.t.values, 'y_pred': el_p,
+                    'y_lower': el_p - 1.96*sig, 'y_upper': el_p + 1.96*sig})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+print('saved fallback predictions.csv')
+EOF
 
 ```
 
@@ -3063,6 +4825,67 @@ Fallback saved (don't trust its swings yet). The parallax evidence points to a *
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def resid(p, a2fixed=None):
+    if a2fixed is None:
+        a2, e2, w2, M02, i2, Om2 = p
+    else:
+        a2 = a2fixed; e2, w2, M02, i2, Om2 = p
+    if e2<0 or e2>=0.995: return np.full(2*len(t), 3.0)
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.hypot(dx, dy))
+    rb_ = (lon - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, lat - g])
+
+rng = np.random.default_rng(51)
+best=None
+for a2f in [0.9, 0.95, 1.0, 1.05, 1.1]:
+    for k in range(40):
+        p0 = [rng.uniform(0,0.6), rng.uniform(0,6.28), rng.uniform(0,6.28), rng.uniform(-3.14,3.14), rng.uniform(0,6.28)]
+        try:
+            sol = least_squares(lambda p: resid(p, a2fixed=a2f), p0, method='lm', max_nfev=600)
+        except Exception:
+            continue
+        s = sol.fun.std()
+        if best is None or s < best[0]:
+            best = (s, a2f, sol.x.copy())
+s, a2f, x = best
+print('BEST co-orbital G1: a2=%.2f resid=%.4f deg' % (a2f, np.rad2deg(s)))
+print('e2=%.4f w2=%.2f M02=%.2f i2=%.3f Om2=%.2f' % (x[0], np.rad2deg(x[1])%360, np.rad2deg(x[2])%360, np.rad2deg(x[3]), np.rad2deg(x[4])%360))
+# also free a2 in [0.8,1.3] via polish from best
+p_full = [a2f] + list(x)
+sol = least_squares(lambda p: resid(p, None), p_full, method='lm', max_nfev=8000)
+print('free-a2 polish: resid=%.4f a2=%.4f' % (np.rad2deg(sol.fun.std()), sol.x[0]))
+EOF
 
 ```
 
@@ -3182,6 +5005,59 @@ G1/co-orbital definitively wrong. New approach: fit the **elevation formula dire
 **tool call: bash**
 
 ```
+timeout 290 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+from scipy.interpolate import CubicSpline
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+b  = np.deg2rad(df.beta.values)
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+lam_s = w1 + nu1 + np.pi
+
+knots = np.linspace(0, 516, 12)
+K = len(knots)
+def model(p):
+    phi, eps, C = p[:3]
+    dk = p[3:]
+    dec = CubicSpline(knots, dk)(t)
+    RA_s = np.arctan2(np.cos(eps)*np.sin(lam_s), np.cos(lam_s))
+    H = RA_s + C - b
+    return np.arcsin(np.clip(np.sin(phi)*np.sin(dec) + np.cos(phi)*np.cos(dec)*np.cos(H), -1, 1))
+
+def resid(p):
+    return model(p) - g
+
+rng = np.random.default_rng(2)
+best=None
+for k in range(60):
+    p0 = np.concatenate([ [rng.uniform(-1.4,1.4), rng.uniform(0.05,1.3), rng.uniform(0,6.28)],
+                          rng.uniform(-0.6,0.6,K) ])
+    try:
+        sol = least_squares(resid, p0, method='lm', max_nfev=1000)
+    except Exception:
+        continue
+    s = sol.fun.std()
+    if best is None or s < best[0]: best = (s, sol.x.copy())
+s, p = best
+print('BEST elevation-spline resid = %.4f deg  (K=%d knots)' % (np.rad2deg(s), K))
+print('phi=%.2f eps=%.2f C=%.2f' % (np.rad2deg(p[0]), np.rad2deg(p[1]), np.rad2deg(p[2])%360))
+print('dec knots deg:', np.round(np.rad2deg(p[3:]),2))
+# residual by segment
+r = np.rad2deg(resid(p))
+for lo,hi in [(0,100),(100,250),(250,360),(360,420),(420,517)]:
+    m=(t>=lo)&(t<hi); print('[%d,%d): resid %.3f'%(lo,hi,r[m].std()))
+json.dump({'p':list(p),'resid':float(s),'knots':list(knots)}, open('work/el_spline.json','w'))
+EOF
 
 ```
 
@@ -3241,6 +5117,58 @@ dec knots deg: [ 43.09  36.86  17.06  -3.34 -10.15   7.4   39.6   44.92  25.55  
 **tool call: bash**
 
 ```
+timeout 290 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+from scipy.interpolate import CubicSpline
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+b  = np.deg2rad(df.beta.values)
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+lam_s = w1 + nu1 + np.pi
+
+def make_model(K):
+    knots = np.linspace(0, 516, K)
+    def model(p):
+        phi, eps, C = p[:3]
+        lam = CubicSpline(knots, p[3:])(t)
+        ce, se = np.cos(eps), np.sin(eps)
+        dec = np.arcsin(np.clip(np.sin(lam)*ce + np.cos(lam)*se*np.sin(b), -1, 1))
+        RA = np.arctan2(np.sin(b)*ce - np.tan(lam)*se, np.cos(b))
+        RA_s = np.arctan2(ce*np.sin(lam_s), np.cos(lam_s))
+        H = RA_s + C - RA
+        return np.arcsin(np.clip(np.sin(phi)*np.sin(dec) + np.cos(phi)*np.cos(dec)*np.cos(H), -1, 1))
+    return model, knots
+
+for K in [8, 12, 16]:
+    model, knots = make_model(K)
+    rng = np.random.default_rng(4)
+    best=None
+    for k in range(40):
+        p0 = np.concatenate([[rng.uniform(-1.4,1.4), rng.uniform(0.05,1.4), rng.uniform(0,6.28)], rng.uniform(-0.7,0.7,K)])
+        try:
+            sol = least_squares(lambda p: model(p)-g, p0, method='lm', max_nfev=900)
+        except Exception:
+            continue
+        s = sol.fun.std()
+        if best is None or s < best[0]: best = (s, sol.x.copy())
+    s, p = best
+    print('K=%d: resid=%.4f deg  phi=%.1f eps=%.1f C=%.1f' % (K, np.rad2deg(s), np.rad2deg(p[0]), np.rad2deg(p[1]), np.rad2deg(p[2])%360))
+    if K==16:
+        json.dump({'p':list(p),'resid':float(s),'knots':list(knots)}, open('work/el_spline2.json','w'))
+        r = np.rad2deg(model(p)-g)
+        for lo,hi in [(0,100),(100,250),(250,360),(360,420),(420,517)]:
+            m=(t>=lo)&(t<hi); print('   [%d,%d): %.3f'%(lo,hi,r[m].std()))
+EOF
 
 ```
 
@@ -3301,6 +5229,70 @@ Improving (0.60°) but the whip needs finer λ resolution. Key insight: the elev
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+from scipy.interpolate import CubicSpline
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+ES = json.load(open('work/el_spline2.json'))
+p = ES['p']; knots = np.array(ES['knots'])
+lam = CubicSpline(knots, np.array(p[3:]))(t)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1)
+
+def resid_orbit(pp):
+    a2, e2, w2, M02, i2, Om2 = pp
+    if a2<=0.03 or e2<0 or e2>=0.995: return np.full(2*len(t), 3.0)
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    lon = np.arctan2(dy, dx)
+    lat = np.arctan2(dz, np.hypot(dx, dy))
+    rb_ = (lon - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, lat - lam])
+
+rng = np.random.default_rng(61)
+cands=[]
+for k in range(200):
+    p0 = [np.exp(rng.uniform(np.log(0.2), np.log(25))), rng.uniform(0,0.93),
+          rng.uniform(0,6.28), rng.uniform(0,6.28), rng.uniform(-3.1,3.1), rng.uniform(0,6.28)]
+    try:
+        sol = least_squares(resid_orbit, p0, method='lm', max_nfev=400)
+    except Exception:
+        continue
+    cands.append((sol.fun.std(), sol.x.copy()))
+cands.sort(key=lambda c: c[0])
+print('top3:', [round(np.rad2deg(c[0]),3) for c in cands[:3]])
+best=None
+for s,x in cands[:8]:
+    sol = least_squares(resid_orbit, x, method='lm', max_nfev=8000)
+    ss = sol.fun.std()
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+s,pp = best
+print('BEST orbit-vs-(beta,lambda) resid = %.4f deg' % np.rad2deg(s))
+print('a2=%.3f e2=%.3f w2=%.1f M02=%.1f i2=%.1f Om2=%.1f' % (
+    pp[0], pp[1], np.rad2deg(pp[2])%360, np.rad2deg(pp[3])%360, np.rad2deg(pp[4]), np.rad2deg(pp[5])%360))
+json.dump({'p':list(pp),'resid':float(s)}, open('work/orbit_betalam.json','w'))
+EOF
 
 ```
 
@@ -3372,6 +5364,68 @@ The λ-spline isn't orbital — the free spline absorbed non-physical structure.
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+n1 = Hh['n1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def model(p):
+    e_m, i_m, Om0, nOm, w0, nw, M0, nm, phi, th0, Hr = p
+    E = kepE(M0 + nm*t, e_m)
+    nu = 2*np.arctan2(np.sqrt(1+e_m)*np.sin(E/2), np.sqrt(1-e_m)*np.cos(E/2))
+    Om = Om0 + nOm*t; w = w0 + nw*t
+    xo, yo = np.cos(nu), np.sin(nu)
+    cw, sw = np.cos(w), np.sin(w)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i_m), np.sin(i_m)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om), np.sin(Om)
+    ux = cO*x2 - sO*y2; uy = sO*x2 + cO*y2; uz = z2
+    RA = np.arctan2(uy, ux); dec = np.arcsin(np.clip(uz,-1,1))
+    H = th0 + Hr*t - RA
+    el = np.arcsin(np.clip(np.sin(phi)*np.sin(dec) + np.cos(phi)*np.cos(dec)*np.cos(H),-1,1))
+    az = np.arctan2(-np.sin(H)*np.cos(dec), np.sin(dec)*np.cos(phi) - np.cos(dec)*np.sin(phi)*np.cos(H))
+    return az, el
+
+def resid(p):
+    if p[0]<0 or p[0]>=0.99: return np.full(2*len(t), 3.0)
+    az, el = model(p)
+    rb_ = (az - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, el - g])
+
+rng = np.random.default_rng(77)
+cands=[]
+for k in range(150):
+    p0 = [rng.uniform(0,0.9), rng.uniform(-1.5,1.5), rng.uniform(0,6.28), np.deg2rad(rng.uniform(-2,2)),
+          rng.uniform(0,6.28), np.deg2rad(rng.uniform(-2,2)), rng.uniform(0,6.28), np.deg2rad(rng.uniform(0.1,3.5)),
+          rng.uniform(-1.4,1.4), rng.uniform(0,6.28), n1*rng.uniform(0.8,1.2)]
+    try:
+        sol = least_squares(resid, p0, method='lm', max_nfev=400)
+    except Exception:
+        continue
+    cands.append((sol.fun.std(), sol.x.copy()))
+cands.sort(key=lambda c: c[0])
+print('top3:', [round(np.rad2deg(c[0]),3) for c in cands[:3]])
+best=None
+for s,x in cands[:8]:
+    sol = least_squares(resid, x, method='lm', max_nfev=8000)
+    ss = sol.fun.std()
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+s,p = best
+print('BEST satellite az/el resid = %.4f deg' % np.rad2deg(s))
+labs=['e_m','i_m','Om0','nOm','w0','nw','M0','nm','phi','th0','Hr']
+for l,v in zip(labs,p): print(' %s=%.4f (%.2f deg or deg/d)'%(l,v,np.rad2deg(v)))
+json.dump({'p':list(p),'resid':float(s)}, open('work/sat_azel.json','w'))
+EOF
 
 ```
 
@@ -3484,6 +5538,81 @@ BEST satellite az/el resid = 3.9343 deg
 **tool call: bash**
 
 ```
+timeout 295 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+g  = np.deg2rad(df.gamma.values)
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+nu1 = 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+r1 = 1 - e1*np.cos(E1); L1 = w1 + nu1
+xh, yh = r1*np.cos(L1), r1*np.sin(L1); lam_s = L1 + np.pi
+
+def model(p):
+    a2, e2, w0, nw, M02, i2, Om0, nOm, eps, phi, C = p
+    n2 = n1 * a2**(-1.5)
+    E2 = kepE(M02 + n2*t, e2)
+    nu2 = 2*np.arctan2(np.sqrt(1+e2)*np.sin(E2/2), np.sqrt(1-e2)*np.cos(E2/2))
+    r2 = a2*(1 - e2*np.cos(E2))
+    w2 = w0 + nw*t; Om2 = Om0 + nOm*t
+    xo, yo = r2*np.cos(nu2), r2*np.sin(nu2)
+    cw, sw = np.cos(w2), np.sin(w2)
+    x1 = cw*xo - sw*yo; y1 = sw*xo + cw*yo
+    ci, si = np.cos(i2), np.sin(i2)
+    y2 = ci*y1; z2 = si*y1; x2 = x1
+    cO, sO = np.cos(Om2), np.sin(Om2)
+    xb = cO*x2 - sO*y2; yb = sO*x2 + cO*y2; zb = z2
+    dx, dy, dz = xb-xh, yb-yh, zb
+    rr = np.sqrt(dx*dx+dy*dy+dz*dz)
+    ux, uy, uz = dx/rr, dy/rr, dz/rr
+    ce, se = np.cos(eps), np.sin(eps)
+    qy = ce*uy - se*uz; qz = se*uy + ce*uz
+    RA = np.arctan2(qy, ux); dec = np.arcsin(np.clip(qz,-1,1))
+    RA_s = np.arctan2(ce*np.sin(lam_s), np.cos(lam_s))
+    H = RA_s + C - RA
+    el = np.arcsin(np.clip(np.sin(phi)*np.sin(dec) + np.cos(phi)*np.cos(dec)*np.cos(H),-1,1))
+    az = np.arctan2(-np.sin(H)*np.cos(dec), np.sin(dec)*np.cos(phi) - np.cos(dec)*np.sin(phi)*np.cos(H))
+    return az, el
+
+def resid(p):
+    if p[0]<=0.03 or p[1]<0 or p[1]>=0.99: return np.full(2*len(t), 3.0)
+    az, el = model(p)
+    rb_ = (az - bu + np.pi)%(2*np.pi) - np.pi
+    return np.concatenate([rb_, el - g])
+
+rng = np.random.default_rng(88)
+cands=[]
+for k in range(150):
+    p0 = [np.exp(rng.uniform(np.log(0.3), np.log(15))), rng.uniform(0,0.9),
+          rng.uniform(0,6.28), np.deg2rad(rng.uniform(-1.5,1.5)), rng.uniform(0,6.28),
+          rng.uniform(-3.1,3.1), rng.uniform(0,6.28), np.deg2rad(rng.uniform(-1.5,1.5)),
+          rng.uniform(-1.4,1.4), rng.uniform(-1.4,1.4), rng.uniform(0,6.28)]
+    try:
+        sol = least_squares(resid, p0, method='lm', max_nfev=400)
+    except Exception:
+        continue
+    cands.append((sol.fun.std(), sol.x.copy()))
+cands.sort(key=lambda c: c[0])
+print('top3:', [round(np.rad2deg(c[0]),3) for c in cands[:3]])
+best=None
+for s,x in cands[:8]:
+    sol = least_squares(resid, x, method='lm', max_nfev=9000)
+    ss = sol.fun.std()
+    if best is None or ss<best[0]: best=(ss, sol.x.copy())
+s,p = best
+print('BEST precessing az/el-heliocentric resid = %.4f deg' % np.rad2deg(s))
+labs=['a2','e2','w0','nw','M02','i2','Om0','nOm','eps','phi','C']
+for l,v in zip(labs,p): print(' %s=%.4f (%.2f)'%(l,v,np.rad2deg(v)))
+json.dump({'p':list(p),'resid':float(s)}, open('work/prec_azel.json','w'))
+EOF
 
 ```
 
@@ -3571,6 +5700,51 @@ Still 3.04°. I'll pivot to a robust hybrid: exact empirical f(α,β) + a carefu
 **tool call: bash**
 
 ```
+timeout 250 python3 << 'EOF'
+import pandas as pd, numpy as np, json
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Hh = json.load(open('work/home.json'))
+w1, n1, M01, e1 = Hh['w1'], Hh['n1'], Hh['M01'], Hh['e1']
+def kepE(M, e):
+    E = M.copy()
+    for _ in range(30): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+E1 = kepE(M01 + n1*t, e1)
+L1 = w1 + 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1/2), np.sqrt(1-e1)*np.cos(E1/2))
+
+# bu = c0 + c1 t + parallax(2 harm of L1) + whip step + whip transient
+def model(p, tt, L1v):
+    c0, c1, s1, c1p, s2, c2p, A, t0, tau, B, t1, tau1 = p
+    base = c0 + c1*tt + s1*np.sin(L1v) + c1p*np.cos(L1v) + s2*np.sin(2*L1v) + c2p*np.cos(2*L1v)
+    step = A/(1+np.exp(-(tt-t0)/tau))
+    trans = B*np.exp(-0.5*((tt-t1)/tau1)**2)
+    return base + step + trans
+
+def resid(p):
+    return model(p, t, L1) - bu
+
+p0 = [bu[0], 0.002, 0,0,0,0, 1.5, 370, 10, 0, 370, 10]
+sol = least_squares(resid, p0, method='lm', max_nfev=20000)
+r = resid(sol.x)
+print('beta structural model resid: %.4f deg max %.3f' % (np.rad2deg(r.std()), np.rad2deg(abs(r).max())))
+p = sol.x
+print('c1=%.5f deg/d, step A=%.2f deg at t0=%.1f (tau=%.1f), transient B=%.2f at t1=%.1f' % (
+    np.rad2deg(p[1]), np.rad2deg(p[6]), p[7], p[8], np.rad2deg(p[9]), p[10]))
+print('parallax amps: 1st=%.3f 2nd=%.3f deg' % (np.rad2deg(np.hypot(p[2],p[3])), np.rad2deg(np.hypot(p[4],p[5]))))
+# residual by segment
+for lo,hi in [(0,100),(100,250),(250,340),(340,400),(400,517)]:
+    m=(t>=lo)&(t<hi); print('[%d,%d): %.3f'%(lo,hi,np.rad2deg(r[m].std())))
+json.dump({'p':list(p),'resid':float(r.std())}, open('work/beta_struct.json','w'))
+# extrapolate to test
+test = pd.read_csv('data/test.csv'); tt = test.t.values.astype(float)
+E1t = kepE(M01 + n1*tt, e1)
+L1t = w1 + 2*np.arctan2(np.sqrt(1+e1)*np.sin(E1t/2), np.sqrt(1-e1)*np.cos(E1t/2))
+bu_t = model(p, tt, L1t)
+print('extrapolated bu at test (deg mod 360):', np.round(np.rad2deg(bu_t)%360,2))
+EOF
 
 ```
 

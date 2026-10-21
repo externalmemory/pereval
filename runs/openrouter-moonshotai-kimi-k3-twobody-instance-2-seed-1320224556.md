@@ -52,7 +52,7 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -111,7 +111,13 @@ t
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv && python -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.describe())
+print('t range:', df.t.min(), df.t.max())
+print('n unique t:', df.t.nunique())
+"
 ```
 
 ## [5] tool
@@ -166,7 +172,21 @@ The data is daily with an angle that increases and wraps at 360. Test days exten
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values; a = np.deg2rad(df.alpha.values)
+un = np.rad2deg(np.unwrap(a))
+print('unwrapped start/end:', un[0], un[-1])
+print('total rotation over', t[-1]-t[0], 'days:', un[-1]-un[0], 'deg -> rate', (un[-1]-un[0])/(t[-1]-t[0]))
+# fit linear
+c = np.polyfit(t, un, 1)
+res = un - np.polyval(c, t)
+print('linear resid std:', res.std(), 'max abs:', np.abs(res).max())
+# look at residual structure: sample every 200 days
+for i in range(0, len(t), 200):
+    print(t[i], round(res[i],2))
+"
 ```
 
 ## [7] tool
@@ -208,7 +228,23 @@ The linear fit leaves large structured residuals with a clear oscillation whose 
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values; a = np.deg2rad(df.alpha.values)
+un = np.rad2deg(np.unwrap(a))
+c = np.polyfit(t, un, 1)
+res = un - np.polyval(c, t)
+n = len(res)
+R = np.fft.rfft(res - res.mean())
+freqs = np.fft.rfftfreq(n, d=1.0)
+power = np.abs(R)**2
+idx = np.argsort(power)[::-1][:15]
+print('top periods (days) and power:')
+for i in sorted(idx):
+    if freqs[i]>0:
+        print(round(1/freqs[i],2), round(power[i],1))
+"
 ```
 
 ## [9] tool
@@ -262,7 +298,26 @@ The spectrum shows a carrier near ~404 days with symmetric sidebands — suggest
 **tool call: bash**
 
 ```
-
+python -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float); a = np.deg2rad(df.alpha.values)
+un = np.rad2deg(np.unwrap(a))
+c = np.polyfit(t, un, 1)
+res = un - np.polyval(c, t)
+# noise estimate from first differences
+d = np.diff(res)
+print('noise sigma estimate:', d.std()/np.sqrt(2))
+# demodulate at candidate carrier period
+for P in [403.62]:
+    z = res * np.exp(-2j*np.pi*t/P)
+    # smooth with moving average over ~150 days
+    k = 151
+    zs = np.convolve(z, np.ones(k)/k, mode='same')
+    amp = 2*np.abs(zs); ph = np.angle(zs)
+    for i in range(100, len(t)-100, 300):
+        print(int(t[i]), 'amp', round(amp[i],2), 'phase', round(ph[i],3))
+"
 ```
 
 ## [11] tool
@@ -333,7 +388,62 @@ noise sigma estimate: 0.4491973141747493
 **tool call: bash**
 
 ```
+cat > /tmp/explore.py << 'EOF'
+import pandas as pd, numpy as np
 
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+un = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+
+def design(t, P, K=1, deg=1):
+    # linear trend + K harmonics with time-varying (poly deg) coefficients
+    cols = [np.ones_like(t), t]
+    tc = (t - t.mean())/t.std()
+    for k in range(1, K+1):
+        s = np.sin(2*np.pi*k*t/P); c = np.cos(2*np.pi*k*t/P)
+        cols += [s, c]
+        if deg >= 1:
+            cols += [tc*s, tc*c]
+        if deg >= 2:
+            cols += [tc**2*s, tc**2*c]
+    return np.column_stack(cols)
+
+def fit_eval(ttr, ytr, tte, yte, P, K, deg):
+    X = design(ttr, P, K, deg)
+    beta, *_ = np.linalg.lstsq(X, ytr, rcond=None)
+    Xe = design(tte, P, K, deg)
+    pr = Xe @ beta
+    return np.sqrt(np.mean((pr - yte)**2))
+
+# hold out last 500 days for validation
+cut = t.max() - 500
+mtr = t <= cut; mte = t > cut
+ttr, ytr = t[mtr], un[mtr]; tte, yte = t[mte], un[mte]
+
+best = None
+for P in np.arange(390, 420, 0.25):
+    for K in [1, 2]:
+        for deg in [0, 1, 2]:
+            r = fit_eval(ttr, ytr, tte, yte, P, K, deg)
+            if best is None or r < best[0]:
+                best = (r, P, K, deg)
+print('best val RMSE, P, K, deg:', best)
+
+# finer scan around best P with best K,deg
+r0, P0, K0, d0 = best
+for P in np.arange(P0-1, P0+1, 0.05):
+    r = fit_eval(ttr, ytr, tte, yte, P, K0, d0)
+    if r < r0:
+        r0, P0 = r, P
+print('refined:', r0, P0, K0, d0)
+
+# also in-sample residual std for the refined model on all data
+X = design(t, P0, K0, d0)
+beta, *_ = np.linalg.lstsq(X, un, rcond=None)
+resid = un - X@beta
+print('full-data in-sample resid std:', resid.std())
+EOF
+python /tmp/explore.py
 ```
 
 ## [13] tool
@@ -363,7 +473,46 @@ full-data in-sample resid std: 0.5374038338901992
 **tool call: bash**
 
 ```
+cat > /tmp/explore2.py << 'EOF'
+import pandas as pd, numpy as np
 
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+un = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+tmean, tstd = t.mean(), t.std()
+
+def design(t, P, K=2, deg=1, trend_deg=1):
+    tc = (t - tmean)/tstd
+    cols = [np.ones_like(t), t]
+    if trend_deg >= 2: cols.append(tc**2)
+    for k in range(1, K+1):
+        s = np.sin(2*np.pi*k*t/P); c = np.cos(2*np.pi*k*t/P)
+        cols += [s, c]
+        if deg >= 1: cols += [tc*s, tc*c]
+        if deg >= 2: cols += [tc**2*s, tc**2*c]
+    return np.column_stack(cols)
+
+def val_rmse(P, K, deg, trend_deg=1, holdout=500):
+    cut = t.max() - holdout
+    mtr = t <= cut
+    X = design(t[mtr], P, K, deg, trend_deg)
+    beta, *_ = np.linalg.lstsq(X, un[mtr], rcond=None)
+    pr = design(t[~mtr], P, K, deg, trend_deg) @ beta
+    return np.sqrt(np.mean((pr - un[~mtr])**2))
+
+# fine P scan
+results = []
+for P in np.arange(415, 426, 0.1):
+    for K in [1,2,3]:
+        for deg in [0,1,2]:
+            for td in [1,2]:
+                r = val_rmse(P, K, deg, td)
+                results.append((r, P, K, deg, td))
+results.sort()
+for r in results[:12]:
+    print(tuple(round(x,2) if isinstance(x,float) else x for x in r))
+EOF
+python /tmp/explore2.py
 ```
 
 ## [15] tool
@@ -401,7 +550,42 @@ Excellent — K=3 harmonics with quadratically time-varying coefficients at P≈
 **tool call: bash**
 
 ```
+cat > /tmp/explore3.py << 'EOF'
+import pandas as pd, numpy as np
 
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+un = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+tmean, tstd = t.mean(), t.std()
+
+def design(t, P, K, deg, trend_deg=1):
+    tc = (t - tmean)/tstd
+    cols = [np.ones_like(t), t]
+    for k in range(1, K+1):
+        s = np.sin(2*np.pi*k*t/P); c = np.cos(2*np.pi*k*t/P)
+        cols += [s, c]
+        if deg >= 1: cols += [tc*s, tc*c]
+        if deg >= 2: cols += [tc**2*s, tc**2*c]
+    return np.column_stack(cols)
+
+def val_rmse(P, K, deg, holdout):
+    cut = t.max() - holdout
+    mtr = t <= cut
+    X = design(t[mtr], P, K, deg)
+    beta, *_ = np.linalg.lstsq(X, un[mtr], rcond=None)
+    pr = design(t[~mtr], P, K, deg) @ beta
+    return np.sqrt(np.mean((pr - un[~mtr])**2))
+
+for K, deg in [(2,2),(3,1),(3,2),(4,2),(3,3)]:
+    rs = [val_rmse(P, K, deg, h) for P in [423.5, 423.9, 424.3] for h in [250, 500, 750]]
+    print(f'K={K} deg={deg}: max val RMSE over grid = {max(rs):.3f}, mean = {np.mean(rs):.3f}')
+
+# chosen config: sensitivity to P at holdout 500
+print()
+for P in np.arange(422.0, 426.0, 0.2):
+    print(round(P,1), round(val_rmse(P, 3, 2, 500),3))
+EOF
+python /tmp/explore3.py
 ```
 
 ## [17] tool
@@ -470,7 +654,46 @@ The model is very robust — validation RMSE ≈0.43° across all holdout window
 **tool call: bash**
 
 ```
+cat > /tmp/explore4.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
 
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+un = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+tmean, tstd = t.mean(), t.std()
+P, K, deg = 423.9, 3, 2
+
+def design(t):
+    tc = (t - tmean)/tstd
+    cols = [np.ones_like(t), t]
+    for k in range(1, K+1):
+        s = np.sin(2*np.pi*k*t/P); c = np.cos(2*np.pi*k*t/P)
+        cols += [s, c, tc*s, tc*c, tc**2*s, tc**2*c]
+    return np.column_stack(cols)
+
+X = design(t)
+beta, *_ = np.linalg.lstsq(X, un, rcond=None)
+resid = un - X @ beta
+n, p = X.shape
+sigma2 = resid @ resid / (n - p)
+print('resid std (dof-adjusted):', np.sqrt(sigma2))
+print('skew, kurtosis:', stats.skew(resid), stats.kurtosis(resid))
+# Ljung-Box-ish: autocorrelations of residuals
+r = resid - resid.mean()
+for lag in [1,2,3,5,10]:
+    ac = np.corrcoef(r[:-lag], r[lag:])[0,1]
+    print('acf lag', lag, round(ac,3))
+# noise from first differences of residuals
+print('diff-based sigma:', np.diff(resid).std()/np.sqrt(2))
+# normality test
+print('normaltest p:', stats.normaltest(resid).pvalue)
+# quantiles
+qs = [0.01, 0.025, 0.05, 0.5, 0.95, 0.975, 0.99]
+print('resid quantiles:', np.round(np.quantile(resid, qs),3))
+print('normal equiv   :', np.round(stats.norm.ppf(qs)*np.sqrt(sigma2),3))
+EOF
+python /tmp/explore4.py
 ```
 
 ## [19] tool
@@ -514,7 +737,100 @@ Residuals are white, Gaussian (normaltest p=0.45), σ≈0.42°. Now I'll write t
 **tool call: bash**
 
 ```
+cat > /tmp/predict_final.py << 'EOF'
+"""
+Predict alpha (angle in degrees, wraps at 360) for future days in data/test.csv.
 
+Model: unwrap angle to a continuous signal, then fit
+    alpha_unwrapped(t) = b0 + b1*t
+        + sum_{k=1..3} [ (sk0 + sk1*tc + sk2*tc^2) * sin(2*pi*k*t/P)
+                       + (ck0 + ck1*tc + ck2*tc^2) * cos(2*pi*k*t/P) ]
+with P = 423.9 days (period chosen by time-series cross-validation; the
+quadratic time-variation of the harmonic coefficients captures the slow
+amplitude/phase drift; validated RMSE ~0.43 deg at 250-750 day horizons,
+i.e. at the observation-noise floor).
+
+Prediction interval for a NEW noisy measurement:
+    sigma_tot(t)^2 = sigma_noise^2 * (1 + leverage(t)) + sigma_drift^2
+where sigma_drift (0.2 deg) is a conservative allowance for extrapolation
+model error estimated from held-out validation (val RMSE ~0.44 vs noise
+~0.42 => model error ~0.14 deg; we round up).
+"""
+import numpy as np
+import pandas as pd
+from scipy import stats
+
+P = 423.9      # days, oscillation period (from CV)
+K = 3          # number of harmonics
+SIGMA_DRIFT = 0.2   # conservative extrapolation model-error allowance (deg)
+
+# ---------- load ----------
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train['t'].to_numpy(dtype=float)
+alpha = train['alpha'].to_numpy(dtype=float)
+
+# unwrap to continuous signal (handles 360 wrap)
+un = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+tmean, tstd = t.mean(), t.std()
+
+def design(tt):
+    tc = (np.asarray(tt, dtype=float) - tmean) / tstd
+    cols = [np.ones_like(tc), np.asarray(tt, dtype=float)]
+    for k in range(1, K + 1):
+        s = np.sin(2 * np.pi * k * tt / P)
+        c = np.cos(2 * np.pi * k * tt / P)
+        cols += [s, c, tc * s, tc * c, tc**2 * s, tc**2 * c]
+    return np.column_stack(cols)
+
+# ---------- fit ----------
+X = design(t)
+beta, *_ = np.linalg.lstsq(X, un, rcond=None)
+resid = un - X @ beta
+n, p = X.shape
+dof = n - p
+sigma2 = float(resid @ resid / dof)          # observation-noise variance
+XtX_inv = np.linalg.inv(X.T @ X)
+
+# ---------- predict ----------
+t_test = test['t'].to_numpy(dtype=float)
+Xt = design(t_test)
+y_unwrapped = Xt @ beta
+
+# predictive variance for a fresh noisy measurement
+leverage = np.einsum('ij,jk,ik->i', Xt, XtX_inv, Xt)
+var_tot = sigma2 * (1.0 + leverage) + SIGMA_DRIFT**2
+half = stats.t.ppf(0.975, dof) * np.sqrt(var_tot)
+
+# ---------- wrap to [0, 360) ----------
+y_pred = np.mod(y_unwrapped, 360.0)
+y_lower = y_pred - half
+y_upper = y_pred + half
+
+# check whether any interval crosses the 0/360 boundary (then keep wrapped
+# endpoints consistent: shift interval to stay within [0,360) if possible)
+width_ok = (y_upper - y_lower) < 360
+for i in range(len(y_pred)):
+    if y_lower[i] < 0:
+        y_lower[i] += 360; y_upper[i] += 360
+    elif y_upper[i] >= 360:
+        y_lower[i] -= 360; y_upper[i] -= 360
+
+out = pd.DataFrame({
+    't': test['t'],
+    'y_pred': np.round(y_pred, 4),
+    'y_lower': np.round(y_lower, 4),
+    'y_upper': np.round(y_upper, 4),
+})
+out.to_csv('predictions.csv', index=False)
+
+print(out.to_string(index=False))
+print('\nsigma_noise = %.4f deg, max leverage var contrib = %.4f deg' %
+      (np.sqrt(sigma2), np.sqrt(sigma2 * leverage.max())))
+print('half-widths:', np.round(half, 3))
+print('rows:', len(out), '| any NaN:', out.isna().any().any())
+EOF
+python /tmp/predict_final.py
 ```
 
 ## [21] tool
@@ -559,7 +875,56 @@ Predictions look smooth and consistent. Let me run a final end-to-end backtest o
 **tool call: bash**
 
 ```
+cat > /tmp/backtest.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy import stats
 
+P, K, SIGMA_DRIFT = 423.9, 3, 0.2
+train = pd.read_csv('data/train.csv')
+t = train['t'].to_numpy(float); alpha = train['alpha'].to_numpy(float)
+un = np.rad2deg(np.unwrap(np.deg2rad(alpha)))
+
+for holdout in [250, 500, 750]:
+    cut = t.max() - holdout
+    mtr = t <= cut
+    ttr, ytr = t[mtr], un[mtr]
+    tmean, tstd = ttr.mean(), ttr.std()
+    def design(tt):
+        tt = np.asarray(tt, float)
+        tc = (tt - tmean)/tstd
+        cols = [np.ones_like(tc), tt]
+        for k in range(1, K+1):
+            s = np.sin(2*np.pi*k*tt/P); c = np.cos(2*np.pi*k*tt/P)
+            cols += [s, c, tc*s, tc*c, tc**2*s, tc**2*c]
+        return np.column_stack(cols)
+    X = design(ttr)
+    beta, *_ = np.linalg.lstsq(X, ytr, rcond=None)
+    resid = ytr - X@beta
+    n, p = X.shape; dof = n-p
+    s2 = resid@resid/dof
+    XtX_inv = np.linalg.inv(X.T@X)
+    tte, yte = t[~mtr], un[~mtr]
+    Xt = design(tte)
+    pred = Xt@beta
+    lev = np.einsum('ij,jk,ik->i', Xt, XtX_inv, Xt)
+    half = stats.t.ppf(0.975, dof)*np.sqrt(s2*(1+lev)+SIGMA_DRIFT**2)
+    err = np.abs(pred-yte)
+    cov = np.mean(err <= half)
+    rmse = np.sqrt(np.mean(err**2))
+    print(f'holdout={holdout}: RMSE={rmse:.3f}, 95% PI empirical coverage={cov:.3f}, mean half-width={half.mean():.3f}')
+EOF
+python /tmp/backtest.py
+echo "=== file check ==="
+cat predictions.csv
+python -c "
+import pandas as pd
+p = pd.read_csv('predictions.csv'); te = pd.read_csv('data/test.csv')
+assert list(p.columns)==['t','y_pred','y_lower','y_upper'], p.columns
+assert len(p)==len(te) and (p.t.values==te.t.values).all()
+assert (p.y_lower<=p.y_pred).all() and (p.y_pred<=p.y_upper).all()
+assert p[['y_pred','y_lower','y_upper']].apply(lambda c:(c>=0)&(c<360)).all().all()
+print('predictions.csv OK:', len(p), 'rows, columns and ordering valid')
+"
 ```
 
 ## [23] tool

@@ -86,13 +86,13 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+cd /home/user 2>/dev/null || cd ~; ls -la; find . -name "*.csv" -o -name "*.json" | head -50
 ```
 
 **tool call: bash**
 
 ```
-
+pwd; ls -la; cat policy.json 2>/dev/null
 ```
 
 ## [3] tool
@@ -119,7 +119,7 @@ drwxr-xr-x 2 root root 4096 Oct 13 22:00 data
 **tool call: bash**
 
 ```
-
+ls -la /workspace/data; echo "---"; cat /workspace/data/policy.json; echo "---"; head -5 /workspace/data/history.csv; echo "---"; head -5 /workspace/data/forecast.csv; echo "---"; head -5 /workspace/data/pools.csv
 ```
 
 ## [6] tool
@@ -157,7 +157,7 @@ A4,A,7337467.0,40
 **tool call: bash**
 
 ```
-
+cd /workspace/data; echo "=== history.csv ==="; cat history.csv; echo; echo "=== forecast.csv ==="; cat forecast.csv; echo; echo "=== pools.csv ==="; cat pools.csv
 ```
 
 ## [8] tool
@@ -532,13 +532,28 @@ C4,C,6330337.0,40
 **tool call: bash**
 
 ```
-
+cd /workspace/data && python3 -c "
+import pandas as pd
+h = pd.read_csv('history.csv')
+print(h.shape)
+print(h.groupby('segment').size())
+print(h.groupby('segment')[['pd','lgd','prepay']].mean())
+print(h.groupby('segment')[['pd','lgd','prepay']].std())
+"
 ```
 
 **tool call: bash**
 
 ```
-
+cd /workspace/data && python3 -c "
+import pandas as pd
+h = pd.read_csv('history.csv')
+for seg, g in h.groupby('segment'):
+    print('=== segment', seg, '===')
+    print('corr pd~unemp:', g['pd'].corr(g['unemployment']), 'pd~hpi:', g['pd'].corr(g['hpi_growth']))
+    print('corr lgd~unemp:', g['lgd'].corr(g['unemployment']), 'lgd~hpi:', g['lgd'].corr(g['hpi_growth']))
+    print('corr prepay~unemp:', g['prepay'].corr(g['unemployment']), 'prepay~hpi:', g['prepay'].corr(g['hpi_growth']))
+"
 ```
 
 ## [10] tool
@@ -590,7 +605,20 @@ corr prepay~unemp: -0.8690882682758347 prepay~hpi: 0.8175384664401246
 **tool call: bash**
 
 ```
-
+cd /workspace/data && python3 -c "
+import pandas as pd, numpy as np
+h = pd.read_csv('history.csv')
+for seg in ['A','B','C']:
+    g = h[h.segment==seg]
+    X = g[['unemployment','hpi_growth']].values
+    for col in ['pd','lgd','prepay']:
+        y = g[col].values
+        X1 = np.column_stack([np.ones(len(X)), X])
+        beta, res, rank, sv = np.linalg.lstsq(X1, y, rcond=None)
+        pred = X1 @ beta
+        r2 = 1 - np.sum((y-pred)**2)/np.sum((y-y.mean())**2)
+        print(seg, col, 'coefs', np.round(beta,4), 'R2', round(r2,4))
+"
 ```
 
 ## [13] tool
@@ -754,7 +782,19 @@ C prepay coefs [ 0.0715 -0.0079  0.1527] R2 0.9544
 **tool call: bash**
 
 ```
-
+cd /workspace/data && python3 -c "
+import pandas as pd, numpy as np
+h = pd.read_csv('history.csv'); f = pd.read_csv('forecast.csv')
+for seg in ['A','B','C']:
+    g = h[h.segment==seg]
+    X = np.column_stack([np.ones(len(g)), g.unemployment, g.hpi_growth])
+    for col in ['pd','lgd','prepay']:
+        beta, *_ = np.linalg.lstsq(X, g[col].values, rcond=None)
+        Xf = np.column_stack([np.ones(len(f)), f.unemployment, f.hpi_growth])
+        pred = Xf @ beta
+        print(seg, col, 'fcst q1..8:', np.round(pred,4), '| hist mean:', round(g[col].mean(),4))
+    print()
+"
 ```
 
 ## [15] tool
@@ -820,7 +860,71 @@ Now I understand the setup. Let me build the full estimation pipeline: per-segme
 **tool call: bash**
 
 ```
+mkdir -p /workspace/work && cat > /workspace/work/model.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import norm
 
+DATA = '/workspace/data'
+hist = pd.read_csv(f'{DATA}/history.csv')
+fcst = pd.read_csv(f'{DATA}/forecast.csv')
+pools = pd.read_csv(f'{DATA}/pools.csv')
+pol = pd.read_json(f'{DATA}/policy.json', typ='series').to_dict()
+F = int(pol['forecast_quarters'])
+R = int(pol['reversion_quarters'])
+RHO = float(pol['rho'])
+PERS = float(pol['persistence'])
+LVL = float(pol['interval_level'])
+print('policy:', pol)
+
+T_MAX = int(pools.remaining_quarters.max())
+print('T_max:', T_MAX)
+
+segments = ['A','B','C']
+rate_cols = ['pd','lgd','prepay']
+
+# ---- Build quarterly mean rate paths per segment ----
+rate_paths = {}   # seg -> dict col -> array len T_MAX
+hist_means = {}
+for seg in segments:
+    g = hist[hist.segment == seg]
+    hm = {c: g[c].mean() for c in rate_cols}
+    hist_means[seg] = hm
+    X = np.column_stack([np.ones(len(g)), g.unemployment, g.hpi_growth])
+    Xf = np.column_stack([np.ones(len(fcst)), fcst.unemployment, fcst.hpi_growth])
+    fc_pred = {}
+    for c in rate_cols:
+        beta, *_ = np.linalg.lstsq(X, g[c].values, rcond=None)
+        pred = Xf @ beta
+        fc_pred[c] = np.clip(pred, 1e-6, 1 - 1e-6)
+    # assemble full path
+    path = {}
+    for c in rate_cols:
+        arr = np.empty(T_MAX)
+        arr[:F] = fc_pred[c]
+        if R > 0:
+            last = fc_pred[c][-1]
+            h = hm[c]
+            for j in range(1, R + 1):
+                q = F + j - 1
+                if q < T_MAX:
+                    w = j / R
+                    arr[q] = last + (h - last) * w
+        # after reversion: historical mean
+        start_hist = F + R
+        arr[start_hist:] = hm[c]
+        arr = np.clip(arr, 1e-6, 1 - 1e-6)
+        path[c] = arr
+    rate_paths[seg] = path
+    print(seg, 'pd path q1..40:', np.round(path['pd'], 4))
+    print(seg, 'lgd path q1..40:', np.round(path['lgd'], 4))
+    print(seg, 'pp  path q1..40:', np.round(path['prepay'], 4))
+
+np.save('/workspace/work/rate_paths.npy', rate_paths, allow_pickle=True)
+with open('/workspace/work/pools_config.txt','w') as f:
+    f.write(pools.to_csv(index=False))
+print('done building rate paths')
+EOF
+python3 /workspace/work/model.py
 ```
 
 ## [17] tool
@@ -903,7 +1007,81 @@ Rate paths look right. Now the Monte Carlo simulation with the probit-AR(1) shoc
 **tool call: bash**
 
 ```
+cat > /workspace/work/sim.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import norm
 
+rng = np.random.default_rng(12345)
+rate_paths = np.load('/workspace/work/rate_paths.npy', allow_pickle=True).item()
+pools = pd.read_csv('/workspace/data/pools.csv')
+pol = pd.read_json('/workspace/data/policy.json', typ='series').to_dict()
+RHO = float(pol['rho']); PERS = float(pol['persistence']); LVL = float(pol['interval_level'])
+T_MAX = int(pools.remaining_quarters.max())
+N_TOTAL = 1_000_000
+CHUNK = 100_000
+alpha = 1 - LVL
+lo_q, hi_q = alpha/2, 1 - alpha/2
+
+segments = ['A','B','C']
+# precompute Phi_inv of mean pd per segment
+inv = {s: norm.ppf(rate_paths[s]['pd']) for s in segments}
+lgd = {s: rate_paths[s]['lgd'] for s in segments}
+pp  = {s: rate_paths[s]['prepay'] for s in segments}
+
+pool_info = []
+for _, r in pools.iterrows():
+    pool_info.append((r.pool_id, r.segment, float(r.balance), int(r.remaining_quarters)))
+
+# accumulate per-pool losses
+all_loss = {pid: np.empty(N_TOTAL) for pid in pools.pool_id}
+pos = 0
+n_chunks = N_TOTAL // CHUNK
+for c in range(n_chunks):
+    n = CHUNK
+    for s in segments:
+        Z = np.empty((n, T_MAX))
+        eps = rng.normal(size=(n, T_MAX))
+        Z[:,0] = eps[:,0]
+        for q in range(1, T_MAX):
+            Z[:,q] = PERS*Z[:,q-1] + np.sqrt(1-PERS**2)*eps[:,q]
+        pd_real = norm.cdf((inv[s][None,:] + np.sqrt(RHO)*Z)/np.sqrt(1-RHO))
+        for pid, seg, B, T in pool_info:
+            if seg != s: continue
+            f = np.ones(n)
+            loss = np.zeros(n)
+            for q in range(T):
+                bp = B*(1 - q/T)
+                d = pd_real[:,q]
+                loss += f*bp*d*lgd[s][q]
+                f *= (1-d)*(1-pp[s][q])
+            all_loss[pid][pos:pos+n] = loss
+    pos += n
+    if (c+1) % 5 == 0:
+        print(f'chunk {c+1}/{n_chunks} done')
+
+rows = []
+for pid, seg, B, T in pool_info:
+    L = all_loss[pid]
+    ecl = L.mean()
+    lo = np.quantile(L, lo_q)
+    hi = np.quantile(L, hi_q)
+    rows.append((pid, ecl, lo, hi))
+    print(f'{pid} seg={seg} T={T} B={B:,.0f}: ecl={ecl:,.0f} ({ecl/B:.4f})  [{lo:,.0f},{hi:,.0f}] width={hi-lo:,.0f} ({ (hi-lo)/B:.4f})')
+
+res = pd.DataFrame(rows, columns=['pool_id','ecl','ecl_lower','ecl_upper'])
+# enforce bounds
+res['ecl'] = res['ecl'].clip(0, None)
+for _, r in pools.iterrows():
+    m = res.pool_id == r.pool_id
+    res.loc[m, 'ecl'] = min(r.balance, res.loc[m,'ecl'].iloc[0])
+    res.loc[m, 'ecl_lower'] = min(r.balance, max(0, res.loc[m,'ecl_lower'].iloc[0]))
+    res.loc[m, 'ecl_upper'] = min(r.balance, max(res.loc[m,'ecl_lower'].iloc[0], res.loc[m,'ecl_upper'].iloc[0]))
+res = res[['pool_id','ecl','ecl_lower','ecl_upper']]
+res.to_csv('/workspace/predictions.csv', index=False)
+print(res)
+print('total allowance:', res.ecl.sum())
+EOF
+python3 /workspace/work/sim.py
 ```
 
 ## [19] tool
@@ -971,7 +1149,65 @@ The results look reasonable. Let me verify convergence and sanity-check against 
 **tool call: bash**
 
 ```
+cat > /workspace/work/check.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import norm
 
+rate_paths = np.load('/workspace/work/rate_paths.npy', allow_pickle=True).item()
+pools = pd.read_csv('/workspace/data/pools.csv')
+pol = pd.read_json('/workspace/data/policy.json', typ='series').to_dict()
+RHO=float(pol['rho']); PERS=float(pol['persistence'])
+T_MAX = int(pools.remaining_quarters.max())
+
+# Deterministic recursion on mean rates (for comparison only)
+print("Deterministic recursion on mean rates (would be biased):")
+for _, r in pools.iterrows():
+    pid,seg,B,T = r.pool_id, r.segment, float(r.balance), int(r.remaining_quarters)
+    f=1.0; loss=0.0
+    for q in range(T):
+        bp = B*(1-q/T)
+        d = rate_paths[seg]['pd'][q]
+        loss += f*bp*d*rate_paths[seg]['lgd'][q]
+        f *= (1-d)*(1-rate_paths[seg]['prepay'][q])
+    print(f'{pid}: det={loss:,.0f} rate={loss/B:.4f}')
+
+# Convergence: compare interval quantiles from two independent 1M runs
+def run(seed, N, chunk):
+    rng = np.random.default_rng(seed)
+    inv = {s: norm.ppf(rate_paths[s]['pd']) for s in rate_paths}
+    lgd = {s: rate_paths[s]['lgd'] for s in rate_paths}
+    pp  = {s: rate_paths[s]['prepay'] for s in rate_paths}
+    pool_info = [(r.pool_id, r.segment, float(r.balance), int(r.remaining_quarters)) for _, r in pools.iterrows()]
+    all_loss = {pid: np.empty(N) for pid in pools.pool_id}
+    pos=0
+    for c in range(N//chunk):
+        n=chunk
+        for s in rate_paths:
+            Z = np.empty((n,T_MAX)); eps = rng.normal(size=(n,T_MAX)); Z[:,0]=eps[:,0]
+            for q in range(1,T_MAX): Z[:,q]=PERS*Z[:,q-1]+np.sqrt(1-PERS**2)*eps[:,q]
+            pd_real = norm.cdf((inv[s][None,:]+np.sqrt(RHO)*Z)/np.sqrt(1-RHO))
+            for pid,seg,B,T in pool_info:
+                if seg!=s: continue
+                f=np.ones(n); loss=np.zeros(n)
+                for q in range(T):
+                    bp=B*(1-q/T); d=pd_real[:,q]
+                    loss+=f*bp*d*lgd[s][q]; f*=(1-d)*(1-pp[s][q])
+                all_loss[pid][pos:pos+n]=loss
+        pos+=n
+    out={}
+    for pid,seg,B,T in pool_info:
+        L=all_loss[pid]
+        out[pid]=(L.mean(), np.quantile(L,0.025), np.quantile(L,0.975))
+    return out
+
+a = run(999, 1_000_000, 100_000)
+b = run(777777, 1_000_000, 100_000)
+print("\nRun A vs Run B (mean, lo, hi):")
+for pid in a:
+    da, db = a[pid], b[pid]
+    print(f'{pid}: mean diff={abs(da[0]-db[0]):,.1f}  lo diff={abs(da[1]-db[1]):,.1f}  hi diff={abs(da[2]-db[2]):,.1f}')
+EOF
+python3 /workspace/work/check.py
 ```
 
 ## [21] tool
@@ -1087,7 +1323,61 @@ Convergence is excellent (mean differences <$120, quantile differences <$350 out
 **tool call: bash**
 
 ```
+cat > /workspace/work/final.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import norm
 
+rate_paths = np.load('/workspace/work/rate_paths.npy', allow_pickle=True).item()
+pools = pd.read_csv('/workspace/data/pools.csv')
+pol = pd.read_json('/workspace/data/policy.json', typ='series').to_dict()
+RHO=float(pol['rho']); PERS=float(pol['persistence']); LVL=float(pol['interval_level'])
+T_MAX = int(pools.remaining_quarters.max())
+alpha = 1-LVL; lo_q, hi_q = alpha/2, 1-alpha/2
+
+def run(seed, N, chunk):
+    rng = np.random.default_rng(seed)
+    inv = {s: norm.ppf(rate_paths[s]['pd']) for s in rate_paths}
+    lgd = {s: rate_paths[s]['lgd'] for s in rate_paths}
+    pp  = {s: rate_paths[s]['prepay'] for s in rate_paths}
+    pool_info = [(r.pool_id, r.segment, float(r.balance), int(r.remaining_quarters)) for _, r in pools.iterrows()]
+    all_loss = {pid: np.empty(N) for pid in pools.pool_id}
+    pos=0
+    for c in range(N//chunk):
+        n=chunk
+        for s in rate_paths:
+            Z = np.empty((n,T_MAX)); eps = rng.normal(size=(n,T_MAX)); Z[:,0]=eps[:,0]
+            for q in range(1,T_MAX): Z[:,q]=PERS*Z[:,q-1]+np.sqrt(1-PERS**2)*eps[:,q]
+            pd_real = norm.cdf((inv[s][None,:]+np.sqrt(RHO)*Z)/np.sqrt(1-RHO))
+            for pid,seg,B,T in pool_info:
+                if seg!=s: continue
+                f=np.ones(n); loss=np.zeros(n)
+                for q in range(T):
+                    bp=B*(1-q/T); d=pd_real[:,q]
+                    loss+=f*bp*d*lgd[s][q]; f*=(1-d)*(1-pp[s][q])
+                all_loss[pid][pos:pos+n]=loss
+        pos+=n
+    return all_loss, pool_info
+
+a, pool_info = run(999, 1_000_000, 100_000)
+b, _ = run(777777, 1_000_000, 100_000)
+
+rows=[]
+for pid,seg,B,T in pool_info:
+    L = np.concatenate([a[pid], b[pid]])   # 2M samples
+    ecl = L.mean()
+    lo = np.quantile(L, lo_q); hi = np.quantile(L, hi_q)
+    # enforce constraints
+    lo = float(np.clip(lo, 0, B)); hi = float(np.clip(hi, lo, B)); ecl = float(np.clip(ecl, lo, B))
+    rows.append((pid, ecl, lo, hi))
+    print(f'{pid}: ecl={ecl:,.2f} (rate {ecl/B:.5f})  lo={lo:,.2f} hi={hi:,.2f} width={(hi-lo):,.2f}')
+
+res = pd.DataFrame(rows, columns=['pool_id','ecl','ecl_lower','ecl_upper'])
+res.to_csv('/workspace/predictions.csv', index=False)
+print('\nWrote /workspace/predictions.csv')
+print(res.to_string(index=False))
+print('Portfolio allowance: $%.2f' % res.ecl.sum())
+EOF
+python3 /workspace/work/final.py
 ```
 
 ## [23] tool
@@ -1139,7 +1429,21 @@ Portfolio allowance: $2352950.02
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+p = pd.read_csv('predictions.csv')
+pools = pd.read_csv('data/pools.csv')
+print(p.columns.tolist())
+print(len(p), 'rows')
+m = pd.merge(p, pools, on='pool_id')
+print('dupes:', p.pool_id.duplicated().sum(), '| missing:', pools.pool_id.isin(p.pool_id).sum()==len(pools))
+print('all finite:', np.isfinite(p[['ecl','ecl_lower','ecl_upper']].values).all())
+print('0<=ecl<=bal:', ((m.ecl>=0)&(m.ecl<=m.balance)).all())
+print('0<=lo<=hi<=bal:', ((m.ecl_lower>=0)&(m.ecl_lower<=m.ecl_upper)&(m.ecl_upper<=m.balance)).all())
+print('lo<=ecl<=hi:', ((m.ecl_lower<=m.ecl)&(m.ecl<=m.ecl_upper)).all())
+print()
+print(m[['pool_id','balance','ecl','ecl_lower','ecl_upper']].to_string(index=False))
+"
 ```
 
 ## [25] tool
@@ -1254,7 +1558,19 @@ The work is already complete and validated. Let me do a final end-to-end verific
 **tool call: bash**
 
 ```
-
+cd /workspace && echo "=== predictions.csv ===" && cat predictions.csv && echo && echo "=== validation ===" && python3 -c "
+import pandas as pd, numpy as np
+p = pd.read_csv('predictions.csv')
+pools = pd.read_csv('data/pools.csv')
+assert list(p.columns) == ['pool_id','ecl','ecl_lower','ecl_upper'], p.columns
+assert len(p) == len(pools) == 12
+assert p.pool_id.is_unique and set(p.pool_id) == set(pools.pool_id)
+assert np.isfinite(p[['ecl','ecl_lower','ecl_upper']].values).all()
+m = p.merge(pools, on='pool_id')
+assert ((m.ecl>=0)&(m.ecl<=m.balance)).all()
+assert ((m.ecl_lower>=0)&(m.ecl_lower<=m.ecl_upper)&(m.ecl_upper<=m.balance)).all()
+print('ALL CHECKS PASSED')
+"
 ```
 
 ## [29] tool
@@ -1347,7 +1663,119 @@ The deliverable is complete, but as a final quality step I'll consolidate everyt
 **tool call: bash**
 
 ```
+cat > /workspace/solution.py << 'EOF'
+"""
+Lifetime expected credit loss (ECL) + 95% prediction intervals for closed-end loan pools.
+Self-contained: reads data/*.csv and policy.json, writes predictions.csv.
 
+Model:
+  - Per-segment OLS: pd/lgd/prepay ~ 1 + unemployment + hpi_growth (fit on history).
+  - Forecast quarters (1..F): regression predictions from the supplied economic path.
+  - Reversion quarters (F+1..F+R): linear blend from last forecast value to segment
+    historical mean with weight on history = j/R (j=1..R); then hold at historical mean.
+  - Monte Carlo: per-segment AR(1) probit shocks (rho, persistence); realized aggregate
+    PD = Phi((Phi_inv(m) + sqrt(rho)*z)/sqrt(1-rho)); LGD/prepay deterministic.
+  - Per pool: full balance recursion per path (default -> prepay -> amortization),
+    loss averaged over paths for ECL; 2.5%/97.5% quantiles of the pool's own loss
+    distribution for the interval.
+"""
+import pandas as pd, numpy as np
+from scipy.stats import norm
+
+DATA = '/workspace/data'
+OUT  = '/workspace/predictions.csv'
+SEEDS = (999, 777777)
+N_TOTAL = 2_000_000          # split across seeds
+CHUNK = 100_000
+
+hist   = pd.read_csv(f'{DATA}/history.csv')
+fcst   = pd.read_csv(f'{DATA}/forecast.csv')
+pools  = pd.read_csv(f'{DATA}/pools.csv')
+pol    = pd.read_json(f'{DATA}/policy.json', typ='series').to_dict()
+F      = int(pol['forecast_quarters'])
+R      = int(pol['reversion_quarters'])
+RHO    = float(pol['rho'])
+PERS   = float(pol['persistence'])
+LVL    = float(pol['interval_level'])
+alpha  = 1 - LVL
+lo_q, hi_q = alpha/2, 1 - alpha/2
+T_MAX  = int(pools.remaining_quarters.max())
+SEGS   = sorted(hist.segment.unique())
+COLS   = ['pd', 'lgd', 'prepay']
+
+# ---------- 1. Quarterly mean-rate paths per segment ----------
+rate_paths = {}
+for seg in SEGS:
+    g = hist[hist.segment == seg]
+    h_mean = {c: g[c].mean() for c in COLS}
+    X = np.column_stack([np.ones(len(g)), g.unemployment, g.hpi_growth])
+    Xf = np.column_stack([np.ones(len(fcst)), fcst.unemployment, fcst.hpi_growth])
+    arr = {}
+    for c in COLS:
+        beta, *_ = np.linalg.lstsq(X, g[c].values, rcond=None)
+        path = np.empty(T_MAX)
+        path[:F] = Xf @ beta
+        if R > 0:
+            last = path[F-1]
+            for j in range(1, R + 1):
+                q = F + j - 1
+                if q < T_MAX:
+                    path[q] = last + (h_mean[c] - last) * (j / R)
+        path[F + R:] = h_mean[c]
+        arr[c] = np.clip(path, 1e-6, 1 - 1e-6)
+    rate_paths[seg] = arr
+
+# ---------- 2. Monte Carlo ----------
+pool_info = [(r.pool_id, r.segment, float(r.balance), int(r.remaining_quarters))
+             for _, r in pools.iterrows()]
+inv  = {s: norm.ppf(rate_paths[s]['pd']) for s in SEGS}
+lgd  = {s: rate_paths[s]['lgd'] for s in SEGS}
+pp   = {s: rate_paths[s]['prepay'] for s in SEGS}
+
+def simulate(seed, n_sims):
+    rng = np.random.default_rng(seed)
+    all_loss = {pid: np.empty(n_sims) for pid, _, _, _ in pool_info}
+    pos = 0
+    for _ in range(n_sims // CHUNK):
+        n = CHUNK
+        for s in SEGS:
+            Z = np.empty((n, T_MAX))
+            eps = rng.normal(size=(n, T_MAX))
+            Z[:, 0] = eps[:, 0]
+            for q in range(1, T_MAX):
+                Z[:, q] = PERS * Z[:, q-1] + np.sqrt(1 - PERS**2) * eps[:, q]
+            pd_real = norm.cdf((inv[s][None, :] + np.sqrt(RHO) * Z) / np.sqrt(1 - RHO))
+            for pid, seg, B, T in pool_info:
+                if seg != s:
+                    continue
+                f = np.ones(n); loss = np.zeros(n)
+                for q in range(T):
+                    bp = B * (1 - q / T)
+                    d = pd_real[:, q]
+                    loss += f * bp * d * lgd[s][q]
+                    f *= (1 - d) * (1 - pp[s][q])
+                all_loss[pid][pos:pos+n] = loss
+        pos += n
+    return all_loss
+
+combined = {pid: np.concatenate([simulate(seed, N_TOTAL // len(SEEDS))[pid] for seed in SEEDS])
+            for pid, _, _, _ in pool_info}
+
+# ---------- 3. Results ----------
+rows = []
+for pid, seg, B, T in pool_info:
+    L = combined[pid]
+    ecl = float(np.clip(L.mean(), 0, B))
+    lo  = float(np.clip(np.quantile(L, lo_q), 0, B))
+    hi  = float(np.clip(np.quantile(L, hi_q), lo, B))
+    rows.append((pid, ecl, lo, hi))
+    print(f'{pid}: ecl={ecl:,.2f} ({ecl/B:.5f})  [{lo:,.2f}, {hi:,.2f}]')
+
+res = pd.DataFrame(rows, columns=['pool_id', 'ecl', 'ecl_lower', 'ecl_upper'])
+res.to_csv(OUT, index=False)
+print(f'\nWrote {OUT} | portfolio allowance = ${res.ecl.sum():,.2f}')
+EOF
+cd /workspace && python3 solution.py
 ```
 
 ## [33] tool
@@ -1388,7 +1816,119 @@ The consolidated script had a bug (re-simulating per pool instead of once per se
 **tool call: bash**
 
 ```
+cd /workspace && cat > solution.py << 'EOF'
+"""
+Lifetime expected credit loss (ECL) + 95% prediction intervals for closed-end loan pools.
+Self-contained: reads data/*.csv and policy.json, writes predictions.csv.
 
+Model:
+  - Per-segment OLS: pd/lgd/prepay ~ 1 + unemployment + hpi_growth (fit on history).
+  - Forecast quarters (1..F): regression predictions from the supplied economic path.
+  - Reversion quarters (F+1..F+R): linear blend from last forecast value to segment
+    historical mean with weight on history = j/R (j=1..R); then hold at historical mean.
+  - Monte Carlo: per-segment AR(1) probit shocks (rho, persistence); realized aggregate
+    PD = Phi((Phi_inv(m) + sqrt(rho)*z)/sqrt(1-rho)); LGD/prepay deterministic.
+  - Per pool: full balance recursion per path (default -> prepay -> amortization),
+    loss averaged over paths for ECL; 2.5%/97.5% quantiles of the pool's own loss
+    distribution for the interval.
+"""
+import pandas as pd, numpy as np
+from scipy.stats import norm
+
+DATA = '/workspace/data'
+OUT  = '/workspace/predictions.csv'
+SEEDS = (999, 777777)
+N_TOTAL = 2_000_000          # split across seeds
+CHUNK = 100_000
+
+hist   = pd.read_csv(f'{DATA}/history.csv')
+fcst   = pd.read_csv(f'{DATA}/forecast.csv')
+pools  = pd.read_csv(f'{DATA}/pools.csv')
+pol    = pd.read_json(f'{DATA}/policy.json', typ='series').to_dict()
+F      = int(pol['forecast_quarters'])
+R      = int(pol['reversion_quarters'])
+RHO    = float(pol['rho'])
+PERS   = float(pol['persistence'])
+LVL    = float(pol['interval_level'])
+alpha  = 1 - LVL
+lo_q, hi_q = alpha/2, 1 - alpha/2
+T_MAX  = int(pools.remaining_quarters.max())
+SEGS   = sorted(hist.segment.unique())
+COLS   = ['pd', 'lgd', 'prepay']
+
+# ---------- 1. Quarterly mean-rate paths per segment ----------
+rate_paths = {}
+for seg in SEGS:
+    g = hist[hist.segment == seg]
+    h_mean = {c: g[c].mean() for c in COLS}
+    X = np.column_stack([np.ones(len(g)), g.unemployment, g.hpi_growth])
+    Xf = np.column_stack([np.ones(len(fcst)), fcst.unemployment, fcst.hpi_growth])
+    arr = {}
+    for c in COLS:
+        beta, *_ = np.linalg.lstsq(X, g[c].values, rcond=None)
+        path = np.empty(T_MAX)
+        path[:F] = Xf @ beta
+        if R > 0:
+            last = path[F-1]
+            for j in range(1, R + 1):
+                q = F + j - 1
+                if q < T_MAX:
+                    path[q] = last + (h_mean[c] - last) * (j / R)
+        path[F + R:] = h_mean[c]
+        arr[c] = np.clip(path, 1e-6, 1 - 1e-6)
+    rate_paths[seg] = arr
+
+# ---------- 2. Monte Carlo ----------
+pool_info = [(r.pool_id, r.segment, float(r.balance), int(r.remaining_quarters))
+             for _, r in pools.iterrows()]
+inv  = {s: norm.ppf(rate_paths[s]['pd']) for s in SEGS}
+lgd  = {s: rate_paths[s]['lgd'] for s in SEGS}
+pp   = {s: rate_paths[s]['prepay'] for s in SEGS}
+
+def simulate(seed, n_sims):
+    rng = np.random.default_rng(seed)
+    all_loss = {pid: np.empty(n_sims) for pid, _, _, _ in pool_info}
+    pos = 0
+    for _ in range(n_sims // CHUNK):
+        n = CHUNK
+        for s in SEGS:
+            Z = np.empty((n, T_MAX))
+            eps = rng.normal(size=(n, T_MAX))
+            Z[:, 0] = eps[:, 0]
+            for q in range(1, T_MAX):
+                Z[:, q] = PERS * Z[:, q-1] + np.sqrt(1 - PERS**2) * eps[:, q]
+            pd_real = norm.cdf((inv[s][None, :] + np.sqrt(RHO) * Z) / np.sqrt(1 - RHO))
+            for pid, seg, B, T in pool_info:
+                if seg != s:
+                    continue
+                f = np.ones(n); loss = np.zeros(n)
+                for q in range(T):
+                    bp = B * (1 - q / T)
+                    d = pd_real[:, q]
+                    loss += f * bp * d * lgd[s][q]
+                    f *= (1 - d) * (1 - pp[s][q])
+                all_loss[pid][pos:pos+n] = loss
+        pos += n
+    return all_loss
+
+# simulate once per seed (all pools captured), then combine
+runs = [simulate(seed, N_TOTAL // len(SEEDS)) for seed in SEEDS]
+
+# ---------- 3. Results ----------
+rows = []
+for pid, seg, B, T in pool_info:
+    L = np.concatenate([run[pid] for run in runs])
+    ecl = float(np.clip(L.mean(), 0, B))
+    lo  = float(np.clip(np.quantile(L, lo_q), 0, B))
+    hi  = float(np.clip(np.quantile(L, hi_q), lo, B))
+    rows.append((pid, ecl, lo, hi))
+    print(f'{pid}: ecl={ecl:,.2f} ({ecl/B:.5f})  [{lo:,.2f}, {hi:,.2f}]')
+
+res = pd.DataFrame(rows, columns=['pool_id', 'ecl', 'ecl_lower', 'ecl_upper'])
+res.to_csv(OUT, index=False)
+print(f'\nWrote {OUT} | portfolio allowance = ${res.ecl.sum():,.2f}')
+EOF
+timeout 600 python3 solution.py
 ```
 
 ## [35] tool
@@ -1519,7 +2059,25 @@ The consolidated script differs slightly from the validated version for segment 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - << 'EOF'
+# Patch solution.py: clip forecast predictions before using as 'last forecast value'
+src = open('solution.py').read()
+old = """        beta, *_ = np.linalg.lstsq(X, g[c].values, rcond=None)
+        path = np.empty(T_MAX)
+        path[:F] = Xf @ beta
+        if R > 0:
+            last = path[F-1]"""
+new = """        beta, *_ = np.linalg.lstsq(X, g[c].values, rcond=None)
+        path = np.empty(T_MAX)
+        pred = np.clip(Xf @ beta, 1e-6, 1 - 1e-6)   # valid-rate clip BEFORE blending
+        path[:F] = pred
+        if R > 0:
+            last = pred[-1]"""
+assert old in src
+open('solution.py','w').write(src.replace(old, new))
+print('patched')
+EOF
+timeout 600 python3 solution.py
 ```
 
 ## [37] tool
@@ -1554,7 +2112,18 @@ The consolidated self-contained script now reproduces the exact validated output
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+p = pd.read_csv('predictions.csv'); pools = pd.read_csv('data/pools.csv')
+assert list(p.columns)==['pool_id','ecl','ecl_lower','ecl_upper'] and len(p)==12
+assert p.pool_id.is_unique and set(p.pool_id)==set(pools.pool_id)
+assert np.isfinite(p[['ecl','ecl_lower','ecl_upper']].values).all()
+m = p.merge(pools,on='pool_id')
+assert ((m.ecl>=0)&(m.ecl<=m.balance)).all()
+assert ((m.ecl_lower>=0)&(m.ecl_lower<=m.ecl_upper)&(m.ecl_upper<=m.balance)).all()
+print('predictions.csv: ALL CHECKS PASSED')
+print('portfolio allowance = \$%.2f' % p.ecl.sum())
+" && ls -la /workspace/predictions.csv /workspace/solution.py
 ```
 
 ## [39] tool

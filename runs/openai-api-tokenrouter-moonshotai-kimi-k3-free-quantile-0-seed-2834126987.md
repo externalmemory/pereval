@@ -49,7 +49,7 @@ Estimate the population tail quantiles for all 100 blocks described in data/task
 **tool call: bash**
 
 ```
-
+cat data/task.txt; echo "---"; head -30 data/blocks.csv; echo "---"; wc -l data/blocks.csv
 ```
 
 ## [3] tool
@@ -481,7 +481,15 @@ block,x
 **tool call: bash**
 
 ```
-
+cat > /tmp/inspect.py <<'PY'
+import pandas as pd, numpy as np
+from scipy import stats
+D=pd.read_csv('data/blocks.csv')
+for b,g in D.groupby('block'):
+ x=g.x.to_numpy(); xs=np.sort(x)
+ print(f"{b:3d} mean {x.mean():9.3g} sd {x.std(ddof=1):8.3g} med {np.median(x):8.3g} q80 {np.quantile(x,.8):9.3g} max {x.max():9.3g} skew {stats.skew(x):6.2f} kurt {stats.kurtosis(x):6.2f} range/med |x| {len(x)}")
+PY
+python /tmp/inspect.py
 ```
 
 ## [5] tool
@@ -527,7 +535,7 @@ AttributeError: partially initialized module 'numpy' has no attribute 'int8' (mo
 **tool call: bash**
 
 ```
-
+mv /tmp/inspect.py /tmp/diag1.py && cd /tmp && python diag1.py
 ```
 
 ## [7] tool
@@ -560,7 +568,20 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/blocks.csv'
 **tool call: bash**
 
 ```
-
+cat > /tmp/diag2.py <<'PY'
+import pandas as pd, numpy as np
+from scipy import stats
+D=pd.read_csv('data/blocks.csv')
+rows=[]
+for b,g in D.groupby('block'):
+ x=g.x.to_numpy()
+ skew=stats.skew(x); kurt=stats.kurtosis(x)
+ rows.append((b,len(x),x.mean(),x.std(ddof=1),np.median(x),x.max(),skew,kurt))
+df=pd.DataFrame(rows,columns=['b','n','mean','sd','med','max','skew','kurt'])
+pd.set_option('display.width',200); pd.set_option('display.max_rows',120)
+print(np.round(df,2).to_string(index=False))
+PY
+python /tmp/diag2.py
 ```
 
 ## [9] tool
@@ -673,7 +694,50 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/blocks.csv'
 **tool call: bash**
 
 ```
-
+cat > /tmp/pred1.py <<'PY'
+import pandas as pd, numpy as np
+from scipy import stats
+# parse m's from task.txt
+import re
+m={}
+for line in open('data/task.txt'):
+    mm=re.match(r'Block (\d+) \(population size m = (\d+)\):',line)
+    if mm: m[int(mm.group(1))]=int(mm.group(2))
+assert len(m)==100
+D=pd.read_csv('data/blocks.csv')
+def shc(x,c=0.95):
+    # exponentially tilted towards the upper tail until sample skewness hits c
+    w=np.ones(len(x))
+    def sk(w):
+        mu=np.dot(w,x)/w.sum(); s2=np.dot(w,(x-mu)**2)/w.sum(); s3=np.dot(w,(x-mu)**3)/w.sum()
+        return s3/s2**1.5
+    def ill(w):
+        if np.abs(w-np.mean(w))==0: return True
+        return np.allclose(np.corrcoef(w,x)[0,1],np.corrcoef(w,x[np.argsort(x)])[0,1])
+    s=stats.skew(x)
+    if s<=c: return x
+    lo,hi=0.,30.
+    for _ in range(80):
+        mid=(lo+hi)/2
+        w=w*np.exp(-mid*(x-x.mean()))
+        w/=w.mean()
+        if sk(w)>c: lo=mid
+        else: hi=mid
+    return w/np.sum(w)*len(x)*x  # effective tilted sample
+rows=[]
+for b,g in D.groupby('block'):
+    x=g.x.to_numpy().astype(float); xt=shc(x)
+    k90=int(np.ceil(.9*m[b]))/m[b]; k95=int(np.ceil(.95*m[b]))/m[b]; k99=int(np.ceil(.99*m[b]))/m[b]
+    mu,sig=xt.mean(),xt.std(ddof=1)
+    q90=mu+sig*stats.t.ppf(k90,4); q95=mu+sig*stats.t.ppf(k95,4); q99=mu+sig*stats.t.ppf(k99,4)
+    s95=sig*np.sqrt((m[b]-10)/(m[b]-1))
+    lo=q95-s95*2.776/np.sqrt(10); hi=q95+s95*2.776/np.sqrt(10)
+    rows.append((b,q90,q95,q99,lo,hi))
+out=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+out.to_csv('predictions.csv',index=False,float_format='%.5g')
+print(out.head(8).to_string(index=False)); print(len(out))
+PY
+python /tmp/pred1.py
 ```
 
 ## [11] tool
@@ -737,7 +801,146 @@ A valid rough `predictions.csv` is on disk. Now let me set up a simulation harne
 **tool call: bash**
 
 ```
+cat > /tmp/sim.py <<'PY'
+import numpy as np
+from scipy import stats
+rng=np.random.default_rng(0)
 
+def gen_series(m, rng):
+    # AR(1) growth with stochastic volatility and occasional shocks; emulates macro YoY pct changes
+    kind=rng.integers(0,4)
+    phi=rng.uniform(-0.3,0.8)
+    sig=rng.uniform(0.5,3.0)
+    mu=rng.uniform(-2,5)
+    e=rng.standard_normal(m)
+    if kind==0:   # gaussian AR
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]
+    elif kind==1: # t innovations
+        df=rng.uniform(2.5,6)
+        e=e*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]
+    elif kind==2: # stoch vol
+        v=np.exp(np.cumsum(0.3*rng.standard_normal(m)))
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*v[i]*e[i]
+    else:         # occasional big shocks (skewed)
+        shock=(rng.random(m)<0.06)*rng.standard_normal(m)*rng.uniform(3,9)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]+shock[i]
+    return y*rng.uniform(0.1,100)
+
+def shc_mu_sig(x,c=0.9):
+    s=stats.skew(x)
+    if s<=c: return x.mean(), x.std(ddof=1)
+    lam=0.0
+    def skew_of(l):
+        w=np.exp(-l*(x-x.mean()))
+        mu=np.dot(w,x)/w.sum(); d=x-mu
+        s2=np.dot(w,d*d)/w.sum(); s3=np.dot(w,d**3)/w.sum()
+        return s3/s2**1.5
+    lo,hi=0.,1.0
+    while skew_of(hi)>c:
+        hi*=2
+        if hi>1e6: break
+    for _ in range(60):
+        mid=(lo+hi)/2
+        if skew_of(mid)>c: lo=mid
+        else: hi=mid
+    w=np.exp(-lo*(x-x.mean())); w/=w.sum()
+    mu=np.dot(w,x); var=np.dot(w,(x-mu)**2)
+    n_eff=1/np.dot(w,w)
+    return mu, np.sqrt(var*n_eff/(n_eff-1)) if n_eff>1.01 else np.sqrt(var)
+
+def hd(x,p):
+    xs=np.sort(x); n=len(x)
+    a=(n+1)*p; b=(n+1)*(1-p)
+    cdf=stats.beta.cdf(xs,a,b)
+    w=np.diff(np.concatenate([[0],cdf]))
+    return w@xs
+
+def hd_range(x,p):
+    # weighted IQR-like scale from HD weights
+    xs=np.sort(x); n=len(x)
+    a=(n+1)*p; b=(n+1)*(1-p)
+    cdf=stats.beta.cdf(xs,a,b)
+    w=np.diff(np.concatenate([[0],cdf])); w/=w.sum()
+    return np.sqrt(w@(xs-(w@xs))**2)
+
+ms=np.arange(251,585)
+
+def run(methods, nrep=400):
+    # returns dict name-> list of excess losses per tau, plus coverage arrays
+    res={name:[] for name in methods}; cov={name:[] for name in methods}
+    for rep in range(nrep):
+        m=int(rng.choice(ms)); pop=gen_series(m,rng)
+        idx=rng.choice(m,10,replace=False); x=pop[idx].astype(float)
+        taus=[0.9,0.95,0.99]
+        ps=[np.ceil(t*m)/m for t in taus]
+        sp=np.sort(pop)
+        tr=[sp[int(np.ceil(p*m))-1] for p in ps]
+        def excess(q,p,t):
+            d=pop-q; l=np.where(d>=0, t*d, (t-1)*d).mean()
+            dt=pop-tr[taus.index(t)]if False else None
+            q0=tr[taus.index(t)]
+            d0=pop-q0; l0=np.where(d0>=0, t*d0,(t-1)*d0).mean()
+            return l-l0
+        scale=np.sqrt((m-10)/(m-1))
+        for name,fn in methods.items():
+            qs,lo,hi=fn(x,m,ps,scale)
+            res[name].append([excess(qs[i],ps[i],taus[i]) for i in range(3)])
+            cov[name].append(lo<=tr[1]<=hi)
+    return res,cov
+
+def mA(x,m,ps,scale): # raw moments + t4
+    mu=x.mean(); s=x.std(ddof=1)
+    z=stats.t.ppf(ps,4)
+    q=mu+s*z*scale
+    # interval via SE of q95 formula with t4 density
+    z95=stats.t.ppf(ps[1],4)
+    dens=stats.t.pdf(z95,4)
+    var= (s*scale)**2/10*(1/10+ (z95**2)/2+ (0.95*0.05)/(10*dens**2))
+    se=np.sqrt(max(var,1e-12))
+    lo=q[1]-2.262*se; hi=q[1]+2.262*se
+    return (q[0],q[1],q[2]),lo,hi
+
+def mA6(x,m,ps,scale):
+    mu=x.mean(); s=x.std(ddof=1)
+    z=stats.t.ppf(ps,6); q=mu+s*z*scale
+    z95=stats.t.ppf(ps[1],6); dens=stats.t.pdf(z95,6)
+    var=(s*scale)**2/10*(1/10+(z95**2)/2+(0.95*0.05)/(10*dens**2))
+    se=np.sqrt(max(var,1e-12)); return (q[0],q[1],q[2]), q[1]-2.262*se, q[1]+2.262*se
+
+def mB(x,m,ps,scale): # SHC + t4
+    mu,s=shc_mu_sig(x,0.9)
+    z=stats.t.ppf(ps,4); q=mu+s*z*scale
+    z95=stats.t.ppf(ps[1],4); dens=stats.t.pdf(z95,4)
+    var=(s*scale)**2/10*(1/10+(z95**2)/2+(0.95*0.05)/(10*dens**2))
+    se=np.sqrt(max(var,1e-12)); return (q[0],q[1],q[2]), q[1]-2.262*se, q[1]+2.262*se
+
+def mC(x,m,ps,scale): # HD points + model-free-ish interval around HD q95
+    q=[hd(x,p) for p in ps]
+    s=hd_range(x,ps[1])
+    # interval: hypergeometric lower via order stat + upper via scale
+    xs=np.sort(x)
+    lo=xs[6]  # ~X(7): P(K>=7) high
+    hi=q[1]+2.5*s
+    return (q[0],q[1],q[2]),lo,hi
+
+def mD(x,m,ps,scale): # raw moments + normal
+    mu=x.mean(); s=x.std(ddof=1)
+    z=stats.norm.ppf(ps); q=mu+s*z*scale
+    return (q[0],q[1],q[2]), q[1]-1.96*s, q[1]+1.96*s
+
+methods={'A_t4':mA,'A_t6':mA6,'B_shc':mB,'C_HD':mC,'D_norm':mD}
+res,cov=run(methods,400)
+for name in methods:
+    L=np.array(res[name]); c=np.mean(cov[name])
+    scalefac=np.mean([np.std(gen_series(int(m_),rng)) for m_ in [300]*20])
+    print(f"{name:7s} mean-excess loss q90/q95/q99 (per sd) : {np.mean(L,0)}  sum {np.mean(L.sum(1)):.4f}  cov95 {c:.3f}")
+PY
+cd /tmp && python sim.py
 ```
 
 ## [13] tool
@@ -794,7 +997,111 @@ The harness works but needs normalized losses (population scales vary hugely) an
 **tool call: bash**
 
 ```
+cat > /tmp/sim2.py <<'PY'
+import numpy as np
+from scipy import stats
+rng=np.random.default_rng(0)
 
+def gen_series(m, rng):
+    kind=rng.integers(0,4)
+    phi=rng.uniform(-0.3,0.8); sig=rng.uniform(0.5,3.0); mu=rng.uniform(-2,5)
+    e=rng.standard_normal(m)
+    if kind==0:
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]
+    elif kind==1:
+        df=rng.uniform(2.5,6); e=e*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]
+    elif kind==2:
+        v=np.exp(np.cumsum(0.3*rng.standard_normal(m)))
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*v[i]*e[i]
+    else:
+        shock=(rng.random(m)<0.06)*rng.standard_normal(m)*rng.uniform(3,9)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]+shock[i]
+    return y*rng.uniform(0.1,100)
+
+def shc_mu_sig(x,c):
+    s=stats.skew(x)
+    if s<=c: return x.mean(), x.std(ddof=1)
+    z=(x-x.mean())/x.std(ddof=1)
+    def skew_of(l):
+        w=np.exp(-l*z); w/=w.sum()
+        mu=w@x; d=x-mu; s2=w@(d*d); s3=w@(d**3)
+        return s3/s2**1.5
+    lo,hi=0.,np.inf
+    for _ in range(70):
+        mid=lo*2 if np.isinf(hi) else (lo+hi)/2
+        if mid==0: mid=1e-6
+        lam=mid
+        if skew_of(lam)>c: lo=lam
+        else: hi=lam
+    w=np.exp(-lo*z); w/=w.sum()
+    mu=w@x; var=w@((x-mu)**2); neff=1/(w@w)
+    sd=np.sqrt(var*neff/max(neff-1,0.05))
+    return mu,sd
+
+def loss_excess(pop,q,t,ps,m):
+    p=ps[t]; tt=[0.9,0.95,0.99][t]
+    sp=np.sort(pop); q0=sp[int(np.ceil(p*m))-1]
+    d=pop-q; d0=pop-q0
+    L=np.where(d>=0,tt*d,(tt-1)*d).mean(); L0=np.where(d0>=0,tt*d0,(tt-1)*d0).mean()
+    return (L-L0)/pop.std(ddof=1)
+
+def eval_points(methods,nrep=600):
+    ms=np.arange(251,585)
+    L={nm:np.zeros((nrep,3)) for nm in methods}
+    for rep in range(nrep):
+        m=int(rng.choice(ms)); pop=gen_series(m,rng)
+        x=pop[rng.choice(m,10,replace=False)].astype(float)
+        ps=[np.ceil(t*m)/m for t in (0.9,0.95,0.99)]
+        for nm,fn in methods.items():
+            for t in range(3):
+                L[nm][rep,t]=loss_excess(pop,fn(x,ps[t]),t,ps,m)
+    for nm in methods:
+        med=np.median(L[nm],0); me=np.mean(L[nm],0)
+        print(f"{nm:12s} median excess/popSD  q90 {med[0]:.5f} q95 {med[1]:.5f} q99 {med[2]:.5f} | mean {me[0]:.5f} {me[1]:.5f} {me[2]:.5f}")
+
+# candidate point estimators (return scalar quantile at p)
+def mk_tfit(df):
+    def f(x,p):
+        mu,s=x.mean(),x.std(ddof=1)
+        return mu+s*stats.t.ppf(p,df)
+    return f
+def mk_shc(df,c):
+    def f(x,p):
+        mu,s=shc_mu_sig(x,c)
+        return mu+s*stats.t.ppf(p,df)
+    return f
+def mk_norm(x,p):
+    return x.mean()+x.std(ddof=1)*stats.norm.ppf(p)
+def mk_tmle(x,p):
+    try:
+        df,loc,sc=stats.t.fit(x)
+        df=min(max(df,2.5),50)
+        return loc+sc*stats.t.ppf(p,df)
+    except Exception:
+        return mk_tfit(4)(x,p)
+def mk_wins(k,df):
+    def f(x,p):
+        lo,hi=np.quantile(x,[k/10,1-k/10]); xw=np.clip(x,lo,hi)
+        mu,s=xw.mean(),xw.std(ddof=1)
+        return mu+s*stats.t.ppf(p,df)
+    return f
+
+methods={
+ 't4':mk_tfit(4),'t6':mk_tfit(6),'t8':mk_tfit(8),'t3':mk_tfit(3),
+ 'norm':mk_norm,
+ 'shc_t4_c0.5':mk_shc(4,0.5),'shc_t4_c0.7':mk_shc(4,0.7),'shc_t4_c0.9':mk_shc(4,0.9),
+ 'shc_t6_c0.7':mk_shc(6,0.7),
+ 'tmle':mk_tmle,
+ 'wins1_t4':mk_wins(1,4),'wins2_t4':mk_wins(2,4),
+}
+eval_points(methods,600)
+PY
+cd /tmp && python sim2.py
 ```
 
 ## [15] tool
@@ -834,7 +1141,97 @@ Now let me refine the candidate set (winsor/t5/t6, small bias adjustment, symmet
 **tool call: bash**
 
 ```
+cat > /tmp/sim3.py <<'PY'
+import numpy as np
+from scipy import stats
+from scipy.special import gammaln
+rng=np.random.default_rng(1)
 
+def gen_series(m, rng):
+    kind=rng.integers(0,5)
+    phi=rng.uniform(-0.3,0.9); sig=rng.uniform(0.5,3.0); mu=rng.uniform(-2,5)
+    e=rng.standard_normal(m)
+    if kind==0:
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]
+    elif kind==1:
+        df=rng.uniform(2.5,6); e=e*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]
+    elif kind==2:
+        v=np.exp(np.cumsum(0.3*rng.standard_normal(m)))
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*v[i]*e[i]
+    elif kind==3:
+        shock=(rng.random(m)<0.06)*rng.standard_normal(m)*rng.uniform(3,9)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]+shock[i]
+    else:  # skewed innovations via skew-normal-ish
+        a=rng.uniform(2,8)
+        z=stats.skewnorm.rvs(a,size=m,random_state=rng)
+        e=(z-z.mean())/z.std()*sig
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+e[i]
+    return y*rng.uniform(0.1,100)
+
+def loss_excess(pop,q,t,ps,m):
+    p=ps[t]; tt=[0.9,0.95,0.99][t]
+    sp=np.sort(pop); q0=sp[int(np.ceil(p*m))-1]
+    d=pop-q; d0=pop-q0
+    L=np.where(d>=0,tt*d,(tt-1)*d).mean(); L0=np.where(d0>=0,tt*d0,(tt-1)*d0).mean()
+    return (L-L0)/pop.std(ddof=1)
+
+def wins(x,k):
+    lo,hi=np.sort(x)[[k-1,10-k]]
+    return np.clip(x,lo,hi)
+
+def mk(method,k,df,sh=0.0,fshift=None):
+    def f(x,p):
+        xw=wins(x,k) if k>0 else x
+        mu,s=xw.mean(),xw.std(ddof=1)
+        sc=s*(1+0 if df>30 else 4*2/df**2)  # tiny scale-up
+        z=stats.t.ppf(p,df) if df<=30 else stats.norm.ppf(p)
+        q=mu+sc*z
+        return q+sh*s
+    return f
+
+def mk_blend(x,p):
+    # robust to outliers: blend winsorized param with raw, tilt more to wins at extreme p
+    a={0.0:0.0}.get(p,None)
+    xw=wins(x,1)
+    mu1,s1=x.mean(),x.std(ddof=1)
+    mu2,s2=xw.mean(),xw.std(ddof=1)
+    z=stats.t.ppf(p,4)
+    w=min(1,max(0,(p-0.9)/0.1))*0.4+0.3  # weight on winsorized
+    return w*(mu2+s2*z)+(1-w)*(mu1+s1*z)
+
+methods={
+ 'w1_t4':mk(0,1,4),'w1_t5':mk(0,1,5),'w1_t6':mk(0,1,6),'w1_t7':mk(0,1,7),
+ 'w1_t5_sh-0.2':mk(0,1,5,sh=-0.2),'w1_t5_sh-0.4':mk(0,1,5,sh=-0.4),
+ 'w1_t5_sh+0.2':mk(0,1,5,sh=0.2),
+ 'w2_t5':mk(0,2,5),'w2_t6':mk(0,2,6),
+ 'blend':mk_blend,
+ 'raw_t6':mk(0,0,6),
+}
+
+ms=np.arange(251,585)
+nrep=4000
+L={nm:np.zeros((nrep,4)) for nm in methods}  # per tau + total
+for rep in range(nrep):
+    m=int(rng.choice(ms)); pop=gen_series(m,rng)
+    x=pop[rng.choice(m,10,replace=False)].astype(float)
+    ps=[np.ceil(t*m)/m for t in (0.9,0.95,0.99)]
+    for nm,fn in methods.items():
+        tot=0
+        for t in range(3):
+            v=loss_excess(pop,fn(x,ps[t]),t,ps,m); L[nm][rep,t]=v; tot+=v
+        L[nm][rep,3]=tot
+print(f"{'method':16s} {'med90':>8s} {'med95':>8s} {'med99':>8s} {'medTOT':>8s} {'meanTOT':>8s}")
+for nm in methods:
+    med=np.median(L[nm],0); me=L[nm][:,3].mean()
+    print(f"{nm:16s} {med[0]:8.5f} {med[1]:8.5f} {med[2]:8.5f} {med[3]:8.5f} {me:8.5f}")
+PY
+cd /tmp && python sim3.py
 ```
 
 ## [17] tool
@@ -858,7 +1255,87 @@ raw_t6            0.07510  0.09565  0.10119  0.27099  0.33408
 **tool call: bash**
 
 ```
+cat > /tmp/sim4.py <<'PY'
+import numpy as np
+from scipy import stats
+import sys
+rng=np.random.default_rng(1)
 
+def gen_series(m, rng):
+    kind=rng.integers(0,5)
+    phi=rng.uniform(-0.3,0.9); sig=rng.uniform(0.5,3.0); mu=rng.uniform(-2,5)
+    e=rng.standard_normal(m)
+    if kind==0:
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]
+    elif kind==1:
+        df=rng.uniform(2.5,6); e=e*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]
+    elif kind==2:
+        v=np.exp(np.cumsum(0.3*rng.standard_normal(m)))
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*v[i]*e[i]
+    elif kind==3:
+        shock=(rng.random(m)<0.06)*rng.standard_normal(m)*rng.uniform(3,9)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+sig*e[i]+shock[i]
+    else:
+        a=rng.uniform(2,8)
+        z=stats.skewnorm.rvs(a,size=m,random_state=rng)
+        e=(z-z.mean())/z.std()*sig
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+e[i]
+    return y*rng.uniform(0.1,100)
+
+def loss_excess(pop,q,t,ps,m):
+    p=ps[t]; tt=[0.9,0.95,0.99][t]
+    sp=np.sort(pop); q0=sp[int(np.ceil(p*m))-1]
+    d=pop-q; d0=pop-q0
+    L=np.where(d>=0,tt*d,(tt-1)*d).mean(); L0=np.where(d0>=0,tt*d0,(tt-1)*d0).mean()
+    return (L-L0)/pop.std(ddof=1)
+
+# families: params k raw weight fraction etc
+def mk_raw(df):
+    def f(x,p): return x.mean()+x.std(ddof=1)*stats.t.ppf(p,df)
+    return f
+
+def run(fams):
+    ms=np.arange(251,585); nrep=2500
+    out={k:np.zeros((nrep,4)) for k in fams}
+    for rep in range(nrep):
+        m=int(rng.choice(ms)); pop=gen_series(m,rng)
+        x=pop[rng.choice(m,10,replace=False)].astype(float)
+        ps=[np.ceil(t*m)/m for t in (0.9,0.95,0.99)]
+        for nm,fn in fams.items():
+            tot=0
+            for t in range(3):
+                v=loss_excess(pop,fn(x,ps[t]),t,ps,m); out[nm][rep,t]=v; tot+=v
+            out[nm][rep,3]=tot
+    res=[]
+    for nm in fams:
+        med=np.median(out[nm],0); res.append((med[3],nm,np.median(out[nm][:,0]),np.median(out[nm][:,1]),np.median(out[nm][:,2])))
+    res.sort()
+    for mt,nm,a,b9,c in res[:14]:
+        print(f"{nm:22s} medTOT {mt:.5f}  (q90 {a:.5f} q95 {b9:.5f} q99 {c:.5f})")
+
+if __name__=='__main__':
+    fams={}
+    for df in [3,4,5,6,8,10,16]:
+        fams[f'raw_t{df}']=mk_raw(df)
+    fams['raw_norm']=lambda x,p: x.mean()+x.std(ddof=1)*stats.norm.ppf(p)
+    # blends of raw t4 with winsorized t4
+    def mk_blend(w,df,k=1):
+        def f(x,p):
+            xs=np.sort(x); xw=np.clip(x,xs[k-1],xs[10-k])
+            z=stats.t.ppf(p,df)
+            return w*(xw.mean()+xw.std(ddof=1)*z)+(1-w)*(x.mean()+x.std(ddof=1)*z)
+        return f
+    for w in [0.3,0.5,0.7,1.0]:
+        fams[f'blend{w}_t4']=mk_blend(w,4)
+    run(fams)
+PY
+cd /tmp && python sim4.py
 ```
 
 ## [19] tool
@@ -884,7 +1361,119 @@ Now clean results: raw moments + t10/t16 tails look best on the toy suite (media
 **tool call: bash**
 
 ```
+cat > /tmp/sim5.py <<'PY'
+import numpy as np, pandas as pd
+from scipy import stats
+rng=np.random.default_rng(2)
 
+# --- observed sample stats of the 100 blocks (scale-free) ---
+D=pd.read_csv('data/blocks.csv')
+obs=[]
+for b,g in D.groupby('block'):
+    x=g.x.x.to_numpy().astype(float)
+    obs.append((stats.skew(x), stats.kurtosis(x), stats.tstd(x)))
+obs=np.array(obs)
+
+# --- candidate generating processes, tuned to reproduce similar moment distribution ---
+def gen(m,rng):
+    kind=rng.integers(0,6)
+    mu=rng.uniform(-3,6); s0=rng.uniform(0.4,3.); phi=rng.uniform(-0.2,0.9)
+    e=rng.standard_normal(m)
+    if kind==0:
+        y=mu+s0*e
+    elif kind==1:
+        df=rng.uniform(2.5,8); y=mu+s0*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+    elif kind==2:
+        a=rng.uniform(2,10); z=stats.skewnorm.rvs(a,size=m,random_state=rng); y=mu+s0*(z-z.mean())/z.std()
+    elif kind==3: # AR1 t
+        df=rng.uniform(2.5,8); ee=np.sqrt((df-2)/df)*rng.standard_t(df,m)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*ee[i]
+    elif kind==4: # stoch vol
+        v=np.exp(np.cumsum(rng.uniform(0.2,0.5)*rng.standard_normal(m)))
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*v[i]*e[i]
+    else: # two-regime / shock
+        sh=(rng.random(m)<0.07)*rng.standard_normal(m)*rng.uniform(2.5,8)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*e[i]+sh[i]
+    return y*rng.uniform(0.05,200)
+
+ms=np.arange(251,585)
+
+# check marginal match of sample skew/kurt
+sims=np.array([ [stats.skew((p:=gen(int(rng.choice(ms)),rng))[idx:=rng.choice(len(p),10,replace=False)]), stats.kurtosis(p[idx])] for _ in range(1500)])
+print("obs skew q10/50/90:", np.round(np.quantile(obs[:,0],[.1,.5,.9]),2), " kurt q10/50/90:", np.round(np.quantile(obs[:,1],[.1,.5,.9]),2))
+print("sim skew q10/50/90:", np.round(np.quantile(sims[:,0],[.1,.5,.9]),2), " kurt q10/50/90:", np.round(np.quantile(sims[:,1],[.1,.5,.9]),2))
+
+def loss_excess(pop,q,t,ps,m):
+    p=ps[t]; tt=[0.9,0.95,0.99][t]
+    sp=np.sort(pop); q0=sp[int(np.ceil(p*m))-1]
+    d=pop-q; d0=pop-q0
+    L=np.where(d>=0,tt*d,(tt-1)*d).mean(); L0=np.where(d0>=0,tt*d0,(tt-1)*d0).mean()
+    return (L-L0)/pop.std(ddof=1)
+
+def mk_raw(df):
+    return lambda x,p: x.mean()+x.std(ddof=1)*stats.t.ppf(p,df)
+
+def hafer_hein(d,lam=0.5):  # heuristic shrink: from lambert-style? skip
+    return d
+
+# interval machinery candidate: bootstrap BCA-lite using parametric t + nonparametric mix
+def interval_mix(x,m,p,B=4000,rng=None):
+    # resample: with prob w parametric t10 fit to (mean,sd) else empirical
+    mu,sd=x.mean(),x.std(ddof=1)
+    qs=[]
+    for _ in range(B):
+        if rng.random()<0.5:
+            z=stats.t.ppf(rng.random(10),10)
+            z=(z-z.mean())/z.std(ddof=1) if z.std(ddof=1)>1e-9 else z
+            xs=mu+sd*z
+        else:
+            xs=rng.choice(x,10,replace=True)
+        mu2,sd2=xs.mean(),xs.std(ddof=1)
+        if sd2<1e-12: continue
+        qs.append(mu2+sd2*stats.t.ppf(p,10))
+    qs=np.sort(qs)
+    return np.quantile(qs,[.025,.975])
+
+def interval_qn(x,m,p,B=6000,rng=None):
+    # nonparametric bootstrap of HD-smoothed quantile, calibrated via t-scale inflation
+    qs=[]
+    for _ in range(B):
+        xs=np.sort(rng.choice(x,10,replace=True))
+        if xs[-1]==xs[0]: continue
+        a=(11)*p; b=(11)*(1-p)
+        c=stats.beta.cdf(xs,a,b); w=np.diff(np.r_[0,c]); q=w@xs
+        qs.append(q)
+    qs=np.sort(qs)
+    lo,hi=np.quantile(qs,[.025,.975])
+    return lo,hi
+
+fams={f'raw_t{df}':mk_raw(df) for df in [6,8,10,16]}
+fams['raw_norm']=lambda x,p: x.mean()+x.std(ddof=1)*stats.norm.ppf(p)
+
+nrep=3000
+L={k:np.zeros((nrep,4)) for k in fams}
+cov=np.zeros(nrep); cov2=np.zeros(nrep); wid=[]; wid2=[]
+for rep in range(nrep):
+    m=int(rng.choice(ms)); pop=gen(m,rng)
+    x=pop[rng.choice(m,10,replace=False)].astype(float)
+    ps=[np.ceil(t*m)/m for t in (0.9,0.95,0.99)]
+    sp=np.sort(pop); true95=sp[int(np.ceil(ps[1]*m))-1]
+    for nm,fn in fams.items():
+        tot=0
+        for t in range(3):
+            v=loss_excess(pop,fn(x,ps[t]),t,ps,m); L[nm][rep,t]=v; tot+=v
+        L[nm][rep,3]=tot
+    l1=interval_mix(x,m,ps[1],rng=rng); cov[rep]=l1[0]<=true95<=l1[1]; wid.append(l1[1]-l1[0])
+    l2=interval_qn(x,m,ps[1],rng=rng); cov2[rep]=l2[0]<=true95<=l2[1]; wid2.append(l2[1]-l2[0])
+for nm in fams:
+    med=np.median(L[nm],0)
+    print(f"{nm:10s} medTOT {med[3]:.5f} q90 {med[0]:.5f} q95 {med[1]:.5f} q99 {med[2]:.5f}")
+print(f"interval mix coverage {cov.mean():.3f} width/sd {np.mean(wid):.2f} | qn-boot coverage {cov2.mean():.3f} width/sd {np.mean(wid2):.2f}")
+PY
+cd /tmp && python sim5.py
 ```
 
 ## [21] tool
@@ -923,7 +1512,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/blocks.csv'
 **tool call: bash**
 
 ```
-
+sed -i "s#'data/blocks.csv'#'data/blocks.csv'#" /tmp/sim5.py && cd ~ && python /tmp/sim5.py
 ```
 
 ## [23] tool
@@ -958,7 +1547,7 @@ The data lives in the original working directory — let me find it.
 **tool call: bash**
 
 ```
-
+pwd; ls; find / -name "blocks.csv" -not -path "*/proc/*" 2>/dev/null | head
 ```
 
 ## [25] tool
@@ -980,7 +1569,7 @@ predictions.csv
 **tool call: bash**
 
 ```
-
+cd /workspace && python /tmp/sim5.py
 ```
 
 ## [27] tool
@@ -1001,7 +1590,7 @@ AttributeError: 'Series' object has no attribute 'x'. Did you mean: 'xs'?
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i 's/x=g.x.x.to_numpy()/x=g["x"].to_numpy()/' /tmp/sim5.py && python /tmp/sim5.py
 ```
 
 ## [29] tool
@@ -1013,7 +1602,73 @@ The bootstrap-based interval simulation is too slow. Let me split the work: firs
 **tool call: bash**
 
 ```
+cat > /tmp/sim6.py <<'PY'
+import numpy as np, pandas as pd, time
+from scipy import stats
+rng=np.random.default_rng(2)
 
+D=pd.read_csv('data/blocks.csv')
+obs=np.array([[stats.skew(g["x"].to_numpy()), stats.kurtosis(g["x"].to_numpy())] for b,g in D.groupby('block')])
+
+def gen(m,rng):
+    kind=rng.integers(0,6)
+    mu=rng.uniform(-3,6); s0=rng.uniform(0.4,3.); phi=rng.uniform(-0.2,0.9)
+    e=rng.standard_normal(m)
+    if kind==0:
+        y=mu+s0*e
+    elif kind==1:
+        df=rng.uniform(2.5,8); y=mu+s0*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+    elif kind==2:
+        a=rng.uniform(2,10); z=stats.skewnorm.rvs(a,size=m,random_state=rng); y=mu+s0*(z-z.mean())/z.std()
+    elif kind==3:
+        df=rng.uniform(2.5,8); ee=np.sqrt((df-2)/df)*rng.standard_t(df,m)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*ee[i]
+    elif kind==4:
+        v=np.exp(np.cumsum(rng.uniform(0.2,0.5)*rng.standard_normal(m)))
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*v[i]*e[i]
+    else:
+        sh=(rng.random(m)<0.07)*rng.standard_normal(m)*rng.uniform(2.5,8)
+        y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*e[i]+sh[i]
+    return y*rng.uniform(0.05,200)
+
+def loss_excess(pop,q,t,ps,m):
+    p=ps[t]; tt=[0.9,0.95,0.99][t]
+    sp=np.sort(pop); q0=sp[int(np.ceil(p*m))-1]
+    d=pop-q; d0=pop-q0
+    L=np.where(d>=0,tt*d,(tt-1)*d).mean(); L0=np.where(d0>=0,tt*d0,(tt-1)*d0).mean()
+    return (L-L0)/pop.std(ddof=1)
+
+def mk_raw(df): return lambda x,p: x.mean()+x.std(ddof=1)*stats.t.ppf(p,df)
+def mk_wins(df,k):
+    def f(x,p):
+        xs=np.sort(x); xw=np.clip(x,xs[k-1],xs[10-k])
+        return xw.mean()+xw.std(ddof=1)*stats.t.ppf(p,df)
+    return f
+
+fams={f'raw_t{df}':mk_raw(df) for df in [6,8,10,12,16,24]}
+fams['raw_norm']=lambda x,p: x.mean()+x.std(ddof=1)*stats.norm.ppf(p)
+fams['w1_t8']=mk_wins(8,1); fams['w1_t12']=mk_wins(12,1)
+
+ms=np.arange(251,585); nrep=4000
+L={k:np.zeros((nrep,4)) for k in fams}
+for rep in range(nrep):
+    m=int(rng.choice(ms)); pop=gen(m,rng)
+    x=pop[rng.choice(m,10,replace=False)].astype(float)
+    ps=[np.ceil(t*m)/m for t in (0.9,0.95,0.99)]
+    for nm,fn in fams.items():
+        tot=0
+        for t in range(3):
+            v=loss_excess(pop,fn(x,ps[t]),t,ps,m); L[nm][rep,t]=v; tot+=v
+        L[nm][rep,3]=tot
+print("median obs skew/kurt:", np.round(np.median(obs,0),2))
+for nm in fams:
+    med=np.median(L[nm],0)
+    print(f"{nm:10s} medTOT {med[3]:.5f} q90 {med[0]:.5f} q95 {med[1]:.5f} q99 {med[2]:.5f} | mean {L[nm][:,3].mean():.5f}")
+PY
+cd /workspace && timeout 600 python /tmp/sim6.py
 ```
 
 ## [31] tool
@@ -1037,7 +1692,66 @@ The point-estimate comparison is stable across generator variants: raw moments +
 **tool call: bash**
 
 ```
+cat > /tmp/sim7.py <<'PY'
+import numpy as np, pandas as pd
+from scipy import stats
+from scipy.special import stdtr, gammaln
+rng=np.random.default_rng(3)
 
+def gen(m,rng):
+    kind=rng.integers(0,6)
+    mu=rng.uniform(-3,6); s0=rng.uniform(0.4,3.); phi=rng.uniform(-0.2,0.9)
+    e=rng.standard_normal(m)
+    if kind==0: y=mu+s0*e
+    elif kind==1:
+        df=rng.uniform(2.5,8); y=mu+s0*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+    elif kind==2:
+        a=rng.uniform(2,10); z=stats.skewnorm.rvs(a,size=m,random_state=rng); y=mu+s0*(z-z.mean())/z.std()
+    elif kind==3:
+        df=rng.uniform(2.5,8); ee=np.sqrt((df-2)/df)*rng.standard_t(df,m); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*ee[i]
+    elif kind==4:
+        v=np.exp(np.cumsum(rng.uniform(0.2,0.5)*rng.standard_normal(m))); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*v[i]*e[i]
+    else:
+        sh=(rng.random(m)<0.07)*rng.standard_normal(m)*rng.uniform(2.5,8); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*e[i]+sh[i]
+    return y*rng.uniform(0.05,200)
+
+ms=np.arange(251,585)
+
+# vectorized sampling experiment for interval methods
+n=10
+N=20000
+def sample_block(rng):
+    m=int(rng.choice(ms)); pop=gen(m,rng)
+    x=pop[rng.choice(m,10,replace=False)].astype(float)
+    sp=np.sort(pop); p=np.ceil(0.95*m)/m
+    return x, sp[int(np.ceil(p*m))-1], pop.std(ddof=1), m
+
+def se_delta(t,mu,s,p,df=12):
+    z=stats.t.ppf(p,df); d0=stats.t.pdf(z,df)
+    return np.sqrt((s/3.1623)**2 + (s*z)**2/20 + (s/d0)**2*0.95*0.05/10 )
+
+methods={}
+methods['delta_t12']=lambda x,p: (lambda mu,s,se: (mu+s*stats.t.ppf(p,12)-2.262*se, mu+s*stats.t.ppf(p,12)+2.262*se))(x.mean(),x.std(ddof=1),se_delta(0,x.mean(),x.std(ddof=1),p,12))
+methods['delta_t12_wide']=lambda x,p: (lambda mu,s,se: (mu+s*stats.t.ppf(p,12)-3.5*se, mu+s*stats.t.ppf(p,12)+3.5*se))(x.mean(),x.std(ddof=1),se_delta(0,x.mean(),x.std(ddof=1),p,12))
+methods['orderstat+scale']=lambda x,p: (np.sort(x)[6], x.mean()+x.std(ddof=1)*stats.t.ppf(p,12)+4*x.std(ddof=1))
+
+covs={k:np.zeros(N) for k in methods}; widths={k:np.zeros(N) for k in methods}
+cnt=0
+for rep in range(N):
+    x,t95,psd,m=sample_block(rng)
+    p=np.ceil(0.95*m)/m
+    for k,f in methods.items():
+        lo,hi=f(x,p); covs[k][rep]= (lo<=t95<=hi); widths[k][rep]=(hi-lo)/psd
+    cnt+=1
+    if rep%4000==0: 
+        pass
+for k in methods:
+    print(f"{k:18s} cov {covs[k].mean():.3f} mean width/SD {widths[k].mean():.2f}")
+PY
+cd /workspace && timeout 900 python /tmp/sim7.py
 ```
 
 ## [33] tool
@@ -1054,7 +1768,64 @@ The delta-method interval with t multiplier 2.262 nails ~0.95 coverage on the ca
 **tool call: bash**
 
 ```
+cat > /tmp/sim8.py <<'PY'
+import numpy as np, pandas as pd
+from scipy import stats
+rng=np.random.default_rng(4)
 
+def gen(m,rng):
+    kind=rng.integers(0,6)
+    mu=rng.uniform(-3,6); s0=rng.uniform(0.4,3.); phi=rng.uniform(-0.2,0.9)
+    e=rng.standard_normal(m)
+    if kind==0: y=mu+s0*e
+    elif kind==1:
+        df=rng.uniform(2.5,8); y=mu+s0*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+    elif kind==2:
+        a=rng.uniform(2,10); z=stats.skewnorm.rvs(a,size=m,random_state=rng); y=mu+s0*(z-z.mean())/z.std()
+    elif kind==3:
+        df=rng.uniform(2.5,8); ee=np.sqrt((df-2)/df)*rng.standard_t(df,m); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*ee[i]
+    elif kind==4:
+        v=np.exp(np.cumsum(rng.uniform(0.2,0.5)*rng.standard_normal(m))); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*v[i]*e[i]
+    else:
+        sh=(rng.random(m)<0.07)*rng.standard_normal(m)*rng.uniform(2.5,8); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*e[i]+sh[i]
+    return y*rng.uniform(0.05,200)
+
+def loss_excess(pop,q,t,ps,m):
+    p=ps[t]; tt=[0.9,0.95,0.99][t]
+    sp=np.sort(pop); q0=sp[int(np.ceil(p*m))-1]
+    d=pop-q; d0=pop-q0
+    L=np.where(d>=0,tt*d,(tt-1)*d).mean(); L0=np.where(d0>=0,tt*d0,(tt-1)*d0).mean()
+    return (L-L0)/pop.std(ddof=1)
+
+def df_of(k):
+    if k>1.5: return 4
+    if k>0.3: return 8
+    return 12
+
+def f_adapt(x,p): return x.mean()+x.std(ddof=1)*stats.t.ppf(p,df_of(stats.kurtosis(x)))
+def f_t12(x,p): return x.mean()+x.std(ddof=1)*stats.t.ppf(p,12)
+def f_t10(x,p): return x.mean()+x.std(ddof=1)*stats.t.ppf(p,10)
+
+fams={'t12':f_t12,'t10':f_t10,'adapt':f_adapt}
+ms=np.arange(251,585); nrep=4000
+L={k:np.zeros((nrep,4)) for k in fams}
+for rep in range(nrep):
+    m=int(rng.choice(ms)); pop=gen(m,rng)
+    x=pop[rng.choice(m,10,replace=False)].astype(float)
+    ps=[np.ceil(t*m)/m for t in (0.9,0.95,0.99)]
+    for nm,fn in fams.items():
+        tot=0
+        for t in range(3):
+            v=loss_excess(pop,fn(x,ps[t]),t,ps,m); L[nm][rep,t]=v; tot+=v
+        L[nm][rep,3]=tot
+for nm in fams:
+    med=np.median(L[nm],0)
+    print(f"{nm:8s} medTOT {med[3]:.5f} q90 {med[0]:.5f} q95 {med[1]:.5f} q99 {med[2]:.5f} mean {L[nm][:,3].mean():.5f}")
+PY
+cd /workspace && timeout 900 python /tmp/sim8.py
 ```
 
 ## [35] tool
@@ -1071,7 +1842,85 @@ Point estimation is decided: **raw moments + t12 tail** (data-dependent df adds 
 **tool call: bash**
 
 ```
+cat > /tmp/sim9.py <<'PY'
+import numpy as np, pandas as pd
+from scipy import stats
+rng=np.random.default_rng(5)
 
+def gen(m,rng):
+    kind=rng.integers(0,6)
+    mu=rng.uniform(-3,6); s0=rng.uniform(0.4,3.); phi=rng.uniform(-0.2,0.9)
+    e=rng.standard_normal(m)
+    if kind==0: y=mu+s0*e
+    elif kind==1:
+        df=rng.uniform(2.5,8); y=mu+s0*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+    elif kind==2:
+        a=rng.uniform(2,10); z=stats.skewnorm.rvs(a,size=m,random_state=rng); y=mu+s0*(z-z.mean())/z.std()
+    elif kind==3:
+        df=rng.uniform(2.5,8); ee=np.sqrt((df-2)/df)*rng.standard_t(df,m); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*ee[i]
+    elif kind==4:
+        v=np.exp(np.cumsum(rng.uniform(0.2,0.5)*rng.standard_normal(m))); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*v[i]*e[i]
+    else:
+        sh=(rng.random(m)<0.07)*rng.standard_normal(m)*rng.uniform(2.5,8); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*e[i]+sh[i]
+    return y*rng.uniform(0.05,200)
+
+def se_delta(mu,s,p,df=12):
+    z=stats.t.ppf(p,df); d0=stats.t.pdf(z,df)
+    return np.sqrt((s/np.sqrt(10))**2 + (s*z)**2/20 + (s/d0)**2*0.95*0.05/10)
+
+def upper_kurt(x):
+    mu,sd=x.mean(),x.std(ddof=1)
+    up=x[x>mu]
+    if len(up)<2 or sd==0: return 0.0
+    return (len(x)/len(up))*np.mean(((up-mu)/sd)**4)
+
+def mk(cal,uh,uhi,a_lo,a_hi):
+    def f(x,p):
+        mu,s=x.mean(),x.std(ddof=1)
+        se=se_delta(mu,s,p,12)
+        q95=mu+s*stats.t.ppf(p,12)
+        uk=upper_kurt(x)
+        hi= q95 + a_hi*se + (uh if uk>UHI else 0)*0 + uhi*np.exp(cal*max(0,uk-6))*s   # exponential blow-up guard
+        lo= q95 - a_lo*se
+        return lo,hi
+    return f
+UHI=6
+
+# simpler parametric family
+def mk2(mult_lo, mult_hi, k):
+    def f(x,p):
+        mu,s=x.mean(),x.std(ddof=1)
+        se=se_delta(mu,s,p,12)
+        q95=mu+s*stats.t.ppf(p,12)
+        uk=upper_kurt(x)
+        return q95-mult_lo*se, q95+mult_hi*se/max(1e-9,1)+k*max(0,uk-8)*s
+    return f
+
+methods={
+ 'A 2.262 flat':mk2(2.262,2.262,0),
+ 'B +0.4*(uk-8)':mk2(2.262,2.262,0.4),
+ 'C +0.8*(uk-8)':mk2(2.262,2.262,0.8),
+ 'D +1.2*(uk-8)':mk2(2.262,2.262,1.2),
+ 'E 2.6/+0.8uk': mk2(2.6,2.6,0.8),
+}
+ms=np.arange(251,585); n=10
+N=12000
+cov={k:np.zeros(N) for k in methods}; wd={k:np.zeros(N) for k in methods}
+lowk={k:np.zeros(N) for k in methods}
+for rep in range(N):
+    m=int(rng.choice(ms)); pop=gen(m,rng)
+    x=pop[rng.choice(m,10,replace=False)].astype(float)
+    sp=np.sort(pop); p=np.ceil(0.95*m)/m; t95=sp[int(np.ceil(p*m))-1]; psd=pop.std(ddof=1)
+    for k,f in methods.items():
+        lo,hi=f(x,p); cov[k][rep]=lo<=t95<=hi; wd[k][rep]=(hi-lo)/psd
+        lowk[k][rep]= (lo<=t95)
+for k in methods:
+    print(f"{k:14s} cov {cov[k].mean():.3f} width/SD {wd[k].mean():.2f} lower-cov {lowk[k].mean():.3f}")
+PY
+cd /workspace && timeout 900 python /tmp/sim9.py
 ```
 
 ## [37] tool
@@ -1094,7 +1943,53 @@ Let me write the final predictions and validate the output format.
 **tool call: bash**
 
 ```
+cat > /workspace/final_preds.py <<'PY'
+import pandas as pd, numpy as np, re
+from scipy import stats
 
+# population sizes
+m={}
+for line in open('data/task.txt'):
+    mm=re.match(r'Block (\d+) \(population size m = (\d+)\):',line)
+    if mm: m[int(mm.group(1))]=int(mm.group(2))
+D=pd.read_csv('data/blocks.csv')
+
+def upper_kurt(x):
+    mu,sd=x.mean(),x.std(ddof=1)
+    up=x[x>mu]
+    if len(up)<2 or sd==0: return 0.0
+    return (len(x)/len(up))*np.mean(((up-mu)/sd)**4)
+
+def se_delta(mu,s,p,df=12):
+    z=stats.t.ppf(p,df); d0=stats.t.pdf(z,df)
+    return np.sqrt((s/np.sqrt(10))**2 + (s*z)**2/20 + (s/d0)**2*0.95*0.05/10)
+
+rows=[]
+for b,g in D.groupby('block'):
+    x=g['x'].to_numpy().astype(float)
+    assert b in m and len(x)==10
+    ps=[np.ceil(t*m[b])/m[b] for t in (0.9,0.95,0.99)]
+    mu=x.mean(); s=x.std(ddof=1)
+    q90,q95,q99=[mu+s*stats.t.ppf(p,12) for p in ps]
+    se=se_delta(mu,s,ps[1],12)
+    lo=q95-2.262*se
+    hi=q95+2.262*se+0.4*max(0.,upper_kurt(x)-8.)*s
+    rows.append((b,q90,q95,q99,lo,hi))
+out=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+out.to_csv('predictions.csv',index=False,float_format='%.6g')
+
+# validation
+chk=pd.read_csv('predictions.csv')
+assert list(chk.columns)==['block','q90','q95','q99','lo','hi']
+assert len(chk)==100 and chk.block.tolist()==list(range(1,101))
+assert np.isfinite(chk[['q90','q95','q99','lo','hi']].values).all()
+assert (chk.lo<chk.q95).all() and (chk.q95<chk.hi).all()
+assert (chk.q90<chk.q95).all() and (chk.q95<chk.q99).all()
+print("OK, 100 rows valid.")
+print(chk.head(3).to_string(index=False))
+print("blocks with kurtosis guard kick-in:", int((pd.Series([upper_kurt(g['x'].to_numpy())>8 for _,g in D.groupby('block')])).sum()))
+PY
+cd /workspace && python final_preds.py
 ```
 
 ## [39] tool
@@ -1114,7 +2009,64 @@ Valid predictions written with the planned formulas. One concern: the exponent 0
 **tool call: bash**
 
 ```
+cat > /tmp/sim10.py <<'PY'
+import numpy as np
+from scipy import stats
+rng=np.random.default_rng(11)
 
+def gen(m,rng):
+    kind=rng.integers(0,6)
+    mu=rng.uniform(-3,6); s0=rng.uniform(0.4,3.); phi=rng.uniform(-0.2,0.9)
+    e=rng.standard_normal(m)
+    if kind==0: y=mu+s0*e
+    elif kind==1:
+        df=rng.uniform(2.5,8); y=mu+s0*np.sqrt((df-2)/df)*rng.standard_t(df,m)
+    elif kind==2:
+        a=rng.uniform(2,10); z=stats.skewnorm.rvs(a,size=m,random_state=rng); y=mu+s0*(z-z.mean())/z.std()
+    elif kind==3:
+        df=rng.uniform(2.5,8); ee=np.sqrt((df-2)/df)*rng.standard_t(df,m); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*ee[i]
+    elif kind==4:
+        v=np.exp(np.cumsum(rng.uniform(0.2,0.5)*rng.standard_normal(m))); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*v[i]*e[i]
+    else:
+        sh=(rng.random(m)<0.07)*rng.standard_normal(m)*rng.uniform(2.5,8); y=np.empty(m); y[0]=mu
+        for i in range(1,m): y[i]=mu+phi*(y[i-1]-mu)+s0*e[i]+sh[i]
+    return y*rng.uniform(0.05,200)
+
+def se_delta(mu,s,p,df=12):
+    z=stats.t.ppf(p,df); d0=stats.t.pdf(z,df)
+    return np.sqrt((s/np.sqrt(10))**2 + (s*z)**2/20 + (s/d0)**2*0.95*0.05/10)
+def upper_kurt(x):
+    mu,sd=x.mean(),x.std(ddof=1); up=x[x>mu]
+    return 0.0 if len(up)<2 or sd==0 else (len(x)/len(up))*np.mean(((up-mu)/sd)**4)
+
+ms=np.arange(251,585)
+N=20000
+xs=[]; t95s=[]; psds=[]; ps=[]
+for rep in range(N):
+    m=int(rng.choice(ms)); pop=gen(m,rng)
+    x=pop[rng.choice(m,10,replace=False)].astype(float)
+    sp=np.sort(pop); p=np.ceil(0.95*m)/m
+    xs.append(x); t95s.append(sp[int(np.ceil(p*m))-1]); psds.append(pop.std(ddof=1)); ps.append(p)
+xs=np.array(xs); t95s=np.array(t95s); psds=np.array(psds); ps=np.array(ps)
+mus=xs.mean(1); ss=xs.std(1,ddof=1)
+q95s=mus+ss*stats.t.ppf(ps,12)
+ses=np.array([se_delta(m_,s_,p_) for m_,s_,p_ in zip(mus,ss,ps)])
+uks=np.array([upper_kurt(x) for x in xs])
+
+for cap_exp in [0.1,0.2,0.4,0.8]:
+    hi=q95s+2.262*ses+cap_exp*np.clip(uks-8,0,None)*ss
+    lo=q95s-2.262*ses
+    cov=(lo<=t95s)&(t95s<=hi)
+    print(f"guard c={cap_exp}: cov {cov.mean():.3f} width/SD {np.mean((hi-lo)/psds):.2f}")
+print(f"no guard: cov {((q95s-2.262*ses<=t95s)&(t95s<=q95s+2.262*ses)).mean():.3f} width/SD {np.mean(4.524*ses/psds):.2f}")
+# how often do TRUE misses get rescued by guard? distribution of misses
+cov0=(q95s-2.262*ses<=t95s)&(t95s<=q95s+2.262*ses)
+print("misses upper-side fraction:", np.mean(t95s>q95s+2.262*ses))
+print("uk of upper misses vs all:  mean", uks[t95s>q95s+2.262*ses].mean(), uks.mean())
+PY
+cd /workspace && timeout 600 python /tmp/sim10.py
 ```
 
 ## [41] tool
@@ -1135,7 +2087,7 @@ The guard works (misses have upper-kurt ~16 vs 10 average); exponent c=0.1 lifts
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i 's/0.4\*max/0.1*max/' final_preds.py && python final_preds.py && echo "---" && head -6 predictions.csv && wc -l predictions.csv
 ```
 
 ## [43] tool

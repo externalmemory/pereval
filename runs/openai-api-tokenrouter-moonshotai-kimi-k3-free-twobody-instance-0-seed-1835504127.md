@@ -52,7 +52,7 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && head data/test.csv && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -110,7 +110,13 @@ t
 **tool call: bash**
 
 ```
-
+tail -20 data/train.csv && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.describe())
+print('t range:', df.t.min(), df.t.max())
+print('gaps in t:', sorted(set(df.t.diff().dropna().unique())))
+"
 ```
 
 ## [5] tool
@@ -161,7 +167,26 @@ gaps in t: [np.float64(1.0)]
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+a = np.deg2rad(np.unwrap(np.deg2rad(df.alpha.values)))  # careful
+# unwrap properly: treat alpha as degrees, unwrap in radians
+u = np.degrees(np.unwrap(np.radians(df.alpha.values)))
+d = np.diff(u)
+print('daily increments: mean %.4f std %.4f min %.4f max %.4f' % (d.mean(), d.std(), d.min(), d.max()))
+# check linearity: fit linear
+t = df.t.values
+A = np.vstack([t, np.ones_like(t)]).T
+coef, res, *_ = np.linalg.lstsq(A, u, rcond=None)
+fit = A @ coef
+r = u - fit
+print('linear fit: slope %.6f, resid std %.5f, max abs resid %.5f' % (coef[0], r.std(), np.abs(r).max()))
+print('first few resid:', r[:10])
+print('resid at end:', r[-10:])
+# autocorr of resid
+print('resid lag1 corr:', np.corrcoef(r[:-1], r[1:])[0,1])
+"
 ```
 
 ## [7] tool
@@ -186,7 +211,23 @@ resid lag1 corr: 0.999580737424465
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+u = np.degrees(np.unwrap(np.radians(df.alpha.values)))
+A = np.vstack([t, np.ones_like(t)]).T
+coef, *_ = np.linalg.lstsq(A, u, rcond=None)
+r = u - A@coef
+# FFT of residual
+n = len(r)
+F = np.fft.rfft(r - 0)  # keep
+freqs = np.fft.rfftfreq(n, d=1.0)
+amp = np.abs(F)/n*2
+idx = np.argsort(amp)[::-1][:8]
+for i in idx:
+    print('period=%.1f days, amp=%.4f deg' % (1/freqs[i] if freqs[i]>0 else np.inf, amp[i]))
+"
 ```
 
 ## [9] tool
@@ -208,7 +249,39 @@ Data has a linear rotation trend plus a low-frequency smooth component. Let me m
 **tool call: bash**
 
 ```
+cat > /tmp/explore.py << 'EOF'
+import numpy as np, pandas as pd
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+u = np.degrees(np.unwrap(np.radians(df.alpha.values)))
 
+# LS fit with linear trend + Fourier series at a candidate frequency
+def design(t, period, K):
+    X = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/period
+        X += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(X)
+
+# fine grid search over fundamental period
+best = None
+for period in np.linspace(250, 400, 3001):
+    X = design(t, period, 3)  # fundamental + 2 harmonics
+    coef, *_ = np.linalg.lstsq(X, u, rcond=None)
+    r = u - X@coef
+    rss = r@r
+    if best is None or rss < best[0]:
+        best = (rss, period)
+print('best period:', best[1], 'resid std:', np.sqrt(best[0]/len(t)))
+
+period = best[1]
+for K in [1,2,3,4,5]:
+    X = design(t, period, K)
+    coef, *_ = np.linalg.lstsq(X, u, rcond=None)
+    r = u - X@coef
+    print('K=%d: resid std=%.5f, lag1 corr=%.4f, max|r|=%.3f' % (K, r.std(), np.corrcoef(r[:-1],r[1:])[0,1], np.abs(r).max()))
+EOF
+python3 /tmp/explore.py
 ```
 
 ## [11] tool
@@ -236,7 +309,53 @@ Nearly white residuals with K=4 harmonics at period ≈ 323.7 days. Let me refin
 **tool call: bash**
 
 ```
+cat > /tmp/explore2.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import minimize_scalar
+from scipy import stats
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+u = np.degrees(np.unwrap(np.radians(df.alpha.values)))
+n = len(t)
 
+def design(t, period, K=4):
+    X = [t, np.ones_like(t)]
+    for k in range(1, K+1):
+        w = 2*np.pi*k/period
+        X += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(X)
+
+def rss_of(period):
+    X = design(t, period)
+    coef, *_ = np.linalg.lstsq(X, u, rcond=None)
+    r = u - X@coef
+    return r@r
+
+res = minimize_scalar(rss_of, bounds=(320, 327), method='bounded', options={'xatol':1e-10})
+period = res.x
+X = design(t, period)
+p = X.shape[1]
+coef, *_ = np.linalg.lstsq(X, u, rcond=None)
+r = u - X@coef
+dof = n - p
+sigma2 = r@r/dof
+print('period=%.4f, coeff std of resid: sigma=%.5f, dof=%d' % (period, np.sqrt(sigma2), dof))
+print('slope=%.6f deg/day' % coef[0])
+# whiteness: Ljung-Box-ish check
+ac = [np.corrcoef(r[:-k], r[k:])[0,1] for k in range(1,6)]
+print('resid autocorr lags1-5:', np.round(ac,3))
+print('normality (normaltest p):', stats.normaltest(r).pvalue)
+# heteroscedasticity: std in time bins
+for lo in range(0, 1500, 250):
+    m = (t>=lo)&(t<lo+250)
+    if m.sum()>1: print('t in [%d,%d): std=%.4f (n=%d)' % (lo, lo+250, r[m].std(), m.sum()))
+# stability: fit on first 1200 days, compare predictions at end
+m = t <= 1200
+Xa = design(t[m], period); ca, *_ = np.linalg.lstsq(Xa, u[m], rcond=None)
+pred_end = design(t[~m], period) @ ca
+print('holdout last ~318d: MAE=%.4f, max err=%.4f' % (np.abs(pred_end-u[~m]).mean(), np.abs(pred_end-u[~m]).max()))
+EOF
+python3 /tmp/explore2.py
 ```
 
 ## [13] tool
@@ -300,7 +419,89 @@ Excellent — the model extrapolates very well (holdout MAE 0.26° over ~318 day
 **tool call: bash**
 
 ```
+cat > solution.py << 'EOF'
+"""
+Predict wrapped angle alpha (deg) for future days.
 
+Model: unwrap alpha -> u(t) = b0 + b1*t + sum_{k=1..4} [a_k sin(2pi k t/P) + b_k cos(2pi k t/P)]
+with P found by nonlinear residual-minimization, plus iid Gaussian observation noise.
+95% prediction interval for a NEW noisy measurement uses the full LS prediction variance
+sigma^2 * (1 + x'(X'X)^{-1}x) with a t-distribution multiplier.
+"""
+import numpy as np
+import pandas as pd
+from scipy.optimize import minimize_scalar
+from scipy import stats
+
+K = 4  # number of harmonics
+
+def design(t, period, K=K):
+    t = np.asarray(t, dtype=float)
+    X = [t, np.ones_like(t)]
+    for k in range(1, K + 1):
+        w = 2 * np.pi * k / period
+        X += [np.sin(w * t), np.cos(w * t)]
+    return np.column_stack(X)
+
+# ---- load and unwrap ----
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train['t'].values.astype(float)
+u = np.degrees(np.unwrap(np.radians(train['alpha'].values)))
+n = len(t)
+
+# ---- find period ----
+def rss_of(period):
+    X = design(t, period)
+    coef, *_ = np.linalg.lstsq(X, u, rcond=None)
+    r = u - X @ coef
+    return r @ r
+
+# coarse then fine
+grid = np.linspace(250, 400, 3001)
+p0 = grid[np.argmin([rss_of(P) for P in grid])]
+res = minimize_scalar(rss_of, bounds=(p0 - 2, p0 + 2), method='bounded',
+                      options={'xatol': 1e-12})
+period = res.x
+
+# ---- final fit ----
+X = design(t, period)
+XtX_inv = np.linalg.inv(X.T @ X)
+coef = XtX_inv @ X.T @ u
+r = u - X @ coef
+p = X.shape[1]
+dof = n - p
+sigma2 = (r @ r) / dof
+tq = stats.t.ppf(0.975, dof)
+print('P=%.5f  slope=%.6f  sigma=%.5f  dof=%d' % (period, coef[0], np.sqrt(sigma2), dof))
+
+# ---- predict ----
+tt = test['t'].values.astype(float)
+Xt = design(tt, period)
+mu = Xt @ coef
+leverage = np.einsum('ij,jk,ik->i', Xt, XtX_inv, Xt)
+pred_std = np.sqrt(sigma2 * (1.0 + leverage))   # includes observation noise
+half = tq * pred_std
+
+y_pred = np.mod(mu, 360.0)
+lo_raw = mu - half
+up_raw = mu + half
+# wrap bounds; width << 360 so no ambiguity unless crossing 0/360
+y_lower = np.mod(lo_raw, 360.0)
+y_upper = np.mod(up_raw, 360.0)
+
+for i in range(len(tt)):
+    crosses = y_lower[i] > y_upper[i]
+    print('t=%.0f mu=%.3f pred=%.3f [%.3f, %.3f] hw=%.3f %s' %
+          (tt[i], np.mod(mu[i],360), y_pred[i], y_lower[i], y_upper[i], half[i],
+           'CROSSES-0' if crosses else ''))
+
+out = pd.DataFrame({'t': test['t'], 'y_pred': y_pred,
+                    'y_lower': y_lower, 'y_upper': y_upper})
+out.to_csv('predictions.csv', index=False)
+print('saved predictions.csv with', len(out), 'rows')
+EOF
+python3 solution.py
 ```
 
 ## [15] tool
@@ -348,7 +549,43 @@ Predictions saved. Let me validate with a parametric bootstrap to confirm that p
 **tool call: bash**
 
 ```
+cat > /tmp/bootstrap.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import minimize_scalar
 
+K=4
+def design(t, period, K=K):
+    t = np.asarray(t, float)
+    X = [t, np.ones_like(t)]
+    for k in range(1,K+1):
+        w = 2*np.pi*k/period
+        X += [np.sin(w*t), np.cos(w*t)]
+    return np.column_stack(X)
+
+train = pd.read_csv('data/train.csv'); test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float); u = np.degrees(np.unwrap(np.radians(train.alpha.values)))
+P = 323.69344
+X = design(t, P); coef, *_ = np.linalg.lstsq(X, u, rcond=None)
+fit = X@coef; sigma = (u-fit).std()
+tt = test.t.values.astype(float)
+rng = np.random.default_rng(0)
+preds = []
+for b in range(60):
+    usim = fit + rng.normal(0, sigma, len(t))
+    def rss_of(period):
+        Xc = design(t, period)
+        c, *_ = np.linalg.lstsq(Xc, usim, rcond=None)
+        r = usim - Xc@c
+        return r@r
+    res = minimize_scalar(rss_of, bounds=(P-1, P+1), method='bounded')
+    Xc = design(t, res.x); c, *_ = np.linalg.lstsq(Xc, usim, rcond=None)
+    preds.append(design(tt, res.x) @ c)
+preds = np.array(preds)
+print('bootstrap std of point predictions per test t (deg):')
+print(np.round(preds.std(axis=0), 4))
+print('noise sigma =', round(sigma,4))
+EOF
+python3 /tmp/bootstrap.py
 ```
 
 ## [17] tool
@@ -375,7 +612,15 @@ Bootstrap uncertainty in point predictions is only 0.03–0.05° vs noise σ=0.3
 **tool call: bash**
 
 ```
-
+cat predictions.csv && python3 -c "
+import pandas as pd, numpy as np
+p = pd.read_csv('predictions.csv'); te = pd.read_csv('data/test.csv')
+assert list(p.columns) == ['t','y_pred','y_lower','y_upper']
+assert len(p) == len(te) == 10
+assert (p.t.values == te.t.values).all()
+assert p[['y_pred','y_lower','y_upper']].apply(lambda s: s.between(0,360)).all().all()
+print('OK: 10 rows, columns exact, angles in [0,360]')
+"
 ```
 
 ## [19] tool

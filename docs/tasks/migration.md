@@ -1,14 +1,14 @@
 # Rating Migration
 
-**Status: built, not measured.** The generator, the four-component scorer, two reference solvers and the Inspect task exist. One smoke test has been run against free models; the task does not appear in the README's score table and will not until there is a cell for every ranked row.
+**Status: built, not measured.** The generator, the scorer, two reference solvers and the Inspect task exist. The one-history, three-scenario shape described below has not yet been run against a model; the free-model smoke tests and the MiniMax run that exist were taken under the earlier rotated shape and their scores are not comparable to anything this version produces. The task does not appear in the README's score table and will not until there is a cell for every ranked row.
 
-The task gives an agent twenty years of annual rating transition counts for a 10,000-obligor portfolio, quarterly macroeconomic history, a nine-quarter supervisory scenario, and a holdout cohort whose rating mix differs from the historical one. It must project where that cohort stands at quarters 4 and 9, record the quarterly transition matrices it used, and report the annual default rate its model projects for each historical year.
+The task gives an agent twenty years of annual rating transition counts for a 10,000-obligor portfolio, quarterly macroeconomic history, three nine-quarter supervisory scenarios over the same future quarters, and a holdout cohort whose rating mix differs from the historical one. It must estimate one model, project where that cohort stands at quarters 4 and 9 under each scenario, record the quarterly transition matrices it used, and report the annual default rate its model projects for each historical year.
 
 The intended difficulty is annual-to-quarterly conversion. A quarterly matrix obtained by rooting an annual one can be inadmissible: negative or complex migration probabilities, and a non-monotonic relationship between rating and default probability. That is the Markov embedding problem, and the standard references are Israel, Rosenthal and Wei (2001) on when a generator exists, Kreinin and Sidelnikova (2001) on regularising an invalid root, and Higham and Lin on pth roots of stochastic matrices.
 
 The trap is real and it is not tuned. Because the systematic factor moves every quarter, the annual matrix for a year is a product of four different quarterly matrices rather than the fourth power of one, so no quarterly matrix reproduces it. Measured on the exact arithmetic the principal fourth root reaches about -3e-08; with the finite 10,000-obligor portfolio it reaches -7e-03, five orders of magnitude worse, which is what an agent actually meets. Both free models in the smoke test found the negative entries, called them numerical issues, and clipped them.
 
-Bracket: oracle 0.000, one-factor reference 0.287, degenerate 1.000, measured over twenty-four instances at the shipped settings.
+Bracket: oracle 0.000, one-factor reference 0.285, degenerate 1.000, measured over twelve instances at the shipped settings, each instance carrying all three scenarios. The reference's per-scenario composites are 0.228 baseline, 0.284 adverse, 0.343 severe, monotone in severity.
 
 ## Provenance
 
@@ -53,7 +53,9 @@ The global 2024 rated cohort totals 6,496 issuers across the six recoverable row
 
 The point of a transition matrix is to estimate losses, and a bank with exposure to a AAA obligor still has to hold a reserve against it. A model that assigns zero default probability to its best grade implies zero expected loss and therefore zero allowance on a live exposure. That is a defect on its own terms, before any regulator is consulted.
 
-The published data invites exactly that defect. Global AAA to default over 1981 to 2024 is **0.00%** at one year. Taken at face value it says a AAA obligor cannot default. The same table refutes that two rows further down:
+The published data invites exactly that defect. Global AAA to default over 1981 to 2024 is **0.00%** at one year. Taken at face value it says a AAA obligor cannot default.
+
+It says no such thing, and the reason is not in the data. A frequency of zero is not a probability of zero. Cromwell's rule is the direct objection: assigning probability zero to an event that is not logically impossible fixes it there permanently, because Bayes multiplies and no quantity of later evidence can move a zero. A grade carrying a zero default probability is a grade that cannot be revised downward by anything that subsequently happens, which is the opposite of what a rating is for. The second objection is that the estimator assigning the rating cannot produce the number anyway: a logistic or ordered-logit link maps any finite score into the open interval (0, 1), so zero is outside its range by construction. The published 0.00% is a count of what happened in 44 static pools, not a parameter.
 
 | Grade | 1 year | 3 year | 5 year |
 | --- | ---: | ---: | ---: |
@@ -62,7 +64,7 @@ The published data invites exactly that defect. Global AAA to default over 1981 
 | A | 0.05% | 0.20% | 0.41% |
 | BBB | 0.14% | 0.67% | 1.42% |
 
-AAA default risk is positive at three and five years, and at five years it exceeds AA's. So the one-year 0.00% is an absence of observations across 44 static pools, not an absence of risk, and it should be read as a small-sample zero rather than a parameter.
+The longer horizons are consistent with that reading but do not establish it, and an earlier version of this section claimed they did. AAA cumulative default risk is positive at three and five years, and at five years it exceeds AA's, but these are cohort rates for issuers *initially* rated AAA: they count obligors downgraded in an early year that defaulted later from a lower grade. A one-year AAA to D probability of exactly zero is entirely compatible with them, so they cannot refute it. The one-year 0.00% is a small-sample zero rather than a parameter, and the argument for that comes from Cromwell's rule and from the form of the estimator rather than from the table.
 
 **A regulatory floor names a number, and it is the wrong number for this task.** For a US institution the operative floor is 12 CFR 217.131(d)(2) (Regulation Q, advanced approaches), "Floor on PD assignment": the PD for each wholesale obligor or retail segment may not be less than **0.03 percent**. The exemptions are exposures to, or directly and unconditionally guaranteed by, a sovereign entity, the BIS, the IMF, the European Commission, the ECB, the ESM, the EFSF, or a multilateral development bank. The Basel Committee's consolidated framework sets a higher 0.05% at CRE32.4, in force 1 January 2023, for every asset class except sovereign; the US has not adopted that figure here, and the March 2026 US proposal would remove the internal-ratings stack rather than raise the floor. Both are recorded in `PD_FLOORS` as reference facts and **neither is applied** to the generator or the solvers.
 
@@ -84,7 +86,7 @@ The ordering of the top two grades now comes out of the data instead of out of a
 
 The result also sits inside the bounds available. Below AA's observed 0.02%, so the top-two ordering is data. Above zero. And below the loosest upper bounds, the constant-hazard reads of the three and five year AAA rates at 0.043% and 0.068% per year, which overstate the first year because a cumulative multi-year figure counts obligors downgraded before defaulting.
 
-One caveat recorded rather than smoothed over: at three and five years the published AAA rate **exceeds** AA's, 0.13% against 0.11% and 0.34% against 0.28%. That inversion is a small-sample artefact of thin AAA pools. It is evidence that AAA risk is positive, which is the thing being relied on, and not evidence about its ordering against AA.
+One caveat recorded rather than smoothed over: at three and five years the published AAA rate **exceeds** AA's, 0.13% against 0.11% and 0.34% against 0.28%. That inversion is a small-sample artefact of thin AAA pools, and it is why those two figures are used only as loose upper bounds above. They are not evidence that the one-year rate is positive, for the reason given at the top of this section: a cumulative cohort rate counts obligors that defaulted from a lower grade, so it is compatible with a one-year AAA to D probability of exactly zero. Positivity rests on Cromwell's rule and on the estimator's range, not on this table.
 
 **What the correction cost.** Nothing measurable, which is the right outcome for a fix to the two grades that contribute least to a cohort default rate. On the pinned three-instance set the reference moved 0.3581 to 0.3596, 0.3840 to 0.3688 and 0.4998 to 0.4999, and the degenerate stayed at exactly 1.000 since identity matrices cannot be floored. Over the twenty-four instance bracket the reference went from 0.287 to 0.292 mean, 0.256 to 0.276 median, 0.662 to 0.632 max, with 0 of 24 losses to the degenerate either way and separation 3.5x to 3.4x. The task did not get easier or harder; the hidden truth got correct.
 
@@ -147,6 +149,116 @@ So admissibility breaks ties. But the defects are not all of one kind, and the m
 
 One limit worth stating. A clean submitted matrix cannot distinguish an agent that reasoned about admissibility from one that clipped silently and got lucky. Both free models in the smoke runs found the negative entries and still called them numerical issues. That reasoning lives in the transcript, and grading it would need a judge, which this suite does not use.
 
+## The Far Downgrade Corner and the Macro Response
+
+Two diagnostics measure the shape of the submitted matrices rather than their admissibility. Both are reported and neither is scored, for the same reason as the admissibility tiers: they are orthogonal to accuracy as the score defines it, and the measurement below is what establishes that.
+
+The question they answer is whether the matrix moves for the right reason. Getting the quarterly scale right is a time-scaling problem and the literature hands an agent the tools for it. Getting the matrix to respond to a macro path is a conditioning problem, and the two are separable in a way that the score cannot see.
+
+### What Agent Submissions Actually Looked Like
+
+The scorer kept only summary statistics of `matrices.csv`, so the submitted matrices from the smoke runs are not recoverable from the eval logs. One near-complete set was reconstructed from what an agent printed into its own transcript, nemotron-3-ultra-550b on a severe instance, and it shows the failure in its strongest form. The share of its downgrade mass travelling two grades or more:
+
+| Quarter | Factor | AAA submitted | AAA true | BBB submitted | BBB true |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.17 | 0.0602 | 0.0267 | 0.1569 | 0.0875 |
+| 3 | 1.82 | 0.0602 | 0.0643 | 0.1569 | 0.1471 |
+| 6 | 4.64 | 0.0602 | 0.2798 | 0.1569 | 0.3467 |
+| 9 | 2.55 | 0.0602 | 0.0945 | 0.1569 | 0.1843 |
+
+Identical to four decimal places in every quarter. Its whole live block is frozen: the maximum relative range across the nine quarters is 0.0001 for AAA, 0.0055 for A and 0.095 for BBB, against 3.8 to 7.9 for the truth, while its default column moves by a relative range of 2.4 to 5.4. It built one unconditional migration matrix, attached a scenario-sensitive default probability to it, and left the body alone. At the trough the truth sends 11.1% of AAA obligors down two grades or more and the submission sends 0.57%, a factor of nineteen, while in the first quarter the same submission overstates the tail. That asymmetry is the signature: not a thinned tail, but a matrix that does not condition at all.
+
+It is one submission, so it is evidence of existence rather than frequency. Two further fragments agree on the pattern in one case and disagree in the other, where the body does move and the far cells run seven to thirteen times above the oracle. The point of adding the diagnostics is that the next run will not need reconstructing from transcripts.
+
+### What the Diagnostics Are
+
+Rows are weighted by the published cohort mix throughout, because the question is how much of this portfolio the matrix sends three grades down, not how distorted the AAA row is on its own. AAA holds 1% of the book and BBB 40%. Default is excluded from every statistic in both groups: it is an absorbing state at the bottom of the scale rather than a grade three notches down, it is already scored directly in two of the twelve components, and including it would let a correct default column hide a collapsed migration body.
+
+**`matrix_down3_ratio`** is the submitted three-notch-or-worse downgrade mass over the oracle's, pooled over every scenario and quarter. Summing the two totals rather than averaging their ratios means the stressed quarters dominate the denominator, so no stress window has to be chosen. **`matrix_down1_ratio`** is the same ratio on the adjacent-grade band over the same four rows and serves as the control, since a model that is uniformly too mild reads low on both. **`matrix_down3_shape`** divides the first by the second and is therefore blind to a uniform error of level.
+
+**`matrix_downgrade_concordance`** is the fraction of matrix pairs, ordered by the true factor, whose submitted downgrade mass moves the same way as the factor. A near-tie counts as discordant, which is the reverse of the convention in `one_model_discordance` and is deliberate: a frozen body is the failure being looked for, so it has to read zero rather than drop out for want of comparable pairs. **`matrix_downgrade_slope`** separates a flat body from a perverse one, since both read zero on concordance, and is reported beside the oracle's own slope for scale.
+
+The oracle is rebuilt in the scorer from `quarterly_base`, the factor path and the drawn correlation, which is why `rho` now travels in `truth`. It never reaches a public file.
+
+### The Far Ratio Is a Measurement, Not a Proxy
+
+Thinning the oracle's far corner to a fixed fraction of itself and folding the remainder into the two-notch cell, so that rows still close and the default column is untouched:
+
+| Far mass retained | `down3_ratio` | `down1_ratio` | Composite score |
+| ---: | ---: | ---: | ---: |
+| 1.00 | 1.000 | 1.000 | 0.000 to 0.003 |
+| 0.75 | 0.750 | 1.000 | 0.003 to 0.005 |
+| 0.50 | 0.500 | 1.000 | 0.005 to 0.010 |
+| 0.25 | 0.250 | 1.000 | 0.008 to 0.015 |
+| 0.10 | 0.100 | 1.000 | 0.010 to 0.018 |
+| 0.00 | 0.000 | 1.000 | 0.011 to 0.020 |
+
+The ratio reads the retained fraction back exactly, identically on all twelve instances, and the control does not move. The score column is the argument for reporting this separately: abolishing every three-notch downgrade, with the factor path and the default column exactly right, moves the composite by about fifteen thousandths against a reference composite of 0.285. A submission can collapse the entire far corner and still score two orders of magnitude better than the anchor.
+
+### The Two Groups Are Each Blind Where the Other Sees
+
+Over twelve instances, on 351 comparable pairs each:
+
+| Submission | `down1_ratio` | `down3_ratio` | `down3_shape` | Concordance | Slope |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| oracle | 1.000 | 1.000 | 1.000 | 1.000 | 0.72 to 1.12 |
+| no three-notch moves | 1.000 | 0.000 | 0.000 | 1.000 | 0.72 to 1.12 |
+| no multi-notch moves at all | 1.08 to 1.19 | 0.000 | 0.000 | 1.000 | 0.72 to 1.12 |
+| body frozen, default column only | 0.11 to 1.06 | 0.04 to 1.27 | 0.39 to 1.19 | 0.000 | -0.022 to -0.0015 |
+| shipped reference | 0.60 to 1.46 | 0.55 to 4.09 | 0.74 to 3.42 | 0.85 to 0.99 | 0.66 to 1.25 |
+
+Folding multi-notch mass into the adjacent grade conserves total downgrade mass, so it reads concordance 1.000 and the oracle's own slope while the far ratio reads zero. A frozen body leaves the far corner's shape roughly intact, overlapping the reference's honest range, while concordance reads exactly zero. Neither group alone catches both failures, which is why there are two.
+
+The frozen body's faintly negative slope is not noise. Renormalising a row to absorb a rising default probability shrinks every migration cell in it, so a model that conditions only its default column makes downgrades very slightly less likely in stress, which is the wrong sign.
+
+### The Reference Overstates the Far Corner, and That Sets the Threshold
+
+The anchor reads 0.55 to 4.09 on the far ratio, median 1.31, and 0.74 to 3.42 on the shape, median 1.57. It is biased upward because it estimates its base matrix from twenty years that contain stressed ones, so it inherits a far corner fattened by the cycle. That scatter, not the statistic, is what bounds the usable sensitivity: a reading below about 0.5 is a finding and a reading above one is not, the same one-sided convention the stress diagnostics use. A model that thins its far corner by a quarter reads 0.75 and is indistinguishable from an honest estimate.
+
+Concordance is tighter. The reference reads 0.846 to 0.994 because its estimated factor orders the quarters slightly differently from the true one, and it never approaches zero. So concordance separates no response from an imperfect response by a clear margin, and makes no claim to grade the quality of a response that exists.
+
+### Limits Worth Stating
+
+The scale is seven rating categories, not twenty notches, so a two-grade move is already A to BB and the far corner holds only ten cells: four from AAA, three from AA, two from A and one from BBB. Nothing here transfers directly to a notch-level scale.
+
+The evidence available to an agent for those ten cells is thin but not absent. Pooled over the twenty published years on the first instance, the three-notch-or-worse counts are 7 from AAA, 32 from AA, 120 from A and 107 from BBB, with one empty cell in the AAA row, and the observed shares run 1.5 to 2.4 times the unconditional annual matrix because the history contains stressed years. So an agent estimating cell by cell gets a noisy and upward-biased far corner rather than a set of sampling zeros. Thin counts are a reason the reference scatters; they are not the mechanism behind a frozen body.
+
+Every figure in this section is measured over `generate(seed=k)` for k from one to twelve, the convention the rest of this document and the tests use. The task itself draws its instance seeds differently, from `SeedSequence(base).generate_state(n_instances)`, and that set is harsher on the anchor: over its first twelve instances the reference's far ratio runs 0.354 to 5.079 with median 1.043, and falls below 0.5 on one of the twelve. So the one-sided reading above is calibrated on a seed set that is not the one an agent is served, and on the served set it would record a finding against the reference itself about eight percent of the time. The diagnostic is reported rather than scored, so this costs nothing beyond knowing it; it is a reason not to promote the far ratio to a gate without recalibrating on the served draw.
+
+The far ratio needs the oracle, so it is not a statistic an agent could compute for itself, and it is not a candidate for the score for that reason among others. It also needs the submission written to enough precision. Rounding the oracle's own matrices and re-measuring, the far ratio reads 1.0000 at eight decimals, 0.9999 at six, 1.0035 at four and 0.6393 at three. The instructions now ask for at least six decimal places, because at three the statistic would convict a correct submission of a 36% thinning that is entirely formatting.
+
+## One History, Three Scenarios
+
+An instance carries one set of annual counts, one macro history, one holdout cohort and three nine-quarter paths over the same future quarters, named `baseline`, `adverse` and `severe` in a `scenario` column of `data/scenario.csv`. The prompt asks for one model estimated on the history and three projections through it. `predictions.csv` and `matrices.csv` carry the same column, at forty-eight and one hundred and eighty-nine rows.
+
+This is a correction. An earlier version drew one scenario per instance and rotated the three across instances, which was wrong in two ways.
+
+**It made severity inseparable from everything else.** Under rotation the instance index fixed both the scenario label and the drawn response law, so no difference between a baseline run and a severe one could be attributed to severity: the scenario, the seed, the latent drivers, the history and the agent session all moved together. The question "does a severe scenario change the functional form the agent reaches for" was unanswerable by construction, and a nine-run crossed design would have been the only way to ask it. Varying severity inside the instance answers it in one run.
+
+**It made the failure that matters unobservable.** An agent that sees one scenario cannot re-estimate per scenario, so nothing in its submission could reveal whether it would have. Per-scenario refitting, retuning and scenario-specific overlays are standard audit findings in this space, and the old shape could not produce the evidence for one.
+
+It also costs nothing in sample count and buys a gradient. Three projections from one fit are not three observations of modelling skill: they share the estimation, so their errors are strongly correlated and averaging them is noise reduction on one draw. What the breakdown shows is where a model fails. The severe path drives the systematic factor outside the range the model was estimated on, so a model that interpolates its own sample scores well on baseline and badly on severe. The reference does exactly that, 0.228 against 0.343, and under the old shape the aggregate hid it.
+
+### It Required Closing a Leak in the CCAR Macro Generator
+
+"One history" was not constructible on the shipped settings. The equity siblings `sp500` and `djia` are built by standardising NASDAQ returns, and that standardisation ran over the whole path, so the stress window's own volatility reached back into the historical values of two published columns. Holding the seed and changing only the scenario label moved 49 of 80 history rows. Under rotation this was inert, since an instance carried one scenario; with three scenarios sharing one history it is a contradiction, and the size of the jump at the join would have encoded severity.
+
+`_simulate` now takes `sibling_ref`, and migration passes `pre_stress`. The default stays at the whole-path behaviour, because changing it moves two published columns on every archived CCAR instance for no benefit to that task. Standardising on a window that includes the future was a lookahead defect either way; it is fixed where it mattered and recorded where it did not.
+
+### The One-Model Instruction Is Checked, Weakly
+
+`matrix_one_model_discordance` asks whether the submitted matrices could have come from a single one-factor model. Under any threshold-shift law the whole matrix is a monotone function of one scalar, so if one quarter is worse than another for the portfolio it is worse for every grade at once and the grades cannot cross. Ordering the submitted matrices by their portfolio-weighted default probability and checking each grade against that order is model-free and costs nothing.
+
+Read as zero against non-zero rather than as a magnitude. The reference reads exactly 0.0 over 2,457 comparable pairs, so any violation is a finding, and the magnitudes are small: re-estimating the base matrix on the severe scenario alone reads 0.77%, an overlay applied to the speculative grades 0.81%, a flat one point add-on 0.12%.
+
+**The blind spot is the likeliest case, and it is not fixable this way.** A model re-estimated per scenario that stays inside the same one-factor family, so that only the macro coefficients and hence the factor path differ, reads exactly 0.00%. Scaling the severe path's factor by 0.6 leaves every grade's ordering intact, because the family is comonotone whatever the factor does. So the statistic detects a change of form, not a change of fit, and a submission reading zero has not been shown to use one model. It is reported as a diagnostic and does not enter the score.
+
+### A Severe Draw Can Still Wipe Out the Book
+
+The severity bands are disjoint, so baseline, adverse and severe come out ordered on every instance measured, and the factor is pushed further out of sample at each step. The tail is the problem. Over twenty-four seeds the severe cohort default share at quarter 9 has a median of 0.123 and a maximum of 0.989: seed 21 draws both weights near one and an asset correlation of 0.173, and its severe factor reaches 7.9 standard deviations, which no supervisory scenario resembles. One instance in twenty-four is affected at that extreme and one more exceeds 0.70.
+
+Rotation hid the frequency rather than reducing it: a severe path was drawn on one instance in three, so a bad draw cost one instance in roughly seventy. Now every instance carries one, so a bad draw damages one column of three. The scoring still behaves, since the degenerate is normalised per scenario and reads 1.000 either way, but an instance whose severe truth is total wipeout is not measuring the annual-to-quarterly problem the task exists for. This is a generator calibration issue that predates the redesign and is not fixed here, because bounding the drawn severity changes the task's difficulty and that is a separate decision from the shape of the instance.
+
 ## The Scenario Has a Trough, Which Cost Something
 
 The horizon was initially monotone. Every macro series deteriorated for all nine quarters without turning, because the inherited CCAR overlay ramps level series linearly to a target and holds growth series at a constant stressed rate, and neither construction can reverse. In `severe` unemployment ran from -0.22 to +1.24 standard deviations in a straight line.
@@ -155,13 +267,15 @@ Published supervisory scenarios are not shaped like that. They deteriorate for a
 
 The systematic factor peaks one to two quarters after the macro path does, which is not a defect: credit deteriorates after the economy does.
 
-| Scenario | 9-quarter portfolio default | Annualised |
-| --- | ---: | ---: |
-| baseline | 2.66% (1.43 to 5.42) | 1.19% |
-| adverse | 7.22% (3.14 to 12.24) | 3.29% |
-| severe | 17.22% (6.13 to 31.16) | 8.20% |
+Re-measured within the instance rather than across instances, over twenty-four seeds. The flow measure replaces defaults from the starting mix each quarter, so it is a fraction of a replenished book and can exceed one on an extreme draw.
 
-Baseline annualises to 1.19% against the 0.99% the portfolio mix was calibrated for, which is the holdout cohort being deliberately riskier than the history.
+| Scenario | 9-quarter portfolio default | Annualised | Cohort share at q9, median |
+| --- | ---: | ---: | ---: |
+| baseline | 4.41% (0.77 to 15.91) | 1.98% | 0.029 |
+| adverse | 14.29% (2.89 to 99.67) | 6.62% | 0.066 |
+| severe | 33.40% (4.09 to 247.48) | 16.53% | 0.123 |
+
+The means are higher than the figures this table carried under rotation, because every instance now contributes to every row instead of one row, so the heavy upper tail is no longer diluted by which scenario an instance happened to draw. The medians are the number to read. Baseline annualises above the 0.99% the portfolio mix was calibrated for, which is the holdout cohort being deliberately riskier than the history.
 
 **Two things the change cost, recorded because one of them contradicts a prediction made before it.**
 
@@ -228,7 +342,9 @@ The penalty is set so the regression spends an effective dimension of `1 + n/8`:
 
 At forty years the same rule picks a light penalty and still helps, 0.190 against 0.210, so nothing here is specific to the short history.
 
-Bracket at the shipped settings: reference 0.287 over twenty-four instances, 0.303 over the eighteen the test uses, degenerate 1.000, separation 3.5x and 3.3x, against 4.8x at forty years unshrunk. Refusing the clip costs 0.041 of that, which is the price of a reference that can answer the question the task asks.
+Bracket at the shipped settings: reference 0.285 over twelve instances, 0.309 over the six the test uses, degenerate 1.000, separation 3.5x and 3.2x, against 4.8x at forty years unshrunk. Refusing the clip costs about 0.04 of that, which is the price of a reference that can answer the question the task asks.
+
+**Every variant figure in this section was measured under the earlier shape, where each instance drew one scenario and the three rotated across instances.** The numbers are left as they were taken, and the conclusions carry over unchanged, because the estimation is identical in both shapes: `base`, the annual factor estimates and the ridge coefficients are computed from the history alone, and the redesign only changed how many paths are pushed through them afterwards. That the headline barely moved, 0.287 under rotation against 0.285 now, is the arithmetic of the same thing being averaged inside the instance instead of across instances. Re-measured on the new shape over eight seeds, shrinkage reads 0.297 mean with 0 of 8 losses to the degenerate against unshrunk 0.458 and 2 of 8, so the decision that section records stands.
 
 Nothing in the prompt mentions sample size or overfitting. Recognising that twenty annual observations will not support an unshrunk macro regression is part of what the task measures.
 
@@ -313,11 +429,11 @@ Two alternative explanations were ruled out rather than argued away. It is not t
 
 The damping and the stability are the same quantity. The score, being an accuracy measure, rewards the damping; a stress reviewer would reject it and issue a finding for insufficient macro sensitivity.
 
-This is recorded rather than fixed, and it sharpens what the task measures. The anchor is competent and challengeable rather than a target: an agent that beats 0.287 while keeping its stress ratio near one is doing something the score alone cannot see.
+This is recorded rather than fixed, and it sharpens what the task measures. The anchor is competent and challengeable rather than a target: an agent that beats 0.285 while keeping its stress ratio near one is doing something the score alone cannot see.
 
 ### Diagnostics Reported
 
-From `backtest.csv`, against the observed annual rates: `fit_stress_mean_ratio` over the worst quartile of years, `fit_peak_ratio` at the single worst year, `fit_all_years_ratio` for the contrast, `fit_peak_prominence` for whether there is a peak at all, and `fit_peak_lag` for its timing. From `matrices.csv` and the truth: `stress_mean_ratio` and `stress_peak_ratio` on the nine-quarter loss path, `stress_peak_lag`, and `default_ratio_q4` and `default_ratio_q9`. None of it enters `score`.
+From `backtest.csv`, against the observed annual rates: `fit_stress_mean_ratio` over the worst quartile of years, `fit_peak_ratio` at the single worst year, `fit_all_years_ratio` for the contrast, `fit_peak_prominence` for whether there is a peak at all, and `fit_peak_lag` for its timing. From `matrices.csv` and the truth: `stress_mean_ratio` and `stress_peak_ratio` on the nine-quarter loss path, `stress_peak_lag`, and `default_ratio_q4` and `default_ratio_q9`. From `matrices.csv` against the rebuilt oracle: `matrix_down3_ratio`, `matrix_down1_ratio` and `matrix_down3_shape` on the far downgrade corner, and `matrix_downgrade_concordance`, `matrix_downgrade_slope` and `matrix_downgrade_response` on whether the migration body answers the macro path, all described under The Far Downgrade Corner and the Macro Response. None of it enters `score`.
 
 **`fit_peak_lag` shipped before it was checked and it was nearly worthless.** It read nine years on one instance and minus sixteen on another, because a damped fitted series is almost flat and the argmax of an almost flat series lands anywhere. Over the sensitivity sweep its absolute value runs 2.88, 3.00, 2.38, 2.12, 2.00, 0.75, non-monotone with a spread of plus or minus 10.8, which is no information.
 
@@ -338,16 +454,21 @@ Prominence spans a factor of thirteen against the stress ratio's four, and at ze
 
 ## What the Silent Check Measured
 
-Two free models and both reference solvers over the same three instances, pinned with `-T seed=1` so the rows are comparable. This replaces an earlier run made before the scenario had a trough and before the history was shortened, and it is the first on the configuration the task now generates.
+Three free models and both reference solvers over the same three instances, pinned with `-T seed=1` so the rows are comparable. This replaces an earlier run made before the scenario had a trough and before the history was shortened, and it is the first on the configuration the task now generates.
 
 | Row | Mean score | Worst | Rows sum to one | Negative cells | Submission gap | Monotonicity violations |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | one-factor reference | 0.409 | 0.500 | 3 of 3 | 0 | 0.0000 | 0 |
+| minimax-m3.1-flash (free) | 0.408 | 0.558 | 3 of 3 | 0 | 0.0000 | 0, 0, 10 |
 | nemotron-3-super (free) | 0.527 | 0.873 | 3 of 3 | 0 | 0.0000 | 0, 0, 9 |
 | nemotron-3-ultra (free) | 0.897 | 1.055 | 2 of 2 supplied | 0 | 0.0000 | 0, 16 |
 | degenerate | 1.000 | 1.000 | n/a | n/a | n/a | 0 |
 
 Ultra's adverse instance at 1.055 is worse than predicting that nothing happens, and it omitted `matrices.csv` entirely on the baseline instance.
+
+**A column that should not have been there.** All nine of these runs saw a `data/macro_history.csv` carrying ten series rather than the nine the prompt promises. The history rows are adopted wholesale from the CCAR generator, which appends the default rate of ITS portfolio, while the scenario rows are built locally from the nine, so only the history had it. Measured against the counts in the same instance's `transitions.csv` it runs eight times too large, and its correlation with them is 0.601 on baseline, **0.033** on adverse and 0.776 on severe. It was noise on one instance and a shortcut on the next, and minimax leaned on it: 39 references on severe, where it correlated 0.776 and helped, and 12 on adverse, where it correlated 0.033. The column is now stripped where the CCAR bundle is adopted, and a test asserts both files ship the same nine headers. Every number in this section was measured with it present, so none of them is strictly comparable with anything measured after. The bias runs in the generous direction, which is the one worth stating: minimax's 0.408 was flattered on the instance where the spurious series was informative, not penalised.
+
+**One free model reaches the reference, which had not happened before.** minimax-m3.1-flash means 0.408 against the reference's 0.409 on byte-identical instances, and it beats the reference on two of the three: 0.213 against 0.369 on adverse and 0.454 against 0.500 on severe. It loses the baseline instance 0.558 against 0.360. On the worst-case convention this repository reports, 0.558 against 0.500, it is still behind, and on one draw per cell that ordering is not resolved either way. What is new is that the gap between the best free model and the shipped reference on this task is no longer a gap.
 
 **These three instances are harder than average.** The reference reads 0.409 on them against 0.292 over the twenty-four instance bracket, so the model rows should be read against 0.409 rather than against the bracket.
 
@@ -358,6 +479,7 @@ Ultra's adverse instance at 1.055 is worse than predicting that nothing happens,
 | Row | `fit_all_years_ratio` | `fit_stress_mean_ratio` | `fit_peak_prominence` | forward stress ratio |
 | --- | ---: | ---: | ---: | ---: |
 | one-factor reference | 0.81, 0.74, 0.82 | 0.64, 0.56, 0.63 | 0.38, 0.42, 0.62 | 0.73, 1.18, 0.41 |
+| minimax-m3.1-flash | 1.00, 1.00, 1.00 | 0.80, 0.97, 0.85 | 0.94, 1.02, 1.19 | 0.63, 0.86, 0.28 |
 | nemotron-3-super | 0.99, 1.00, 1.00 | 0.54, 0.45, 0.41 | 0.14, 0.09, 0.14 | 0.72, 1.04, 0.04 |
 | nemotron-3-ultra | 0.99, 0.98, 0.96 | 0.98, 0.80, 0.54 | 1.80, 0.63, 0.89 | n/a, 1.58, 0.06 |
 | degenerate | 0.00 | 0.00 | 0.00 | 0.00 |
@@ -368,15 +490,21 @@ The prominence column separates them by a factor of four where the score separat
 
 Ultra fails a third way. A near-perfect backtest on the first two instances, all-years 0.99 and 0.98 with prominence 1.80 and 0.63, beside a forward response of 0.06 on the third. It is the interpolation failure described above, and only the pair of columns identifies it.
 
+**minimax-m3.1-flash is the case that settles what the backtest is worth.** It has the best backtest in the table by every column: the level exact at 1.00 on all three, the stressed years at 0.80 to 0.97 where the reference manages 0.56 to 0.64, and a peak at 0.94 to 1.19 of the observed one. If a good backtest implied a good forward response, this row would be the proof. Its forward severe response is 0.28. A model can reproduce twenty years of history including the peaks and still propagate under a third of the stress response into a scenario it has not seen, which is precisely why the forward ratio is reported beside the backtest rather than in place of it.
+
+**Every row in the table under-responds on the severe instance, and only on that one.** Forward stress reads 0.04 for super, 0.06 for ultra, 0.28 for minimax and 0.41 for the reference, against 1.04, 1.58, 0.86 and 1.18 on adverse. Four independent solvers, one of them deterministic, fail in the same direction on the same instance and are unbiased or over-responsive one instance away. The failure is not a property of any model: severity itself is what breaks extrapolation, and the direction it breaks in is the one that under-reserves. The reference's own 0.41 is documented above as a known failure of its own check, so the generator is not being graded here by a solver that passes.
+
 **The hard constraint was respected without being asked for.** Every supplied matrix has rows summing to one, no negative cell survived, and the submission gap is 0.0000 in every case, so each agent's documented matrices reproduce its own reported projection exactly. The matrices are genuinely the models used, not decoration.
 
-**The judgment-dependent constraint was not noticed at all.** Default monotonicity is violated 0, 0 and 9 times by super and 0 and 16 times by ultra, against 54 adjacent-pair checks per instance, nine quarters by six notches. Ultra's severe matrix inverts 30% of adjacent pairs and super's 17%: they assert that better-rated obligors default more often. Across the six transcripts, excluding the prompt itself, "rows sum" and "renormalise" appear one to six times each, while "monotonic", "prudent", "reserve" and "implausible" appear **not once**. The earlier run on the previous configuration found the same thing, with "monotonic" appearing a single time and referring to a bisection converging in a scalar rather than to the rating ordering.
+**The judgment-dependent constraint was not noticed at all.** Default monotonicity is violated 0, 0 and 9 times by super, 0 and 16 times by ultra, and 0, 0 and 10 times by minimax, against 54 adjacent-pair checks per instance, nine quarters by six notches. Ultra's severe matrix inverts 30% of adjacent pairs, minimax's 19% and super's 17%: they assert that better-rated obligors default more often. All three break it on the severe instance and nowhere else, which is the same instance every one of them under-responds to, so the two defects arrive together.
+
+The vocabulary count says why. Across the nine transcripts, excluding the prompt itself, "rows sum" and "renormalise" appear one to twenty-one times each, while "prudent", "reserve" and "implausible" appear **not once**. minimax is the first model in this task to use the word "monotone" at all, six to nine times per instance, and not once about the rating ordering: it means monotone in the default rate across ratings as a clue to identifying the generator, and monotone convexity of the stress response. The word arrives as a tool for reverse-engineering the hidden law, never as a condition its own answer should satisfy. The earlier run on the previous configuration found the same substitution, with "monotonic" referring to a bisection converging in a scalar.
 
 The split is explained by whether the constraint is self-enforcing. Rows summing to one has a mechanical consequence: mass leaks and the projection misbehaves, and scaling rows to 1.2 drives the submission gap from 0.0000 to 2.5163. An agent is dragged to it by the arithmetic. Monotonicity has no mechanical consequence and costs a third of a basis point of score, so it matters only to someone who already knows a transition matrix should have it. That is the domain judgment a review function supplies, and neither model supplied it.
 
 This is also the evidence for the tie-breaker treatment rather than a gate. Gating on monotonicity would have disqualified both models for a defect costing nothing measurable, which is the over-reaction the materiality argument rules out. Reporting it lets the defect be seen without pretending it drove the score.
 
-One operational gap. nemotron-3-super produced no parseable `matrices.csv` on one of three instances, which is also its worst-scoring one, so `matrix_provided` is 0.67 for that row and the other diagnostics are absent rather than zero for that sample. Aggregating a row whose matrix is sometimes missing needs a convention before this becomes a reported column.
+One operational gap. nemotron-3-ultra produced no parseable `matrices.csv` on the baseline instance, so `matrix_provided` is 0.67 for that row and the other matrix diagnostics are absent rather than zero for that sample. That absence crashed the aggregation step until the scorer was taught to fill every reported key, which is recorded under the diagnostics above. super and minimax supplied all three. Aggregating a row whose matrix is sometimes missing still needs a convention before this becomes a reported column, because 0.67 and "two of two supplied were clean" are different claims.
 
 ## How the Open Design Questions Were Resolved
 

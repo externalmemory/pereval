@@ -49,13 +49,13 @@ Estimate the population tail quantiles for all 100 blocks described in data/task
 **tool call: bash**
 
 ```
-
+cat data/task.txt
 ```
 
 **tool call: bash**
 
 ```
-
+head -20 data/blocks.csv; echo "---"; wc -l data/blocks.csv
 ```
 
 ## [3] tool
@@ -790,7 +790,36 @@ We need to estimate population tail quantiles (q90/q95/q99) per block from n=10 
 **tool call: bash**
 
 ```
+mkdir -p work && cat > work/explore.py << 'EOF'
+import re, numpy as np, pandas as pd
+from scipy import stats
 
+df = pd.read_csv('data/blocks.csv')
+txt = open('data/task.txt').read()
+ms = dict((int(b), int(m)) for b, m in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt))
+assert len(ms) == 100
+
+rows = []
+for b, g in df.groupby('block'):
+    x = g['x'].values
+    rows.append(dict(block=b, m=ms[b], mean=x.mean(), sd=x.std(),
+                     skew=stats.skew(x), kurt=stats.kurtosis(x),
+                     mn=x.min(), mx=x.max(), mx_over_sd=x.max()/x.std()))
+s = pd.DataFrame(rows)
+pd.set_option('display.width', 200)
+print(s.describe().T[['min','25%','50%','75%','max']])
+print()
+print("blocks with |skew|>1.5:", sorted(s[s.skew.abs()>1.5].block.tolist()))
+print("blocks with kurt>3:", sorted(s[s.kurt>3].block.tolist()))
+print()
+# ratio of max to second-largest as heavy-right-tail signal
+for b, g in df.groupby('block'):
+    xs = np.sort(g['x'].values)
+    r = xs[-1] - xs[-2]
+    if r > 2.5*np.std(g['x']):
+        print(f"block {b}: max gap {r:.3g}, sd {np.std(g['x']):.3g}, max {xs[-1]:.4g}, 2nd {xs[-2]:.4g}")
+EOF
+python work/explore.py
 ```
 
 ## [6] tool
@@ -833,7 +862,28 @@ Data parsed fine. Let me fix the minor bug and continue exploring, then build th
 **tool call: bash**
 
 ```
+cat > work/explore2.py << 'EOF'
+import re, numpy as np, pandas as pd
+from scipy import stats
 
+df = pd.read_csv('data/blocks.csv')
+txt = open('data/task.txt').read()
+ms = dict((int(b), int(m)) for b, m in re.findall(r'Block (\d+) \(population size m = (\d+)\)', txt))
+
+rows = []
+for b, g in df.groupby('block'):
+    x = np.sort(g['x'].values)
+    z = (x - x.mean())
+    r = (x[-1]-x[-2])/g['x'].std()
+    rows.append(dict(block=b, m=ms[b], sd=g['x'].std(), sk=stats.skew(x),
+                     maxgap=r, log_mx=np.sign(x[-1])*np.log1p(abs(x[-1]))))
+s = pd.DataFrame(rows)
+print("blocks with maxgap > 1.6 (big top-1 gap):")
+print(s[s.maxgap>1.6].to_string())
+print()
+print("blocks with sk > 1.2:", s[s.sk>1.2].block.tolist())
+EOF
+python work/explore2.py
 ```
 
 ## [8] tool
@@ -908,7 +958,132 @@ blocks with sk > 1.2: [3, 11, 16, 17, 22, 30, 32, 46, 86]
 **tool call: bash**
 
 ```
+cat > work/validate.py << 'EOF'
+"""Validation harness: simulate blocks under realistic macro YoY process,
+evaluate candidate quantile estimators with pinball loss."""
+import numpy as np, pandas as pd
+from scipy import stats, optimize
 
+rng_global = np.random.default_rng(0)
+
+def fernandez_steel_t(n, nu, gamma, rng):
+    """Skew-t: left scaled by 1/gamma, right by gamma (relative to symmetric t)."""
+    z = rng.standard_t(nu, n)
+    u = rng.uniform(size=n)
+    x = np.where(u < 1/(1+gamma**2), z/gamma, z*gamma)
+    return x
+
+def garch_series(n, rng):
+    h, out = 1.0, np.zeros(n)
+    a, b = 0.15, 0.80
+    e = rng.standard_normal(n)
+    for i in range(n):
+        h = 0.05 + 1.0*0 + a*e[i-1]**2 if i>0 else 1.0
+        h = 0.05 + a*(e[i-1]**2 if i>0 else 1.0) + b*(h if i>0 else 1.0)
+        out[i] = np.sqrt(max(h,1e-6))*e[i]
+    return out
+
+def gen_block(rng):
+    m = rng.integers(250, 593)
+    T1 = m + rng.integers(0, 13)          # months = target + up to a year of YoY
+    kind = rng.uniform()
+    df = np.exp(rng.uniform(np.log(2.6), np.log(60)))
+    gam = np.exp(rng.normal(0.28, 0.33)) if rng.uniform()<0.6 else 1.0
+    base = fernandez_steel_t(T1+40, df, gam, rng)      # burn-in 40
+    phi = rng.uniform(-0.3, 0.6)
+    e = base
+    for i in range(1, len(e)):
+        e[i] += phi*e[i-1]
+    if rng.uniform() < 0.5:                             # vol clustering
+        h = np.ones(len(e))
+        for i in range(1, len(e)):
+            h[i] = 0.05 + 0.15*e[i-1]**2 + 0.80*h[i-1]
+        e = e*np.sqrt(np.maximum(h/np.mean(h),1e-6))
+    base = base*np.exp(rng.normal(0, 1.0)) + rng.normal(0, 3.0)
+    pop = (base[12:] - base[:-12])                     # YoY difference (K=12)
+    pop = pop[len(pop)-m:]
+    sc = 100.0 * 10.0**rng.uniform(-2, 2)              # unknown positive constant
+    pop = pop*sc
+    # round to 4 significant figures
+    def r4(v):
+        if v==0: return 0.0
+        d = 4 - int(np.floor(np.log10(abs(v)))) - 1
+        return round(v, d)
+    pop = np.array([r4(v) for v in pop])
+    idx = rng.choice(m, 10, replace=False)
+    return pop, pop[idx], m
+
+# ---------- candidate estimator ----------
+def pooled_shapes(samples):
+    """estimate pooled df and skewness from all blocks (kurtosis-based, shrunk)"""
+    kurts = []
+    for x in samples:
+        s = x.std()
+        z = (x-x.mean())/s
+        kurts.append(np.mean(z**4)-3)
+    kurts = np.array(kurts)
+    # sample excess kurtosis of size-10 normal sample has mean ~ -1.22 (bias); t-dist adds 6/(nu-4)
+    # use median, add back 1.22
+    med = np.median(kurts) + 1.22
+    med = max(med, 0.05)
+    nu_pool = 4 + 6.0/med
+    return min(max(nu_pool, 3.0), 40.0)
+
+def estimate(x, m, nu_pool, hyper):
+    x = np.asarray(x, float); n=len(x)
+    mu = x.mean(); s = x.std(ddof=1)
+    out = {}
+    xs = np.sort(x); z = (xs-mu)/s
+    # --- GPD on top exceedances ---
+    u = xs[int(np.floor(0.8*(n-1)))]
+    y = xs[xs>u] - u
+    if len(y) >= 2 and np.all(y>0):
+        lr = np.log1p(y/max(u,1e-12))   # not used
+        # simple Hill on log-spacings of top values
+        lx = np.log(xs[-min(4,n):]+1e-12)
+        # chance-corrected shape: use mean excess ratio
+        xi_raw = np.mean(y)/(u - xs[0] + 1e-12) if False else None
+        # use Pickands-ish: fit xi via method of moments on exceedance ratios
+        r = y/ (y.mean())
+        xi_raw = max(0.0, 0.5*(np.var(r, ddof=1)**0.5)) if len(y)>=2 else 0.0
+        xi_raw = min(xi_raw, 1.0)
+    else:
+        xi_raw = 0.0
+    xi = hyper['w_xi']*xi_raw                           # shrink toward 0
+    nu_blk = 1.0/max(xi,1e-6) if xi>0.02 else nu_pool
+    df_use = hyper['a']*nu_pool + (1-hyper['a'])*nu_blk
+    # chance-correction inflation of sd for tail:
+    g = hyper['g']
+    s_eff = s*g
+    for tau,name in [(0.9,'q90'),(0.95,'q95'),(0.99,'q99')]:
+        tq = stats.t(df_use).ppf(tau) * np.sqrt((df_use-2)/df_use)
+        # combine with sample order stat to avoid absurd extrapolation in normal-looking blocks
+        k_mod = min(len(x)-1, int(np.ceil(tau*len(x)))-1)
+        k_smp = z[k_mod] * (1 + hyper['ord_boost']*(10-k_mod-1))
+        blend = hyper['b']*tq + (1-hyper['b'])*k_smp
+        out[name] = mu + s_eff*blend
+    # interval for q95 from bootstrap-ish width: lognormal-ish around point est
+    return out
+
+# quick sanity run
+if __name__ == '__main__':
+    rng = np.random.default_rng(1)
+    blk = [gen_block(rng) for _ in range(100)]
+    samples = [b[1] for b in blk]
+    nu_pool = pooled_shapes(samples)
+    print("nu_pool", nu_pool)
+    hyper = dict(w_xi=0.6, a=0.6, g=1.05, b=0.85, ord_boost=0.0)
+    tot = 0.0
+    for pop, smp, m in blk:
+        est = estimate(smp, m, nu_pool, hyper)
+        qs = {0.9: np.quantile(pop, 0.9), 0.95: np.quantile(pop,0.95), 0.99: np.quantile(pop,0.99)}
+        for tau, name in [(0.9,'q90'),(0.95,'q95'),(0.99,'q99')]:
+            d = pop - est[name]
+            loss = np.mean(np.where(d>=0, tau*d, (tau-1)*d)) - np.mean(np.where(pop-qs[tau]>=0, tau*(pop-qs[tau]), (tau-1)*(pop-qs[tau])))
+            tot += loss/ (qs[tau]-np.quantile(pop,0.5)+1e-9 + np.std(pop))  # normalized by sd
+    print("mean normalized excess loss per block (sum of 3 taus):", tot/100)
+EOF
+python work/validate.py
 ```
 
 ## [10] tool
@@ -927,7 +1102,98 @@ The harness works. Let me run the validation over many simulated series for a ro
 **tool call: bash**
 
 ```
+cat > work/validate2.py << 'EOF'
+"""Robust comparison of estimators over repeated simulated experiments."""
+import numpy as np
+from scipy import stats
 
+# ----- DGP (as before) -----
+def fst_t(n, nu, gamma, rng):
+    z = rng.standard_t(nu, n); u = rng.uniform(size=n)
+    return np.where(u < 1/(1+gamma**2), z/gamma, z*gamma)
+
+def gen_block(rng):
+    m = rng.integers(250, 593)
+    T1 = m + rng.integers(0, 13)
+    df = np.exp(rng.uniform(np.log(2.6), np.log(60)))
+    gam = np.exp(rng.normal(0.28, 0.33)) if rng.uniform()<0.6 else 1.0
+    e = fst_t(T1+40, df, gam, rng)
+    phi = rng.uniform(-0.3, 0.6)
+    for i in range(1, len(e)):
+        e[i] += phi*e[i-1]
+    if rng.uniform() < 0.5:
+        h = np.ones(len(e))
+        for i in range(1, len(e)):
+            h[i] = 0.05 + 0.15*e[i-1]**2 + 0.80*h[i-1]
+        e = e*np.sqrt(np.maximum(h/np.mean(h),1e-6))
+    base = e*np.exp(rng.normal(0,1.0)) + rng.normal(0,3.0)
+    pop = (base[12:]-base[:-12])[ -m: ]
+    sc = 100.0*10.0**rng.uniform(-2,2)
+    pop = pop*sc
+    def r4(v):
+        if v==0: return 0.0
+        d = 4-int(np.floor(np.log10(abs(v))))-1
+        return round(v,d)
+    pop = np.array([r4(v) for v in pop])
+    idx = rng.choice(m,10,replace=False)
+    return pop, pop[idx], m
+
+def pop_loss(pop, qhat, tau):
+    q = np.quantile(pop, tau)
+    d1 = pop-qhat; d2 = pop-q
+    return np.mean(np.where(d1>=0,tau*d1,(tau-1)*d1)) - np.mean(np.where(d2>=0,tau*d2,(tau-1)*d2))
+
+# ----- estimators: all return dict q90,q95,q99 given sample -----
+def pooled_nu(samples):
+    k = [(np.mean(((x-x.mean())/x.std())**4)-3) + 1.22 for x in samples]
+    med = max(np.median(k), 0.05)
+    return min(max(4+6.0/med, 3.0), 60.0)
+
+def est_A(x, m, nu):  # plain t with pooled nu
+    mu,s = x.mean(), x.std(ddof=1)
+    f = np.sqrt((nu-2)/nu)
+    return {t: mu+s*f*stats.t(nu).ppf(t) for t in (0.9,0.95,0.99)}
+
+def est_B(x, m, nu):  # t pooled nu + sd chance-correction
+    mu,s = x.mean(), x.std(ddof=1); g=1.06
+    f = np.sqrt((nu-2)/nu)
+    return {t: mu+s*g*f*stats.t(nu).ppf(t) for t in (0.9,0.95,0.99)}
+
+def est_C(x, m, nu):  # + per-block fatness from top-gap
+    mu,s = x.mean(), x.std(ddof=1); xs=np.sort(x)
+    gap = (xs[-1]-xs[-2])/s
+    nu_b = 3.0 + max(0.0, 2.6-gap)*2.5     # big gap => df->3; small => larger
+    nu_e = 0.5*nu + 0.5*min(max(nu_b,3.0), 40.0)
+    g = 1.06
+    f = np.sqrt((nu_e-2)/nu_e)
+    return {t: mu+s*g*f*stats.t(nu_e).ppf(t) for t in (0.9,0.95,0.99)}
+
+def est_D(x, m, nu):  # GPD tail on top 3 (Hill-ish) blended with t
+    mu,s = x.mean(), x.std(ddof=1)
+    return est_B(x,m,nu)[0.9], None  # placeholder
+
+ESTS = dict(A=est_A, B=est_B, C=est_C)
+
+if __name__ == '__main__':
+    res = {k:[] for k in ESTS} 
+    nexp = 30
+    for e in range(nexp):
+        rng = np.random.default_rng(1000+e)
+        blk = [gen_block(rng) for _ in range(100)]
+        samples = [b[1] for b in blk]
+        nu = pooled_nu(samples)
+        tots = {k:0.0 for k in ESTS}
+        for pop,smp,m in blk:
+            for k,f in ESTS.items():
+                est = f(smp, m, nu)
+                sc = np.std(pop)
+                for t,nm in [(0.9,0.9),(0.95,0.95),(0.99,0.99)]:
+                    tots[k] += pop_loss(pop, est[t], t)/sc
+        for k in ESTS: res[k].append(tots[k]/100)
+    for k,v in res.items():
+        v=np.array(v); print(k, "mean %.4f  se %.4f  p90 %.4f" % (v.mean(), v.std()/np.sqrt(len(v)), np.quantile(v,0.9)))
+EOF
+python work/validate2.py
 ```
 
 ## [12] tool
@@ -942,7 +1208,60 @@ C mean 0.0390  se 0.0009  p90 0.0441
 **tool call: bash**
 
 ```
+cat > work/validate3.py << 'EOF'
+import numpy as np
+from scipy import stats
+import validate2 as V
+from validate2 import gen_block, pop_loss, pooled_nu
 
+# candidate grid
+def make_est(g, w_blk, use_t=True, floor_ord=False):
+    def f(x, m, nu):
+        mu,s = x.mean(), x.std(ddof=1)
+        xs = np.sort(x); z=(xs-mu)/s
+        gap=(xs[-1]-xs[-2])/s
+        nu_b = 3.0 + max(0.0, 2.7-gap)*2.2
+        nu_b = min(max(nu_b,3.0), 60.)
+        nu_e = (1-w_blk)*nu + w_blk*nu_b
+        fac = np.sqrt((nu_e-2)/nu_e)
+        out={}
+        for t in (0.9,0.95,0.99):
+            val = mu + s*g*fac*stats.t(nu_e).ppf(t)
+            if floor_ord:
+                k = min(len(x)-1, int(np.ceil(t*len(x)))-1)   # <= index 9
+                k2 = min(len(x)-1, k+1)
+                ordv = xs[k2] if k2<=9 else xs[9]
+                val = max(val, ordv)
+            out[t]=val
+        return out
+    return f
+
+if __name__=='__main__':
+    grid = []
+    for g in (1.0,1.04,1.08):
+        for w in (0.0,0.3,0.5,0.7):
+            for fl in (False, True):
+                grid.append((g,w,fl, make_est(g,w,floor_ord=fl)))
+    res = {i:[] for i in range(len(grid))}
+    for e in range(24):
+        rng = np.random.default_rng(5000+e)
+        blk=[gen_block(rng) for _ in range(100)]
+        nu = pooled_nu([b[1] for b in blk])
+        tot = {i:0.0 for i in range(len(grid))}
+        for pop,smp,m in blk:
+            sc=np.std(pop)
+            for i,(g,w,fl,f) in enumerate(grid):
+                est=f(smp,m,nu)
+                for t in (0.9,0.95,0.99):
+                    tot[i]+=pop_loss(pop,est[t],t)/sc
+        for i in range(len(grid)): res[i].append(tot[i]/100)
+    out=[]
+    for i,(g,w,fl,f) in enumerate(grid):
+        v=np.array(res[i]); out.append((v.mean(), v.std()/np.sqrt(len(v)), g,w,fl))
+    for mn,se,g,w,fl in sorted(out)[:14]:
+        print(f"g={g} w={w} floor={fl}: mean {mn:.4f} se {se:.4f}")
+EOF
+python work/validate3.py
 ```
 
 ## [14] tool
@@ -970,7 +1289,50 @@ The floor hurts; ν-pooling and the sd uplift help. Let me finish tuning (uplift
 **tool call: bash**
 
 ```
+cat > work/validate4.py << 'EOF'
+import numpy as np
+from scipy import stats
+from validate2 import gen_block, pop_loss, pooled_nu
 
+def make_est(g, w_blk, c99, nu_cap=60.):
+    def f(x, m, nu):
+        mu,s = x.mean(), x.std(ddof=1)
+        xs=np.sort(x); gap=(xs[-1]-xs[-2])/s
+        nu_b = min(max(3.0+max(0.0,2.7-gap)*2.2, 3.0), nu_cap)
+        nu_e = (1-w_blk)*nu + w_blk*nu_b
+        fac = np.sqrt((nu_e-2)/nu_e)
+        out={}
+        for t in (0.9,0.95,0.99):
+            z = fac*stats.t(nu_e).ppf(t)
+            if t==0.99: z *= c99
+            out[t]= mu + s*g*z
+        return out
+    return f
+
+if __name__=='__main__':
+    grid=[]
+    for g in (1.05,1.08,1.11,1.14):
+        for w in (0.3,0.5,0.7):
+            for c in (1.0,1.06):
+                grid.append((g,w,c,make_est(g,w,c)))
+    res={i:[] for i in range(len(grid))}
+    for e in range(30):
+        rng=np.random.default_rng(7000+e)
+        blk=[gen_block(rng) for _ in range(100)]
+        nu=pooled_nu([b[1] for b in blk])
+        tot={i:0.0 for i in range(len(grid))}
+        for pop,smp,m in blk:
+            sc=np.std(pop)
+            for i,(g,w,c,f) in enumerate(grid):
+                est=f(smp,m,nu)
+                for t in (0.9,0.95,0.99):
+                    tot[i]+=pop_loss(pop,est[t],t)/sc
+        for i in range(len(grid)): res[i].append(tot[i]/100)
+    arr=[(np.mean(v), np.std(v)/np.sqrt(len(v)), grid[i][:3]) for i,v in res.items()]
+    for mn,se,hp in sorted(arr)[:12]:
+        print(f"g={hp[0]} w={hp[1]} c99={hp[2]}: {mn:.4f} se {se:.4f}")
+EOF
+python work/validate4.py
 ```
 
 ## [16] tool
@@ -1054,7 +1416,116 @@ Surface is flat around g≈1.08–1.11, w_blk≈0.5–0.7, c99≈1.06. Now I'll 
 **tool call: bash**
 
 ```
+cat > work/final.py << 'EOF'
+import numpy as np, pandas as pd, re
+from scipy import stats
+from validate2 import gen_block, pop_loss
 
+G, W_BLK, C99 = 1.09, 0.55, 1.05   # tuned hyperparams
+
+# ---------- 1. kurtosis -> tail df lookup (n=10 samples from standardized t) ----------
+def build_kurt_lookup(rng):
+    nus = np.array([3,3.5,4,5,6,7,8,10,12,15,20,30,60,300.0])
+    meds = []
+    for nu in nus:
+        if nu < 250: z = rng.standard_t(nu, (40000,10))
+        else:        z = rng.standard_normal((40000,10))
+        z = (z - z.mean(1,keepdims=True))/z.std(1,keepdims=True)
+        k = np.mean(z**4,axis=1)-3.0
+        meds.append(np.median(k))
+    return np.array(meds), nus
+
+def kurt_to_nu(med_kurt, meds, nus):
+    # interp on log scale; extrapolate flat at ends
+    return float(np.exp(np.interp(med_kurt, meds, np.log(nus))))
+
+# ---------- 2. estimator ----------
+def est_point(x, nu):
+    x=np.asarray(x,float); mu=x.mean(); s=x.std(ddof=1)
+    if s<=0: s=1e-9
+    xs=np.sort(x); gap=(xs[-1]-xs[-2])/s
+    nu_b=np.clip(3.0+max(0.0,2.7-gap)*2.2, 3.0, 60.)
+    nu_e=(1-W_BLK)*nu + W_BLK*nu_b
+    fac=np.sqrt((nu_e-2)/nu_e)
+    q={}
+    for t in (0.9,0.95,0.99):
+        z=fac*stats.t(nu_e).ppf(t)
+        if t==0.99: z*=C99
+        q[t]=mu+s*G*z
+    return q, nu_e, fac*stats.t(nu_e).ppf(0.95)   # z95 (pre-C99)
+
+# ---------- 3. interval calibration ----------
+def calibrate_interval(nu, meds, nus, nblocks=8000, seed=42):
+    rng=np.random.default_rng(seed)
+    Ts=[]
+    for _ in range(nblocks):
+        pop,smp,m=gen_block(rng)
+        mu=smp.mean(); s=smp.std(ddof=1) or 1e-9
+        _,_,z95=est_point(smp,nu)
+        true95=np.quantile(pop,0.95)
+        Ts.append((true95-mu)/(s*G*z95))
+    Ts=np.array(Ts)
+    lo_m, hi_m = np.quantile(Ts,0.025), np.quantile(Ts,0.975)
+    return lo_m, hi_m
+
+if __name__=='__main__':
+    rng=np.random.default_rng(7)
+    meds,nus=build_kurt_lookup(rng)
+    print("lookup meds:", np.round(meds,3))
+
+    # real data
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    ms=dict((int(b),int(m)) for b,m in re.findall(r'Block (\d+) \(population size m = (\d+)\)',txt))
+    groups={b:g['x'].values for b,g in df.groupby('block')}
+
+    # pooled fatness from real data
+    kurts=[]
+    for x in groups.values():
+        z=(x-x.mean())/x.std()
+        kurts.append(np.mean(z**4)-3.0)
+    med_k=float(np.median(kurts))
+    nu_real=kurt_to_nu(med_k, meds, nus)
+    print("median sample excess kurtosis (real): %.3f -> pooled nu %.2f" % (med_k, nu_real))
+
+    lo_m,hi_m=calibrate_interval(nu_real, meds, nus)
+    print("interval multipliers: lo %.3f hi %.3f" % (lo_m,hi_m))
+
+    # ---- validation on fresh simulated set ----
+    rng=np.random.default_rng(999)
+    tot=0.0; cov=0; N=4000
+    for _ in range(N):
+        pop,smp,m=gen_block(rng)
+        # recompute pooled nu the same way as we will with real data (per experiment of 100)
+        q,_,z95=est_point(smp, nu_real)
+        sc=np.std(pop)
+        for t in (0.9,0.95,0.99):
+            tot+=pop_loss(pop,q[t],t)/sc
+        mu=smp.mean(); s=smp.std(ddof=1) or 1e-9
+        lo=mu+s*G*z95*lo_m; hi=mu+s*G*z95*hi_m
+        true95=np.quantile(pop,0.95)
+        cov += (lo<=true95<=hi)
+    print("validation: mean normalized loss/block %.4f, q95 interval coverage %.3f" % (tot/N, cov/N))
+
+    # ---- produce predictions.csv ----
+    rows=[]
+    for b in range(1,101):
+        x=groups[b]; m=ms[b]
+        q,nu_e,z95=est_point(x, nu_real)
+        mu=x.mean(); s=x.std(ddof=1) or 1e-9
+        lo=mu+s*G*z95*lo_m; hi=mu+s*G*z95*hi_m
+        lo=min(lo,q[0.95]); hi=max(hi,q[0.95])
+        rows.append(dict(block=b,q90=q[0.9],q95=q[0.95],q99=q[0.99],lo=lo,hi=hi))
+    out=pd.DataFrame(rows)
+    out.to_csv('predictions.csv',index=False,float_format='%.6g')
+    print(out.head(12).to_string())
+    print("rows:",len(out)," ok:", os.path.exists('predictions.csv') if False else len(out)==100)
+EOF
+cd /workspace && python - << 'EOF'
+import os
+print(os.getcwd())
+EOF
+python work/final.py
 ```
 
 ## [18] tool
@@ -1088,7 +1559,24 @@ Valid predictions.csv is on disk with calibrated ~95% coverage. However, the poo
 **tool call: bash**
 
 ```
+cat > work/diag.py << 'EOF'
+import numpy as np
+from scipy import stats
+from validate2 import gen_block
+from final import build_kurt_lookup, kurt_to_nu
 
+rng=np.random.default_rng(7)
+meds,nus=build_kurt_lookup(rng)
+
+# what pooled nu does the real DGP produce for samples?
+for e in range(5):
+    r=np.random.default_rng(100+e)
+    blk=[gen_block(r) for _ in range(100)]
+    kurts=[np.mean(((x-x.mean())/x.std())**4)-3 for _,x,_ in blk]
+    mk=np.median(kurts)
+    print(f"exp {e}: median sample-kurt {mk:.3f} -> nu {kurt_to_nu(mk,meds,nus):.2f}")
+EOF
+python work/diag.py
 ```
 
 ## [20] tool
@@ -1107,7 +1595,53 @@ This is a critical finding: median kurtosis saturates. I need a per-block tail-f
 **tool call: bash**
 
 ```
+cat > work/diag2.py << 'EOF'
+import numpy as np, pandas as pd, re
+from scipy import stats
+from validate2 import gen_block
 
+# ---- build calibration: for each true nu, distribution of mean-top-gap ----
+def gap_stat(x):
+    xs=np.sort(np.asarray(x,float)); s=x.std()
+    if s<=0: s=1e-9
+    return ((xs[-1]-xs[-2])/s + (xs[-2]-xs[-3])/s)/2.0
+
+rng=np.random.default_rng(11)
+nus=np.array([3,4,5,7,10,15,25,60,300.0])
+gp_med={}
+for nu in nus:
+    if nu<250: z=rng.standard_t(nu,(60000,10))
+    else: z=rng.standard_normal((60000,10))
+    zz=(z-z.mean(1,keepdims=True))/z.std(1,keepdims=True)
+    zz=np.sort(zz,axis=1)
+    g=((zz[:,-1]-zz[:,-2])+(zz[:,-2]-zz[:,-3]))/2.0
+    gp_med[nu]=np.median(g)
+    print(f"nu={nu:5.0f} med gap2={gp_med[nu]:.3f}")
+nus_arr=nus; meds_arr=np.array([gp_med[v] for v in nus])
+
+def gap2_to_nu(g2):
+    # decreasing in g2; interp on log-log where possible
+    return float(np.exp(np.interp(g2, meds_arr[::-1], np.log(nus_arr[::-1]))))
+
+# how variable is per-block gap2 -> nu? check on simulated blocks
+r=np.random.default_rng(3)
+est_nus=[]
+for _ in range(200):
+    pop,smp,m=gen_block(r)
+    est_nus.append(gap2_to_nu(gap_stat(smp)))
+est_nus=np.array(est_nus)
+print("gap2->nu distribution on macro-like blocks:", np.round(np.percentile(est_nus,[5,25,50,75,95]),1))
+
+# compare to sample-kurt based per-experiment pooled
+mk=[]
+for e in range(30):
+    r=np.random.default_rng(200+e)
+    blk=[gen_block(r) for _ in range(100)]
+    kur=[np.mean(((x-x.mean())/x.std())**4)-3 for _,x,_ in blk]
+    mk.append(np.median(kur))
+print("median sample-kurt across exps:", np.round(np.percentile(mk,[5,50,95]),3))
+EOF
+python work/diag2.py
 ```
 
 ## [22] tool
@@ -1132,7 +1666,63 @@ Top-gap is saturated too — fat-tail detection with n=10 is fundamentally limit
 **tool call: bash**
 
 ```
+cat > work/grid5.py << 'EOF'
+import numpy as np
+from scipy import stats
+from validate2 import gen_block, pop_loss
 
+W_BLK=0.5; NU=18.0
+
+def gap2(x):
+    xs=np.sort(np.asarray(x,float)); s=x.std() or 1e-9
+    return ((xs[-1]-xs[-2])/s + (xs[-2]-xs[-3])/s)/2.0
+
+def est(x, g, alpha, c99, gmix=None):
+    mu=x.mean(); s=x.std(ddof=1) or 1e-9
+    g2=gap2(x)
+    nu_b=np.clip(3.0+max(0.0,0.30-g2)*60.0, 3.0, 60.0)
+    nu_e=(1-W_BLK)*NU + W_BLK*nu_b
+    fac=np.sqrt((nu_e-2)/nu_e)
+    if gmix is None:
+        seff=s*g
+    else:
+        # match pooled variance: mixture of two cluster sds ratio rho, frac p
+        rho,p=gmix
+        s_big=s*np.sqrt(1.0/(p+(1-p)*rho**2))
+        seff=s_big*g
+    out={}
+    for t in (0.9,0.95,0.99):
+        z=fac*stats.t(nu_e).ppf(t)
+        if t==0.95: z*=alpha
+        if t==0.99: z*=c99
+        out[t]=mu+seff*z
+    return out
+
+if __name__=='__main__':
+    grid=[]
+    for g in (0.98,1.02,1.06):
+        for a in (1.02,1.07,1.12):
+            for c in (0.98,1.03,1.08):
+                for gm in (None,(3.0,0.35)):
+                    grid.append((g,a,c,gm))
+    res={i:[] for i in range(len(grid))}
+    nexp=20
+    for e in range(nexp):
+        rng=np.random.default_rng(9000+e)
+        blk=[gen_block(rng) for _ in range(100)]
+        tot={i:0.0 for i in range(len(grid))}
+        for pop,smp,m in blk:
+            sc=np.std(pop)
+            for i,hp in enumerate(grid):
+                q=est(smp,*hp)
+                for t in (0.9,0.95,0.99):
+                    tot[i]+=pop_loss(pop,q[t],t)/sc
+        for i in range(len(grid)): res[i].append(tot[i]/100)
+    arr=[(np.mean(v),np.std(v)/np.sqrt(len(v)),grid[i]) for i,v in res.items()]
+    for mn,se,hp in sorted(arr)[:16]:
+        print(f"g={hp[0]} a95={hp[1]} c99={hp[2]} mix={hp[3]}: {mn:.4f} se {se:.4f}")
+EOF
+python work/grid5.py
 ```
 
 ## [24] tool
@@ -1162,7 +1752,54 @@ The NU=18 config performs slightly worse than pooled-ν≈8 with g≈1.09. Let m
 **tool call: bash**
 
 ```
+cat > work/grid6.py << 'EOF'
+import numpy as np
+from scipy import stats
+from validate2 import gen_block, pop_loss
 
+def gap2(x):
+    xs=np.sort(np.asarray(x,float)); s=x.std() or 1e-9
+    return ((xs[-1]-xs[-2])/s + (xs[-2]-xs[-3])/s)/2.0
+
+def make(NU,g,w,c99,gmix):
+    def est(x):
+        mu=x.mean(); s=x.std(ddof=1) or 1e-9
+        g2=gap2(x)
+        nu_b=np.clip(3.0+max(0.0,0.30-g2)*60.0,3.0,60.0)
+        nu_e=(1-w)*NU+w*nu_b
+        fac=np.sqrt((nu_e-2)/nu_e)
+        if gmix is None: seff=s*g
+        else:
+            rho,p=gmix; s_big=s*np.sqrt(1.0/(p+(1-p)*rho**2)); seff=s_big*g
+        out={}
+        for t in (0.9,0.95,0.99):
+            z=fac*stats.t(nu_e).ppf(t)
+            if t==0.99: z*=c99
+            out[t]=mu+seff*z
+        return out
+    return est
+
+grid=[]
+for NU in (8,14,25):
+    for g in (1.0,1.05,1.10):
+        for gm in (None,(3.0,0.35)):
+            grid.append((NU,g,0.5,1.06,gm))
+res={i:[] for i in range(len(grid))}
+for e in range(40):
+    rng=np.random.default_rng(11000+e)
+    blk=[gen_block(rng) for _ in range(100)]
+    tot={i:0.0 for i in range(len(grid))}
+    for pop,smp,m in blk:
+        sc=np.std(pop)
+        for i,hp in enumerate(grid):
+            q=make(*hp)(smp)
+            for t in (0.9,0.95,0.99): tot[i]+=pop_loss(pop,q[t],t)/sc
+    for i in range(len(grid)): res[i].append(tot[i]/100)
+arr=[(np.mean(v),np.std(v)/np.sqrt(len(v)),grid[i]) for i,v in res.items()]
+for mn,se,hp in sorted(arr)[:14]:
+    print(f"NU={hp[0]} g={hp[1]} mix={hp[4]}: {mn:.4f} se {se:.4f}")
+EOF
+python work/grid6.py
 ```
 
 ## [26] tool
@@ -1190,7 +1827,85 @@ The mixture rescale was a bug (blasted the loss). ν_pool 8–14 are equivalent;
 **tool call: bash**
 
 ```
+cat > work/interval_test.py << 'EOF'
+import numpy as np
+from scipy import stats
+from validate2 import gen_block
 
+NU=12.0; G=1.10; W_BLK=0.5
+
+def point_and_z95(x):
+    mu=x.mean(); s=x.std(ddof=1) or 1e-9
+    xs=np.sort(x); g2=((xs[-1]-xs[-2])/s+(xs[-2]-xs[-3])/s)/2.0
+    nu_b=np.clip(3.0+max(0.0,0.30-g2)*60.0,3.0,60.0)
+    nu_e=(1-W_BLK)*NU+W_BLK*nu_b
+    fac=np.sqrt((nu_e-2)/nu_e)
+    q95 = mu + s*G*fac*stats.t(nu_e).ppf(0.95)
+    return q95, fac*stats.t(nu_e).ppf(0.95)   # z95
+
+def quant_gauss(k, N, p):
+    ks=int(np.clip(k,1,N))
+    lo,hi=stats.beta.ppf([0.025,0.975],ks,N+1-ks)
+    return stats.norm.ppf(lo), stats.norm.ppf(hi)
+
+def quick_boot_interval(x, rng, NB=300):
+    x=np.asarray(x,float); mu=x.mean(); s=x.std(ddof=1) or 1e-9
+    xs=np.sort(x); z=(xs-mu)/s
+    boots=[]
+    for _ in range(NB):
+        zb=rng.choice(z,10,replace=True)
+        zb=zb-zb.mean()
+        sd=zb.std()
+        zb = zb/sd if sd>1e-12 else np.zeros(10)
+        mub=zb.mean(); sb=zb.std(ddof=1)
+        if sb<1e-9: continue
+        kb=int(np.ceil(0.95*10))-1
+        ze=np.sort(zb)[kb]
+        if sd<0.45: 
+            ze=1.6+(1.6-ze)/(0.45-sd+1e-9)
+             # clamp to keep sane
+            ze=np.clip(ze,0.5,2.5)
+        T=(ze-1.645*sb)/sb
+        boots.append(T)
+    if len(boots)<50: return None
+    Tlo,Thi=np.quantile(boots,[0.025,0.975])
+    zl,zh=quant_gauss(int(np.ceil(0.95*10)),600,0.95)
+    lo=q95p + s*G*z95*(Tlo-0.0)
+    # lo = mu + s*(G*z95 + Tlo)  ; hi = mu + s*(G*z95 + Thi)
+    lo = mu + s*(G*z95 + Tlo)
+    hi = mu + s*(G*z95 + Thi)
+    return lo,hi
+
+# T-calibration multipliers (from final.py method, computed here)
+def calib_T(nu, n=10000, seed=5):
+    rng=np.random.default_rng(seed); Ts=[]
+    for _ in range(n):
+        pop,smp,m=gen_block(rng)
+        mu=smp.mean(); s=smp.std(ddof=1) or 1e-9
+        _,z95=point_and_z95(smp)
+        Ts.append((np.quantile(pop,0.95)-mu)/(s*G*z95))
+    return np.quantile(Ts,[0.025,0.975])
+
+if __name__=='__main__':
+    tlo,thi=calib_T(NU, 6000)
+    print("T multipliers:", np.round(tlo,3), np.round(thi,3))
+    rng=np.random.default_rng(555)
+    covT=covB=0; N=3000; wT=[]; wB=[]
+    q95p=0.0
+    for _ in range(N):
+        pop,smp,m=gen_block(rng)
+        mu=smp.mean(); s=smp.std(ddof=1) or 1e-9
+        q95p,z95=point_and_z95(smp)
+        true95=np.quantile(pop,0.95)
+        lo=mu+s*G*z95*tlo; hi=mu+s*G*z95*thi
+        covT += (lo<=true95<=hi); wT.append(hi-lo)
+        ib=quick_boot_interval(smp, rng)
+        if ib:
+            covB += (ib[0]<=true95<=ib[1]); wB.append(ib[1]-ib[0])
+    print(f"T-calib coverage {covT/N:.3f} mean width {np.mean(wT):.4g}")
+    print(f"boot    coverage {covB/N:.3f} mean width {np.mean(wB):.4g}")
+EOF
+python work/interval_test.py
 ```
 
 ## [28] tool
@@ -1207,7 +1922,51 @@ T-calibration achieves 95.6% coverage; the quick bootstrap badly undercovers (75
 **tool call: bash**
 
 ```
+cat > work/grid7.py << 'EOF'
+import numpy as np
+from scipy import stats
+from validate2 import gen_block, pop_loss
 
+NU=12.0; W_BLK=0.5
+def gap2(x):
+    xs=np.sort(x); s=x.std() or 1e-9
+    return ((xs[-1]-xs[-2])/s+(xs[-2]-xs[-3])/s)/2.0
+def nu_blk(x):
+    return np.clip(3.0+max(0.0,0.30-gap2(x))*60.0,3.0,60.0)
+
+def make(g, lam, c99):
+    def est(x):
+        mu=x.mean(); s=x.std(ddof=1) or 1e-9
+        ne=(1-W_BLK)*NU+W_BLK*nu_blk(x)
+        sk=stats.skew(x)
+        tne,ts,ts2=stats.t(ne),stats.t(8.0),stats.t(4.0)
+        z=(1-lam)*np.sqrt((ne-2)/ne)*tne.ppf + None
+        out={}
+        for t in (0.9,0.95,0.99):
+            zz=(1-lam)*np.sqrt((ne-2)/ne)*tne.ppf(t)
+            zz+= lam*(0.55*np.sqrt(6/8)*ts.ppf(t)+0.45*np.sqrt(2/4)*ts2.ppf(t)) if sk>0.9 else 0.0
+            if t==0.99: zz*=c99
+            out[t]=mu+s*g*zz
+        return out
+    return est
+
+grid=[(g,lam,c) for g in (1.05,1.10,1.15) for lam in (0.0,0.35) for c in (1.0,1.06)]
+res={i:[] for i in range(len(grid))}
+for e in range(40):
+    rng=np.random.default_rng(13000+e)
+    blk=[gen_block(rng) for _ in range(100)]
+    tot={i:0.0 for i in range(len(grid))}
+    for pop,smp,m in blk:
+        sc=np.std(pop)
+        for i,hp in enumerate(grid):
+            q=make(*hp)(smp)
+            for t in (0.9,0.95,0.99): tot[i]+=pop_loss(pop,q[t],t)/sc
+    for i in range(len(grid)): res[i].append(tot[i]/100)
+arr=[(np.mean(v),np.std(v)/np.sqrt(len(v)),grid[i]) for i,v in res.items()]
+for mn,se,hp in sorted(arr)[:12]:
+    print(f"g={hp[0]} lam={hp[1]} c99={hp[2]}: {mn:.4f} se {se:.4f}")
+EOF
+python work/grid7.py
 ```
 
 ## [30] tool
@@ -1228,7 +1987,7 @@ TypeError: unsupported operand type(s) for *: 'float' and 'method'
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i '/^        z=(1-lam)\*np.sqrt((ne-2)\/ne)\*tne.ppf + None$/d' work/grid7.py && python work/grid7.py
 ```
 
 ## [32] tool
@@ -1254,7 +2013,75 @@ The skew-blend hurts (adding distributional asymmetry on top of skew already in 
 **tool call: bash**
 
 ```
+cat > work/produce.py << 'EOF'
+import numpy as np, pandas as pd, re
+from scipy import stats
+from validate2 import gen_block, pop_loss
 
+NU_POOL, W_BLK, G, C99 = 12.0, 0.5, 1.10, 1.06
+
+def gap2(x):
+    xs=np.sort(np.asarray(x,float)); s=x.std() or 1e-9
+    return ((xs[-1]-xs[-2])/s+(xs[-2]-xs[-3])/s)/2.0
+
+def nu_block(x):
+    return float(np.clip(3.0+max(0.0,0.30-gap2(x))*60.0, 3.0, 60.0))
+
+def est_params(x):
+    """returns mu, s, z90, z95, z99 (unit-variance t quantiles, pre-G)"""
+    x=np.asarray(x,float); mu=x.mean(); s=x.std(ddof=1) or 1e-9
+    nu=(1-W_BLK)*NU_POOL + W_BLK*nu_block(x)
+    fac=np.sqrt((nu-2)/nu)
+    z={t: fac*stats.t(nu).ppf(t) for t in (0.9,0.95,0.99)}
+    q={t: mu+s*G*(z[t]*(C99 if t==0.99 else 1.0)) for t in (0.9,0.95,0.99)}
+    return q, z, mu, s
+
+def calib_T(nsim=20000, seed=5):
+    rng=np.random.default_rng(seed); Ts=np.empty(nsim)
+    for i in range(nsim):
+        pop,smp,m=gen_block(rng)
+        q,z,mu,s=est_params(smp)
+        Ts[i]=(np.quantile(pop,0.95)-mu)/(s*G*z[0.95])
+    return np.quantile(Ts,[0.025,0.975])
+
+def load_real():
+    df=pd.read_csv('data/blocks.csv')
+    txt=open('data/task.txt').read()
+    ms=dict((int(b),int(m)) for b,m in re.findall(r'Block (\d+) \(population size m = (\d+)\)',txt))
+    return {b:g['x'].values for b,g in df.groupby('block')}, ms
+
+if __name__=='__main__':
+    tlo,thi=calib_T()
+    print("T multipliers: lo=%.4f hi=%.4f"%(tlo,thi))
+
+    # --- validation on fresh simulated experiments ---
+    cov=0; tot=0.0; N=6000; rng=np.random.default_rng(2468)
+    for _ in range(N):
+        pop,smp,m=gen_block(rng)
+        q,z,mu,s=est_params(smp)
+        sc=np.std(pop)
+        for t in (0.9,0.95,0.99): tot+=pop_loss(pop,q[t],t)/sc
+        true95=np.quantile(pop,0.95)
+        lo=mu+s*G*z[0.95]*tlo; hi=mu+s*G*z[0.95]*thi
+        cov += (lo<=true95<=hi)
+    print("validation: norm loss/block %.4f | 95-int coverage %.3f"%(tot/N,cov/N))
+
+    # --- real predictions ---
+    groups,ms=load_real()
+    rows=[]
+    for b in sorted(groups):
+        x=groups[b]
+        q,z,mu,s=est_params(x)
+        lo=mu+s*G*z[0.95]*tlo; hi=mu+s*G*z[0.95]*thi
+        lo=min(lo,q[0.95]); hi=max(hi,q[0.95])
+        rows.append(dict(block=b,q90=q[0.9],q95=q[0.95],q99=q[0.99],lo=lo,hi=hi))
+    out=pd.DataFrame(rows)[['block','q90','q95','q99','lo','hi']]
+    assert len(out)==100 and list(out.columns)==['block','q90','q95','q99','lo','hi']
+    out.to_csv('predictions.csv',index=False,float_format='%.6g')
+    print(out.head(10).to_string(index=False))
+    print("... wrote", len(out), "rows")
+EOF
+python work/produce.py
 ```
 
 ## [34] tool
@@ -1282,7 +2109,23 @@ Validation: 95.0% interval coverage and normalized loss 0.0374/block. Let me ver
 **tool call: bash**
 
 ```
-
+cat > work/check.py << 'EOF'
+import pandas as pd, numpy as np
+p=pd.read_csv('predictions.csv')
+print("header:", list(p.columns))
+print("rows:", len(p), "| blocks 1-100:", sorted(p.block)==list(range(1,101)))
+print("nulls:", p.isnull().sum().sum())
+bad = p[(p.lo>p.q95)|(p.hi<p.q95)|(p.q90>p.q95)|(p.q95>p.q99)]
+print("ordering violations:", len(bad))
+d=pd.read_csv('data/blocks.csv')
+mx=d.groupby('block')['x'].max()
+chk=p.set_index('block').join(mx.rename('sample_max'))
+print("q99 < sample_max in", int((chk.q99<chk.sample_max).sum()), "blocks (expected for many)")
+print("q95 < sample_max in", int((chk.q95<chk.sample_max).sum()), "blocks")
+print()
+print(p.tail(4).to_string(index=False))
+EOF
+python work/check.py && echo --- && head -3 predictions.csv
 ```
 
 ## [36] tool

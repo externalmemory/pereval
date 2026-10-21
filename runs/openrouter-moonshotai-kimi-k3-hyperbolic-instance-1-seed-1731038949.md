@@ -51,7 +51,7 @@ Predict gamma with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -110,7 +110,20 @@ t
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.describe())
+print()
+print('Non-null counts:')
+print(df.count())
+print()
+print('Rows with beta:')
+print(df[df.beta.notnull()])
+print()
+print('Rows with gamma:')
+print(df[df.gamma.notnull()])
+"
 ```
 
 ## [5] tool
@@ -200,7 +213,23 @@ Let me explore the data more thoroughly to understand its structure.
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+a = df.alpha.values
+t = df.t.values
+# look at alpha over time: unwrapping
+au = np.deg2rad(a)
+aun = np.rad2deg(np.unwrap(au))
+print('alpha unwrapped start/end:', aun[0], aun[-1])
+print('total change over', t[-1]-t[0], 'days:', aun[-1]-aun[0])
+print('deg/day:', (aun[-1]-aun[0])/(t[-1]-t[0]))
+# diff stats
+d = np.diff(aun)
+print('daily diff mean/std:', d.mean(), d.std())
+print('daily diff min/max:', d.min(), d.max())
+"
 ```
 
 ## [7] tool
@@ -239,7 +268,29 @@ daily diff min/max: -2.890699999999981 4.801199999999994
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+obs['alpha_u'] = aun[df.gamma.notnull().values]
+t = obs.t.values
+g = obs.gamma.values
+b = obs.beta.values
+au = obs.alpha_u.values
+print('t range:', t.min(), t.max())
+# gamma vs time rate at various points
+for i in range(0, len(t), 20):
+    print(f't={t[i]:4d} alpha_u={au[i]:8.2f} beta={b[i]:8.2f} gamma={g[i]:8.2f}')
+print()
+# check correlation of gamma with alpha_u and t
+print('corr(gamma,t):', np.corrcoef(g,t)[0,1])
+print('corr(gamma,alpha_u):', np.corrcoef(g,au)[0,1])
+print('corr(beta,alpha_u):', np.corrcoef(b,au)[0,1])
+print('corr(beta,t):', np.corrcoef(b,t)[0,1])
+print('corr(gamma,beta):', np.corrcoef(g,b)[0,1])
+"
 ```
 
 ## [9] tool
@@ -333,7 +384,29 @@ The data suggests orbital/periodic geometry. Let me analyze the structure more d
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+df['alpha_u'] = aun
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values; g = obs.gamma.values; b = obs.beta.values; au = obs.alpha_u.values
 
+# Do fluctuations in alpha correlate with fluctuations in gamma/beta?
+# detrend with rolling median-ish: use linear fit on sliding window, or high-pass via diff
+# alpha daily increment fluctuation vs gamma daily increment
+da = np.diff(au); dg = np.diff(g); db = np.diff(b)
+print('corr(diff alpha, diff gamma):', np.corrcoef(da, dg)[0,1])
+print('corr(diff alpha, diff beta):', np.corrcoef(da, db)[0,1])
+
+# smooth trend of gamma derivative
+import numpy as np
+# fit local slopes
+for i in range(0, len(t)-10, 15):
+    sl = np.polyfit(t[i:i+11], g[i:i+11], 1)[0]
+    print(f't={t[i]:4d} gamma slope ~ {sl:+.3f} deg/day, beta slope ~ {np.polyfit(t[i:i+11], b[i:i+11],1)[0]:+.3f}')
+"
 ```
 
 ## [11] tool
@@ -420,7 +493,31 @@ The slopes change dramatically (slow → fast → slow), suggesting Keplerian-li
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+df['alpha_u'] = aun
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values; g = obs.gamma.values; b = obs.beta.values; au = obs.alpha_u.values
 
+# Noise estimate: fit local linear on 5-day windows, residual std
+res=[]
+for i in range(len(t)-4):
+    tt=t[i:i+5]; gg=g[i:i+5]
+    p=np.polyfit(tt,gg,1)
+    res.extend(gg-np.polyval(p,tt))
+res=np.array(res)
+print('gamma local residual std (rough noise):', res.std())
+
+# gamma as function of beta? check monotonic relation
+order = np.argsort(b)
+bs = b[order]; gs = g[order]
+# print sampled curve
+for i in range(0, len(bs), 12):
+    print(f'beta={bs[i]:8.2f} gamma={gs[i]:8.2f}')
+" | head -40
 ```
 
 ## [13] tool
@@ -490,7 +587,23 @@ The (beta,gamma) trajectory looks like a closed curve. Let me test whether the 3
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+b = np.deg2rad(obs.beta.values); g = np.deg2rad(obs.gamma.values)
+v = np.stack([np.cos(g)*np.cos(b), np.cos(g)*np.sin(b), np.sin(g)], axis=1)
+# fit plane through origin: smallest singular vector
+U,S,Vt = np.linalg.svd(v, full_matrices=False)
+n = Vt[-1]
+resid = v @ n
+print('singular values:', S)
+print('plane residual RMS (deg equiv):', np.rad2deg(np.sqrt(np.mean(resid**2))))
+print('normal:', n)
+# expressed as inclination etc: normal's own elevation
+print('normal elevation deg:', np.rad2deg(np.arcsin(n[2])), 'azimuth:', np.rad2deg(np.arctan2(n[1],n[0])))
+"
 ```
 
 ## [15] tool
@@ -600,7 +713,26 @@ normal elevation deg: -18.852739584927107 azimuth: -70.8444096866405
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+# linear fit
+p = np.polyfit(t, aun, 1)
+res = aun - np.polyval(p, t)
+print('linear fit slope (deg/day):', p[0], '-> period:', 360/p[0])
+print('residual std around linear:', res.std())
+print('residual min/max:', res.min(), res.max())
+# check for smooth trend in residuals (moving avg)
+import numpy as np
+k=15
+sm = np.convolve(res, np.ones(k)/k, mode='valid')
+print('smoothed residual range:', sm.min(), sm.max())
+# autocorrelation of residuals at lag1
+print('lag-1 autocorr:', np.corrcoef(res[:-1], res[1:])[0,1])
+"
 ```
 
 ## [17] tool
@@ -627,7 +759,17 @@ Alpha has strong smooth structure (±24° around linear) — likely a true anoma
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+p = np.polyfit(t, aun, 1)
+res = aun - np.polyval(p, t)
+for i in range(0, len(t), 20):
+    print(f't={t[i]:4d} alpha_u={aun[i]:9.2f} res={res[i]:+8.2f}')
+"
 ```
 
 ## [19] tool
@@ -726,7 +868,55 @@ Alpha shows a clear "equation of center" oscillation — the observer's planet i
 **tool call: bash**
 
 ```
+mkdir -p work && cat > work/fit_alpha.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
 
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+
+def kepler_E(M, e):
+    M = np.atleast_1d(M)
+    E = M.copy()
+    for _ in range(60):
+        f = E - e*np.sin(E) - M
+        fp = 1 - e*np.cos(E)
+        dE = f/fp
+        E = E - dE
+        if np.max(np.abs(dE)) < 1e-14:
+            break
+    return E
+
+def model_alpha(params, t):
+    # alpha_u(t) = lam0 + nu(t), M = n*(t-T)
+    e, n, T, lam0 = params
+    M = np.deg2rad(n)*(t - T)
+    E = kepler_E(M, e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return lam0 + np.rad2deg(nu)
+
+def resid(params):
+    return model_alpha(params, t) - aun
+
+best = None
+for e0 in [0.1, 0.2, 0.3]:
+    for n0 in [1.0, 1.2, 1.4]:
+        for T0 in [50, 150, 250]:
+            for l0 in [aun[0]]:
+                r = least_squares(resid, [e0,n0,T0,l0], method='lm', max_nfev=20000)
+                ss = np.sum(r.fun**2)
+                if best is None or ss < best[0]:
+                    best = (ss, r.x)
+print('best SSR:', best[0], 'RMS resid (deg):', np.sqrt(best[0]/len(t)))
+e,n,T,lam0 = best[1]
+print(f'e_p={e:.4f}, n_p={n:.5f} deg/day -> P_p={360/n:.2f} d, T_p={T:.2f}, lam0={lam0:.3f}')
+# check residual autocorrelation -> noise level of alpha
+res = model_alpha(best[1], t) - aun
+print('alpha resid std:', res.std(), 'lag1 autocorr:', np.corrcoef(res[:-1],res[1:])[0,1])
+EOF
+python3 work/fit_alpha.py
 ```
 
 ## [21] tool
@@ -795,7 +985,93 @@ Excellent! Alpha is a clean Keplerian longitude: e_p=0.193, P_p=360.1 days, whit
 **tool call: bash**
 
 ```
+cat > work/fit_body.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares, differential_evolution
+import pickle, time
 
+df = pd.read_csv('data/train.csv')
+t_all = df.t.values.astype(float)
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values
+gamma_o = obs.gamma.values
+
+# planet elements from alpha fit
+e_p, n_p, T_p, lam0 = 0.1928, 0.99973, 219.49, 551.430
+# refine quickly
+def kepler_E(M, e):
+    M = np.atleast_1d(M).astype(float)
+    E = M.copy()
+    for _ in range(80):
+        dE = (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+        E -= dE
+        if np.max(np.abs(dE)) < 1e-15: break
+    return E
+def alpha_model(params, tt):
+    e,n,T,l0 = params
+    E = kepler_E(np.deg2rad(n)*(tt-T), e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return l0 + np.rad2deg(nu)
+r = least_squares(lambda p: alpha_model(p,t_all)-aun, [e_p,n_p,T_p,lam0], method='lm', max_nfev=40000)
+e_p,n_p,T_p,lam0 = r.x
+print('planet: e=%.5f n=%.6f (P=%.3f) T=%.4f lam0=%.4f  rms=%.4f' % (e_p,n_p,360/n_p,T_p,lam0, np.sqrt(np.mean(r.fun**2))))
+
+def planet_pos(tt):
+    # returns heliocentric ecliptic position of planet, a_p=1
+    E = kepler_E(np.deg2rad(n_p)*(tt-T_p), e_p)
+    nu = 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    r = 1 - e_p*np.cos(E)   # a_p = 1
+    lam = np.deg2rad(lam0) + nu
+    return np.stack([r*np.cos(lam), r*np.sin(lam), np.zeros_like(r)], axis=0)
+
+def body_pos(params, tt):
+    a,e,i,Om,w,M0,n = params
+    M = np.deg2rad(M0) + np.deg2rad(n)*(tt-t[0])
+    E = kepler_E(M, e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    rr = a*(1 - e*np.cos(E))
+    u = np.deg2rad(w) + nu
+    ci,si = np.cos(np.deg2rad(i)), np.sin(np.deg2rad(i))
+    cO,sO = np.cos(np.deg2rad(Om)), np.sin(np.deg2rad(Om))
+    x = rr*(cO*np.cos(u) - sO*np.sin(u)*ci)
+    y = rr*(sO*np.cos(u) + cO*np.sin(u)*ci)
+    z = rr*(np.sin(u)*si)
+    return np.stack([x,y,z], axis=0)
+
+def predict_bg(params, tt):
+    d = body_pos(params, tt) - planet_pos(tt)
+    beta = np.rad2deg(np.arctan2(d[1], d[0]))
+    gamma = np.rad2deg(np.arcsin(d[2]/np.sqrt((d**2).sum(axis=0))))
+    return beta, gamma
+
+def wrap180(x):
+    return (x + 180) % 360 - 180
+
+def resid(params):
+    bp, gp = predict_bg(params, t)
+    return np.concatenate([wrap180(beta_o - bp), gamma_o - gp])
+
+# global search with differential evolution
+bounds = [(0.2, 8.0), (0.001, 0.95), (0.0, 180.0), (0,360), (0,360), (0,360), (0.05, 5.0)]
+t0 = time.time()
+result = differential_evolution(lambda p: np.sum(resid(p)**2), bounds, seed=1, maxiter=400,
+                                popsize=25, tol=1e-10, mutation=(0.5,1.5), recombination=0.9,
+                                polish=False, updating='immediate', workers=1)
+print('DE done in %.1fs, SSR=%.3f' % (time.time()-t0, result.fun))
+print('params:', result.x)
+r2 = least_squares(resid, result.x, method='lm', max_nfev=40000)
+print('refined SSR=%.4f  RMS=%.4f deg' % (np.sum(r2.fun**2), np.sqrt(np.mean(r2.fun**2))))
+names=['a','e','i','Om','w','M0','n']
+for nm,v in zip(names, r2.x): print(f'  {nm} = {v:.6f}')
+# Kepler III check: n_pred = n_p * a^-1.5
+a,e,i,Om,w,M0,n = r2.x
+print('KeplerIII n expected = %.5f (fitted %.5f)' % (n_p*a**-1.5, n))
+pickle.dump({'planet':(e_p,n_p,T_p,lam0),'body':r2.x}, open('work/fit1.pkl','wb'))
+EOF
+python3 work/fit_body.py
 ```
 
 ## [23] tool
@@ -903,7 +1179,67 @@ The fit fell into a degenerate solution. The issue: alpha might be the Sun's geo
 **tool call: bash**
 
 ```
+cat > work/model.py << 'EOF'
+import numpy as np
 
+def kepler_E(M, e):
+    M = np.atleast_1d(M).astype(float)
+    E = M.copy()
+    for _ in range(100):
+        dE = (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+        E -= dE
+        if np.max(np.abs(dE)) < 1e-15: break
+    return E
+
+def stumpff_C(z):
+    z = np.asarray(z, float)
+    C = np.where(z > 1e-8, (1-np.cos(np.sqrt(np.abs(z))))/np.abs(z),
+        np.where(z < -1e-8, (np.cosh(np.sqrt(-z))-1)/(-z), 0.5 - z/24 + z*z/720))
+    return C
+
+def stumpff_S(z):
+    z = np.asarray(z, float)
+    sq = np.sqrt(np.abs(z))
+    S = np.where(z > 1e-8, (sq-np.sin(sq))/sq**3,
+        np.where(z < -1e-8, (np.sinh(sq)-sq)/sq**3, 1/6 - z/120 + z*z/5040))
+    return S
+
+def propagate_universal(r0, v0, mu, dt):
+    """Propagate state (r0,v0) by dt array using universal Kepler. r0,v0 shape (3,), dt shape (N,)."""
+    r0n = np.linalg.norm(r0); v0n2 = np.dot(v0,v0)
+    rv0 = np.dot(r0, v0)
+    sqrtmu = np.sqrt(mu)
+    alpha = 2/r0n - v0n2/mu   # 1/a
+    dt = np.atleast_1d(dt).astype(float)
+    # initial guess for chi
+    if alpha > 1e-6:
+        chi0 = sqrtmu*dt*alpha
+    elif abs(alpha) < 1e-6:
+        chi0 = sqrtmu*dt/r0n
+    else:
+        # hyperbolic guess
+        chi0 = np.sign(dt)*np.sqrt(-1/alpha)*np.log(np.abs((-2*mu*alpha*dt)/(rv0 + np.sign(dt)*np.sqrt(-mu/alpha)*(1-r0n*alpha)))+1e-300)
+    chi = chi0.copy()
+    for _ in range(60):
+        z = alpha*chi**2
+        C = stumpff_C(z); S = stumpff_S(z)
+        F = (rv0/sqrtmu)*chi**2*C + (1-alpha*r0n)*chi**3*S + r0n*chi - sqrtmu*dt
+        dF = (rv0/sqrtmu)*chi*(1-z*S) + (1-alpha*r0n)*chi**2*C + r0n
+        dchi = F/dF
+        chi -= dchi
+        if np.max(np.abs(dchi)) < 1e-12: break
+    z = alpha*chi**2
+    C = stumpff_C(z); S = stumpff_S(z)
+    f = 1 - chi**2*C/r0n
+    g = dt - chi**3*S/sqrtmu
+    r = f[None,:]*r0[:,None] + g[None,:]*v0[:,None]   # (3,N)
+    rn = np.sqrt((r**2).sum(axis=0))
+    fdot = (sqrtmu/(rn*r0n))*chi*(z*S - 1)
+    gdot = 1 - chi**2*C/rn
+    v = fdot[None,:]*r0[:,None] + gdot[None,:]*v0[:,None]
+    return r, v
+EOF
+echo done
 ```
 
 ## [25] tool
@@ -933,7 +1269,72 @@ done
 **tool call: bash**
 
 ```
+cat > work/fit_body2.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares, differential_evolution
+import pickle, time, sys
+sys.path.insert(0,'work')
+from model import kepler_E, propagate_universal
 
+df = pd.read_csv('data/train.csv')
+t_all = df.t.values.astype(float)
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+
+# refined planet fit
+def alpha_model(params, tt):
+    e,n,T,l0 = params
+    E = kepler_E(np.deg2rad(n)*(tt-T), e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return l0 + np.rad2deg(nu)
+r = least_squares(lambda p: alpha_model(p,t_all)-aun, [0.1928,0.99973,219.49,551.43], method='lm', max_nfev=40000)
+e_p,n_p,T_p,lam0 = r.x
+P_p = 360/n_p
+mu = (2*np.pi/P_p)**2   # AU^3/day^2, a_p=1
+print('planet: e=%.5f P=%.4f T=%.4f lam0=%.4f mu=%.6e' % (e_p,P_p,T_p,lam0,mu))
+
+def planet_pos(tt, Delta):
+    E = kepler_E(np.deg2rad(n_p)*(tt-T_p), e_p)
+    nu = 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    rr = 1 - e_p*np.cos(E)
+    lam = np.deg2rad(lam0 + Delta) + nu
+    return np.stack([rr*np.cos(lam), rr*np.sin(lam), np.zeros_like(rr)], axis=0)
+
+T0 = 420.0
+def predict_bg(state, tt, Delta):
+    rb,_ = propagate_universal(state[:3], state[3:], mu, tt-T0)
+    d = rb - planet_pos(tt, Delta)
+    beta = np.rad2deg(np.arctan2(d[1], d[0]))
+    gamma = np.rad2deg(np.arcsin(d[2]/np.sqrt((d**2).sum(axis=0))))
+    return beta, gamma
+
+def wrap180(x): return (x+180)%360-180
+
+def make_resid(Delta):
+    def resid(state):
+        bp,gp = predict_bg(state, t, Delta)
+        return np.concatenate([wrap180(beta_o-bp), gamma_o-gp])
+    return resid
+
+bounds = [(-5,5),(-5,5),(-5,5),(-0.08,0.08),(-0.08,0.08),(-0.08,0.08)]
+results = {}
+for Delta in [0.0, 180.0]:
+    resid = make_resid(Delta)
+    t0=time.time()
+    de = differential_evolution(lambda s: np.sum(resid(s)**2), bounds, seed=3, maxiter=700,
+                                popsize=30, tol=1e-11, mutation=(0.3,1.2), recombination=0.85, polish=False)
+    r2 = least_squares(resid, de.x, method='lm', max_nfev=60000)
+    ss = np.sum(r2.fun**2)
+    results[Delta] = (ss, r2.x)
+    print(f'Delta={Delta}: DE SSR={de.fun:.2f} refined SSR={ss:.3f} RMS={np.sqrt(ss/len(r2.fun)):.4f} deg ({time.time()-t0:.0f}s)')
+    print('  state r0=%s v0=%s' % (np.round(r2.x[:3],5), np.round(r2.x[3:],7)))
+
+pickle.dump({'planet':(e_p,n_p,T_p,lam0),'mu':mu,'results':results,'T0':T0}, open('work/fit2.pkl','wb'))
+EOF
+python3 work/fit_body2.py
 ```
 
 ## [27] tool
@@ -1015,7 +1416,67 @@ The heliocentric fit isn't converging (LM blew up; DE stuck ~4°). Let me try a 
 **tool call: bash**
 
 ```
+cat > work/fit_line.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares, differential_evolution
+import sys, time
+sys.path.insert(0,'work')
+from model import kepler_E
 
+df = pd.read_csv('data/train.csv')
+t_all = df.t.values.astype(float)
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+
+def alpha_model(params, tt):
+    e,n,T,l0 = params
+    E = kepler_E(np.deg2rad(n)*(tt-T), e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return l0 + np.rad2deg(nu)
+r = least_squares(lambda p: alpha_model(p,t_all)-aun, [0.1928,0.99973,219.49,551.43], method='lm', max_nfev=40000)
+e_p,n_p,T_p,lam0 = r.x
+
+def planet_pos(tt, Delta):
+    E = kepler_E(np.deg2rad(n_p)*(tt-T_p), e_p)
+    nu = 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    rr = 1 - e_p*np.cos(E)
+    lam = np.deg2rad(lam0 + Delta) + nu
+    return np.stack([rr*np.cos(lam), rr*np.sin(lam), np.zeros_like(rr)], axis=0)
+
+T0 = 420.0
+def make_resid(Delta):
+    def resid(state):
+        rb = state[:3,None] + state[3:,None]*(t-T0)[None,:]
+        d = rb - planet_pos(t, Delta)
+        beta = np.rad2deg(np.arctan2(d[1], d[0]))
+        gamma = np.rad2deg(np.arcsin(d[2]/np.sqrt((d**2).sum(axis=0))))
+        return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+    return resid
+
+for Delta in [0.0, 180.0]:
+    resid = make_resid(Delta)
+    best=None
+    for seed in range(4):
+        de = differential_evolution(lambda s: np.sum(resid(s)**2),
+            [(-4,4),(-4,4),(-4,4),(-0.1,0.1),(-0.1,0.1),(-0.1,0.1)],
+            seed=seed, maxiter=300, popsize=20, tol=1e-11, polish=False)
+        r2 = least_squares(resid, de.x, method='lm', max_nfev=60000)
+        ss=np.sum(r2.fun**2)
+        if best is None or ss<best[0]: best=(ss,r2.x)
+        # also try bounded LM to keep sane
+    ss, x = best
+    # compute implied distance range
+    rb = x[:3,None] + x[3:,None]*(t-T0)[None,:]
+    d = rb - planet_pos(t, Delta)
+    dist = np.sqrt((d**2).sum(axis=0))
+    print(f'Delta={Delta}: SSR={ss:.2f} RMS={np.sqrt(ss/len(resid(x))):.4f} deg')
+    print('  r0=',np.round(x[:3],4),' v=',np.round(x[3:],6))
+    print('  geocentric dist: min=%.3f at t=%.0f, range %.3f..%.3f' % (dist.min(), t[np.argmin(dist)], dist[0], dist[-1]))
+EOF
+python3 work/fit_line.py
 ```
 
 ## [29] tool
@@ -1046,7 +1507,24 @@ Even a free straight-line model stalls at 4° — maybe beta itself is much nois
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values; g = obs.gamma.values; b = obs.beta.values
+for name, x in [('beta',b),('gamma',g)]:
+    res=[]
+    for i in range(len(t)-4):
+        p=np.polyfit(t[i:i+5],x[i:i+5],1)
+        res.extend(x[i:i+5]-np.polyval(p,t[i:i+5]))
+    print(name,'local resid std:', np.std(res))
+# day-to-day diffs
+print('beta diff std:', np.diff(b).std(), 'gamma diff std:', np.diff(g).std())
+db=np.diff(b); dg=np.diff(g)
+print('beta  |diff| > 3:', np.sum(np.abs(db)>3), 'of', len(db))
+print('gamma |diff| > 3:', np.sum(np.abs(dg)>3), 'of', len(dg))
+"
 ```
 
 ## [31] tool
@@ -1091,7 +1569,16 @@ Both have similar noise (~0.66°), so the 4° misfit is structural. Let me visua
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values; g = obs.gamma.values; b = obs.beta.values
+print('Trajectory in order (every 6th):')
+for i in range(0, len(t), 6):
+    print(f't={t[i]:4d} beta={b[i]:8.2f} gamma={g[i]:8.2f}')
+"
 ```
 
 ## [33] tool
@@ -1170,7 +1657,21 @@ The trajectory is a curved arc with a sharp bend — like a flyby with a turn ne
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values
+b = np.deg2rad(obs.beta.values); g = np.deg2rad(obs.gamma.values)
+v = np.stack([np.cos(g)*np.cos(b), np.cos(g)*np.sin(b), np.sin(g)], axis=1)
+U,S,Vt = np.linalg.svd(v, full_matrices=False)
+n = Vt[-1]
+resid = v @ n
+print('planarity resid (deg) vs t (every 6th):')
+for i in range(0, len(t), 6):
+    print(f't={t[i]:4d} resid={np.rad2deg(resid[i]):+7.3f}')
+"
 ```
 
 ## [35] tool
@@ -1276,7 +1777,81 @@ The planarity residuals show a strong ±10° S-twist — real structure, not noi
 **tool call: bash**
 
 ```
+cat > work/fit_body3.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares, differential_evolution
+import pickle, time, sys
+sys.path.insert(0,'work')
+from model import kepler_E, propagate_universal
 
+df = pd.read_csv('data/train.csv')
+t_all = df.t.values.astype(float)
+aun = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+
+def alpha_model(params, tt):
+    e,n,T,l0 = params
+    E = kepler_E(np.deg2rad(n)*(tt-T), e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return l0 + np.rad2deg(nu)
+r = least_squares(lambda p: alpha_model(p,t_all)-aun, [0.1928,0.99973,219.49,551.43], method='lm', max_nfev=40000)
+e_p,n_p,T_p,lam0 = r.x
+P_p = 360/n_p
+mu = (2*np.pi/P_p)**2
+print('planet: e=%.5f P=%.4f T=%.4f lam0=%.4f mu=%.6e' % (e_p,P_p,T_p,lam0,mu))
+
+def planet_pos(tt, Delta):
+    E = kepler_E(np.deg2rad(n_p)*(tt-T_p), e_p)
+    nu = 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    rr = 1 - e_p*np.cos(E)
+    lam = np.deg2rad(lam0 + Delta) + nu
+    return np.stack([rr*np.cos(lam), rr*np.sin(lam), np.zeros_like(rr)], axis=0)
+
+T0 = 420.0
+def predict_bg(p, tt):
+    Delta = p[6]
+    rb,_ = propagate_universal(p[:3], p[3:6], mu, tt-T0)
+    d = rb - planet_pos(tt, Delta)
+    beta = np.rad2deg(np.arctan2(d[1], d[0]))
+    gamma = np.rad2deg(np.arcsin(np.clip(d[2]/np.sqrt((d**2).sum(axis=0)),-1,1)))
+    return beta, gamma
+
+def resid(p):
+    bp,gp = predict_bg(p, t)
+    return np.concatenate([(beta_o-bp+180)%360-180, gamma_o-gp])
+
+bounds = [(-8,8),(-8,8),(-8,8),(-0.09,0.09),(-0.09,0.09),(-0.09,0.09),(0,360)]
+lb = np.array([b[0] for b in bounds]); ub = np.array([b[1] for b in bounds])
+
+best=None
+t0=time.time()
+for seed in [11, 23]:
+    de = differential_evolution(lambda p: np.sum(resid(p)**2), bounds, seed=seed, maxiter=1500,
+                                popsize=40, tol=1e-12, mutation=(0.4,1.3), recombination=0.85,
+                                polish=False, updating='immediate')
+    r2 = least_squares(resid, de.x, bounds=(lb,ub), method='trf', max_nfev=20000, xtol=1e-15, ftol=1e-15)
+    ss=np.sum(r2.fun**2)
+    print(f'seed={seed}: DE SSR={de.fun:.3f} refined SSR={ss:.4f} RMS={np.sqrt(ss/334):.4f} deg ({time.time()-t0:.0f}s)')
+    if best is None or ss<best[0]: best=(ss, r2.x)
+ss,x = best
+print('BEST RMS = %.4f deg' % np.sqrt(ss/334))
+print('state r0=%s v0=%s Delta=%.3f' % (np.round(x[:3],6), np.round(x[3:6],8), x[6]))
+rb,_ = propagate_universal(x[:3], x[3:6], mu, t-T0)
+d = rb - planet_pos(t, x[6])
+dist = np.sqrt((d**2).sum(axis=0))
+rhelio = np.sqrt((rb**2).sum(axis=0))
+print('geocentric dist min=%.4f at t=%.0f; dist range %.3f..%.3f' % (dist.min(), t[np.argmin(dist)], dist[0], dist[-1]))
+print('heliocentric r range: %.3f..%.3f' % (rhelio.min(), rhelio.max()))
+# derived elements
+from scipy.optimize import fsolve
+energy = 0.5*np.dot(x[3:6],x[3:6]) - mu/np.linalg.norm(x[:3])
+print('specific energy=%.6e -> %s' % (energy, 'bound, a=%.4f' % (-mu/(2*energy)) if energy<0 else 'HYPERBOLIC'))
+pickle.dump({'planet':(e_p,n_p,T_p,lam0),'mu':mu,'state':x,'T0':T0,'SSR':ss}, open('work/fit3.pkl','wb'))
+EOF
+timeout 3000 python3 work/fit_body3.py
 ```
 
 ## [37] tool
@@ -1368,7 +1943,49 @@ Both DE seeds converged to the same 3.66° minimum — the heliocentric model se
 **tool call: bash**
 
 ```
+cat > work/fit_poly.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+import sys
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+T0 = 420.0
+tau = (t - T0)/100.0   # scaled time
+
+def fit_degree(deg, nstarts=60, seed=0):
+    rng = np.random.default_rng(seed)
+    # params: for each coord, deg+1 coefficients. Fix scale by ||constant term|| handled via normalization in obj.
+    np_ = 3*(deg+1)
+    def resid(c):
+        C = c.reshape(3, deg+1)
+        R = np.zeros((3, len(t)))
+        for k in range(deg+1):
+            R += C[:, k:k+1]*tau[None,:]**k
+        nrm = np.sqrt((R**2).sum(axis=0))
+        beta = np.rad2deg(np.arctan2(R[1], R[0]))
+        gamma = np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+        return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+    best=None
+    for s in range(nstarts):
+        c0 = rng.normal(size=np_)*3
+        c0[:3] += np.array([1,0,0])
+        try:
+            r = least_squares(resid, c0, method='lm', max_nfev=20000)
+            ss = np.sum(r.fun**2)
+            if best is None or ss<best[0]: best=(ss, r.x)
+        except Exception as e:
+            pass
+    return best
+
+for deg in [1,2,3,4,5]:
+    ss, x = fit_degree(deg)
+    print(f'degree {deg}: params={3*(deg+1)} SSR={ss:.3f} RMS={np.sqrt(ss/334):.4f} deg')
+EOF
+python3 work/fit_poly.py
 ```
 
 ## [39] tool
@@ -1479,7 +2096,120 @@ Geocentric polynomials fit well (degree 4: 0.86°, near the 0.66° noise) — bu
 **tool call: bash**
 
 ```
+cat > work/threebody.py << 'EOF'
+import numpy as np
+import sys
+sys.path.insert(0,'work')
+from model import kepler_E
 
+# planet orbit from alpha (a_p=1)
+e_p, n_p, T_p, lam0 = 0.19283, 0.999727, 219.4857, 551.4301
+P_p = 360/n_p
+MU = (2*np.pi/P_p)**2   # star GM, AU^3/day^2
+OM_p = np.deg2rad(lam0)  # periapsis longitude of planet (nu=0 -> lam=om)
+cosOM, sinOM = np.cos(OM_p), np.sin(OM_p)
+
+def planet_pos(tt):
+    tt = np.atleast_1d(tt).astype(float)
+    E = kepler_E(np.deg2rad(n_p)*(tt-T_p), e_p)
+    nu = 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    rr = 1 - e_p*np.cos(E)
+    lam = OM_p + nu
+    return np.stack([rr*np.cos(lam), rr*np.sin(lam), np.zeros_like(rr)], axis=0)  # (3,N)
+
+def make_grid(t0, t1, step=0.05):
+    tg = np.arange(t0, t1+1e-9, step)
+    Pg = planet_pos(tg)
+    return tg, Pg
+
+def interp_planet(tt, tg, Pg):
+    # linear interpolation of planet position
+    idx = np.clip(np.searchsorted(tg, tt)-1, 0, len(tg)-2)
+    w = (tt - tg[idx])/(tg[idx+1]-tg[idx])
+    return Pg[:, idx]*(1-w) + Pg[:, idx+1]*w
+
+def propagate3(state, log10q, tt, tg, Pg, T0=420.0):
+    """RK4 fixed-step on the grid. state=(6,) at T0, q=planet/star mass ratio.
+       tt: output times (must align with grid start/end). Returns body pos (3,len(tt))."""
+    q = 10**log10q
+    mu_p = q*MU
+    # integrate from T0 forward and backward as needed; grid tg covers full span
+    # find start index
+    def rhs(r, v, tcur):
+        rp = interp_planet(np.array([tcur]), tg, Pg)[:,0]
+        d = r - rp
+        rn = np.sqrt(np.dot(r,r)); dn = np.sqrt(np.dot(d,d))
+        return -MU*r/rn**3 - mu_p*d/dn**3
+    # output index mapping
+    out = np.zeros((3, len(tt)))
+    # integrate step by step over grid
+    # start at T0
+    i0 = np.argmin(np.abs(tg-T0))
+    r = state[:3].astype(float).copy(); v = state[3:].astype(float).copy()
+    tcur = tg[i0]
+    h = tg[1]-tg[0]
+    # map tt to grid indices (tt should be subset of grid points approx)
+    jset = {int(round((x-tg[0])/h)): k for k,x in enumerate(tt)}
+    # forward
+    def rk4(r,v,tcur,h):
+        def f(r,v,tc):
+            rp = interp_planet(np.array([tc]), tg, Pg)[:,0]
+            d = r - rp
+            rn = np.sqrt(np.dot(r,r)); dn = np.sqrt(np.dot(d,d))
+            a = -MU*r/rn**3 - mu_p*d/dn**3
+            return v, a
+        k1v, k1a = f(r, v, tcur)
+        k2v, k2a = f(r+0.5*h*k1v, v+0.5*h*k1a, tcur+0.5*h)
+        k3v, k3a = f(r+0.5*h*k2v, v+0.5*h*k2a, tcur+0.5*h)
+        k4v, k4a = f(r+h*k3v, v+h*k3a, tcur+h)
+        return r + h/6*(k1v+2*k2v+2*k3v+k4v), v + h/6*(k1a+2*k2a+2*k3a+k4a)
+    # backward from i0 to 0
+    rb = r.copy(); vb = v.copy()
+    for i in range(i0, 0, -1):
+        if i in jset:
+            out[:, jset[i]] = rb
+        rb, vb = rk4(rb, vb, tg[i], -h)
+    if 0 in jset: out[:, jset[0]] = rb
+    rf = r.copy(); vf = v.copy()
+    for i in range(i0, len(tg)-1):
+        if i in jset:
+            out[:, jset[i]] = rf
+        rf, vf = rk4(rf, vf, tg[i], h)
+    if (len(tg)-1) in jset: out[:, jset[len(tg)-1]] = rf
+    return out
+EOF
+cat > work/test3.py << 'EOF'
+import numpy as np, sys, time
+sys.path.insert(0,'work')
+from threebody import *
+from scipy.integrate import solve_ivp
+
+t0 = time.time()
+tg, Pg = make_grid(280, 580, 0.05)
+print('grid setup %.2fs' % (time.time()-t0))
+
+state = np.array([0.9, 1.3, -0.6, 0.035, -0.02, 0.05])
+tt = np.arange(301, 468, 1.0)
+t0=time.time()
+out_rk4 = propagate3(state, -3.0, tt, tg, Pg)
+print('RK4 propagate %.3fs' % (time.time()-t0))
+
+# reference: solve_ivp DOP853
+q = 1e-3; mu_p = q*MU
+def rhs(t_, y):
+    r = y[:3]; v = y[3:]
+    rp = planet_pos(np.array([t_]))[:,0]
+    d = r - rp
+    rn = np.linalg.norm(r); dn = np.linalg.norm(d)
+    return np.concatenate([v, -MU*r/rn**3 - mu_p*d/dn**3])
+sol = solve_ivp(rhs, (420, 301), state, method='DOP853', rtol=1e-11, atol=1e-13, t_eval=tt[tt<=420][::-1])
+sol2 = solve_ivp(rhs, (420, 467), state, method='DOP853', rtol=1e-11, atol=1e-13, t_eval=tt[tt>420])
+ref = np.hstack([sol.y[:3][:, ::-1], sol2.y[:3]])
+err = np.abs(out_rk4 - ref)
+print('max |RK4 - DOP853| position diff (AU):', err.max())
+print('typical dist ~', np.linalg.norm(ref,axis=0).mean())
+EOF
+timeout 600 python3 work/test3.py
 ```
 
 ## [41] tool
@@ -1517,7 +2247,98 @@ RK4 at dt=0.05 is ultra-accurate but too slow for global search. Let me optimize
 **tool call: bash**
 
 ```
+cat > work/threebody.py << 'EOF'
+import numpy as np
+import sys
+sys.path.insert(0,'work')
+from model import kepler_E
 
+e_p, n_p, T_p, lam0 = 0.19283, 0.999727, 219.4857, 551.4301
+P_p = 360/n_p
+MU = (2*np.pi/P_p)**2
+OM_p = np.deg2rad(lam0)
+
+def planet_pos(tt):
+    tt = np.atleast_1d(tt).astype(float)
+    E = kepler_E(np.deg2rad(n_p)*(tt-T_p), e_p)
+    nu = 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    rr = 1 - e_p*np.cos(E)
+    lam = OM_p + nu
+    return np.stack([rr*np.cos(lam), rr*np.sin(lam), np.zeros_like(rr)], axis=0)
+
+class Integrator:
+    def __init__(self, t0, t1, h=0.25, T0=420.0):
+        # fine grid at h/2 so RK4 midpoints are grid points
+        self.h = h
+        self.T0 = T0
+        self.t0g = t0; self.t1g = t1
+        nf = int(round((t1-t0)/(h/2))) + 1
+        self.tf = t0 + np.arange(nf)*(h/2)
+        self.Pf = planet_pos(self.tf)   # (3, nf) on half-grid
+        self.i0 = int(round((T0 - t0)/(h/2)))  # index of T0 on fine grid
+    def _acc(self, r, pi):
+        rp = self.Pf[:, pi]
+        d = r - rp
+        rn2 = np.dot(r,r); dn2 = np.dot(d,d)
+        return -self.MU*r/(rn2**1.5) - self.mu_p*d/(dn2**1.5)
+    def propagate(self, state, log10q, tt):
+        self.MU = MU
+        self.mu_p = (10**log10q)*MU
+        h = self.h
+        hh = h/2
+        i0 = self.i0
+        out = np.zeros((3, len(tt)))
+        jset = {int(round((x-self.t0g)/hh)): k for k,x in enumerate(tt)}
+        r = state[:3].astype(float).copy(); v = state[3:].astype(float).copy()
+        # backward
+        rb = r.copy(); vb = v.copy()
+        for i in range(i0, 1, -2):
+            if i in jset: out[:, jset[i]] = rb
+            # RK4 step -h : use midpoint i-1
+            a1 = self._acc(rb, i);            k1v = vb
+            a2 = self._acc(rb-hh*k1v, i-1);   k2v = vb-hh*a1
+            a3 = self._acc(rb-hh*k2v, i-1);   k3v = vb-hh*a2
+            a4 = self._acc(rb-h*k3v, i-2);    k4v = vb-h*a3
+            rb = rb - h/6*(k1v+2*k2v+2*k3v+k4v)
+            vb = vb - h/6*(a1+2*a2+2*a3+a4)
+        # forward
+        rf = r.copy(); vf = v.copy()
+        for i in range(i0, len(self.tf)-2, 2):
+            if i in jset: out[:, jset[i]] = rf
+            a1 = self._acc(rf, i);            k1v = vf
+            a2 = self._acc(rf+hh*k1v, i+1);   k2v = vf+hh*a1
+            a3 = self._acc(rf+hh*k2v, i+1);   k3v = vf+hh*a2
+            a4 = self._acc(rf+h*k3v, i+2);    k4v = vf+h*a3
+            rf = rf + h/6*(k1v+2*k2v+2*k3v+k4v)
+            vf = vf + h/6*(a1+2*a2+2*a3+a4)
+        return out
+EOF
+cat > work/test3b.py << 'EOF'
+import numpy as np, sys, time
+sys.path.insert(0,'work')
+from threebody import Integrator, planet_pos, MU
+from scipy.integrate import solve_ivp
+
+state = np.array([0.9, 1.3, -0.6, 0.035, -0.02, 0.05])
+tt = np.arange(301, 468, 1.0)
+q=1e-3; mu_p=q*MU
+def rhs(t_, y):
+    r = y[:3]; v = y[3:]
+    rp = planet_pos(np.array([t_]))[:,0]
+    d = r - rp
+    return np.concatenate([v, -MU*r/np.linalg.norm(r)**3 - mu_p*d/np.linalg.norm(d)**3])
+s1 = solve_ivp(rhs,(420,301),state,method='DOP853',rtol=1e-12,atol=1e-14,t_eval=tt[tt<=420][::-1])
+s2 = solve_ivp(rhs,(420,467),state,method='DOP853',rtol=1e-12,atol=1e-14,t_eval=tt[tt>420])
+ref = np.hstack([s1.y[:3][:,::-1], s2.y[:3]])
+
+for h in [0.5, 0.25, 0.1]:
+    integ = Integrator(280, 580, h)
+    t0=time.time()
+    out = integ.propagate(state, -3.0, tt)
+    dt_ = time.time()-t0
+    print(f'h={h}: time={dt_*1000:.1f}ms  max err={np.abs(out-ref).max():.3e} AU')
+EOF
+timeout 300 python3 work/test3b.py
 ```
 
 ## [43] tool
@@ -1550,7 +2371,28 @@ Fast and accurate. Let me check parallelism and test even coarser steps for the 
 **tool call: bash**
 
 ```
-
+nproc; python3 -c "
+import numpy as np, sys, time
+sys.path.insert(0,'work')
+from threebody import Integrator, planet_pos, MU
+from scipy.integrate import solve_ivp
+state = np.array([0.9, 1.3, -0.6, 0.035, -0.02, 0.05])
+tt = np.arange(301, 468, 1.0)
+q=1e-3; mu_p=q*MU
+def rhs(t_, y):
+    r = y[:3]; v = y[3:]
+    rp = planet_pos(np.array([t_]))[:,0]
+    d = r - rp
+    return np.concatenate([v, -MU*r/np.linalg.norm(r)**3 - mu_p*d/np.linalg.norm(d)**3])
+s1 = solve_ivp(rhs,(420,301),state,method='DOP853',rtol=1e-12,atol=1e-14,t_eval=tt[tt<=420][::-1])
+s2 = solve_ivp(rhs,(420,467),state,method='DOP853',rtol=1e-12,atol=1e-14,t_eval=tt[tt>420])
+ref = np.hstack([s1.y[:3][:,::-1], s2.y[:3]])
+for h in [1.0, 0.75]:
+    integ = Integrator(280, 580, h)
+    t0=time.time()
+    out = integ.propagate(state, -3.0, tt)
+    print(f'h={h}: time={(time.time()-t0)*1000:.1f}ms  max err={np.abs(out-ref).max():.3e} AU')
+"
 ```
 
 ## [45] tool
@@ -1611,7 +2453,86 @@ h=1.0 is fast (11ms) and accurate. Smart reparametrization: at T0=420 the body's
 **tool call: bash**
 
 ```
+cat > work/obj3.py << 'EOF'
+import numpy as np
+import sys
+sys.path.insert(0,'work')
+from threebody import Integrator, planet_pos, MU
+import pandas as pd
 
+_df = pd.read_csv('data/train.csv')
+_obs = _df[_df.gamma.notnull()].copy()
+T_OBS = _obs.t.values.astype(float)
+BETA_O = _obs.beta.values
+GAMMA_O = _obs.gamma.values
+T0 = 420.0
+
+# smoothed observed direction at T0 (local linear fit around 420)
+def _u0():
+    m = (T_OBS>=410)&(T_OBS<=430)
+    pb = np.polyfit(T_OBS[m], BETA_O[m], 1)
+    pg = np.polyfit(T_OBS[m], GAMMA_O[m], 1)
+    b0 = np.deg2rad(np.polyval(pb, T0)); g0 = np.deg2rad(np.polyval(pg, T0))
+    return np.array([np.cos(g0)*np.cos(b0), np.cos(g0)*np.sin(b0), np.sin(g0)])
+U0 = _u0()
+RP0 = planet_pos(np.array([T0]))[:,0]
+
+_INTEG = None
+def integ():
+    global _INTEG
+    if _INTEG is None:
+        _INTEG = Integrator(280, 480, 1.0, T0)
+    return _INTEG
+
+def predict_bg(p, tt=None):
+    # p = (log10 rho0, vx, vy, vz, log10q)
+    if tt is None: tt = T_OBS
+    logrho, vx, vy, vz, logq = p
+    r0 = RP0 + (10**logrho)*U0
+    state = np.array([r0[0], r0[1], r0[2], vx, vy, vz])
+    rb = integ().propagate(state, logq, tt)
+    rp = planet_pos(tt)
+    d = rb - rp
+    beta = np.rad2deg(np.arctan2(d[1], d[0]))
+    gamma = np.rad2deg(np.arcsin(np.clip(d[2]/np.sqrt((d**2).sum(axis=0)),-1,1)))
+    return beta, gamma
+
+def resid(p):
+    bp, gp = predict_bg(p)
+    return np.concatenate([(BETA_O-bp+180)%360-180, GAMMA_O-gp])
+
+def ssr(p):
+    r = resid(p)
+    bad = ~np.isfinite(r)
+    if bad.any(): return 1e12
+    return float(np.sum(r**2))
+
+BOUNDS = [(-2.5, 0.5), (-0.08,0.08), (-0.08,0.08), (-0.08,0.08), (-6.0, -0.2)]
+EOF
+cat > work/run_de.py << 'EOF'
+import numpy as np, time, sys
+sys.path.insert(0,'work')
+from obj3 import ssr, BOUNDS, resid
+from scipy.optimize import differential_evolution, least_squares
+import pickle
+
+best=None
+t0=time.time()
+for seed in [5, 17]:
+    de = differential_evolution(ssr, BOUNDS, seed=seed, maxiter=400, popsize=25,
+                                tol=1e-11, mutation=(0.4,1.3), recombination=0.85,
+                                polish=False, workers=4, updating='deferred')
+    ss = ssr(de.x)
+    print(f'seed={seed}: DE SSR={ss:.3f} RMS={np.sqrt(ss/334):.4f} ({time.time()-t0:.0f}s) x={np.round(de.x,5)}')
+    if best is None or ss<best[0]: best=(ss, de.x)
+ss,x = best
+# polish with LM
+r = least_squares(resid, x, method='lm', max_nfev=40000)
+print('LM SSR=%.4f RMS=%.5f' % (np.sum(r.fun**2), np.sqrt(np.mean(r.fun**2))))
+print('x=', np.round(r.x, 6))
+pickle.dump({'x5': r.x}, open('work/fit3b.pkl','wb'))
+EOF
+timeout 3000 python3 work/run_de.py
 ```
 
 ## [47] tool
@@ -1631,7 +2552,16 @@ h=1.0 is fast (11ms) and accurate. Smart reparametrization: at T0=420 the body's
 **tool call: bash**
 
 ```
-
+timeout 120 python3 -c "
+import numpy as np, time, sys
+sys.path.insert(0,'work')
+from obj3 import ssr, BOUNDS
+x = np.array([-1.0, 0.02, -0.01, 0.03, -3.0])
+t0=time.time()
+for _ in range(20):
+    s = ssr(x)
+print('per eval: %.1f ms, SSR=%.1f' % ((time.time()-t0)/20*1000, s))
+"
 ```
 
 ## [49] tool
@@ -1653,7 +2583,30 @@ The tool has its own timeout. Let me run the search in the background and poll.
 **tool call: bash**
 
 ```
+cat > work/run_de.py << 'EOF'
+import numpy as np, time, sys
+sys.path.insert(0,'work')
+from obj3 import ssr, BOUNDS, resid
+from scipy.optimize import differential_evolution, least_squares
+import pickle
 
+best=None
+t0=time.time()
+for seed in [5, 17, 31]:
+    de = differential_evolution(ssr, BOUNDS, seed=seed, maxiter=250, popsize=18,
+                                tol=1e-11, mutation=(0.4,1.3), recombination=0.85,
+                                polish=False, workers=4, updating='deferred')
+    ss = ssr(de.x)
+    print(f'seed={seed}: DE SSR={ss:.3f} RMS={np.sqrt(ss/334):.4f} ({time.time()-t0:.0f}s) x={np.round(de.x,5)}', flush=True)
+    if best is None or ss<best[0]: best=(ss, de.x)
+ss,x = best
+r = least_squares(resid, x, method='lm', max_nfev=40000)
+print('LM SSR=%.4f RMS=%.5f' % (np.sum(r.fun**2), np.sqrt(np.mean(r.fun**2))), flush=True)
+print('x=', np.round(r.x, 6), flush=True)
+pickle.dump({'x5': r.x}, open('work/fit3b.pkl','wb'))
+EOF
+cd /workspace && nohup python3 work/run_de.py > work/de.log 2>&1 &
+echo "started PID $!"
 ```
 
 ## [51] tool
@@ -1690,7 +2643,74 @@ While the search runs, let me build a fallback empirical prediction (quartic geo
 **tool call: bash**
 
 ```
+sleep 30 && cat work/de.log; echo "---"; cat > work/predict_poly.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+import sys
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+test = pd.read_csv('data/test.csv')
+tt = test.t.values.astype(float)
+T0 = 420.0
+
+def fit_and_predict(deg):
+    tau_o = (t-T0)/100.0
+    def build(c, tau):
+        C = c.reshape(3, deg+1)
+        R = np.zeros((3, len(tau)))
+        for k in range(deg+1):
+            R += C[:, k:k+1]*tau[None,:]**k
+        return R
+    def resid(c):
+        R = build(c, tau_o)
+        nrm = np.sqrt((R**2).sum(axis=0))
+        beta = np.rad2deg(np.arctan2(R[1],R[0]))
+        gamma = np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+        return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+    rng = np.random.default_rng(0)
+    best=None
+    for s in range(80):
+        c0 = rng.normal(size=3*(deg+1))*3; c0[:3]+=[1,0,0]
+        r = least_squares(resid, c0, method='lm', max_nfev=20000)
+        ss=np.sum(r.fun**2)
+        if best is None or ss<best[0]: best=(ss,r)
+    ss, r = best
+    # covariance
+    dof = 2*len(t) - len(r.x)
+    s2 = ss/dof
+    J = r.jac
+    try:
+        cov = s2*np.linalg.inv(J.T@J)
+    except Exception:
+        cov = s2*np.linalg.pinv(J.T@J)
+    # numeric jacobian of prediction wrt params
+    def pred_gamma(c, tau):
+        R = build(c, tau)
+        nrm = np.sqrt((R**2).sum(axis=0))
+        return np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+    tau_t = (tt-T0)/100.0
+    g_pred = pred_gamma(r.x, tau_t)
+    eps=1e-6
+    G = np.zeros((len(tt), len(r.x)))
+    for j in range(len(r.x)):
+        d = np.zeros_like(r.x); d[j]=eps
+        G[:,j] = (pred_gamma(r.x+d, tau_t)-pred_gamma(r.x-d, tau_t))/(2*eps)
+    var_model = np.maximum(0, np.einsum('ij,jk,ik->i', G, cov, G))
+    noise = 0.66
+    sd = np.sqrt(var_model + noise**2)
+    return np.sqrt(ss/334), g_pred, sd, var_model
+
+for deg in [3,4,5]:
+    rms, gp, sd, vm = fit_and_predict(deg)
+    print(f'=== degree {deg}: in-sample RMS={rms:.4f} deg ===')
+    for i in range(len(tt)):
+        print(f'  t={tt[i]:5.0f} gamma_pred={gp[i]:8.2f}  sd={sd[i]:6.2f}  [{gp[i]-1.96*sd[i]:8.2f},{gp[i]+1.96*sd[i]:8.2f}]')
+EOF
+timeout 900 python3 work/predict_poly.py
 ```
 
 ## [53] tool
@@ -1762,7 +2782,62 @@ Degree-4 and degree-5 agree gamma keeps rising to ~+48-51; degree-3 (worse fit) 
 **tool call: bash**
 
 ```
+cat work/de.log; echo "==="; cat > work/write_placeholder.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+test = pd.read_csv('data/test.csv')
+tt = test.t.values.astype(float)
+T0 = 420.0
+deg = 4
+tau_o = (t-T0)/100.0
+def build(c, tau):
+    C = c.reshape(3, deg+1)
+    R = np.zeros((3, len(tau)))
+    for k in range(deg+1):
+        R += C[:, k:k+1]*tau[None,:]**k
+    return R
+def resid(c):
+    R = build(c, tau_o)
+    nrm = np.sqrt((R**2).sum(axis=0))
+    beta = np.rad2deg(np.arctan2(R[1],R[0]))
+    gamma = np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+    return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+rng = np.random.default_rng(0)
+best=None
+for s in range(80):
+    c0 = rng.normal(size=3*(deg+1))*3; c0[:3]+=[1,0,0]
+    r = least_squares(resid, c0, method='lm', max_nfev=20000)
+    ss=np.sum(r.fun**2)
+    if best is None or ss<best[0]: best=(ss,r)
+ss, r = best
+dof = 2*len(t)-len(r.x); s2 = ss/dof
+cov = s2*np.linalg.pinv(r.jac.T@r.jac)
+def pred_gamma(c, tau):
+    R = build(c, tau)
+    nrm = np.sqrt((R**2).sum(axis=0))
+    return np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+tau_t=(tt-T0)/100.0
+gp = pred_gamma(r.x, tau_t)
+eps=1e-6
+G=np.zeros((len(tt),len(r.x)))
+for j in range(len(r.x)):
+    d=np.zeros_like(r.x); d[j]=eps
+    G[:,j]=(pred_gamma(r.x+d,tau_t)-pred_gamma(r.x-d,tau_t))/(2*eps)
+var_model=np.maximum(0,np.einsum('ij,jk,ik->i',G,cov,G))
+sd = np.sqrt(var_model + 0.66**2)
+sd = sd*1.5  # inflate for extrapolation/model risk
+out = pd.DataFrame({'t':test.t.values,'y_pred':gp,'y_lower':gp-1.96*sd,'y_upper':gp+1.96*sd})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string(index=False))
+print('rows:', len(out))
+EOF
+python3 work/write_placeholder.py
 ```
 
 ## [55] tool
@@ -1847,7 +2922,7 @@ Placeholder saved. Now let me monitor the three-body global search.
 **tool call: bash**
 
 ```
-
+sleep 240 && cat work/de.log
 ```
 
 ## [57] tool
@@ -1864,7 +2939,7 @@ Placeholder saved. Now let me monitor the three-body global search.
 **tool call: bash**
 
 ```
-
+cat work/de.log; echo "---"; ps aux | grep run_de | grep -v grep | head -3
 ```
 
 ## [59] tool
@@ -1926,7 +3001,7 @@ The 5-param DE also failed (RMS 5°, stuck at bounds). Let me stop it and instea
 **tool call: bash**
 
 ```
-
+for p in /proc/[0-9]*/cmdline; do tr '\0' ' ' < $p 2>/dev/null | grep -q run_de && echo "$(basename $(dirname $p)) running"; done; echo "---kill---"; for p in /proc/[0-9]*/cmdline; do pid=$(basename $(dirname $p)); tr '\0' ' ' < $p 2>/dev/null | grep -q run_de && kill $pid 2>/dev/null && echo "killed $pid"; done
 ```
 
 ## [61] tool
@@ -1952,7 +3027,58 @@ killed 609
 **tool call: bash**
 
 ```
+cat > work/examine_quartic.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+T0 = 420.0
+deg = 4
+tau_o = (t-T0)/100.0
+def build(c, tau):
+    C = c.reshape(3, deg+1)
+    R = np.zeros((3, len(tau)))
+    for k in range(deg+1):
+        R += C[:, k:k+1]*tau[None,:]**k
+    return R
+def resid(c):
+    R = build(c, tau_o)
+    nrm = np.sqrt((R**2).sum(axis=0))
+    beta = np.rad2deg(np.arctan2(R[1],R[0]))
+    gamma = np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+    return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+rng = np.random.default_rng(0)
+best=None
+for s in range(80):
+    c0 = rng.normal(size=3*(deg+1))*3; c0[:3]+=[1,0,0]
+    r = least_squares(resid, c0, method='lm', max_nfev=20000)
+    ss=np.sum(r.fun**2)
+    if best is None or ss<best[0]: best=(ss,r)
+ss,r = best
+print('RMS', np.sqrt(ss/334))
+tt = np.arange(301, 468, 1.0)
+tau = (tt-T0)/100.0
+R = build(r.x, tau)
+dist = np.sqrt((R**2).sum(axis=0))
+print('relative distance (arb units): min=%.3f at t=%d, range %.3f..%.3f' % (dist.min(), tt[np.argmin(dist)], dist[0], dist[-1]))
+# print shape
+for i in range(0, len(tt), 10):
+    print(f't={tt[i]:4d}  R=({R[0,i]:+7.3f},{R[1,i]:+7.3f},{R[2,i]:+7.3f})  |R|={dist[i]:6.3f}')
+# does R(t) look like a conic about origin? Check angular momentum h = R x R' (should be const for Kepler)
+# numeric derivative
+dR = build(r.x, (tt[1:]-T0)/100.0) - build(r.x, (tt[:-1]-T0)/100.0)
+Rmid = 0.5*(R[:,1:]+R[:,:-1])
+h = np.cross(Rmid, dR, axis=0)
+hn = np.sqrt((h**2).sum(axis=0))
+hu = h/hn
+print('ang mom direction spread (deg):', np.rad2deg(np.std(hu,axis=1)))
+print('hu sample:', np.round(hu[:,::30],3))
+EOF
+python3 work/examine_quartic.py
 ```
 
 ## [63] tool
@@ -1980,7 +3106,7 @@ relative distance (arb units): min=698.337 at t=422, range 23616.045..3716.010
 **tool call: bash**
 
 ```
-
+sed -i 's/t={tt\[i\]:4d}/t={tt[i]:4.0f}/' work/examine_quartic.py && python3 work/examine_quartic.py
 ```
 
 ## [65] tool
@@ -2065,7 +3191,107 @@ Angular momentum of the relative path swings 10-15° — genuinely non-Keplerian
 **tool call: bash**
 
 ```
+cat > work/fit_from_quartic.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+import sys, pickle, time
+sys.path.insert(0,'work')
+from threebody import Integrator, planet_pos, MU, e_p, n_p, T_p, OM_p
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+T0 = 420.0
+
+# ---- quartic fit ----
+deg=4
+tau_o=(t-T0)/100.0
+def build(c, tau):
+    C=c.reshape(3,deg+1); R=np.zeros((3,len(tau)))
+    for k in range(deg+1): R+=C[:,k:k+1]*tau[None,:]**k
+    return R
+def resid_q(c):
+    R=build(c,tau_o); nrm=np.sqrt((R**2).sum(axis=0))
+    beta=np.rad2deg(np.arctan2(R[1],R[0])); gamma=np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+    return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+rng=np.random.default_rng(0); best=None
+for s in range(80):
+    c0=rng.normal(size=3*(deg+1))*3; c0[:3]+=[1,0,0]
+    r=least_squares(resid_q,c0,method='lm',max_nfev=20000)
+    ss=np.sum(r.fun**2)
+    if best is None or ss<best[0]: best=(ss,r)
+C = best[1].x.reshape(3,deg+1)
+# R_q(T0) and derivative wrt day
+Rq0 = C[:,0]
+dRq0 = np.zeros(3)
+for k in range(1,deg+1): dRq0 += C[:,k]*k*0  # tau=0 at T0 -> only k=1 term /100
+dRq0 = C[:,1]/100.0   # dR/dt at T0 (arb units per day)
+u0 = Rq0/np.linalg.norm(Rq0)
+print('quartic RMS=%.4f, |Rq(T0)|=%.1f arb, u0=%s' % (np.sqrt(best[0]/334), np.linalg.norm(Rq0), np.round(u0,4)))
+
+# ---- planet state at T0 ----
+def planet_state(tt):
+    E = float(__import__('model').kepler_E(np.array([np.deg2rad(n_p)*(tt-T_p)]), e_p)[0])
+    cE,sE=np.cos(E),np.sin(E)
+    rr = 1-e_p*cE
+    lam = OM_p + 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    pos = np.array([rr*np.cos(lam), rr*np.sin(lam), 0.0])
+    nr = np.deg2rad(n_p)
+    vx_op = -nr*np.sin(E)/(1-e_p*cE)
+    vy_op = nr*np.sqrt(1-e_p**2)*np.cos(E)/(1-e_p*cE)
+    cw,sw = np.cos(OM_p),np.sin(OM_p)
+    vel = np.array([cw*vx_op - sw*vy_op, sw*vx_op + cw*vy_op, 0.0])
+    return pos, vel
+RP0, VP0 = planet_state(T0)
+print('planet pos=%s vel=%s |v|=%.5f' % (np.round(RP0,4), np.round(VP0,6), np.linalg.norm(VP0)))
+
+# ---- three-body resid ----
+_INTEG=None
+def integ():
+    global _INTEG
+    if _INTEG is None: _INTEG = Integrator(280,480,0.5,T0)
+    return _INTEG
+def resid(p):
+    # p = (state 6, log10q)
+    rb = integ().propagate(p[:6], p[6], t)
+    rp = planet_pos(t)
+    d = rb - rp
+    beta = np.rad2deg(np.arctan2(d[1],d[0]))
+    gamma = np.rad2deg(np.arcsin(np.clip(d[2]/np.sqrt((d**2).sum(axis=0)),-1,1)))
+    return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+
+bestfit=None
+t0=time.time()
+for logrho in np.linspace(-3.0, 0.7, 40):
+    rho0 = 10**logrho
+    s = rho0/np.linalg.norm(Rq0)
+    r0 = RP0 + rho0*u0
+    v0 = VP0 + s*dRq0
+    p0 = np.concatenate([r0, v0, [-3.0]])
+    try:
+        r = least_squares(resid, p0, method='lm', max_nfev=30000)
+        ss = np.sum(r.fun**2)
+        if bestfit is None or ss<bestfit[0]:
+            bestfit=(ss,r.x,logrho)
+            print('  logrho=%.2f -> SSR=%.4f RMS=%.4f (%.0fs)' % (logrho, ss, np.sqrt(ss/334), time.time()-t0), flush=True)
+    except Exception as ex:
+        pass
+ss,x,lr = bestfit
+print('BEST: SSR=%.4f RMS=%.5f from logrho0=%.2f' % (ss, np.sqrt(ss/334), lr))
+print('state=%s logq=%.4f' % (np.round(x[:6],7), x[6]))
+# diagnostics
+rb = integ().propagate(x[:6], x[6], t)
+rp = planet_pos(t); d=rb-rp; dist=np.sqrt((d**2).sum(axis=0))
+print('geocentric dist min=%.4f AU at t=%.0f (range %.4f..%.4f)' % (dist.min(), t[np.argmin(dist)], dist[0], dist[-1]))
+rh = np.sqrt((rb**2).sum(axis=0))
+print('heliocentric r: %.4f..%.4f' % (rh.min(), rh.max()))
+print('planet mass ratio q = %.3e (planet/star)' % (10**x[6]))
+pickle.dump({'x':x,'SSR':ss}, open('work/best3.pkl','wb'))
+EOF
+nohup python3 work/fit_from_quartic.py > work/fq.log 2>&1 &
+echo "started $!"; sleep 90; cat work/fq.log
 ```
 
 ## [67] tool
@@ -2106,7 +3332,7 @@ Running but slow. Let me poll for progress.
 **tool call: bash**
 
 ```
-
+sleep 100; grep logrho work/fq.log | tail -20
 ```
 
 ## [69] tool
@@ -2140,7 +3366,104 @@ Too slow with overflows. Let me parallelize with bounded LM and a coarser integr
 **tool call: bash**
 
 ```
+for p in /proc/[0-9]*/cmdline; do pid=$(basename $(dirname $p)); tr '\0' ' ' < $p 2>/dev/null | grep -q fit_from_quartic && kill $pid 2>/dev/null && echo "killed $pid"; done
+cat > work/gridfit.py << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+import sys, pickle, time
+sys.path.insert(0,'work')
+from threebody import Integrator, planet_pos, MU, e_p, n_p, T_p, OM_p
+from model import kepler_E
+import multiprocessing as mp
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+T0 = 420.0
+
+deg=4
+tau_o=(t-T0)/100.0
+def build(c, tau):
+    C=c.reshape(3,deg+1); R=np.zeros((3,len(tau)))
+    for k in range(deg+1): R+=C[:,k:k+1]*tau[None,:]**k
+    return R
+def resid_q(c):
+    R=build(c,tau_o); nrm=np.sqrt((R**2).sum(axis=0))
+    beta=np.rad2deg(np.arctan2(R[1],R[0])); gamma=np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+    return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+rng=np.random.default_rng(0); best=None
+for s in range(80):
+    c0=rng.normal(size=3*(deg+1))*3; c0[:3]+=[1,0,0]
+    r=least_squares(resid_q,c0,method='lm',max_nfev=20000)
+    ss=np.sum(r.fun**2)
+    if best is None or ss<best[0]: best=(ss,r)
+C = best[1].x.reshape(3,deg+1)
+Rq0 = C[:,0]; dRq0 = C[:,1]/100.0
+u0 = Rq0/np.linalg.norm(Rq0)
+
+def planet_state(tt):
+    E = float(kepler_E(np.array([np.deg2rad(n_p)*(tt-T_p)]), e_p)[0])
+    cE,sE=np.cos(E),np.sin(E)
+    rr = 1-e_p*cE
+    lam = OM_p + 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    pos = np.array([rr*np.cos(lam), rr*np.sin(lam), 0.0])
+    nr = np.deg2rad(n_p)
+    vx_op = -nr*np.sin(E)/(1-e_p*cE)
+    vy_op = nr*np.sqrt(1-e_p**2)*np.cos(E)/(1-e_p*cE)
+    cw,sw = np.cos(OM_p),np.sin(OM_p)
+    vel = np.array([cw*vx_op - sw*vy_op, sw*vx_op + cw*vy_op, 0.0])
+    return pos, vel
+RP0, VP0 = planet_state(T0)
+
+_INTEG=None
+def integ():
+    global _INTEG
+    if _INTEG is None: _INTEG = Integrator(280,480,1.0,T0)
+    return _INTEG
+def resid(p):
+    rb = integ().propagate(p[:6], p[6], t)
+    rp = planet_pos(t)
+    d = rb - rp
+    beta = np.rad2deg(np.arctan2(d[1],d[0]))
+    gamma = np.rad2deg(np.arcsin(np.clip(d[2]/np.sqrt((d**2).sum(axis=0)),-1,1)))
+    return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+
+LB = np.array([-8,-8,-8,-0.15,-0.15,-0.15,-9.0])
+UB = np.array([ 8, 8, 8, 0.15, 0.15, 0.15,-0.3])
+
+def try_logrho(logrho):
+    rho0 = 10**logrho
+    s = rho0/np.linalg.norm(Rq0)
+    r0 = RP0 + rho0*u0
+    v0 = VP0 + s*dRq0
+    p0 = np.concatenate([r0, v0, [-3.0]])
+    try:
+        r = least_squares(resid, p0, bounds=(LB,UB), method='trf', max_nfev=3000, xtol=1e-13, ftol=1e-13)
+        return (np.sum(r.fun**2), logrho, r.x)
+    except Exception as ex:
+        return (np.inf, logrho, None)
+
+if __name__=='__main__':
+    grid = np.linspace(-3.0, 0.7, 38)
+    t0=time.time()
+    with mp.Pool(4) as pool:
+        results = pool.map(try_logrho, grid)
+    results = [r for r in results if r[2] is not None]
+    results.sort(key=lambda z: z[0])
+    for ss,lr,x in results[:8]:
+        print('logrho0=%.2f SSR=%.4f RMS=%.4f' % (lr, ss, np.sqrt(ss/334)), flush=True)
+    ss,lr,x = results[0]
+    print('BEST: logrho0=%.2f SSR=%.4f RMS=%.5f (%.0fs)' % (lr, ss, np.sqrt(ss/334), time.time()-t0))
+    print('state=%s logq=%.4f q=%.3e' % (np.round(x[:6],7), x[6], 10**x[6]))
+    rb = integ().propagate(x[:6], x[6], t)
+    rp = planet_pos(t); d=rb-rp; dist=np.sqrt((d**2).sum(axis=0))
+    print('geocentric dist min=%.4f AU at t=%.0f (range %.4f..%.4f)' % (dist.min(), t[np.argmin(dist)], dist[0], dist[-1]))
+    pickle.dump({'x':x,'SSR':ss}, open('work/best3.pkl','wb'))
+EOF
+nohup python3 work/gridfit.py > work/gf.log 2>&1 &
+echo "started $!"; sleep 110; cat work/gf.log
 ```
 
 ## [71] tool
@@ -2162,7 +3485,7 @@ killed 876
 **tool call: bash**
 
 ```
-
+sleep 110; cat work/gf.log
 ```
 
 ## [73] tool
@@ -2185,7 +3508,7 @@ cat: work/gf.log: No such file or directory
 **tool call: bash**
 
 ```
-
+ls -la work/gf.log 2>&1; for p in /proc/[0-9]*/cmdline; do pid=$(basename $(dirname $p)); tr '\0' ' ' < $p 2>/dev/null | grep -q gridfit && echo "running $pid"; done; sleep 60; echo "---"; cat work/gf.log 2>&1
 ```
 
 ## [75] tool
@@ -2212,7 +3535,7 @@ cat: work/gf.log: No such file or directory
 **tool call: bash**
 
 ```
-
+ls -la /proc/1000/fd/1 2>&1; readlink /proc/1000/fd/1 2>&1; cat /proc/1000/cwd 2>/dev/null; readlink /proc/1000/cwd 2>&1; ls -la /workspace/work/*.log 2>&1
 ```
 
 ## [77] tool
@@ -2258,7 +3581,7 @@ The background process handling is unreliable here. Let me check the tool's time
 **tool call: bash**
 
 ```
-
+date +%s; sleep 100; date +%s; echo "slept 100 ok"
 ```
 
 ## [79] tool
@@ -2280,7 +3603,8 @@ slept 100 ok
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -u -c "import work.gridfit" 2>&1 | head -5 &
+sleep 2; cd /workspace && nohup python3 -u work/gridfit.py > work/gf.log 2>&1 & echo "started $!"
 ```
 
 ## [81] tool
@@ -2304,7 +3628,7 @@ started 1155
 **tool call: bash**
 
 ```
-
+sleep 95; cat /workspace/work/gf.log
 ```
 
 ## [83] tool
@@ -2332,7 +3656,98 @@ The heredoc got interrupted before writing the file. Let me recreate it cleanly 
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/gridfit.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+import sys, pickle, time
+sys.path.insert(0,'work')
+from threebody import Integrator, planet_pos, MU, e_p, n_p, T_p, OM_p
+from model import kepler_E
+import multiprocessing as mp
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+T0 = 420.0
+deg=4
+tau_o=(t-T0)/100.0
+def build(c, tau):
+    C=c.reshape(3,deg+1); R=np.zeros((3,len(tau)))
+    for k in range(deg+1): R+=C[:,k:k+1]*tau[None,:]**k
+    return R
+def resid_q(c):
+    R=build(c,tau_o); nrm=np.sqrt((R**2).sum(axis=0))
+    beta=np.rad2deg(np.arctan2(R[1],R[0])); gamma=np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+    return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+rng=np.random.default_rng(0); best=None
+for s in range(80):
+    c0=rng.normal(size=3*(deg+1))*3; c0[:3]+=[1,0,0]
+    r=least_squares(resid_q,c0,method='lm',max_nfev=20000)
+    ss=np.sum(r.fun**2)
+    if best is None or ss<best[0]: best=(ss,r)
+C = best[1].x.reshape(3,deg+1)
+Rq0 = C[:,0]; dRq0 = C[:,1]/100.0
+u0 = Rq0/np.linalg.norm(Rq0)
+def planet_state(tt):
+    E = float(kepler_E(np.array([np.deg2rad(n_p)*(tt-T_p)]), e_p)[0])
+    cE,sE=np.cos(E),np.sin(E)
+    rr = 1-e_p*cE
+    lam = OM_p + 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    pos = np.array([rr*np.cos(lam), rr*np.sin(lam), 0.0])
+    nr = np.deg2rad(n_p)
+    vx_op = -nr*np.sin(E)/(1-e_p*cE)
+    vy_op = nr*np.sqrt(1-e_p**2)*np.cos(E)/(1-e_p*cE)
+    cw,sw = np.cos(OM_p),np.sin(OM_p)
+    vel = np.array([cw*vx_op - sw*vy_op, sw*vx_op + cw*vy_op, 0.0])
+    return pos, vel
+RP0, VP0 = planet_state(T0)
+_INTEG=None
+def integ():
+    global _INTEG
+    if _INTEG is None: _INTEG = Integrator(280,480,1.0,T0)
+    return _INTEG
+def resid(p):
+    rb = integ().propagate(p[:6], p[6], t)
+    rp = planet_pos(t)
+    d = rb - rp
+    beta = np.rad2deg(np.arctan2(d[1],d[0]))
+    gamma = np.rad2deg(np.arcsin(np.clip(d[2]/np.sqrt((d**2).sum(axis=0)),-1,1)))
+    return np.concatenate([(beta_o-beta+180)%360-180, gamma_o-gamma])
+LB = np.array([-8,-8,-8,-0.15,-0.15,-0.15,-9.0])
+UB = np.array([ 8, 8, 8, 0.15, 0.15, 0.15,-0.3])
+def try_logrho(logrho):
+    rho0 = 10**logrho
+    s = rho0/np.linalg.norm(Rq0)
+    r0 = RP0 + rho0*u0
+    v0 = VP0 + s*dRq0
+    p0 = np.concatenate([r0, v0, [-3.0]])
+    try:
+        r = least_squares(resid, p0, bounds=(LB,UB), method='trf', max_nfev=3000, xtol=1e-13, ftol=1e-13)
+        return (float(np.sum(r.fun**2)), float(logrho), r.x.tolist())
+    except Exception:
+        return (float('inf'), float(logrho), None)
+if __name__=='__main__':
+    grid = np.linspace(-3.0, 0.7, 38)
+    t0=time.time()
+    with mp.Pool(4) as pool:
+        results = pool.map(try_logrho, grid)
+    results = [r for r in results if r[2] is not None]
+    results.sort(key=lambda z: z[0])
+    for ss,lr,x in results[:8]:
+        print('logrho0=%.2f SSR=%.4f RMS=%.4f' % (lr, ss, np.sqrt(ss/334)), flush=True)
+    ss,lr,xl = results[0]
+    x = np.array(xl)
+    print('BEST: logrho0=%.2f SSR=%.4f RMS=%.5f (%.0fs)' % (lr, ss, np.sqrt(ss/334), time.time()-t0), flush=True)
+    print('state=%s logq=%.4f q=%.3e' % (np.round(x[:6],7), x[6], 10**x[6]), flush=True)
+    rb = integ().propagate(x[:6], x[6], t)
+    rp = planet_pos(t); d=rb-rp; dist=np.sqrt((d**2).sum(axis=0))
+    print('geocentric dist min=%.4f AU at t=%.0f (range %.4f..%.4f)' % (dist.min(), t[np.argmin(dist)], dist[0], dist[-1]), flush=True)
+    pickle.dump({'x':x,'SSR':ss}, open('work/best3.pkl','wb'))
+    print('saved', flush=True)
+PYEOF
+ls -la work/gridfit.py && python3 -c "compile(open('work/gridfit.py').read(),'g','exec')" && echo "SYNTAX OK"
 ```
 
 ## [85] tool
@@ -2354,7 +3769,7 @@ SYNTAX OK
 **tool call: bash**
 
 ```
-
+cd /workspace && nohup python3 -u work/gridfit.py > work/gf.log 2>&1 & echo "started $!"; sleep 3; cat work/gf.log
 ```
 
 ## [87] tool
@@ -2378,7 +3793,7 @@ started 1188
 **tool call: bash**
 
 ```
-
+sleep 95; cat /workspace/work/gf.log
 ```
 
 ## [89] tool
@@ -2397,7 +3812,7 @@ started 1188
 **tool call: bash**
 
 ```
-
+sleep 95; cat /workspace/work/gf.log; echo "---procs---"; for p in /proc/[0-9]*/cmdline; do pid=$(basename $(dirname $p)); tr '\0' ' ' < $p 2>/dev/null | grep -q gridfit && echo "running $pid"; done
 ```
 
 ## [91] tool
@@ -2432,7 +3847,7 @@ running 1220
 **tool call: bash**
 
 ```
-
+sleep 95; cat /workspace/work/gf.log
 ```
 
 ## [93] tool
@@ -2463,7 +3878,10 @@ It's too slow (bounded LM with tight tolerances). Let me kill it and use faster 
 **tool call: bash**
 
 ```
-
+for p in /proc/[0-9]*/cmdline; do pid=$(basename $(dirname $p)); tr '\0' ' ' < $p 2>/dev/null | grep -q gridfit && kill -9 $pid 2>/dev/null; done; echo killed
+cd /workspace && sed -i "s/max_nfev=3000, xtol=1e-13, ftol=1e-13/max_nfev=400/" work/gridfit.py
+sed -i "s/        return (float(np.sum(r.fun\*\*2)), float(logrho), r.x.tolist())/        ss=float(np.sum(r.fun**2)); print('logrho=%.2f SSR=%.2f'%(logrho,ss),flush=True); return (ss, float(logrho), r.x.tolist())/" work/gridfit.py
+python3 -c "compile(open('work/gridfit.py').read(),'g','exec')" && echo OK
 ```
 
 ## [95] tool
@@ -2481,7 +3899,7 @@ It's too slow (bounded LM with tight tolerances). Let me kill it and use faster 
 **tool call: bash**
 
 ```
-
+cd /workspace && grep -n "max_nfev\|print('logrho" work/gridfit.py
 ```
 
 ## [97] tool
@@ -2507,7 +3925,17 @@ It's too slow (bounded LM with tight tolerances). Let me kill it and use faster 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - << 'PYEOF'
+src = open('work/gridfit.py').read()
+src = src.replace(
+"        r = least_squares(resid, p0, bounds=(LB,UB), method='trf', max_nfev=3000, xtol=1e-13, ftol=1e-13)",
+"        r = least_squares(resid, p0, bounds=(LB,UB), method='trf', max_nfev=400)")
+src = src.replace(
+"        return (float(np.sum(r.fun**2)), float(logrho), r.x.tolist())",
+"        ss=float(np.sum(r.fun**2)); print('logrho=%.2f SSR=%.2f'%(logrho,ss),flush=True); return (ss, float(logrho), r.x.tolist())")
+open('work/gridfit.py','w').write(src)
+PYEOF
+grep -n "max_nfev=400\|print('logrho=" work/gridfit.py
 ```
 
 ## [99] tool
@@ -2530,7 +3958,7 @@ It's too slow (bounded LM with tight tolerances). Let me kill it and use faster 
 **tool call: bash**
 
 ```
-
+cd /workspace && nohup python3 -u work/gridfit.py > work/gf.log 2>&1 & echo "started $!"; sleep 5; cat work/gf.log
 ```
 
 ## [101] tool
@@ -2558,7 +3986,7 @@ logrho=-2.00 SSR=1786207.75
 **tool call: bash**
 
 ```
-
+sleep 90; cat /workspace/work/gf.log
 ```
 
 ## [103] tool
@@ -2742,7 +4170,157 @@ The best physics fit is still 2.33° (vs 0.66° noise) — a structural problem.
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/fit_inclined.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+import sys, pickle, time
+sys.path.insert(0,'work')
+from model import kepler_E, propagate_universal
+import multiprocessing as mp
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float)
+beta_o = obs.beta.values; gamma_o = obs.gamma.values
+T0 = 420.0
+
+# planet alpha-fit params (fixed): e_p, n_p, T_p, and periapsis longitude om0 (planar approx)
+e_p, n_p, T_p = 0.19283, 0.999727, 219.4857
+om0 = np.deg2rad(551.4301 - 360.0)   # omega_p (planar)
+P_p = 360/n_p
+MU = (2*np.pi/P_p)**2
+
+# quartic for body init
+deg=4; tau_o=(t-T0)/100.0
+def build(c,tau):
+    C=c.reshape(3,deg+1); R=np.zeros((3,len(tau)))
+    for k in range(deg+1): R+=C[:,k:k+1]*tau[None,:]**k
+    return R
+def resid_q(c):
+    R=build(c,tau_o); nrm=np.sqrt((R**2).sum(axis=0))
+    b=np.rad2deg(np.arctan2(R[1],R[0])); g=np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+    return np.concatenate([(beta_o-b+180)%360-180, gamma_o-g])
+rng=np.random.default_rng(0); bq=None
+for s in range(80):
+    c0=rng.normal(size=3*(deg+1))*3; c0[:3]+=[1,0,0]
+    r=least_squares(resid_q,c0,method='lm',max_nfev=20000)
+    ss=np.sum(r.fun**2)
+    if bq is None or ss<bq[0]: bq=(ss,r)
+Cq = bq[1].x.reshape(3,deg+1)
+Rq0=Cq[:,0]; dRq0=Cq[:,1]/100.0; u0=Rq0/np.linalg.norm(Rq0)
+
+def planet_pos_inc(tt, ip, Op, wp):
+    # inclined Kepler, a_p=1
+    E = kepler_E(np.deg2rad(n_p)*(np.atleast_1d(tt).astype(float)-T_p), e_p)
+    nu = 2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2), np.sqrt(1-e_p)*np.cos(E/2))
+    rr = 1 - e_p*np.cos(E)
+    u = wp + nu
+    ci,si = np.cos(ip), np.sin(ip)
+    cO,sO = np.cos(Op), np.sin(Op)
+    x = rr*(cO*np.cos(u) - sO*np.sin(u)*ci)
+    y = rr*(sO*np.cos(u) + cO*np.sin(u)*ci)
+    z = rr*(np.sin(u)*si)
+    return np.stack([x,y,z],axis=0)
+
+def planet_vel_inc(tt, ip, Op, wp):
+    # numeric derivative
+    h=1e-4
+    return (planet_pos_inc(tt+h,ip,Op,wp)-planet_pos_inc(tt-h,ip,Op,wp))/(2*h)
+
+# numerical 3-body propagation using solve_ivp-free RK on grid, but with inclined planet:
+# reuse Integrator machinery? It assumes planar planet. Redefine propagate here with inclined planet grid.
+class IntegInc:
+    def __init__(self, t0, t1, h, T0, ip, Op, wp):
+        self.h=h; self.T0=T0; self.t0g=t0
+        nf=int(round((t1-t0)/(h/2)))+1
+        self.tf=t0+np.arange(nf)*(h/2)
+        self.Pf=planet_pos_inc(self.tf, ip, Op, wp)
+        self.i0=int(round((T0-t0)/(h/2)))
+    def _acc(self,r,pi):
+        rp=self.Pf[:,pi]; d=r-rp
+        rn2=np.dot(r,r); dn2=np.dot(d,d)
+        return -MU*r/(rn2**1.5)-self.mu_p*d/(dn2**1.5)
+    def prop(self,state,logq,tt):
+        self.mu_p=(10**logq)*MU
+        h=self.h; hh=h/2; i0=self.i0
+        out=np.zeros((3,len(tt)))
+        jset={int(round((x-self.t0g)/hh)):k for k,x in enumerate(tt)}
+        r=state[:3].astype(float).copy(); v=state[3:].astype(float).copy()
+        rb=r.copy(); vb=v.copy()
+        for i in range(i0,1,-2):
+            if i in jset: out[:,jset[i]]=rb
+            a1=self._acc(rb,i); k1=vb
+            a2=self._acc(rb-hh*k1,i-1); k2=vb-hh*a1
+            a3=self._acc(rb-hh*k2,i-1); k3=vb-hh*a2
+            a4=self._acc(rb-h*k3,i-2); k4=vb-h*a3
+            rb=rb-h/6*(k1+2*k2+2*k3+k4); vb=vb-h/6*(a1+2*a2+2*a3+a4)
+        rf=r.copy(); vf=v.copy()
+        for i in range(i0,len(self.tf)-2,2):
+            if i in jset: out[:,jset[i]]=rf
+            a1=self._acc(rf,i); k1=vf
+            a2=self._acc(rf+hh*k1,i+1); k2=vf+hh*a1
+            a3=self._acc(rf+hh*k2,i+1); k3=vf+hh*a2
+            a4=self._acc(rf+h*k3,i+2); k4=vf+h*a3
+            rf=rf+h/6*(k1+2*k2+2*k3+k4); vf=vf+h/6*(a1+2*a2+2*a3+a4)
+        return out
+
+_CACHE={}
+def get_integ(ip, Op, wp):
+    key=(round(ip,6),round(Op,6),round(wp,6))
+    if key not in _CACHE:
+        _CACHE[key]=IntegInc(280,480,1.0,T0,ip,Op,wp)
+    return _CACHE[key]
+
+def resid(p):
+    # p = state(6), logq, ip_deg, Op_deg  (wp fixed = om0)
+    ip=np.deg2rad(p[7]); Op=np.deg2rad(p[8]); wp=om0
+    rb=get_integ(ip,Op,wp).prop(p[:6],p[6],t)
+    rp=planet_pos_inc(t,ip,Op,wp)
+    d=rb-rp
+    b=np.rad2deg(np.arctan2(d[1],d[0])); g=np.rad2deg(np.arcsin(np.clip(d[2]/np.sqrt((d**2).sum(axis=0)),-1,1)))
+    return np.concatenate([(beta_o-b+180)%360-180, gamma_o-g])
+
+LB=np.array([-8,-8,-8,-0.15,-0.15,-0.15,-9.0, 0.0, 0.0])
+UB=np.array([ 8, 8, 8, 0.15, 0.15, 0.15,-0.3, 60.0, 360.0])
+
+def try_init(arg):
+    logrho, ip0, Op0 = arg
+    # build init state using PLANAR planet for velocity (approx)
+    rho0=10**logrho; s=rho0/np.linalg.norm(Rq0)
+    ipr=np.deg2rad(ip0); Opr=np.deg2rad(Op0)
+    rp0=planet_pos_inc(np.array([T0]),ipr,Opr,om0)[:,0]
+    vp0=planet_vel_inc(np.array([T0]),ipr,Opr,om0)[:,0]
+    r0=rp0+rho0*u0; v0=vp0+s*dRq0
+    p0=np.concatenate([r0,v0,[-3.0],[ip0],[Op0]])
+    try:
+        r=least_squares(resid,p0,bounds=(LB,UB),method='trf',max_nfev=500)
+        ss=float(np.sum(r.fun**2))
+        return (ss,arg,r.x.tolist())
+    except Exception as ex:
+        return (float('inf'),arg,None)
+
+if __name__=='__main__':
+    import itertools
+    args=[]
+    for logrho in [-1.5,-1.0,-0.5]:
+        for ip0 in [2.0, 8.0, 20.0, 40.0]:
+            for Op0 in [0.0, 90.0, 180.0, 270.0]:
+                args.append((logrho,ip0,Op0))
+    t0=time.time()
+    with mp.Pool(4) as pool:
+        res = pool.map(try_init, args)
+    res=[r for r in res if r[2] is not None]
+    res.sort(key=lambda z:z[0])
+    for ss,arg,x in res[:10]:
+        print('init(rho=%.2f,i=%.0f,O=%.0f) SSR=%.4f RMS=%.4f -> i=%.2f O=%.2f'%(10**arg[0],arg[1],arg[2],ss,np.sqrt(ss/334),x[7],x[8]),flush=True)
+    ss,arg,xl=res[0]; x=np.array(xl)
+    print('BEST SSR=%.4f RMS=%.5f (%.0fs)'%(ss,np.sqrt(ss/334),time.time()-t0),flush=True)
+    print('state=%s logq=%.3f i=%.3f O=%.3f'%(np.round(x[:6],6),x[6],x[7],x[8]),flush=True)
+    pickle.dump({'x':x,'SSR':ss},open('work/best_inc.pkl','wb'))
+    print('saved',flush=True)
+PYEOF
+python3 -c "compile(open('work/fit_inclined.py').read(),'g','exec')" && echo "SYNTAX OK"
 ```
 
 ## [105] tool
@@ -2773,7 +4351,7 @@ SYNTAX OK
 **tool call: bash**
 
 ```
-
+cd /workspace && nohup python3 -u work/fit_inclined.py > work/fi.log 2>&1 & echo "started $!"
 ```
 
 ## [107] tool
@@ -2810,7 +4388,7 @@ Started. Let me poll — and I should also test the alpha=Sun-longitude variant 
 **tool call: bash**
 
 ```
-
+sleep 95; cat /workspace/work/fi.log
 ```
 
 ## [109] tool
@@ -2829,7 +4407,7 @@ Started. Let me poll — and I should also test the alpha=Sun-longitude variant 
 **tool call: bash**
 
 ```
-
+sleep 95; cat /workspace/work/fi.log; echo "---"; for p in /proc/[0-9]*/cmdline; do pid=$(basename $(dirname $p)); tr '\0' ' ' < $p 2>/dev/null | grep -q fit_inclined && echo "running $pid"; done
 ```
 
 ## [111] tool
@@ -2891,7 +4469,7 @@ Still no output (prints only at the end). Let me wait a bit more, then reconside
 **tool call: bash**
 
 ```
-
+sleep 95; cat /workspace/work/fi.log
 ```
 
 ## [113] tool
@@ -2971,7 +4549,31 @@ Excellent — breakthrough! The three-body fit reached **RMS=0.85°** (matching 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float); beta_o=obs.beta.values; gamma_o=obs.gamma.values
+T0=420.0
+for deg in [4,5,6,7,8]:
+    tau_o=(t-T0)/100.0
+    def build(c,tau):
+        C=c.reshape(3,deg+1); R=np.zeros((3,len(tau)))
+        for k in range(deg+1): R+=C[:,k:k+1]*tau[None,:]**k
+        return R
+    def resid(c):
+        R=build(c,tau_o); nrm=np.sqrt((R**2).sum(axis=0))
+        b=np.rad2deg(np.arctan2(R[1],R[0])); g=np.rad2deg(np.arcsin(np.clip(R[2]/nrm,-1,1)))
+        return np.concatenate([(beta_o-b+180)%360-180, gamma_o-g])
+    rng=np.random.default_rng(0); best=None
+    for s in range(40):
+        c0=rng.normal(size=3*(deg+1))*3; c0[:3]+=[1,0,0]
+        r=least_squares(resid,c0,method='lm',max_nfev=20000)
+        ss=np.sum(r.fun**2)
+        if best is None or ss<best[0]: best=(ss,r)
+    print(f'deg {deg}: RMS={np.sqrt(best[0]/334):.4f}')
+"
 ```
 
 ## [115] tool
@@ -3052,7 +4654,88 @@ The polynomial floor is ~0.80°, so the three-body fit (0.85°) is already near-
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/analyze.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+import sys, pickle
+sys.path.insert(0,'work')
+from model import kepler_E
 
+df = pd.read_csv('data/train.csv')
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float); beta_o=obs.beta.values; gamma_o=obs.gamma.values
+test = pd.read_csv('data/test.csv'); tt=test.t.values.astype(float)
+T0=420.0
+e_p, n_p, T_p = 0.19283, 0.999727, 219.4857
+om0 = np.deg2rad(551.4301-360.0)
+P_p = 360/n_p; MU=(2*np.pi/P_p)**2
+
+x = pickle.load(open('work/best_inc.pkl','rb'))['x']
+print('loaded best_inc: SSR=%.4f'%pickle.load(open('work/best_inc.pkl','rb'))['SSR'])
+print('state=%s logq=%.3f i=%.3f O=%.3f'%(np.round(x[:6],6),x[6],x[7],x[8]))
+
+def planet_pos(tt):
+    E=kepler_E(np.deg2rad(n_p)*(np.atleast_1d(tt).astype(float)-T_p),e_p)
+    nu=2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2),np.sqrt(1-e_p)*np.cos(E/2))
+    rr=1-e_p*np.cos(E); lam=om0+nu
+    return np.stack([rr*np.cos(lam),rr*np.sin(lam),np.zeros_like(rr)],axis=0)
+def planet_state(tt):
+    E=float(kepler_E(np.array([np.deg2rad(n_p)*(tt-T_p)]),e_p)[0]); cE,sE=np.cos(E),np.sin(E)
+    rr=1-e_p*cE; lam=om0+2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2),np.sqrt(1-e_p)*np.cos(E/2))
+    pos=np.array([rr*np.cos(lam),rr*np.sin(lam),0.0])
+    nr=np.deg2rad(n_p)
+    vx=-nr*np.sin(E)/(1-e_p*cE); vy=nr*np.sqrt(1-e_p**2)*np.cos(E)/(1-e_p*cE)
+    cw,sw=np.cos(om0),np.sin(om0)
+    return pos, np.array([cw*vx-sw*vy, sw*vx+cw*vy, 0.0])
+
+# high-accuracy propagation via solve_ivp for final analysis
+from scipy.integrate import solve_ivp
+q=10**x[6]; mu_p=q*MU
+def rhs(tv,y):
+    r=y[:3];v=y[3:]; rp=planet_pos(np.array([tv]))[:,0]; d=r-rp
+    return np.concatenate([v,-MU*r/np.dot(r,r)**1.5 - mu_p*d/np.dot(d,d)**1.5])
+def propagate(tt, state):
+    tt=np.atleast_1d(tt).astype(float)
+    out=np.zeros((6,len(tt)))
+    for half in [tt<=T0, tt>T0]:
+        tsub=tt[half]
+        if len(tsub)==0: continue
+        sol=solve_ivp(rhs,(T0,tsub[-1] if tsub[-1]>T0 else tsub[0]),state,method='DOP853',
+                      rtol=1e-11,atol=1e-13,t_eval=tsub, dense_output=False)
+        out[:,half]=sol.y[:, ::-1] if tsub[0]<T0 else sol.y
+    return out
+
+# check state at T0
+print('|r0|=%.4f |v0|=%.5f'%(np.linalg.norm(x[:3]),np.linalg.norm(x[3:6])))
+# propagate over obs and test
+allt = np.concatenate([t, tt])
+Y = propagate(allt, x[:6])
+rb=Y[:3]; rp=planet_pos(allt); d=rb-rp; dist=np.sqrt((d**2).sum(axis=0))
+no=len(t)
+print('OBS window: geocentric dist min=%.5f AU at t=%.0f'%(dist[:no].min(), allt[:no][np.argmin(dist[:no])]))
+print('  dist at t=301: %.4f, t=467: %.4f'%(dist[0],dist[no-1]))
+print('TEST window dist:', np.round(dist[no:],4))
+# predicted angles
+beta_p=np.rad2deg(np.arctan2(d[1],d[0])); gamma_p=np.rad2deg(np.arcsin(d[2]/dist))
+res_b=(beta_o-beta_p[:no]+180)%360-180; res_g=gamma_o-gamma_p[:no]
+print('resid RMS: beta=%.4f gamma=%.4f total=%.4f'%(res_b.std(),res_g.std(),np.sqrt((res_b**2+res_g**2).mean())))
+print('resid lag1 autocorr: beta=%.3f gamma=%.3f'%(np.corrcoef(res_b[:-1],res_b[1:])[0,1],np.corrcoef(res_g[:-1],res_g[1:])[0,1]))
+print('resid max |beta|=%.3f |gamma|=%.3f'%(np.abs(res_b).max(),np.abs(res_g).max()))
+# body orbital elements (heliocentric osculating at T0)
+r0=x[:3]; v0=x[3:6]
+h_=np.cross(r0,v0); en=0.5*np.dot(v0,v0)-MU/np.linalg.norm(r0)
+a_b=-MU/(2*en) if en<0 else np.inf
+ecv=(np.dot(v0,v0)-MU/np.linalg.norm(r0))*r0/MU - np.dot(r0,v0)*v0/MU
+ecc=np.linalg.norm(ecv)
+print('body heliocentric: a=%.4f e=%.4f (energy %.3e)'%(a_b,ecc,en))
+print()
+print('TEST PREDICTIONS (three-body best_inc):')
+for i in range(len(tt)):
+    print('  t=%5.0f gamma=%8.3f  beta=%8.3f dist=%.4f'%(tt[i],gamma_p[no+i],beta_p[no+i],dist[no+i]))
+pickle.dump({'gamma_p_test':gamma_p[no:],'beta_p_test':beta_p[no:]},open('work/pred_inc.pkl','wb'))
+PYEOF
+python3 work/analyze.py
 ```
 
 ## [117] tool
@@ -3086,7 +4769,37 @@ state=[-0.578609 -0.327712 -0.159177  0.019654 -0.016499  0.024191] logq=-3.073 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - << 'PYEOF'
+src=open('work/analyze.py').read()
+old="""def propagate(tt, state):
+    tt=np.atleast_1d(tt).astype(float)
+    out=np.zeros((6,len(tt)))
+    for half in [tt<=T0, tt>T0]:
+        tsub=tt[half]
+        if len(tsub)==0: continue
+        sol=solve_ivp(rhs,(T0,tsub[-1] if tsub[-1]>T0 else tsub[0]),state,method='DOP853',
+                      rtol=1e-11,atol=1e-13,t_eval=tsub, dense_output=False)
+        out[:,half]=sol.y[:, ::-1] if tsub[0]<T0 else sol.y
+    return out"""
+new="""def propagate(tt, state):
+    tt=np.atleast_1d(tt).astype(float)
+    out=np.zeros((6,len(tt)))
+    tb=np.sort(tt[tt<=T0])[::-1]
+    if len(tb):
+        sol=solve_ivp(rhs,(T0,tb[-1]),state,method='DOP853',rtol=1e-11,atol=1e-13,t_eval=tb)
+        yb=sol.y[:, ::-1]
+        idx=np.where(tt<=T0)[0]; out[:,idx]=yb
+    tf=np.sort(tt[tt>T0])
+    if len(tf):
+        sol=solve_ivp(rhs,(T0,tf[-1]),state,method='DOP853',rtol=1e-11,atol=1e-13,t_eval=tf)
+        idx=np.where(tt>T0)[0]; out[:,idx]=sol.y
+    return out"""
+assert old in src
+src=src.replace(old,new)
+open('work/analyze.py','w').write(src)
+print('patched')
+PYEOF
+python3 work/analyze.py
 ```
 
 ## [119] tool
@@ -3143,7 +4856,19 @@ Critical catch: the fit put the planet node at Ω=180.1°, meaning **alpha is th
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - << 'PYEOF'
+src=open('work/analyze.py').read()
+# use Omega from fit (x[8]) in planet longitude
+src=src.replace("om0 = np.deg2rad(551.4301-360.0)",
+                "om0 = np.deg2rad(551.4301-360.0)\nimport pickle as _pk\nOMEGA = np.deg2rad(_pk.load(open('work/best_inc.pkl','rb'))['x'][8])")
+src=src.replace("    rr=1-e_p*np.cos(E); lam=om0+nu\n","    rr=1-e_p*np.cos(E); lam=om0+OMEGA+nu\n")
+src=src.replace("rr=1-e_p*cE; lam=om0+2*np.arctan2","rr=1-e_p*cE; lam=om0+OMEGA+2*np.arctan2")
+# velocity rotation should use om0+OMEGA as periapsis longitude
+src=src.replace("cw,sw=np.cos(om0),np.sin(om0)","cw,sw=np.cos(om0+OMEGA),np.sin(om0+OMEGA)")
+open('work/analyze.py','w').write(src)
+print('patched')
+PYEOF
+python3 work/analyze.py
 ```
 
 ## [121] tool
@@ -3243,7 +4968,116 @@ Now it's consistent: residuals are **white** (autocorr ≈ 0) at 0.85°, with a 
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/joint.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+import sys, pickle, time
+sys.path.insert(0,'work')
+from model import kepler_E
 
+df = pd.read_csv('data/train.csv')
+t_all = df.t.values.astype(float)
+alpha_u = np.rad2deg(np.unwrap(np.deg2rad(df.alpha.values)))
+obs = df[df.gamma.notnull()].copy()
+t = obs.t.values.astype(float); beta_o=obs.beta.values; gamma_o=obs.gamma.values
+T0=420.0
+
+def planet_pos_params(tt, e_p, n_p, T_p, pi_p):
+    E=kepler_E(np.deg2rad(n_p)*(np.atleast_1d(tt).astype(float)-T_p),e_p)
+    nu=2*np.arctan2(np.sqrt(1+e_p)*np.sin(E/2),np.sqrt(1-e_p)*np.cos(E/2))
+    rr=1-e_p*np.cos(E); lam=np.deg2rad(pi_p)+nu
+    return np.stack([rr*np.cos(lam),rr*np.sin(lam),np.zeros_like(rr)],axis=0), np.rad2deg(nu)
+
+class Integ:
+    def __init__(self, t0, t1, h, T0):
+        self.h=h; self.T0=T0; self.t0g=t0
+        self.nf=int(round((t1-t0)/(h/2)))+1
+        self.tf=t0+np.arange(self.nf)*(h/2)
+        self.i0=int(round((T0-t0)/(h/2)))
+        self.Pf=None
+    def set_planet(self, e_p,n_p,T_p,pi_p):
+        self.Pf,_=planet_pos_params(self.tf, e_p,n_p,T_p,pi_p)
+    def _acc(self,r,pi):
+        rp=self.Pf[:,pi]; d=r-rp
+        rn2=np.dot(r,r); dn2=np.dot(d,d)
+        return -self.MU*r/(rn2**1.5)-self.mu_p*d/(dn2**1.5)
+    def prop(self,state,tt):
+        h=self.h; hh=h/2; i0=self.i0
+        out=np.zeros((3,len(tt)))
+        jset={int(round((x-self.t0g)/hh)):k for k,x in enumerate(tt)}
+        r=state[:3].astype(float).copy(); v=state[3:].astype(float).copy()
+        rb=r.copy(); vb=v.copy()
+        for i in range(i0,1,-2):
+            if i in jset: out[:,jset[i]]=rb
+            a1=self._acc(rb,i); k1=vb
+            a2=self._acc(rb-hh*k1,i-1); k2=vb-hh*a1
+            a3=self._acc(rb-hh*k2,i-1); k3=vb-hh*a2
+            a4=self._acc(rb-h*k3,i-2); k4=vb-h*a3
+            rb=rb-h/6*(k1+2*k2+2*k3+k4); vb=vb-h/6*(a1+2*a2+2*a3+a4)
+        rf=r.copy(); vf=v.copy()
+        for i in range(i0,len(self.tf)-2,2):
+            if i in jset: out[:,jset[i]]=rf
+            a1=self._acc(rf,i); k1=vf
+            a2=self._acc(rf+hh*k1,i+1); k2=vf+hh*a1
+            a3=self._acc(rf+hh*k2,i+1); k3=vf+hh*a2
+            a4=self._acc(rf+h*k3,i+2); k4=vf+h*a3
+            rf=rf+h/6*(k1+2*k2+2*k3+k4); vf=vf+h/6*(a1+2*a2+2*a3+a4)
+        return out
+
+_integ = Integ(280, 480, 0.5, T0)
+W_A = 0.66/0.85   # weight of alpha residuals relative to beta/gamma noise
+
+def unpack(p):
+    e_p,n_p,T_p,pi_p = p[0],p[1],p[2],p[3]
+    state = p[4:10]; logq = p[10]
+    P_p=360/n_p; MU=(2*np.pi/P_p)**2
+    return e_p,n_p,T_p,pi_p,state,logq,MU
+
+def resid(p):
+    e_p,n_p,T_p,pi_p,state,logq,MU = unpack(p)
+    _integ.MU=MU; _integ.mu_p=(10**logq)*MU
+    _integ.set_planet(e_p,n_p,T_p,pi_p)
+    # alpha residuals
+    _,nu_deg = planet_pos_params(t_all, e_p,n_p,T_p,pi_p)
+    alpha_pred = pi_p + nu_deg
+    ra = ((alpha_u - alpha_pred + 180)%360-180)*W_A
+    # beta/gamma
+    rb = _integ.prop(state, t)
+    rp,_ = planet_pos_params(t, e_p,n_p,T_p,pi_p)
+    d = rb - rp
+    bp = np.rad2deg(np.arctan2(d[1],d[0]))
+    gp = np.rad2deg(np.arcsin(np.clip(d[2]/np.sqrt((d**2).sum(axis=0)),-1,1)))
+    return np.concatenate([ra, (beta_o-bp+180)%360-180, gamma_o-gp])
+
+# init
+x0 = pickle.load(open('work/best_inc.pkl','rb'))['x']
+pi0 = (551.4301-360.0) + x0[8]   # om0 + OMEGA
+p0 = np.array([0.19283, 0.999727, 219.4857, pi0, *x0[:6], x0[6]])
+print('init pi_p=%.3f'%pi0, flush=True)
+r0 = resid(p0)
+print('init weighted SSR=%.3f'%np.sum(r0**2), flush=True)
+t0=time.time()
+r = least_squares(resid, p0, method='lm', max_nfev=2000, xtol=1e-12, ftol=1e-12)
+print('joint fit done %.0fs'% (time.time()-t0), flush=True)
+ss=np.sum(r.fun**2)
+nres=len(r.fun); npar=len(r.x)
+print('weighted SSR=%.4f  dof=%d  s2=%.4f'%(ss, nres-npar, ss/(nres-npar)))
+# unweighted beta/gamma RMS
+e_p,n_p,T_p,pi_p,state,logq,MU = unpack(r.x)
+_integ.MU=MU; _integ.mu_p=(10**logq)*MU; _integ.set_planet(e_p,n_p,T_p,pi_p)
+rb=_integ.prop(state,t); rp,_=planet_pos_params(t,e_p,n_p,T_p,pi_p); d=rb-rp
+bp=np.rad2deg(np.arctan2(d[1],d[0])); gp=np.rad2deg(np.arcsin(np.clip(d[2]/np.sqrt((d**2).sum(axis=0)),-1,1)))
+resb=(beta_o-bp+180)%360-180; resg=gamma_o-gp
+_,nu_deg=planet_pos_params(t_all,e_p,n_p,T_p,pi_p); resa=(alpha_u-(pi_p+nu_deg)+180)%360-180
+print('RMS: alpha=%.4f beta=%.4f gamma=%.4f'%(resa.std(),resb.std(),resg.std()))
+print('autocorr: alpha=%.3f beta=%.3f gamma=%.3f'%(np.corrcoef(resa[:-1],resa[1:])[0,1],np.corrcoef(resb[:-1],resb[1:])[0,1],np.corrcoef(resg[:-1],resg[1:])[0,1]))
+print('planet: e=%.5f n=%.6f T=%.4f pi=%.4f'%(e_p,n_p,T_p,pi_p))
+print('body state=%s logq=%.4f q=%.3e'%(np.round(state,7),logq,10**logq))
+pickle.dump({'p':r.x,'jac':r.jac,'ss':ss,'nres':nres}, open('work/joint.pkl','wb'))
+print('saved', flush=True)
+PYEOF
+nohup python3 -u work/joint.py > work/joint.log 2>&1 & echo "started $!"
 ```
 
 ## [123] tool
@@ -3265,7 +5099,7 @@ started 1577
 **tool call: bash**
 
 ```
-
+sleep 90; cat /workspace/work/joint.log
 ```
 
 ## [125] tool

@@ -99,7 +99,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la
 ```
 
 ## [3] tool
@@ -121,7 +121,7 @@ drwxr-xr-x 2 root root 4096 Oct 13 16:07 data
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [5] tool
@@ -146,7 +146,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 16:07 ..
 **tool call: bash**
 
 ```
-
+head -20 data/history.csv
 ```
 
 ## [7] tool
@@ -186,7 +186,7 @@ A,19,6.05671137557502,-0.028209308456916354,0.0285,0.6712991782900884,0.0253
 **tool call: bash**
 
 ```
-
+cat data/forecast.csv
 ```
 
 ## [9] tool
@@ -215,7 +215,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [11] tool
@@ -235,7 +235,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+cat data/pools.csv
 ```
 
 ## [13] tool
@@ -1839,7 +1839,7 @@ All checks passed.
 **tool call: bash**
 
 ```
-
+ls -l predictions.csv
 ```
 
 ## [37] tool
@@ -1927,7 +1927,7 @@ Difference upper: 0.0013206605799496174
 **tool call: bash**
 
 ```
-
+cat predictions.csv
 ```
 
 ## [41] tool

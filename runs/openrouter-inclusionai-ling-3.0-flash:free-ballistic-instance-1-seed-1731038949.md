@@ -66,7 +66,7 @@ Let me start by examining the data and then build a model.
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv && echo "---" && wc -l data/train.csv data/test.csv && echo "---" && head -5 data/test.csv
 ```
 
 ## [3] tool
@@ -114,7 +114,28 @@ H6F6wO,200.0
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+print('Train shape:', train.shape)
+print('Test shape:', test.shape)
+print()
+print('Categories in train:', train['category'].nunique())
+print('Categories in test:', test['category'].nunique())
+print()
+print('Train x range per category:')
+for cat in sorted(train['category'].unique()):
+    sub = train[train['category']==cat]
+    print(f'  {cat}: x=[{sub.x.min():.1f}, {sub.x.max():.1f}], n={len(sub)}, y range=[{sub.y.min():.3f}, {sub.y.max():.3f}]')
+print()
+print('Test x range per category:')
+for cat in sorted(test['category'].unique()):
+    sub = test[test['category']==cat]
+    print(f'  {cat}: x=[{sub.x.min():.1f}, {sub.x.max():.1f}], n={len(sub)}')
+print()
+print('Test categories not in train:', set(test['category']) - set(train['category']))
+"
 ```
 
 ## [5] tool
@@ -153,7 +174,19 @@ Test categories not in train: set()
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
 
+# Look at each category's data more carefully
+for cat in sorted(train['category'].unique()):
+    sub = train[train['category']==cat].sort_values('x')
+    print(f'=== {cat} ===')
+    print(sub.to_string())
+    print()
+"
 ```
 
 ## [7] tool
@@ -736,7 +769,23 @@ Now let me look at the data patterns more carefully and build a model.
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
 
+# Check if y is always negative
+print('y min:', train['y'].min(), 'y max:', train['y'].max())
+print('All y negative?', (train['y'] < 0).all())
+
+# Look at mean y per category per x
+for cat in sorted(train['category'].unique()):
+    sub = train[train['category']==cat]
+    means = sub.groupby('x')['y'].agg(['mean','std','count'])
+    print(f'\n=== {cat} ===')
+    print(means.to_string())
+"
 ```
 
 ## [9] tool
@@ -1010,7 +1059,20 @@ Let me write a proper analysis script and then the full solution.
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
 
+# Check log(-y) patterns for each category
+for cat in sorted(train['category'].unique()):
+    sub = train[train['category']==cat]
+    z = np.log(-sub['y'])
+    print(f'\n=== {cat} ===')
+    for xval in sorted(sub['x'].unique()):
+        z_sub = z[sub['x']==xval]
+        print(f'  x={xval:.0f}: mean_log(-y)={z_sub.mean():.4f}, std={z_sub.std():.4f}, n={len(z_sub)}')
+PYEOF
 ```
 
 ## [13] tool
@@ -1185,7 +1247,176 @@ Now I have a good understanding of the data. Let me write the full solution
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+# Read data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X_train = cat_train['x'].values
+    y_train = cat_train['y'].values
+    X_test = cat_test['x'].values
+    
+    # Transform: z = log(-y) since y is always negative
+    z_train = np.log(-y_train)
+    
+    # Try polynomial degrees 1-4, select best by AIC
+    best_degree = 1
+    best_aic = np.inf
+    best_model = None
+    best_sigma2 = None
+    best_X_train_poly = None
+    best_X_test_poly = None
+    
+    n_train = len(X_train)
+    
+    for degree in range(1, min(5, n_train)):
+        # Build polynomial features
+        X_poly_train = np.column_stack([X_train**d for d in range(1, degree+1)])
+        X_poly_test = np.column_stack([X_test**d for d in range(1, degree+1)])
+        
+        # Add intercept
+        X_design = np.column_stack([np.ones(n_train), X_poly_train])
+        X_design_test = np.column_stack([np.ones(len(X_test)), X_poly_test])
+        
+        # Fit OLS
+        beta = np.linalg.lstsq(X_design, z_train, rcond=None)[0]
+        z_pred_train = X_design @ beta
+        residuals = z_train - z_pred_train
+        
+        # AIC = n*log(RSS/n) + 2*k
+        sigma2 = np.sum(residuals**2) / n_train
+        k = degree + 1  # number of parameters
+        aic = n_train * np.log(sigma2) + 2 * k
+        
+        if aic < best_aic:
+            best_aic = aic
+            best_degree = degree
+            best_model = beta
+            best_sigma2 = sigma2
+            best_X_train_poly = X_design
+            best_X_test_poly = X_design_test
+    
+    # Also try modeling variance as a function of x
+    # Compute residuals from best mean model
+    z_pred_train = best_X_train_poly @ best_model
+    resid = z_train - z_pred_train
+    
+    # Model log(variance) as polynomial in x
+    # Use absolute residuals or squared residuals
+    abs_resid = np.abs(resid)
+    
+    # Try to fit variance model
+    best_var_degree = 0
+    best_var_aic = np.inf
+    best_var_model = None
+    best_var_sigma2 = None
+    
+    for vdegree in range(0, min(4, n_train)):
+        if vdegree == 0:
+            X_var = np.ones((n_train, 1))
+            X_var_test = np.ones((len(X_test), 1))
+        else:
+            X_var = np.column_stack([X_train**d for d in range(1, vdegree+1)])
+            X_var_test = np.column_stack([X_test**d for d in range(1, vdegree+1)])
+        
+        # Fit log(variance) model using squared residuals
+        log_var_resid = np.log(resid**2 + 1e-10)
+        
+        # Remove any inf/nan
+        valid = np.isfinite(log_var_resid)
+        if valid.sum() < vdegree + 2:
+            continue
+        
+        X_var_v = X_var[valid]
+        log_var_v = log_var_resid[valid]
+        
+        try:
+            beta_var = np.linalg.lstsq(X_var_v, log_var_v, rcond=None)[0]
+            log_var_pred = X_var @ beta_var
+            var_resid = log_var_resid - log_var_pred
+            var_sigma2 = np.sum(var_resid[valid]**2) / np.sum(valid)
+            k_var = vdegree + 1
+            var_aic = np.sum(valid) * np.log(np.mean(var_resid[valid]**2)) + 2 * k_var
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_degree = vdegree
+                best_var_model = beta_var
+                best_var_sigma2 = var_sigma2
+        except:
+            continue
+    
+    # Now compute predictions with prediction intervals
+    z_pred_test = best_X_test_poly @ best_model
+    
+    # Compute leverage for each test point
+    XtX_inv = np.linalg.inv(best_X_train_poly.T @ best_X_train_poly)
+    
+    # For variance prediction at each test point
+    if best_var_model is not None and best_var_degree >= 0:
+        var_pred_test = np.exp(best_X_test_poly @ best_var_model)
+    else:
+        # Fall back to global variance estimate
+        var_pred_test = np.full(len(X_test), best_sigma2)
+    
+    # Compute prediction intervals
+    n_train = len(X_train)
+    p = best_degree + 1  # number of mean model parameters
+    t_val = stats.t.ppf(0.975, df=n_train - p)
+    
+    for i in range(len(X_test)):
+        x_new = best_X_test_poly[i]
+        leverage = x_new @ XtX_inv @ x_new
+        
+        # Prediction interval on z scale
+        se_z = np.sqrt(best_sigma2 * (1 + leverage) + var_pred_test[i])
+        # Actually, let me reconsider. The standard prediction interval for OLS is:
+        # se_pred = sigma * sqrt(1 + x_new^T (X^T X)^{-1} x_new)
+        # where sigma is the residual standard deviation of the mean model
+        # But if variance is heteroscedastic, we should use the local variance estimate
+        
+        # Use the local variance estimate for the prediction
+        se_pred = np.sqrt(var_pred_test[i] * (1 + leverage))
+        
+        z_lower = z_pred_test[i] - t_val * se_pred
+        z_upper = z_pred_test[i] + t_val * se_pred
+        
+        # Transform back to y scale
+        # y = -exp(z), so y_lower = -exp(z_upper), y_upper = -exp(z_lower)
+        y_pred = -np.exp(z_pred_test[i])
+        y_lower = -np.exp(z_upper)
+        y_upper = -np.exp(z_lower)
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+# Create DataFrame and write
+result_df = pd.DataFrame(results)
+# Ensure correct column order
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [15] tool
@@ -1212,7 +1443,156 @@ Let me fix the script - the variance model needs to use the same polynomial feat
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X_train = cat_train['x'].values
+    y_train = cat_train['y'].values
+    X_test = cat_test['x'].values
+    
+    # Transform: z = log(-y) since y is always negative
+    z_train = np.log(-y_train)
+    
+    n_train = len(X_train)
+    n_test = len(X_test)
+    
+    # Try polynomial degrees 1-4 for mean model, select best by AIC
+    best_degree = 1
+    best_aic = np.inf
+    best_model = None
+    best_sigma2 = None
+    best_X_train_design = None
+    best_X_test_design = None
+    
+    for degree in range(1, min(5, n_train)):
+        # Build polynomial features (no intercept, we add it)
+        X_poly_train = np.column_stack([X_train**d for d in range(1, degree+1)])
+        X_poly_test = np.column_stack([X_test**d for d in range(1, degree+1)])
+        
+        # Add intercept
+        X_design = np.column_stack([np.ones(n_train), X_poly_train])
+        X_design_test = np.column_stack([np.ones(n_test), X_poly_test])
+        
+        # Fit OLS
+        beta = np.linalg.lstsq(X_design, z_train, rcond=None)[0]
+        z_pred_train = X_design @ beta
+        residuals = z_train - z_pred_train
+        
+        # AIC = n*log(RSS/n) + 2*k
+        sigma2 = np.sum(residuals**2) / n_train
+        k = degree + 1
+        aic = n_train * np.log(sigma2) + 2 * k
+        
+        if aic < best_aic:
+            best_aic = aic
+            best_degree = degree
+            best_model = beta
+            best_sigma2 = sigma2
+            best_X_train_design = X_design
+            best_X_test_design = X_design_test
+    
+    # Compute residuals from best mean model
+    z_pred_train = best_X_train_design @ best_model
+    resid = z_train - z_pred_train
+    
+    # Model variance as function of x
+    # Use log(squared residuals) to model log(variance)
+    log_var_obs = np.log(resid**2 + 1e-10)
+    
+    best_var_degree = 0
+    best_var_aic = np.inf
+    best_var_model = None
+    best_var_sigma2 = None
+    best_var_pred_test = None
+    
+    for vdegree in range(0, min(4, n_train)):
+        if vdegree == 0:
+            X_var_train = np.ones((n_train, 1))
+            X_var_test = np.ones((n_test, 1))
+        else:
+            X_var_train = np.column_stack([X_train**d for d in range(1, vdegree+1)])
+            X_var_test = np.column_stack([X_test**d for d in range(1, vdegree+1)])
+        
+        # Remove inf/nan
+        valid = np.isfinite(log_var_obs)
+        if valid.sum() < vdegree + 2:
+            continue
+        
+        X_var_v = X_var_train[valid]
+        log_var_v = log_var_obs[valid]
+        
+        try:
+            beta_var = np.linalg.lstsq(X_var_v, log_var_v, rcond=None)[0]
+            log_var_pred_train = X_var_train @ beta_var
+            var_resid = log_var_obs - log_var_pred_train
+            var_sigma2 = np.sum(var_resid[valid]**2) / np.sum(valid)
+            k_var = vdegree + 1
+            var_aic = np.sum(valid) * np.log(np.mean(var_resid[valid]**2)) + 2 * k_var
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_degree = vdegree
+                best_var_model = beta_var
+                best_var_sigma2 = var_sigma2
+                best_var_pred_test = np.exp(X_var_test @ beta_var)
+        except:
+            continue
+    
+    # If no variance model worked, use global estimate
+    if best_var_pred_test is None:
+        best_var_pred_test = np.full(n_test, best_sigma2)
+    
+    # Compute prediction intervals
+    XtX_inv = np.linalg.inv(best_X_train_design.T @ best_X_train_design)
+    p = best_degree + 1
+    t_val = stats.t.ppf(0.975, df=n_train - p)
+    
+    for i in range(n_test):
+        x_new = best_X_test_design[i]
+        leverage = x_new @ XtX_inv @ x_new
+        
+        # Use local variance estimate
+        local_var = best_var_pred_test[i]
+        se_pred = np.sqrt(local_var * (1 + leverage))
+        
+        z_pred = best_X_test_design[i] @ best_model
+        z_lower = z_pred - t_val * se_pred
+        z_upper = z_pred + t_val * se_pred
+        
+        # Transform back to y scale
+        y_pred = -np.exp(z_pred)
+        y_lower = -np.exp(z_upper)
+        y_upper = -np.exp(z_lower)
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [17] tool
@@ -1397,7 +1777,69 @@ The log-polynomial extrapolation is exploding for some categories. Let me rethin
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Let me check what degree polynomial on log(-y) vs x fits best for each category
+# and also check log(-y) vs log(x) (power law)
+
+for cat in sorted(train['category'].unique()):
+    sub = train[train['category']==cat]
+    X = sub['x'].values
+    y = sub['y'].values
+    z = np.log(-y)
+    logX = np.log(X)
+    
+    print(f"\n=== {cat} ===")
+    
+    # Linear in x: z = a + b*x
+    for deg in [1, 2]:
+        if deg == 1:
+            Xp = np.column_stack([np.ones(len(X)), X])
+        else:
+            Xp = np.column_stack([np.ones(len(X)), X, X**2])
+        
+        beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+        resid = z - Xp @ beta
+        rss = np.sum(resid**2)
+        sigma2 = rss / len(X)
+        k = Xp.shape[1]
+        aic = len(X) * np.log(sigma2) + 2 * k
+        bic = len(X) * np.log(sigma2) + k * np.log(len(X))
+        
+        # Also compute R²
+        ss_tot = np.sum((z - z.mean())**2)
+        r2 = 1 - rss/ss_tot
+        
+        label = f"deg={deg}"
+        print(f"  {label}: AIC={aic:.1f}, BIC={bic:.1f}, R²={r2:.4f}, sigma²={sigma2:.6f}")
+    
+    # Power law: z = a + b*log(x)
+    Xp = np.column_stack([np.ones(len(X)), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    resid = z - Xp @ beta
+    rss = np.sum(resid**2)
+    sigma2 = rss / len(X)
+    k = Xp.shape[1]
+    aic = len(X) * np.log(sigma2) + 2 * k
+    bic = len(X) * np.log(sigma2) + k * np.log(len(X))
+    ss_tot = np.sum((z - z.mean())**2)
+    r2 = 1 - rss/ss_tot
+    print(f"  power_law: AIC={aic:.1f}, BIC={bic:.1f}, R²={r2:.4f}")
+    
+    # Check test extrapolation for linear model
+    X_test = test[test['category']==cat]['x'].values
+    if deg >= 1:
+        # Linear prediction
+        Xp_test = np.column_stack([np.ones(len(X_test)), X_test])
+        z_pred = Xp_test @ beta
+        print(f"  Linear pred at test x: y_pred = {-np.exp(z_pred)}")
+PYEOF
 ```
 
 ## [19] tool
@@ -1488,7 +1930,69 @@ The log-linear model in x causes exponential explosion during extrapolation. Let
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+# Try power law: log(-y) = a + b*log(x) for each category
+# And also try polynomial on y directly
+
+for cat in sorted(train['category'].unique()):
+    sub = train[train['category']==cat]
+    X = sub['x'].values
+    y = sub['y'].values
+    z = np.log(-y)
+    logX = np.log(X)
+    X_test = test[test['category']==cat]['x'].values
+    
+    print(f"\n=== {cat} ===")
+    
+    # Power law: z = a + b*log(x)
+    Xp = np.column_stack([np.ones(len(X)), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    resid = z - Xp @ beta
+    rss = np.sum(resid**2)
+    sigma2 = rss / len(X)
+    k = Xp.shape[1]
+    aic = len(X) * np.log(sigma2) + 2 * k
+    r2 = 1 - rss/np.sum((z - z.mean())**2)
+    
+    # Extrapolate
+    logX_test = np.log(X_test)
+    Xp_test = np.column_stack([np.ones(len(X_test)), logX_test])
+    z_pred = Xp_test @ beta
+    y_pred = -np.exp(z_pred)
+    print(f"  Power law: AIC={aic:.1f}, R²={r2:.4f}")
+    print(f"    Test preds: {y_pred}")
+    
+    # Quadratic in x on original y scale
+    for deg in [1, 2]:
+        if deg == 1:
+            Xp = np.column_stack([np.ones(len(X)), X])
+        else:
+            Xp = np.column_stack([np.ones(len(X)), X, X**2])
+        
+        beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+        resid = y - Xp @ beta
+        rss = np.sum(resid**2)
+        sigma2 = rss / len(X)
+        k = Xp.shape[1]
+        aic = len(X) * np.log(sigma2) + 2 * k
+        r2 = 1 - rss/np.sum((y - y.mean())**2)
+        
+        # Extrapolate
+        if deg == 1:
+            Xp_test = np.column_stack([np.ones(len(X_test)), X_test])
+        else:
+            Xp_test = np.column_stack([np.ones(len(X_test)), X_test, X_test**2])
+        y_pred = Xp_test @ beta
+        print(f"  Poly deg={deg}: AIC={aic:.1f}, R²={r2:.4f}")
+        print(f"    Test preds: {y_pred}")
+PYEOF
 ```
 
 ## [21] tool
@@ -1696,7 +2200,235 @@ The log-linear in x causes exponential explosion. Let me use power law (log-log)
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Strategy: Try multiple model forms, pick best by AIC on training data
+    # All models predict y (not log(y))
+    
+    best_aic = np.inf
+    best_pred_func = None
+    best_params = None
+    best_model_type = None
+    best_resid_std = None
+    best_X_design = None
+    
+    # Model 1: Power law on log scale: log(-y) = a + b*log(x)
+    # Predict: y = -exp(a + b*log(x))
+    try:
+        logX = np.log(X)
+        z = np.log(-y)
+        Xp = np.column_stack([np.ones(n), logX])
+        beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+        z_pred = Xp @ beta
+        resid = z - z_pred
+        rss = np.sum(resid**2)
+        sigma2 = rss / n
+        k = 2
+        aic = n * np.log(sigma2) + 2 * k
+        
+        if aic < best_aic:
+            best_aic = aic
+            best_model_type = 'power'
+            best_params = beta
+            best_resid_std = np.sqrt(rss / (n - k))
+            best_X_design = Xp
+            
+            def pred_func(x_vals, beta=beta):
+                return -np.exp(beta[0] + beta[1] * np.log(x_vals))
+            
+            best_pred_func = pred_func
+    except:
+        pass
+    
+    # Model 2: Quadratic polynomial on y scale: y = a + b*x + c*x^2
+    try:
+        Xp = np.column_stack([np.ones(n), X, X**2])
+        beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+        y_pred = Xp @ beta
+        resid = y - y_pred
+        rss = np.sum(resid**2)
+        sigma2 = rss / n
+        k = 3
+        aic = n * np.log(sigma2) + 2 * k
+        
+        if aic < best_aic:
+            best_aic = aic
+            best_model_type = 'quad'
+            best_params = beta
+            best_resid_std = np.sqrt(rss / (n - k))
+            best_X_design = Xp
+            
+            def pred_func(x_vals, beta=beta):
+                return beta[0] + beta[1]*x_vals + beta[2]*x_vals**2
+            
+            best_pred_func = pred_func
+    except:
+        pass
+    
+    # Model 3: Linear on y scale: y = a + b*x
+    try:
+        Xp = np.column_stack([np.ones(n), X])
+        beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+        y_pred = Xp @ beta
+        resid = y - y_pred
+        rss = np.sum(resid**2)
+        sigma2 = rss / n
+        k = 2
+        aic = n * np.log(sigma2) + 2 * k
+        
+        if aic < best_aic:
+            best_aic = aic
+            best_model_type = 'linear'
+            best_params = beta
+            best_resid_std = np.sqrt(rss / (n - k))
+            best_X_design = Xp
+            
+            def pred_func(x_vals, beta=beta):
+                return beta[0] + beta[1]*x_vals
+            
+            best_pred_func = pred_func
+    except:
+        pass
+    
+    # Model 4: Quadratic on log(-y) scale: log(-y) = a + b*log(x) + c*log(x)^2
+    try:
+        logX = np.log(X)
+        z = np.log(-y)
+        Xp = np.column_stack([np.ones(n), logX, logX**2])
+        beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+        z_pred = Xp @ beta
+        resid = z - z_pred
+        rss = np.sum(resid**2)
+        sigma2 = rss / n
+        k = 3
+        aic = n * np.log(sigma2) + 2 * k
+        
+        if aic < best_aic:
+            best_aic = aic
+            best_model_type = 'power_quad'
+            best_params = beta
+            best_resid_std = np.sqrt(rss / (n - k))
+            best_X_design = Xp
+            
+            def pred_func(x_vals, beta=beta):
+                logx = np.log(x_vals)
+                return -np.exp(beta[0] + beta[1]*logx + beta[2]*logx**2)
+            
+            best_pred_func = pred_func
+    except:
+        pass
+    
+    # Now model the variance as a function of x
+    # Compute residuals from the best mean model
+    y_pred_train = best_pred_func(X)
+    resid_train = y - y_pred_train
+    
+    # Model log(variance) as function of x
+    # Use squared residuals
+    log_var_obs = np.log(resid_train**2 + 1e-10)
+    
+    # Try constant variance (degree 0) and linear in log(x) (degree 1)
+    best_var_aic = np.inf
+    best_var_model = None
+    best_var_pred = None
+    
+    for vdeg in range(0, 3):
+        if vdeg == 0:
+            Xv = np.ones((n, 1))
+            Xv_test = np.ones((len(X_test), 1))
+        elif vdeg == 1:
+            Xv = np.column_stack([np.ones(n), np.log(X)])
+            Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+        else:
+            Xv = np.column_stack([np.ones(n), np.log(X), np.log(X)**2])
+            Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+        
+        try:
+            beta_v = np.linalg.lstsq(Xv, log_var_obs, rcond=None)[0]
+            log_var_pred = Xv @ beta_v
+            var_resid = log_var_obs - log_var_pred
+            var_sigma2 = np.sum(var_resid**2) / (n - vdeg - 1)
+            k_v = vdeg + 1
+            var_aic = (n - vdeg - 1) * np.log(var_sigma2) + 2 * k_v
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_model = beta_v
+                best_var_pred = np.exp(Xv_test @ beta_v)
+        except:
+            continue
+    
+    if best_var_pred is None:
+        best_var_pred = np.full(len(X_test), np.var(resid_train))
+    
+    # Compute prediction intervals
+    # Leverage for test points
+    XtX_inv = np.linalg.inv(best_X_design.T @ best_X_design)
+    p = best_X_design.shape[1]
+    t_val = stats.t.ppf(0.975, df=n - p)
+    
+    y_pred_test = best_pred_func(X_test)
+    
+    for i in range(len(X_test)):
+        # Compute leverage
+        if best_model_type == 'power':
+            x_vec = np.array([1.0, np.log(X_test[i])])
+        elif best_model_type == 'power_quad':
+            lx = np.log(X_test[i])
+            x_vec = np.array([1.0, lx, lx**2])
+        else:
+            if best_model_type == 'linear':
+                x_vec = np.array([1.0, X_test[i]])
+            elif best_model_type == 'quad':
+                x_vec = np.array([1.0, X_test[i], X_test[i]**2])
+            else:
+                x_vec = np.array([1.0, X_test[i]])
+        
+        leverage = x_vec @ XtX_inv @ x_vec
+        
+        # Prediction interval on y scale
+        # Use the local variance estimate
+        local_var = best_var_pred[i]
+        se_pred = np.sqrt(local_var * (1 + leverage))
+        
+        y_lower = y_pred_test[i] - t_val * se_pred
+        y_upper = y_pred_test[i] + t_val * se_pred
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred_test[i],
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [23] tool
@@ -1849,7 +2581,203 @@ The results look reasonable but let me refine the approach. I need to check mode
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Try multiple model forms, all predicting y directly
+    models = []
+    
+    # Model 1: Linear: y = a + b*x
+    Xp = np.column_stack([np.ones(n), X])
+    beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+    resid = y - Xp @ beta
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 2
+    aic = n * np.log(sigma2) + 2 * k
+    models.append(('linear', Xp, beta, aic, k, rss))
+    
+    # Model 2: Quadratic: y = a + b*x + c*x^2
+    Xp = np.column_stack([np.ones(n), X, X**2])
+    beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+    resid = y - Xp @ beta
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 3
+    aic = n * np.log(sigma2) + 2 * k
+    models.append(('quadratic', Xp, beta, aic, k, rss))
+    
+    # Model 3: Cubic: y = a + b*x + c*x^2 + d*x^3
+    if n >= 5:
+        Xp = np.column_stack([np.ones(n), X, X**2, X**3])
+        beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+        resid = y - Xp @ beta
+        rss = np.sum(resid**2)
+        sigma2 = rss / n
+        k = 4
+        aic = n * np.log(sigma2) + 2 * k
+        models.append(('cubic', Xp, beta, aic, k, rss))
+    
+    # Model 4: Power law: log(-y) = a + b*log(x), predict y = -exp(a + b*log(x))
+    logX = np.log(X)
+    z = np.log(-y)
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred = Xp @ beta
+    resid = z - z_pred
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 2
+    aic = n * np.log(sigma2) + 2 * k
+    models.append(('power', Xp, beta, aic, k, rss))
+    
+    # Model 5: Power law quadratic: log(-y) = a + b*log(x) + c*log(x)^2
+    Xp = np.column_stack([np.ones(n), logX, logX**2])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred = Xp @ beta
+    resid = z - z_pred
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 3
+    aic = n * np.log(sigma2) + 2 * k
+    models.append(('power_quad', Xp, beta, aic, k, rss))
+    
+    # Select best model by AIC
+    best_model = min(models, key=lambda m: m[3])
+    model_type, X_design, beta, aic, k, rss = best_model
+    
+    # Compute residuals and their variance
+    if model_type in ('power', 'power_quad'):
+        y_pred_train = -np.exp(X_design @ beta)
+    else:
+        y_pred_train = X_design @ beta
+    resid_train = y - y_pred_train
+    
+    # Model variance as function of x
+    # Use log(squared residuals) to model log(variance)
+    log_var_obs = np.log(resid_train**2 + 1e-10)
+    
+    # Try variance models: constant, linear in log(x), quadratic in log(x)
+    best_var_aic = np.inf
+    best_var_beta = None
+    best_var_degree = 0
+    
+    for vdeg in range(0, 4):
+        if vdeg == 0:
+            Xv = np.ones((n, 1))
+        elif vdeg == 1:
+            Xv = np.column_stack([np.ones(n), np.log(X)])
+        elif vdeg == 2:
+            Xv = np.column_stack([np.ones(n), np.log(X), np.log(X)**2])
+        else:
+            Xv = np.column_stack([np.ones(n), np.log(X), np.log(X)**2, np.log(X)**3])
+        
+        try:
+            beta_v = np.linalg.lstsq(Xv, log_var_obs, rcond=None)[0]
+            log_var_pred = Xv @ beta_v
+            var_resid = log_var_obs - log_var_pred
+            var_sigma2 = np.sum(var_resid**2) / max(1, n - vdeg - 1)
+            k_v = vdeg + 1
+            var_aic = max(1, n - vdeg - 1) * np.log(var_sigma2) + 2 * k_v
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_beta = beta_v
+                best_var_degree = vdeg
+        except:
+            continue
+    
+    # Compute variance predictions for test points
+    if best_var_degree == 0:
+        Xv_test = np.ones((len(X_test), 1))
+    elif best_var_degree == 1:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+    elif best_var_degree == 2:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+    else:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2, np.log(X_test)**3])
+    
+    var_pred_test = np.exp(Xv_test @ best_var_beta)
+    
+    # Compute prediction intervals
+    XtX_inv = np.linalg.inv(X_design.T @ X_design)
+    p = X_design.shape[1]
+    t_val = stats.t.ppf(0.975, df=n - p)
+    
+    # Predictions for test points
+    if model_type in ('power', 'power_quad'):
+        logX_test = np.log(X_test)
+        if model_type == 'power':
+            X_test_design = np.column_stack([np.ones(len(X_test)), logX_test])
+        else:
+            X_test_design = np.column_stack([np.ones(len(X_test)), logX_test, logX_test**2])
+        y_pred_test = -np.exp(X_test_design @ beta)
+    else:
+        y_pred_test = X_test_design @ beta if model_type != 'linear' else X_test_design @ beta
+    
+    # Recompute X_test_design for leverage
+    if model_type == 'linear':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test])
+    elif model_type == 'quadratic':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test, X_test**2])
+    elif model_type == 'cubic':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test, X_test**2, X_test**3])
+    elif model_type == 'power':
+        X_test_design = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+    elif model_type == 'power_quad':
+        X_test_design = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+    
+    y_pred_test = X_test_design @ beta
+    if model_type in ('power', 'power_quad'):
+        y_pred_test = -np.exp(y_pred_test)
+    
+    for i in range(len(X_test)):
+        x_vec = X_test_design[i]
+        leverage = x_vec @ XtX_inv @ x_vec
+        
+        # Prediction interval
+        local_var = var_pred_test[i]
+        se_pred = np.sqrt(local_var * (1 + leverage))
+        
+        t_val_adj = stats.t.ppf(0.975, df=max(1, n - p))
+        
+        y_lower = y_pred_test[i] - t_val_adj * se_pred
+        y_upper = y_pred_test[i] + t_val_adj * se_pred
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred_test[i],
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [25] tool
@@ -1876,7 +2804,190 @@ Let me fix the script - the variable scope issue:
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Try multiple model forms, all predicting y directly
+    models = []
+    
+    # Model 1: Linear: y = a + b*x
+    Xp = np.column_stack([np.ones(n), X])
+    beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+    resid = y - Xp @ beta
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 2
+    aic = n * np.log(sigma2) + 2 * k
+    models.append(('linear', Xp, beta, aic, k))
+    
+    # Model 2: Quadratic: y = a + b*x + c*x^2
+    Xp = np.column_stack([np.ones(n), X, X**2])
+    beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+    resid = y - Xp @ beta
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 3
+    aic = n * np.log(sigma2) + 2 * k
+    models.append(('quadratic', Xp, beta, aic, k))
+    
+    # Model 3: Cubic: y = a + b*x + c*x^2 + d*x^3
+    if n >= 5:
+        Xp = np.column_stack([np.ones(n), X, X**2, X**3])
+        beta = np.linalg.lstsq(Xp, y, rcond=None)[0]
+        resid = y - Xp @ beta
+        rss = np.sum(resid**2)
+        sigma2 = rss / n
+        k = 4
+        aic = n * np.log(sigma2) + 2 * k
+        models.append(('cubic', Xp, beta, aic, k))
+    
+    # Model 4: Power law: log(-y) = a + b*log(x)
+    logX = np.log(X)
+    z = np.log(-y)
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred = Xp @ beta
+    resid = z - z_pred
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 2
+    aic = n * np.log(sigma2) + 2 * k
+    models.append(('power', Xp, beta, aic, k))
+    
+    # Model 5: Power law quadratic: log(-y) = a + b*log(x) + c*log(x)^2
+    Xp = np.column_stack([np.ones(n), logX, logX**2])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred = Xp @ beta
+    resid = z - z_pred
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 3
+    aic = n * np.log(sigma2) + 2 * k
+    models.append(('power_quad', Xp, beta, aic, k))
+    
+    # Select best model by AIC
+    best_model = min(models, key=lambda m: m[3])
+    model_type, X_design, beta, aic_val, k = best_model
+    
+    # Compute residuals and their variance
+    if model_type in ('power', 'power_quad'):
+        y_pred_train = -np.exp(X_design @ beta)
+    else:
+        y_pred_train = X_design @ beta
+    resid_train = y - y_pred_train
+    
+    # Model variance as function of x using log(squared residuals)
+    log_var_obs = np.log(resid_train**2 + 1e-10)
+    
+    best_var_aic = np.inf
+    best_var_beta = None
+    best_var_degree = 0
+    
+    for vdeg in range(0, 4):
+        if vdeg == 0:
+            Xv = np.ones((n, 1))
+        elif vdeg == 1:
+            Xv = np.column_stack([np.ones(n), np.log(X)])
+        elif vdeg == 2:
+            Xv = np.column_stack([np.ones(n), np.log(X), np.log(X)**2])
+        else:
+            Xv = np.column_stack([np.ones(n), np.log(X), np.log(X)**2, np.log(X)**3])
+        
+        try:
+            beta_v = np.linalg.lstsq(Xv, log_var_obs, rcond=None)[0]
+            log_var_pred = Xv @ beta_v
+            var_resid = log_var_obs - log_var_pred
+            var_sigma2 = np.sum(var_resid**2) / max(1, n - vdeg - 1)
+            k_v = vdeg + 1
+            var_aic = max(1, n - vdeg - 1) * np.log(var_sigma2) + 2 * k_v
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_beta = beta_v
+                best_var_degree = vdeg
+        except:
+            continue
+    
+    # Compute variance predictions for test points
+    if best_var_degree == 0:
+        Xv_test = np.ones((len(X_test), 1))
+    elif best_var_degree == 1:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+    elif best_var_degree == 2:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+    else:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2, np.log(X_test)**3])
+    
+    var_pred_test = np.exp(Xv_test @ best_var_beta)
+    
+    # Build X_test_design for predictions and leverage
+    if model_type == 'linear':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test])
+    elif model_type == 'quadratic':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test, X_test**2])
+    elif model_type == 'cubic':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test, X_test**2, X_test**3])
+    elif model_type == 'power':
+        X_test_design = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+    elif model_type == 'power_quad':
+        X_test_design = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+    
+    # Predictions for test points
+    z_pred = X_test_design @ beta
+    if model_type in ('power', 'power_quad'):
+        y_pred_test = -np.exp(z_pred)
+    else:
+        y_pred_test = z_pred
+    
+    # Compute leverage and prediction intervals
+    XtX_inv = np.linalg.inv(X_design.T @ X_design)
+    p = X_design.shape[1]
+    t_val = stats.t.ppf(0.975, df=max(1, n - p))
+    
+    for i in range(len(X_test)):
+        x_vec = X_test_design[i]
+        leverage = x_vec @ XtX_inv @ x_vec
+        
+        local_var = var_pred_test[i]
+        se_pred = np.sqrt(local_var * (1 + leverage))
+        
+        y_lower = y_pred_test[i] - t_val * se_pred
+        y_upper = y_pred_test[i] + t_val * se_pred
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred_test[i],
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [27] tool
@@ -2061,7 +3172,97 @@ The YdTZK3 prediction intervals are exploding and UsN6Q8 intervals are too narro
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Use power law model: log(-y) = a + b*log(x)
+    # This gives y = -C * x^b, which extrapolates polynomially
+    logX = np.log(X)
+    z = np.log(-y)
+    
+    # Fit: z = a + b*log(x)
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred_train = Xp @ beta
+    resid_z = z - z_pred_train
+    
+    # Estimate noise variance on log scale
+    sigma2_z = np.sum(resid_z**2) / (n - 2)
+    
+    # Also estimate noise on original y scale for prediction intervals
+    # Transform back: y_pred = -exp(z_pred)
+    y_pred_train = -np.exp(z_pred_train)
+    resid_y = y - y_pred_train
+    sigma2_y = np.sum(resid_y**2) / (n - 2)
+    
+    # For prediction intervals, we need to account for:
+    # 1. Uncertainty in the mean prediction (leverage)
+    # 2. Observation noise
+    
+    # On the log scale, the prediction interval is:
+    # z_pred ± t * sigma_z * sqrt(1 + leverage)
+    # Then transform to y scale
+    
+    # Compute leverage for test points
+    XtX_inv = np.linalg.inv(Xp.T @ Xp)
+    p = 2  # intercept + slope
+    t_val = stats.t.ppf(0.975, df=n - p)
+    
+    # Test point design matrix
+    logX_test = np.log(X_test)
+    X_test_design = np.column_stack([np.ones(len(X_test)), logX_test])
+    
+    z_pred_test = X_test_design @ beta
+    
+    for i in range(len(X_test)):
+        x_vec = X_test_design[i]
+        leverage = x_vec @ XtX_inv @ x_vec
+        
+        # Prediction interval on log scale
+        se_z = np.sqrt(sigma2_z * (1 + leverage))
+        z_lower = z_pred_test[i] - t_val * se_z
+        z_upper = z_pred_test[i] + t_val * se_z
+        
+        # Transform to y scale
+        # y = -exp(z), so y_lower = -exp(z_upper), y_upper = -exp(z_lower)
+        y_pred = -np.exp(z_pred_test[i])
+        y_lower = -np.exp(z_upper)
+        y_upper = -np.exp(z_lower)
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [29] tool
@@ -2179,7 +3380,172 @@ The power law model gives much more reasonable extrapolation. Let me now try a m
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Try multiple model forms and select best by AIC on y scale
+    candidate_models = []
+    
+    # Model 1: Power law: log(-y) = a + b*log(x) => y = -exp(a)*x^b
+    logX = np.log(X)
+    z = np.log(-y)
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred = Xp @ beta
+    y_pred = -np.exp(z_pred)
+    resid = y - y_pred
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 2
+    aic = n * np.log(sigma2) + 2 * k
+    candidate_models.append(('power', Xp, beta, aic, k, rss, y_pred, resid))
+    
+    # Model 2: Power law quadratic: log(-y) = a + b*log(x) + c*log(x)^2
+    Xp2 = np.column_stack([np.ones(n), logX, logX**2])
+    beta2 = np.linalg.lstsq(Xp2, z, rcond=None)[0]
+    z_pred2 = Xp2 @ beta2
+    y_pred2 = -np.exp(z_pred2)
+    resid2 = y - y_pred2
+    rss2 = np.sum(resid2**2)
+    sigma2_2 = rss2 / n
+    k2 = 3
+    aic2 = n * np.log(sigma2_2) + 2 * k2
+    candidate_models.append(('power_quad', Xp2, beta2, aic2, k2, rss2, y_pred2, resid2))
+    
+    # Model 3: Linear: y = a + b*x
+    Xp_lin = np.column_stack([np.ones(n), X])
+    beta_lin = np.linalg.lstsq(Xp_lin, y, rcond=None)[0]
+    y_pred_lin = Xp_lin @ beta_lin
+    resid_lin = y - y_pred_lin
+    rss_lin = np.sum(resid_lin**2)
+    sigma2_lin = rss_lin / n
+    k_lin = 2
+    aic_lin = n * np.log(sigma2_lin) + 2 * k_lin
+    candidate_models.append(('linear', Xp_lin, beta_lin, aic_lin, k_lin, rss_lin, y_pred_lin, resid_lin))
+    
+    # Model 4: Quadratic: y = a + b*x + c*x^2
+    Xp_quad = np.column_stack([np.ones(n), X, X**2])
+    beta_quad = np.linalg.lstsq(Xp_quad, y, rcond=None)[0]
+    y_pred_quad = Xp_quad @ beta_quad
+    resid_quad = y - y_pred_quad
+    rss_quad = np.sum(resid_quad**2)
+    sigma2_quad = rss_quad / n
+    k_quad = 3
+    aic_quad = n * np.log(sigma2_quad) + 2 * k_quad
+    candidate_models.append(('quadratic', Xp_quad, beta_quad, aic_quad, k_quad, rss_quad, y_pred_quad, resid_quad))
+    
+    # Select best model by AIC
+    best = min(candidate_models, key=lambda m: m[3])
+    model_type, X_design, beta, aic_val, k, rss, y_pred_train, resid_train = best
+    
+    # Estimate noise variance on the y scale
+    # Use the residuals from the best model
+    sigma2_y = np.sum(resid_train**2) / max(1, n - k)
+    
+    # Also estimate variance on log scale for power law models
+    if model_type in ('power', 'power_quad'):
+        sigma2_z = np.sum((z - X_design @ beta)**2) / max(1, n - k)
+    
+    # For prediction intervals, we need to account for:
+    # 1. Uncertainty in mean prediction (leverage)
+    # 2. Observation noise
+    
+    # Compute leverage for test points
+    XtX_inv = np.linalg.inv(X_design.T @ X_design)
+    p = X_design.shape[1]
+    t_val = stats.t.ppf(0.975, df=max(1, n - p))
+    
+    # Build test design matrix
+    if model_type == 'linear':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test])
+    elif model_type == 'quadratic':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test, X_test**2])
+    elif model_type == 'power':
+        X_test_design = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+    elif model_type == 'power_quad':
+        X_test_design = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+    
+    # Predictions
+    if model_type in ('power', 'power_quad'):
+        z_pred_test = X_test_design @ beta
+        y_pred_test = -np.exp(z_pred_test)
+    else:
+        y_pred_test = X_test_design @ beta
+    
+    # For power law models, compute prediction intervals on log scale then transform
+    if model_type in ('power', 'power_quad'):
+        for i in range(len(X_test)):
+            x_vec = X_test_design[i]
+            leverage = x_vec @ XtX_inv @ x_vec
+            
+            # Prediction interval on log scale
+            se_z = np.sqrt(sigma2_z * (1 + leverage))
+            z_lower = z_pred_test[i] - t_val * se_z
+            z_upper = z_pred_test[i] + t_val * se_z
+            
+            # Transform to y scale
+            y_pred = -np.exp(z_pred_test[i])
+            y_lower = -np.exp(z_upper)
+            y_upper = -np.exp(z_lower)
+            
+            results.append({
+                'category': cat,
+                'x': X_test[i],
+                'y_pred': y_pred,
+                'y_lower': y_lower,
+                'y_upper': y_upper
+            })
+    else:
+        # For linear/quadratic models, compute prediction intervals on y scale
+        # Need to model variance as function of x for heteroscedastic data
+        
+        # Simple approach: use local variance estimate based on nearby points
+        # For each test point, estimate variance from training points within some bandwidth
+        for i in range(len(X_test)):
+            x_vec = X_test_design[i]
+            leverage = x_vec @ XtX_inv @ x_vec
+            
+            # Use global variance estimate (simpler, more stable)
+            se_y = np.sqrt(sigma2_y * (1 + leverage))
+            
+            y_pred = y_pred_test[i]
+            y_lower = y_pred - t_val * se_y
+            y_upper = y_pred + t_val * se_y
+            
+            results.append({
+                'category': cat,
+                'x': X_test[i],
+                'y_pred': y_pred,
+                'y_lower': y_lower,
+                'y_upper': y_upper
+            })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [31] tool
@@ -2357,7 +3723,66 @@ Let me check which models are selected for each category and refine the approach
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    n = len(X)
+    
+    logX = np.log(X)
+    z = np.log(-y)
+    
+    # Power law AIC
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    resid = z - Xp @ beta
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    aic_power = n * np.log(sigma2) + 2 * 2
+    
+    # Power quad AIC
+    Xp2 = np.column_stack([np.ones(n), logX, logX**2])
+    beta2 = np.linalg.lstsq(Xp2, z, rcond=None)[0]
+    resid2 = z - Xp2 @ beta2
+    rss2 = np.sum(resid2**2)
+    sigma2_2 = rss2 / n
+    aic_power_quad = n * np.log(sigma2_2) + 2 * 3
+    
+    # Linear AIC (on y scale)
+    Xp_lin = np.column_stack([np.ones(n), X])
+    beta_lin = np.linalg.lstsq(Xp_lin, y, rcond=None)[0]
+    resid_lin = y - Xp_lin @ beta_lin
+    rss_lin = np.sum(resid_lin**2)
+    sigma2_lin = rss_lin / n
+    aic_linear = n * np.log(sigma2_lin) + 2 * 2
+    
+    # Quadratic AIC (on y scale)
+    Xp_quad = np.column_stack([np.ones(n), X, X**2])
+    beta_quad = np.linalg.lstsq(Xp_quad, y, rcond=None)[0]
+    resid_quad = y - Xp_quad @ beta_quad
+    rss_quad = np.sum(resid_quad**2)
+    sigma2_quad = rss_quad / n
+    aic_quad = n * np.log(sigma2_quad) + 2 * 3
+    
+    print(f"\n=== {cat} (n={n}) ===")
+    print(f"  Power law:       AIC={aic_power:.1f}")
+    print(f"  Power quad:      AIC={aic_power_quad:.1f}")
+    print(f"  Linear (y):      AIC={aic_linear:.1f}")
+    print(f"  Quadratic (y):   AIC={aic_quad:.1f}")
+    
+    # Check residuals for power law model
+    y_pred_power = -np.exp(Xp @ beta)
+    resid_y_power = y - y_pred_power
+    print(f"  Power law resid std: {np.sqrt(np.mean(resid_y_power**2)):.4f}")
+    print(f"  Power law resid (y): {resid_y_power}")
+PYEOF
 ```
 
 ## [33] tool
@@ -2563,7 +3988,125 @@ The power law model gives reasonable predictions. Let me refine the variance mod
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Power law model: log(-y) = a + b*log(x)
+    logX = np.log(X)
+    z = np.log(-y)
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred_train = Xp @ beta
+    resid_z = z - z_pred_train
+    
+    # Model variance of log-scale residuals as function of log(x)
+    # log(var) = gamma_0 + gamma_1 * log(x)
+    logX2 = np.log(X)**2
+    
+    # Try constant variance (deg 0) and linear in log(x) (deg 1)
+    best_var_aic = np.inf
+    best_var_beta = None
+    best_var_deg = 0
+    
+    for vdeg in range(0, 3):
+        if vdeg == 0:
+            Xv = np.ones((n, 1))
+        elif vdeg == 1:
+            Xv = np.column_stack([np.ones(n), logX])
+        else:
+            Xv = np.column_stack([np.ones(n), logX, logX2])
+        
+        # Use squared residuals for variance modeling
+        log_var_obs = np.log(resid_z**2 + 1e-10)
+        
+        # Remove extreme outliers
+        valid = np.isfinite(log_var_obs) & np.abs(log_var_obs - np.median(log_var_obs)) < 5 * np.std(log_var_obs)
+        if valid.sum() < vdeg + 2:
+            continue
+        
+        try:
+            beta_v = np.linalg.lstsq(Xv[valid], log_var_obs[valid], rcond=None)[0]
+            log_var_pred = Xv @ beta_v
+            var_resid = log_var_obs - log_var_pred
+            var_sigma2 = np.sum(var_resid[valid]**2) / max(1, np.sum(valid) - vdeg - 1)
+            k_v = vdeg + 1
+            var_aic = max(1, np.sum(valid) - vdeg - 1) * np.log(var_sigma2) + 2 * k_v
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_beta = beta_v
+                best_var_deg = vdeg
+        except:
+            continue
+    
+    # Compute variance predictions for test points
+    if best_var_deg == 0:
+        Xv_test = np.ones((len(X_test), 1))
+    elif best_var_deg == 1:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+    else:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+    
+    log_var_pred_test = Xv_test @ best_var_beta
+    var_pred_test = np.exp(log_var_pred_test)
+    
+    # Compute prediction intervals
+    XtX_inv = np.linalg.inv(Xp.T @ Xp)
+    p = 2
+    t_val = stats.t.ppf(0.975, df=max(1, n - p))
+    
+    logX_test = np.log(X_test)
+    X_test_design = np.column_stack([np.ones(len(X_test)), logX_test])
+    z_pred_test = X_test_design @ beta
+    
+    for i in range(len(X_test)):
+        x_vec = X_test_design[i]
+        leverage = x_vec @ XtX_inv @ x_vec
+        
+        # Prediction interval on log scale
+        se_z = np.sqrt(var_pred_test[i] * (1 + leverage))
+        z_lower = z_pred_test[i] - t_val * se_z
+        z_upper = z_pred_test[i] + t_val * se_z
+        
+        # Transform to y scale
+        y_pred = -np.exp(z_pred_test[i])
+        y_lower = -np.exp(z_upper)
+        y_upper = -np.exp(z_lower)
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [35] tool
@@ -2594,7 +4137,123 @@ Let me fix the variance modeling and simplify the approach:
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Power law model: log(-y) = a + b*log(x)
+    logX = np.log(X)
+    z = np.log(-y)
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred_train = Xp @ beta
+    resid_z = z - z_pred_train
+    
+    # Estimate noise variance on log scale
+    # Model variance as function of log(x) for heteroscedasticity
+    log_var_obs = np.log(resid_z**2)
+    
+    # Try constant variance (deg 0) and linear in log(x) (deg 1)
+    best_var_aic = np.inf
+    best_var_beta = None
+    best_var_deg = 0
+    best_var_sigma2 = None
+    
+    for vdeg in range(0, 3):
+        if vdeg == 0:
+            Xv = np.ones((n, 1))
+        elif vdeg == 1:
+            Xv = np.column_stack([np.ones(n), logX])
+        else:
+            Xv = np.column_stack([np.ones(n), logX, logX**2])
+        
+        # Remove inf/nan
+        valid = np.isfinite(log_var_obs)
+        if valid.sum() < vdeg + 2:
+            continue
+        
+        try:
+            beta_v = np.linalg.lstsq(Xv[valid], log_var_obs[valid], rcond=None)[0]
+            log_var_pred = Xv @ beta_v
+            var_resid = log_var_obs[valid] - log_var_pred[valid]
+            var_sigma2 = np.sum(var_resid**2) / max(1, np.sum(valid) - vdeg - 1)
+            k_v = vdeg + 1
+            var_aic = max(1, np.sum(valid) - vdeg - 1) * np.log(var_sigma2) + 2 * k_v
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_beta = beta_v
+                best_var_deg = vdeg
+                best_var_sigma2 = var_sigma2
+        except:
+            continue
+    
+    # Compute variance predictions for test points
+    if best_var_deg == 0:
+        Xv_test = np.ones((len(X_test), 1))
+    elif best_var_deg == 1:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+    else:
+        Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+    
+    var_pred_test = np.exp(Xv_test @ best_var_beta)
+    
+    # Compute prediction intervals
+    XtX_inv = np.linalg.inv(Xp.T @ Xp)
+    p = 2
+    t_val = stats.t.ppf(0.975, df=max(1, n - p))
+    
+    logX_test = np.log(X_test)
+    X_test_design = np.column_stack([np.ones(len(X_test)), logX_test])
+    z_pred_test = X_test_design @ beta
+    
+    for i in range(len(X_test)):
+        x_vec = X_test_design[i]
+        leverage = x_vec @ XtX_inv @ x_vec
+        
+        # Prediction interval on log scale
+        se_z = np.sqrt(var_pred_test[i] * (1 + leverage))
+        z_lower = z_pred_test[i] - t_val * se_z
+        z_upper = z_pred_test[i] + t_val * se_z
+        
+        # Transform to y scale
+        y_pred = -np.exp(z_pred_test[i])
+        y_lower = -np.exp(z_upper)
+        y_upper = -np.exp(z_lower)
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [37] tool
@@ -2774,7 +4433,27 @@ The results look much better now. Let me verify the output and make sure everyth
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
 
+# Verify predictions.csv
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+
+print(f"Predictions shape: {pred.shape}")
+print(f"Test shape: {test.shape}")
+print(f"Columns: {list(pred.columns)}")
+print(f"Expected columns: ['category', 'x', 'y_pred', 'y_lower', 'y_upper']")
+print(f"Match: {list(pred.columns) == ['category', 'x', 'y_pred', 'y_lower', 'y_upper']}")
+print(f"Row count match: {len(pred) == len(test)}")
+print(f"All categories match: {set(pred['category']) == set(test['category'])}")
+print(f"All x values match: {all(pred['x'] == test['x'])}")
+print(f"y_lower < y_pred < y_upper: {(pred['y_lower'] < pred['y_pred']).all() and (pred['y_pred'] < pred['y_upper']).all()}")
+print(f"Any NaN: {pred.isnull().any().any()}")
+print()
+print(pred.to_string())
+PYEOF
 ```
 
 ## [39] tool
@@ -2964,7 +4643,201 @@ The predictions look reasonable. Let me also try to improve the model by trying 
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Try multiple model forms, all predicting y directly
+    # Select best by AIC on the y scale (for fair comparison)
+    candidate_models = []
+    
+    # Model 1: Power law: log(-y) = a + b*log(x) => y = -exp(a)*x^b
+    logX = np.log(X)
+    z = np.log(-y)
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred = Xp @ beta
+    y_pred = -np.exp(z_pred)
+    resid = y - y_pred
+    rss = np.sum(resid**2)
+    sigma2 = rss / n
+    k = 2
+    aic = n * np.log(sigma2) + 2 * k
+    candidate_models.append(('power', Xp, beta, aic, k, rss, y_pred, resid, 'log'))
+    
+    # Model 2: Power law quadratic: log(-y) = a + b*log(x) + c*log(x)^2
+    Xp2 = np.column_stack([np.ones(n), logX, logX**2])
+    beta2 = np.linalg.lstsq(Xp2, z, rcond=None)[0]
+    z_pred2 = Xp2 @ beta2
+    y_pred2 = -np.exp(z_pred2)
+    resid2 = y - y_pred2
+    rss2 = np.sum(resid2**2)
+    sigma2_2 = rss2 / n
+    k2 = 3
+    aic2 = n * np.log(sigma2_2) + 2 * k2
+    candidate_models.append(('power_quad', Xp2, beta2, aic2, k2, rss2, y_pred2, resid2, 'log'))
+    
+    # Model 3: Linear: y = a + b*x
+    Xp_lin = np.column_stack([np.ones(n), X])
+    beta_lin = np.linalg.lstsq(Xp_lin, y, rcond=None)[0]
+    y_pred_lin = Xp_lin @ beta_lin
+    resid_lin = y - y_pred_lin
+    rss_lin = np.sum(resid_lin**2)
+    sigma2_lin = rss_lin / n
+    k_lin = 2
+    aic_lin = n * np.log(sigma2_lin) + 2 * k_lin
+    candidate_models.append(('linear', Xp_lin, beta_lin, aic_lin, k_lin, rss_lin, y_pred_lin, resid_lin, 'orig'))
+    
+    # Model 4: Quadratic: y = a + b*x + c*x^2
+    Xp_quad = np.column_stack([np.ones(n), X, X**2])
+    beta_quad = np.linalg.lstsq(Xp_quad, y, rcond=None)[0]
+    y_pred_quad = Xp_quad @ beta_quad
+    resid_quad = y - y_pred_quad
+    rss_quad = np.sum(resid_quad**2)
+    sigma2_quad = rss_quad / n
+    k_quad = 3
+    aic_quad = n * np.log(sigma2_quad) + 2 * k_quad
+    candidate_models.append(('quadratic', Xp_quad, beta_quad, aic_quad, k_quad, rss_quad, y_pred_quad, resid_quad, 'orig'))
+    
+    # Select best model by AIC
+    best = min(candidate_models, key=lambda m: m[3])
+    model_type, X_design, beta, aic_val, k, rss, y_pred_train, resid_train, scale = best
+    
+    # Estimate noise variance
+    # For log-scale models, also estimate variance on log scale
+    if scale == 'log':
+        z_pred_train = X_design @ beta
+        resid_z = z - z_pred_train
+        sigma2_z = np.sum(resid_z**2) / max(1, n - k)
+    
+    sigma2_y = np.sum(resid_train**2) / max(1, n - k)
+    
+    # Model variance as function of x for heteroscedasticity
+    # Use log(squared residuals) to model log(variance)
+    if scale == 'log':
+        # On log scale, model log(variance of z residuals)
+        log_var_obs = np.log(resid_z**2 + 1e-10)
+    else:
+        # On original scale, model log(variance of y residuals)
+        log_var_obs = np.log(resid_train**2 + 1e-10)
+    
+    best_var_aic = np.inf
+    best_var_beta = None
+    best_var_deg = 0
+    best_var_pred_test = None
+    
+    for vdeg in range(0, 3):
+        if vdeg == 0:
+            Xv = np.ones((n, 1))
+            Xv_test = np.ones((len(X_test), 1))
+        elif vdeg == 1:
+            Xv = np.column_stack([np.ones(n), logX])
+            Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+        else:
+            Xv = np.column_stack([np.ones(n), logX, logX**2])
+            Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+        
+        valid = np.isfinite(log_var_obs)
+        if valid.sum() < vdeg + 2:
+            continue
+        
+        try:
+            beta_v = np.linalg.lstsq(Xv[valid], log_var_obs[valid], rcond=None)[0]
+            log_var_pred = Xv @ beta_v
+            var_resid = log_var_obs[valid] - log_var_pred[valid]
+            var_sigma2 = np.sum(var_resid**2) / max(1, np.sum(valid) - vdeg - 1)
+            k_v = vdeg + 1
+            var_aic = max(1, np.sum(valid) - vdeg - 1) * np.log(var_sigma2) + 2 * k_v
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_beta = beta_v
+                best_var_deg = vdeg
+                best_var_pred_test = np.exp(Xv_test @ beta_v)
+        except:
+            continue
+    
+    if best_var_pred_test is None:
+        if scale == 'log':
+            best_var_pred_test = np.full(len(X_test), sigma2_z)
+        else:
+            best_var_pred_test = np.full(len(X_test), sigma2_y)
+    
+    # Build test design matrix
+    if model_type == 'linear':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test])
+    elif model_type == 'quadratic':
+        X_test_design = np.column_stack([np.ones(len(X_test)), X_test, X_test**2])
+    elif model_type == 'power':
+        X_test_design = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+    elif model_type == 'power_quad':
+        X_test_design = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+    
+    # Predictions
+    pred_raw = X_test_design @ beta
+    if scale == 'log':
+        y_pred_test = -np.exp(pred_raw)
+    else:
+        y_pred_test = pred_raw
+    
+    # Compute leverage and prediction intervals
+    XtX_inv = np.linalg.inv(X_design.T @ X_design)
+    p = X_design.shape[1]
+    t_val = stats.t.ppf(0.975, df=max(1, n - p))
+    
+    for i in range(len(X_test)):
+        x_vec = X_test_design[i]
+        leverage = x_vec @ XtX_inv @ x_vec
+        
+        # Prediction interval
+        if scale == 'log':
+            # On log scale, then transform
+            se_z = np.sqrt(best_var_pred_test[i] * (1 + leverage))
+            z_lower = pred_raw[i] - t_val * se_z
+            z_upper = pred_raw[i] + t_val * se_z
+            y_pred = y_pred_test[i]
+            y_lower = -np.exp(z_upper)
+            y_upper = -np.exp(z_lower)
+        else:
+            # On original scale
+            se_y = np.sqrt(best_var_pred_test[i] * (1 + leverage))
+            y_pred = y_pred_test[i]
+            y_lower = y_pred - t_val * se_y
+            y_upper = y_pred + t_val * se_y
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [41] tool
@@ -3049,7 +4922,121 @@ The model selection is inconsistent across scales. Let me use a cleaner approach
 **tool call: bash**
 
 ```
+cat > solution.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+results = []
+
+for cat in sorted(test['category'].unique()):
+    cat_train = train[train['category'] == cat].copy()
+    cat_test = test[test['category'] == cat].copy()
+    
+    X = cat_train['x'].values
+    y = cat_train['y'].values
+    X_test = cat_test['x'].values
+    n = len(X)
+    
+    # Power law model: log(-y) = a + b*log(x)
+    logX = np.log(X)
+    z = np.log(-y)
+    Xp = np.column_stack([np.ones(n), logX])
+    beta = np.linalg.lstsq(Xp, z, rcond=None)[0]
+    z_pred_train = Xp @ beta
+    resid_z = z - z_pred_train
+    
+    # Estimate noise variance on log scale
+    sigma2_z = np.sum(resid_z**2) / max(1, n - 2)
+    
+    # Model variance as function of log(x) for heteroscedasticity
+    # log(var) = gamma_0 + gamma_1 * log(x)
+    log_var_obs = np.log(resid_z**2 + 1e-10)
+    
+    # Try constant (deg 0) and linear in log(x) (deg 1)
+    best_var_aic = np.inf
+    best_var_beta = None
+    best_var_deg = 0
+    best_var_pred_test = None
+    
+    for vdeg in range(0, 3):
+        if vdeg == 0:
+            Xv = np.ones((n, 1))
+            Xv_test = np.ones((len(X_test), 1))
+        elif vdeg == 1:
+            Xv = np.column_stack([np.ones(n), logX])
+            Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test)])
+        else:
+            Xv = np.column_stack([np.ones(n), logX, logX**2])
+            Xv_test = np.column_stack([np.ones(len(X_test)), np.log(X_test), np.log(X_test)**2])
+        
+        valid = np.isfinite(log_var_obs)
+        if valid.sum() < vdeg + 2:
+            continue
+        
+        try:
+            beta_v = np.linalg.lstsq(Xv[valid], log_var_obs[valid], rcond=None)[0]
+            log_var_pred = Xv @ beta_v
+            var_resid = log_var_obs[valid] - log_var_pred[valid]
+            var_sigma2 = np.sum(var_resid**2) / max(1, np.sum(valid) - vdeg - 1)
+            k_v = vdeg + 1
+            var_aic = max(1, np.sum(valid) - vdeg - 1) * np.log(var_sigma2) + 2 * k_v
+            
+            if var_aic < best_var_aic:
+                best_var_aic = var_aic
+                best_var_beta = beta_v
+                best_var_deg = vdeg
+                best_var_pred_test = np.exp(Xv_test @ beta_v)
+        except:
+            continue
+    
+    if best_var_pred_test is None:
+        best_var_pred_test = np.full(len(X_test), sigma2_z)
+    
+    # Compute prediction intervals
+    XtX_inv = np.linalg.inv(Xp.T @ Xp)
+    p = 2
+    t_val = stats.t.ppf(0.975, df=max(1, n - p))
+    
+    logX_test = np.log(X_test)
+    X_test_design = np.column_stack([np.ones(len(X_test)), logX_test])
+    z_pred_test = X_test_design @ beta
+    
+    for i in range(len(X_test)):
+        x_vec = X_test_design[i]
+        leverage = x_vec @ XtX_inv @ x_vec
+        
+        # Prediction interval on log scale
+        se_z = np.sqrt(best_var_pred_test[i] * (1 + leverage))
+        z_lower = z_pred_test[i] - t_val * se_z
+        z_upper = z_pred_test[i] + t_val * se_z
+        
+        # Transform to y scale
+        y_pred = -np.exp(z_pred_test[i])
+        y_lower = -np.exp(z_upper)
+        y_upper = -np.exp(z_lower)
+        
+        results.append({
+            'category': cat,
+            'x': X_test[i],
+            'y_pred': y_pred,
+            'y_lower': y_lower,
+            'y_upper': y_upper
+        })
+
+result_df = pd.DataFrame(results)
+result_df = result_df[['category', 'x', 'y_pred', 'y_lower', 'y_upper']]
+result_df.to_csv('predictions.csv', index=False)
+
+print(f"Predictions written: {len(result_df)} rows")
+print(result_df.to_string())
+PYEOF
+python3 solution.py
 ```
 
 ## [43] tool
@@ -3208,7 +5195,27 @@ The results look reasonable. Let me verify the output format and submit:
 **tool call: bash**
 
 ```
+python3 << 'PYEOF'
+import pandas as pd
+import numpy as np
 
+pred = pd.read_csv('predictions.csv')
+test = pd.read_csv('data/test.csv')
+
+# Final verification
+print(f"Shape: {pred.shape}")
+print(f"Columns: {list(pred.columns)}")
+print(f"Row count matches test: {len(pred) == len(test)}")
+print(f"All categories match: {set(pred['category']) == set(test['category'])}")
+print(f"All x values match: {all(pred['x'] == test['x'])}")
+print(f"y_lower < y_pred < y_upper: {(pred['y_lower'] < pred['y_pred']).all() and (pred['y_pred'] < pred['y_upper']).all()}")
+print(f"No NaN: {not pred.isnull().any().any()}")
+print(f"No Inf: {not np.isinf(pred.select_dtypes(include=[np.number])).any().any()}")
+print(f"\nFirst 5 rows:")
+print(pred.head())
+print(f"\nLast 5 rows:")
+print(pred.tail())
+PYEOF
 ```
 
 ## [45] tool

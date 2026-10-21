@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+cd /root 2>/dev/null || cd ~; ls; echo "---"; find . -maxdepth 3 -name "*.csv" 2>/dev/null | head
 ```
 
 ## [3] tool
@@ -74,7 +74,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+pwd; ls -la; find / -maxdepth 4 -name "train.csv" 2>/dev/null | head
 ```
 
 ## [5] tool
@@ -92,7 +92,7 @@ drwxr-xr-x 2 root root 4096 Aug 11 05:49 data
 **tool call: bash**
 
 ```
-
+cd /workspace; ls -la data; echo "---"; head -20 data/train.csv; echo "---"; head -20 data/test.csv; echo "---"; wc -l data/*.csv
 ```
 
 ## [7] tool
@@ -154,7 +154,13 @@ t
 **tool call: bash**
 
 ```
-
+cd /workspace; python -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.describe())
+print('t range:', df.t.min(), df.t.max())
+print(df.tail())
+"
 ```
 
 ## [9] tool
@@ -190,7 +196,27 @@ t range: 0 4142
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
 
+# Check relationship alpha vs beta
+corr = np.corrcoef(df.alpha, df.beta)[0,1]
+print('corr alpha,beta:', corr)
+print('corr t,beta:', np.corrcoef(df.t, df.beta)[0,1])
+print('corr t,alpha:', np.corrcoef(df.t, df.alpha)[0,1])
+
+# diff of beta
+db = np.diff(df.beta.values)
+print('beta diff mean/std:', db.mean(), db.std())
+da = np.diff(df.alpha.values)
+print('alpha diff mean/std:', da.mean(), da.std())
+
+# Maybe beta - alpha relationship
+d = (df.beta - df.alpha).values % 360
+print('beta-alpha mean/std (mod 360):', d.mean(), d.std())
+EOF
 ```
 
 ## [11] tool
@@ -216,7 +242,29 @@ beta-alpha mean/std (mod 360): 185.78839384503985 79.99394357855195
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+a = df.alpha.values; b = df.beta.values; t = df.t.values
 
+# consecutive diffs ignoring wrap
+da = np.diff(a); db = np.diff(b)
+# count large jumps near wrap
+print('alpha diffs > 100:', np.sum(np.abs(da)>100))
+print('beta diffs > 100:', np.sum(np.abs(db)>100))
+
+# Unwrap using numpy
+au = np.unwrap(np.deg2rad(a))
+bu = np.unwrap(np.deg2rad(b))
+print('unwrap alpha range rad:', au.min(), au.max())
+print('unwrap beta range rad:', bu.min(), bu.max())
+
+# check if unwrapped series looks smooth
+du = np.diff(au); dv = np.diff(bu)
+print('unwrap alpha diff std:', du.std(), 'beta diff std:', dv.std())
+print('unwrap alpha diff mean:', du.mean(), 'beta diff mean:', dv.mean())
+EOF
 ```
 
 ## [13] tool
@@ -246,7 +294,34 @@ unwrap alpha diff mean: 0.014901716805323869 beta diff mean: 0.00485259470917810
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+a = df.alpha.values; b = df.beta.values; t = df.t.values
+au = np.unwrap(np.deg2rad(a)); bu = np.unwrap(np.deg2rad(b))
 
+# residuals from linear fit
+ra = au - np.polyval(np.polyfit(t, au, 1), t)
+rb = bu - np.polyval(np.polyfit(t, bu, 1), t)
+print('alpha lin res std:', ra.std(), 'range:', ra.min(), ra.max())
+print('beta lin res std:', rb.std(), 'range:', rb.min(), rb.max())
+
+# quadratic fit
+ca = np.polyfit(t, au, 2); cb = np.polyfit(t, bu, 2)
+print('alpha quad coeff:', ca)
+print('beta quad coeff:', cb)
+print('alpha quad res std:', (au - np.polyval(ca,t)).std())
+print('beta quad res std:', (bu - np.polyval(cb,t)).std())
+
+# cubic
+cc = np.polyfit(t, au, 3); cd = np.polyfit(t, bu, 3)
+print('alpha cubic res std:', (au - np.polyval(cc,t)).std())
+print('beta cubic res std:', (bu - np.polyval(cd,t)).std())
+
+# noise level from residuals
+print('beta residual std lin:', rb.std()*180/np.pi)
+EOF
 ```
 
 ## [15] tool
@@ -275,7 +350,18 @@ beta residual std lin: 34.697089602877185
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+ra = au - np.polyval(np.polyfit(t, au, 1), t)
+rb = bu - np.polyval(np.polyfit(t, bu, 1), t)
+# print decimated residuals
+for i in range(0,len(t),200):
+    print(i, t[i], round(rb[i],3), round(ra[i],3))
+EOF
 ```
 
 ## [17] tool
@@ -332,7 +418,26 @@ beta residual std lin: 34.697089602877185
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+# Detrend linearly and compute FFT to find dominant periods
+def dom_period(y, t):
+    y = y - np.polyval(np.polyfit(t, y, 1), t)
+    y = y - y.mean()
+    n = len(y); dt = t[1]-t[0]
+    f = np.fft.rfftfreq(n, dt)
+    spec = np.abs(np.fft.rfft(y))
+    idx = np.argsort(spec)[::-1][:10]
+    return sorted([(1/f[i], spec[i]) for i in idx if f[i]>0])
+
+print('alpha periods:', dom_period(au, t))
+print('beta periods:', dom_period(bu, t))
+EOF
 ```
 
 ## [19] tool
@@ -358,7 +463,19 @@ beta periods: [(np.float64(258.9375), np.float64(173.36158641244916)), (np.float
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+# local rate over 200-day windows
+def local_rate(y, idx, w=200):
+    return (y[idx+w] - y[idx]) / w
+for i in range(0, len(t)-200, 400):
+    print('t=', t[i], 'alpha rate deg/day:', round(np.rad2deg(local_rate(au, i)),5), 'beta rate:', round(np.rad2deg(local_rate(bu, i)),5))
+EOF
 ```
 
 ## [21] tool
@@ -402,7 +519,19 @@ t= 3600 alpha rate deg/day: 0.64655 beta rate: 0.37367
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+# Check if beta is a function of alpha: sort by alpha, look for multivaluedness
+# Plot beta vs alpha for decimated points
+idx = np.arange(0, len(t), 50)
+for i in idx:
+    print(f't={t[i]:6.0f} alpha_deg={np.rad2deg(au[i]):8.3f} beta_deg={np.rad2deg(bu[i]):8.3f}')
+EOF
 ```
 
 ## [23] tool
@@ -519,7 +648,17 @@ t=  4100 alpha_deg=3723.981 beta_deg=1413.956
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+d = bu - au
+print('beta-alpha deg (unwrapped):')
+for i in range(0, len(t), 300):
+    print(f't={t[i]:5.0f} d={np.rad2deg(d[i]):9.3f} dmod360={np.rad2deg(d[i])%360:7.3f}')
+EOF
 ```
 
 ## [25] tool
@@ -644,7 +783,38 @@ t= 3900 d=-2132.742 dmod360= 27.258
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values)
+t = df.t.values
 
+# Test: do the points (cos b, sin b) lie on a circle? Fit circle via least squares.
+def fit_circle(x, y):
+    # minimize sum((x-a)^2+(y-b)^2-r^2)^2 -> linear in a,b and c=a^2+b^2-r^2
+    A = np.stack([x, y, np.ones_like(x)], axis=1)
+    rhs = x**2 + y**2
+    sol, *_ = np.linalg.lstsq(A, rhs, rcond=None)
+    cx, cy, c = sol
+    r = np.sqrt(cx**2+cy**2+c)
+    res = np.sqrt((x-cx)**2+(y-cy)**2)
+    return cx, cy, r, res
+
+x = np.cos(b); y = np.sin(b)
+cx, cy, r, res = fit_circle(x,y)
+print('beta circle center', cx, cy, 'radius', r, 'res mean/std/max', res.mean(), res.std(), res.max())
+
+x = np.cos(a); y = np.sin(a)
+cx, cy, r, res = fit_circle(x,y)
+print('alpha circle center', cx, cy, 'radius', r, 'res mean/std/max', res.mean(), res.std(), res.max())
+
+# Check W vs Z: maybe beta = atan2(sin(alpha)-y0, cos(alpha)-x0) i.e. seen from point (x0,y0)
+# i.e., direction from a fixed point to the moving point on the unit circle
+# If so, (cos b, sin b) points from (x0,y0) to (cos a, sin a) direction.
+# So cos a - x0 = r cos b, sin a - y0 = r sin b  => r = sqrt((cos a - x0)^2+(sin a - y0)^2)
+# And alpha would be constant rate in this model. Not obviously.
+EOF
 ```
 
 ## [27] tool
@@ -715,7 +885,30 @@ alpha circle center -1.739316306980605e-16 -6.661338147750939e-16 radius 0.99999
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+# Fit alpha = c0 + c1*t + A*sin(2pi*t/P) + B*cos(2pi*t/P) for a grid of P
+def fit_sin(y, t, P):
+    X = np.column_stack([np.ones_like(t), t, np.sin(2*np.pi*t/P), np.cos(2*np.pi*t/P)])
+    coef, res, *_ = np.linalg.lstsq(X, y, rcond=None)
+    r = y - X@coef
+    return coef, r.std()
+
+print("alpha 1-sinusoid fits:")
+for P in [400,500,600,700,800,900,1000,1200,1500,2000,2500,3000,4000,4143]:
+    coef,r = fit_sin(au,t,P)
+    print(f"  P={P:5.0f} resstd={r:.5f} slope={np.rad2deg(coef[1]):.5f} A={np.hypot(coef[2],coef[3]):.4f} amp_deg={np.rad2deg(np.hypot(coef[2],coef[3])):.3f}")
+print("beta 1-sinusoid fits:")
+for P in [400,500,600,700,800,900,1000,1200,1500,2000,2500,3000,4000,4143]:
+    coef,r = fit_sin(bu,t,P)
+    print(f"  P={P:5.0f} resstd={r:.5f} slope={np.rad2deg(coef[1]):.5f} A={np.hypot(coef[2],coef[3]):.4f} amp_deg={np.rad2deg(np.hypot(coef[2],coef[3])):.3f}")
+EOF
 ```
 
 ## [29] tool
@@ -773,7 +966,20 @@ beta 1-sinusoid fits:
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+a = df.alpha.values; b = df.beta.values; t = df.t.values
 
+# scatter of beta mod 360 vs alpha mod 360, decimated
+# check multi-valuedness
+import collections
+# For each alpha bin, spread of beta
+idx = np.arange(0, len(t), 20)
+for i in idx[:]:
+    print(f"t={t[i]:4.0f} alpha={a[i]:7.3f} beta={b[i]:7.3f} a_mod={a[i]%18:.2f}")
+EOF
 ```
 
 ## [31] tool
@@ -1041,7 +1247,27 @@ t=4140 alpha=148.287 beta=347.855 a_mod=4.29
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+a = df.alpha.values; b = df.beta.values; t = df.t.values
 
+# Is beta a function of alpha mod 360? For each alpha rounded to 2 deg, collect beta values.
+import collections
+bins = collections.defaultdict(list)
+for ai, bi in zip(a%360, b%360):
+    bins[round(ai/2)*2].append(bi)
+# compute spread for bins with many samples
+spreads=[]
+for k,v in bins.items():
+    if len(v)>=5:
+        v=np.array(v); spreads.append((np.deg2rad(v).std(), k, len(v)))
+spreads.sort(reverse=True)
+print("alpha bins with >=5 samples, std of beta (deg):")
+for s,k,n in spreads[:10]:
+    print(f"  alpha~{k:6.1f} n={n} beta_std={np.rad2deg(s):7.2f}")
+EOF
 ```
 
 ## [33] tool
@@ -1103,7 +1329,26 @@ alpha bins with >=5 samples, std of beta (deg):
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+# second differences
+d2a = np.diff(au,2); d2b = np.diff(bu,2)
+print('alpha d2 mean/std:', d2a.mean(), d2a.std())
+print('beta d2 mean/std:', d2b.mean(), d2b.std())
+# sample alpha derivative (first diff) over time
+da = np.diff(au)
+print('alpha rate deg/day (1st diff) decimated:')
+for i in range(0, len(da), 300):
+    print(f"  t={t[i]:5d} rate={np.rad2deg(da[i]):.4f}")
+print('beta rate decimated:')
+db = np.diff(bu)
+for i in range(0, len(db), 300):
+    print(f"  t={t[i]:5d} rate={np.rad2deg(db[i]):.4f}")
+EOF
 ```
 
 ## [35] tool
@@ -1163,7 +1408,32 @@ beta rate decimated:
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+# smooth with Gaussian kernel (bandwidth 100 days), compute smoothed derivative
+def smooth_deriv(y, t, h=100):
+    ys = np.zeros_like(y); d = np.zeros_like(y)
+    for i in range(len(t)):
+        w = np.exp(-0.5*((t-t[i])/h)**2)
+        w = w/w.sum()
+        # local linear fit
+        W = np.diag(w)
+        X = np.column_stack([np.ones_like(t), t-t[i]])
+        coef = np.linalg.solve(X.T@W@X, X.T@W@y)
+        ys[i]=coef[0]; d[i]=coef[1]
+    return ys, d
+
+ysa, da = smooth_deriv(au, t, 150)
+ysb, db = smooth_deriv(bu, t, 150)
+print("smoothed rates (deg/day):")
+for i in range(0, len(t), 300):
+    print(f"  t={t[i]:5.0f} alpha_rate={np.rad2deg(da[i]):7.4f} beta_rate={np.rad2deg(db[i]):7.4f}")
+EOF
 ```
 
 ## [37] tool
@@ -1181,7 +1451,31 @@ beta rate decimated:
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+# Downsample to every 20 days then fit local linear on full data around those points
+ts = t[::20]
+def smooth_deriv_sampled(y, t, ts, h=150):
+    out=[]
+    for tc in ts:
+        w = np.exp(-0.5*((t-tc)/h)**2)
+        X = np.column_stack([np.ones_like(t), t-tc])
+        W = np.diag(w)
+        coef = np.linalg.solve(X.T@W@X, X.T@W@y)
+        out.append((coef[0], coef[1]))
+    return np.array(out)
+
+print("smoothed rates (deg/day):")
+sa = smooth_deriv_sampled(au, t, ts, 150)
+sb = smooth_deriv_sampled(bu, t, ts, 150)
+for i in range(0, len(ts), 15):
+    print(f"  t={ts[i]:5.0f} alpha_rate={np.rad2deg(sa[i,1]):7.4f} beta_rate={np.rad2deg(sb[i,1]):7.4f}  alpha_u={sa[i,0]:8.3f} beta_u={sb[i,0]:8.3f}")
+EOF
 ```
 
 ## [39] tool
@@ -1222,7 +1516,49 @@ smoothed rates (deg/day):
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+t = t - t.mean()  # center
 
+def model(theta, t, n):
+    # theta = [c0, c1, (A1,B1,f1), ...]
+    y = np.full_like(t, theta[0]) + theta[1]*t
+    for j in range(n):
+        A, B, f = theta[2+3*j:5+3*j]
+        y = y + A*np.sin(2*np.pi*f*t) + B*np.cos(2*np.pi*f*t)
+    return y
+
+def fit(y, t, n, freqs_init):
+    theta0 = [y.mean(), np.polyfit(t,y,1)[0]]
+    for f in freqs_init:
+        theta0 += [0.3, 0.3, f]
+    def resid(th):
+        return model(th, t, n) - y
+    res = least_squares(resid, theta0, method='lm', max_nfev=20000)
+    return res
+
+# Try 3 sinusoids for beta, init frequencies from FFT guesses: 1/1200, 1/600, 1/400
+res = fit(bu, t, 3, [1/1200, 1/600, 1/400])
+print('beta fit residual std:', res.fun.std(), 'deg:', np.rad2deg(res.fun.std()))
+th = res.x
+print('c0,c1(deg/day):', th[0], np.rad2deg(th[1]))
+for j in range(3):
+    A,B,f = th[2+3*j:5+3*j]
+    print(f'  sin{j}: A={A:.4f} B={B:.4f} P={1/f:.3f} amp_deg={np.rad2deg(np.hypot(A,B)):.3f}')
+
+res = fit(au, t, 3, [1/800, 1/500, 1/1200])
+print('alpha fit residual std:', res.fun.std(), 'deg:', np.rad2deg(res.fun.std()))
+th = res.x
+print('c0,c1(deg/day):', th[0], np.rad2deg(th[1]))
+for j in range(3):
+    A,B,f = th[2+3*j:5+3*j]
+    print(f'  sin{j}: A={A:.4f} B={B:.4f} P={1/f:.3f} amp_deg={np.rad2deg(np.hypot(A,B)):.3f}')
+EOF
 ```
 
 ## [41] tool
@@ -1258,7 +1594,40 @@ c0,c1(deg/day): 34.76356260291226 0.8496242726123882
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
+tc = t - t.mean()
 
+def model(theta, t, n):
+    y = np.full_like(t, theta[0]) + theta[1]*t
+    for j in range(n):
+        A, B, f = theta[2+3*j:5+3*j]
+        y = y + A*np.sin(2*np.pi*f*t) + B*np.cos(2*np.pi*f*t)
+    return y
+
+def fit(y, t, n, freqs_init):
+    theta0 = [y.mean(), np.polyfit(t,y,1)[0]]
+    for f in freqs_init:
+        theta0 += [0.3, 0.3, f]
+    res = least_squares(lambda th: model(th,t,n)-y, theta0, method='lm', max_nfev=30000)
+    return res
+
+# progressively add sinusoids for beta
+freqs = [1/1257, 1/641, 1/377, 1/900, 1/500, 1/300, 1/200, 1/150]
+for n in [2,3,4,5,6,7,8]:
+    res = fit(bu, tc, n, freqs[:n])
+    print(f"beta n={n}: resstd={res.fun.std():.5f} rad={np.rad2deg(res.fun.std()):.4f} deg")
+    th=res.x
+    for j in range(n):
+        A,B,f=th[2+3*j:5+3*j]
+        print(f"   P={1/f:9.3f} amp_deg={np.rad2deg(np.hypot(A,B)):8.3f}")
+EOF
 ```
 
 ## [43] tool
@@ -1369,7 +1738,26 @@ beta n=8: resstd=0.08232 rad=4.7166 deg
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+d = bu - au  # unwrapped difference
+# fit linear to d
+p = np.polyfit(t, d, 1)
+dl = d - np.polyval(p, t)
+print('d linear fit slope deg/day:', np.rad2deg(p[0]), 'resid std:', dl.std(), 'deg', np.rad2deg(dl.std()))
+# FFT of dl
+n=len(dl)
+freq=np.fft.rfftfreq(n, t[1]-t[0])
+spec=np.abs(np.fft.rfft(dl-dl.mean()))
+idx=np.argsort(spec)[::-1][:8]
+for i in idx:
+    if freq[i]>0:
+        print(f"  P={1/freq[i]:10.3f} amp={spec[i]:.2f}")
+EOF
 ```
 
 ## [45] tool
@@ -1446,7 +1834,35 @@ d linear fit slope deg/day: -0.5534004870254129 resid std: 0.6974208743940454 de
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def true_anomaly(M, e):
+    # solve Kepler M = E - e sin E
+    E = M.copy()
+    for _ in range(30):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return nu, E
+
+def kepler_alpha(theta, t):
+    n, e, M0, C = theta
+    M = n*t + M0
+    nu, E = true_anomaly(M, e)
+    return C + nu
+
+# initial guess
+n0 = 0.8496*np.pi/180  # deg/day -> rad/day, roughly
+res = least_squares(lambda th: kepler_alpha(th, t)-au, [n0, 0.1, 0, np.pi], max_nfev=20000)
+print('alpha kepler fit resid std:', res.fun.std(), 'deg', np.rad2deg(res.fun.std()))
+n,e,M0,C = res.x
+print('n deg/day:', n*180/np.pi, 'e:', e, 'M0:', np.rad2deg(M0)%360, 'P days:', 2*np.pi/n)
+EOF
 ```
 
 ## [47] tool
@@ -1589,7 +2005,38 @@ n deg/day: 1.7085604129742804 e: 0.9917440084319402 M0: 262.0268588635134 P days
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+# convert unwrapped to phase; use unwrapped directly
 
+def bearing_to_planet(theta, r, dx, dy):
+    # angle of (r cos th - dx, r sin th - dy) from observer at (dx,dy)
+    return np.arctan2(r*np.sin(theta)-dy, r*np.cos(theta)-dx)
+
+def model1(theta, t, r, dx, dy):
+    # theta=omega*t+phi
+    om, phi = theta
+    ang = bearing_to_planet(om*t+phi, r, dx, dy)
+    return np.unwrap(ang)
+
+# fit alpha: params om1, phi1, dx, dy (r1=1)
+def fit_alpha(p, t, au):
+    om, phi, dx, dy = p
+    ang = bearing_to_planet(om*t+phi, 1.0, dx, dy)
+    return np.unwrap(ang) - au
+
+# init: om=0.85 deg/day, phi=alpha at t=0, dx=dy=0
+om0 = np.deg2rad(0.85); phi0 = np.deg2rad(212.67)
+for init in [(om0, phi0, 0,0), (om0, phi0, 0.5,0.5), (om0, phi0, -0.5,0.3), (om0, phi0, 2,0)]:
+    res = least_squares(fit_alpha, [om0, phi0, 0.3, 0.2], max_nfev=50000)
+    print('alpha fit resstd deg:', np.rad2deg(res.fun.std()), 'params om(deg/day),phi,dx,dy:', np.rad2deg(res.x[0]), np.rad2deg(res.x[1])%360, res.x[2], res.x[3])
+    break
+EOF
 ```
 
 ## [49] tool
@@ -1628,7 +2075,26 @@ TypeError: fit_alpha() missing 2 required positional arguments: 't' and 'au'
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def bearing(r, th, dx, dy):
+    return np.arctan2(r*np.sin(th)-dy, r*np.cos(th)-dx)
+
+om0 = np.deg2rad(0.85); phi0 = np.deg2rad(212.67)
+def fit_alpha(p):
+    om, phi, dx, dy = p
+    ang = bearing(1.0, om*t+phi, dx, dy)
+    return np.unwrap(ang) - au
+for x0 in [[om0,phi0,0.3,0.2],[om0,phi0,-0.5,0.5],[om0,phi0,2,0]]:
+    res = least_squares(fit_alpha, x0, max_nfev=50000)
+    print('alpha resstd deg:', np.rad2deg(res.fun.std()), 'om(d/d),phi,dx,dy:', np.rad2deg(res.x[0])%360, np.rad2deg(res.x[1])%360, res.x[2], res.x[3])
+EOF
 ```
 
 ## [51] tool
@@ -1675,7 +2141,37 @@ alpha resstd deg: 1016.0207423033105 om(d/d),phi,dx,dy: 10.498905752541265 67.15
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares, minimize
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def true_anomaly(M, e):
+    E = M.copy()
+    for _ in range(50):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+
+def fit_kepler(p):
+    n, e, M0, C = p
+    M = n*t + M0
+    nu = true_anomaly(M, e)
+    return (C + nu) - au
+
+best=None
+for n0 in [np.deg2rad(0.85), np.deg2rad(0.86), np.deg2rad(0.84), np.deg2rad(0.9), np.deg2rad(2*0.85), np.deg2rad(0.425)]:
+    for e0 in [0.1,0.2,0.3,0.5]:
+        for M0 in [0,1,2,3,4,5]:
+            res = least_squares(fit_kepler, [n0,e0,M0,np.pi], max_nfev=20000)
+            if best is None or res.cost<best.cost:
+                best=res
+print('best alpha kepler resstd deg:', np.rad2deg(best.fun.std()))
+n,e,M0,C=best.x
+print('n deg/day:', np.rad2deg(n), 'P:', 2*np.pi/n, 'e:', e, 'M0:', np.rad2deg(M0)%360)
+EOF
 ```
 
 ## [53] tool
@@ -1699,7 +2195,18 @@ n deg/day: 1.7481997730946122 P: 205.92612214034241 e: 0.9777267183852004 M0: 28
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+p = np.polyfit(t, au, 1)
+ra = au - np.polyval(p, t)
+print('alpha residual (deg) decimated:')
+for i in range(0, len(t), 150):
+    print(f"  t={t[i]:5.0f} res={np.rad2deg(ra[i]):8.3f}")
+EOF
 ```
 
 ## [55] tool
@@ -1752,7 +2259,40 @@ alpha residual (deg) decimated:
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def true_anomaly(M, e):
+    E = M.copy()
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return nu
+
+def fit_kepler(p):
+    n, e, M0, C = p
+    M = n*t + M0
+    nu = true_anomaly(M, e)
+    return (C + nu) - au
+
+lower=[np.deg2rad(0.7), 0.0, -np.pi, -10]
+upper=[np.deg2rad(1.1), 0.6, np.pi, 10]
+best=None
+for n0 in [0.85,0.86,0.84]:
+    for e0 in [0.1,0.2,0.3,0.4]:
+        for M0i in [0,1,2,3,4,5]:
+            res = least_squares(fit_kepler, [np.deg2rad(n0),e0,M0i,np.pi], bounds=(lower,upper), max_nfev=20000)
+            if best is None or res.cost<best.cost:
+                best=res
+print('best alpha kepler resstd deg:', np.rad2deg(best.fun.std()))
+n,e,M0,C=best.x
+print('n deg/day:', np.rad2deg(n), 'P:', 2*np.pi/n, 'e:', e, 'M0:', np.rad2deg(M0)%360, 'C:', C)
+EOF
 ```
 
 ## [57] tool
@@ -1773,7 +2313,41 @@ ValueError: Initial guess is outside of provided bounds
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def true_anomaly(M, e):
+    E = M.copy()
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return nu
+
+def fit_kepler(p):
+    n, e, M0, C = p
+    M = n*t + M0
+    nu = true_anomaly(M, e)
+    return (C + nu) - au
+
+lower=[np.deg2rad(0.7), 0.0, -np.pi, -10]
+upper=[np.deg2rad(1.1), 0.6, np.pi, 10]
+best=None
+for n0 in [0.85,0.86,0.84]:
+    for e0 in [0.1,0.2,0.3,0.4]:
+        for M0i in [0,1,2,3,4,5]:
+            x0=[np.deg2rad(n0),e0,M0i,0.0]
+            res = least_squares(fit_kepler, x0, bounds=(lower,upper), max_nfev=20000)
+            if best is None or res.cost<best.cost:
+                best=res
+print('best alpha kepler resstd deg:', np.rad2deg(best.fun.std()))
+n,e,M0,C=best.x
+print('n deg/day:', np.rad2deg(n), 'P:', 2*np.pi/n, 'e:', e, 'M0:', np.rad2deg(M0)%360, 'C:', C)
+EOF
 ```
 
 ## [59] tool
@@ -1800,7 +2374,41 @@ ValueError: Initial guess is outside of provided bounds
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def true_anomaly(M, e):
+    E = M.copy()
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return nu
+
+def fit_kepler(p):
+    n, e, M0, C = p
+    M = n*t + M0
+    nu = true_anomaly(M, e)
+    return (C + nu) - au
+
+lower=[np.deg2rad(0.7), 0.0, -np.pi, -10]
+upper=[np.deg2rad(1.1), 0.6, np.pi, 10]
+best=None
+for n0 in [0.85,0.86,0.84]:
+    for e0 in [0.1,0.2,0.3,0.4]:
+        for M0i in [-3,-2,-1,0,1,2,3]:
+            x0=[np.deg2rad(n0),e0,M0i,0.0]
+            res = least_squares(fit_kepler, x0, bounds=(lower,upper), max_nfev=20000)
+            if best is None or res.cost<best.cost:
+                best=res
+print('best alpha kepler resstd deg:', np.rad2deg(best.fun.std()))
+n,e,M0,C=best.x
+print('n deg/day:', np.rad2deg(n), 'P:', 2*np.pi/n, 'e:', e, 'M0:', np.rad2deg(M0)%360, 'C:', C)
+EOF
 ```
 
 ## [61] tool
@@ -1840,7 +2448,31 @@ n deg/day: 1.0869613930376523 P: 331.1985157025072 e: 0.5997252985066689 M0: 179
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
+for name,y in [('alpha',au),('beta',bu)]:
+    yr = y - np.polyval(np.polyfit(t,y,1),t)
+    yr = yr - yr.mean()
+    n=len(yr)
+    freq=np.fft.rfftfreq(n, t[1]-t[0])
+    spec=np.abs(np.fft.rfft(yr))
+    # find peaks
+    idx=np.argsort(spec)[::-1]
+    print(name, 'dominant periods:')
+    seen=[]
+    for i in idx:
+        f=freq[i]
+        if f<=0: continue
+        P=1/f
+        if any(abs(P-s)<s*0.05 for s in seen): continue
+        seen.append(P)
+        print(f"   P={P:9.3f} amp={spec[i]:8.1f}")
+        if len(seen)>=6: break
+EOF
 ```
 
 ## [63] tool
@@ -1925,7 +2557,36 @@ beta dominant periods:
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+def true_anomaly(M, e):
+    E = M.copy()
+    for _ in range(60):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    return nu
+
+best=(1e9,None)
+for n_d in np.linspace(0.75, 0.95, 41):
+    n = np.deg2rad(n_d)
+    for e in np.linspace(0.0, 0.5, 26):
+        for M0 in np.linspace(-np.pi, np.pi, 37):
+            M = n*t + M0
+            nu = true_anomaly(M, e)
+            # fit C by least squares
+            C = (au - nu).mean()
+            r = (au - (C+nu))
+            s = r.std()
+            if s < best[0]:
+                best = (s, (n_d, e, M0, C))
+print('best resstd deg:', np.rad2deg(best[0]))
+print(best[1])
+EOF
 ```
 
 ## [65] tool
@@ -1945,7 +2606,19 @@ beta dominant periods:
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+ra = au - np.polyval(np.polyfit(t, au, 1), t)
+ra = ra - ra.mean()
+# autocorrelation at lags
+for lag in [300,350,380,400,414,424,440,460,500,550,600]:
+    r = np.corrcoef(ra[:-lag], ra[lag:])[0,1]
+    print(f"lag={lag}: autocorr={r:.3f}")
+EOF
 ```
 
 ## [67] tool
@@ -1974,7 +2647,18 @@ lag=600: autocorr=-0.838
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+ra = au - np.polyval(np.polyfit(t, au, 1), t)
+ra = ra - ra.mean()
+for lag in [424, 848, 1272, 1696, 2120]:
+    r = np.corrcoef(ra[:-lag], ra[lag:])[0,1]
+    print(f"lag={lag}: autocorr={r:.3f}")
+EOF
 ```
 
 ## [69] tool
@@ -2011,7 +2695,33 @@ lag=2120: autocorr=0.998
 **tool call: bash**
 
 ```
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+def bearing(r, th, dx, dy):
+    return np.arctan2(r*np.sin(th)-dy, r*np.cos(th)-dx)
+
+def fit_alpha(p):
+    om, phi, dx, dy = p
+    return np.unwrap(bearing(1.0, om*t+phi, dx, dy)) - au
+
+best=None
+om = 2*np.pi/424
+for phi in np.linspace(0, 2*np.pi, 12, endpoint=False):
+    for dx in [-1,-0.5,-0.2,0,0.2,0.5,1]:
+        for dy in [-1,-0.5,-0.2,0,0.2,0.5,1]:
+            res = least_squares(fit_alpha, [om, phi, dx, dy], max_nfev=20000)
+            if best is None or res.cost<best.cost:
+                best=res
+print('alpha circular-parallax resstd deg:', np.rad2deg(best.fun.std()))
+om,phi,dx,dy=best.x
+print('P:',2*np.pi/om,'phi:',np.rad2deg(phi)%360,'dx,dy:',dx,dy)
+EOF
 ```
 
 ## [71] tool
@@ -2037,7 +2747,35 @@ lag=2120: autocorr=0.998
 **tool call: bash**
 
 ```
+cd /workspace; timeout 120 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+def bearing(th, a, b):
+    # observer at (a,b)?? define: planet (cos th, sin th), observer at (dx,dy)
+    # use a=dy/r, b=dx/r
+    return np.arctan2(np.sin(th)-a, np.cos(th)-b)
+
+def fit_alpha(p):
+    om, phi, a, b = p
+    return np.unwrap(bearing(om*t+phi, a, b)) - au
+
+best=None
+om = 2*np.pi/424
+for phi in np.linspace(0, 2*np.pi, 10, endpoint=False):
+    for a in [-0.5,-0.25,0,0.25,0.5]:
+        for b in [-0.5,-0.25,0,0.25,0.5]:
+            res = least_squares(fit_alpha, [om, phi, a, b], max_nfev=10000)
+            if best is None or res.cost<best.cost:
+                best=res
+print('alpha circular-parallax resstd deg:', np.rad2deg(best.fun.std()))
+om,phi,a,b=best.x
+print('P:',2*np.pi/om,'phi:',np.rad2deg(phi)%360,'a,b:',a,b)
+EOF
 ```
 
 ## [73] tool
@@ -2061,7 +2799,41 @@ P: 419.9828764672655 phi: 207.74048680632734 a,b: -0.4654677000192509 0.23421069
 **tool call: bash**
 
 ```
+cd /workspace; timeout 120 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values)); bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def bearing(th, a, b):
+    return np.arctan2(np.sin(th)-a, np.cos(th)-b)
+def fit_alpha(p):
+    om, phi, a, b = p
+    return np.unwrap(bearing(om*t+phi, a, b)) - au
+om = 2*np.pi/424
+best=None
+for phi in np.linspace(0, 2*np.pi, 10, endpoint=False):
+    for a in [-0.5,-0.25,0,0.25,0.5]:
+        for b in [-0.5,-0.25,0,0.25,0.5]:
+            res = least_squares(fit_alpha, [om, phi, a, b], max_nfev=10000)
+            if best is None or res.cost<best.cost: best=res
+res=best
+om,phi,a,b=res.x
+r=res.fun
+print('resid std deg:', np.rad2deg(r.std()))
+# look at residual over time
+for i in range(0,len(t),150):
+    print(f"t={t[i]:5.0f} res={np.rad2deg(r[i]):8.3f}")
+# residual vs phase theta mod 2pi
+th = (om*t+phi)%(2*np.pi)
+print('residual vs theta (deg):')
+for k in range(12):
+    lo=k*30; hi=lo+30
+    m=(np.rad2deg(th)>=lo)&(np.rad2deg(th)<hi)
+    if m.sum()>0: print(f"  theta[{lo:3d},{hi:3d}] mean_res={np.rad2deg(r[m].mean()):7.3f} std={np.rad2deg(r[m].std()):6.3f}")
+EOF
 ```
 
 ## [75] tool
@@ -2142,7 +2914,20 @@ residual vs theta (deg):
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+rb = bu - np.polyval(np.polyfit(t, bu, 1), t)
+rb = rb - rb.mean()
+# autocorrelation around various periods
+def acf_at(lag):
+    return np.corrcoef(rb[:-lag], rb[lag:])[0,1]
+for lag in [1250,1255,1257,1260,1265,1280,1286]:
+    print(f"lag={lag}: acf={acf_at(lag):.3f}  at 2x: {acf_at(2*lag) if 2*lag<len(rb) else float('nan'):.3f}")
+EOF
 ```
 
 ## [77] tool
@@ -2213,7 +2998,37 @@ lag=1286: acf=0.989  at 2x: 0.961
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a = np.deg2rad(df.alpha.values); b = np.deg2rad(df.beta.values)
 
+# Consider: maybe both are defined by observer at origin seeing two moving objects.
+# Let's test a known alternative: the two angles are the two angles of a triangle:
+# observer moving, two fixed objects. Then as observer moves in a straight line,
+# beta - alpha (angle subtended) is a function of position. 
+
+# Instead, let's look at the joint structure: is there a clean model where 
+# z1 = planet1 pos, z2 = planet2 pos, obs = origin. alpha=arg(z1), beta=arg(z2).
+# If so, alpha and beta are independent linear functions (no). 
+
+# Try: observer moving on unit circle, planet fixed far. bearing to fixed point from circle.
+# Let's test whether alpha is bearing to a FIXED point from a circularly-moving observer.
+# Then bearing as function of omega*t+phi is periodic with period 2pi in the phase = observer period.
+# alpha winds once per observer orbit. alpha winds 9.83 times => observer period ~421.
+# Then beta also winds once per observer orbit => beta would wind 9.83 times. Contradiction. skip.
+
+# Alternative: Two bodies. Let's just extract beta's fundamental and check beta(t+P)-beta(t) const.
+bu = np.unwrap(b)
+for P in [640, 1280, 2560]:
+    d = bu[P:] - bu[:-P]
+    d = np.deg2rad(d)  # already rad
+    print(f"P={P}: mean step of beta over P days = {np.rad2deg(np.diff(bu)[:] )}"[:0])
+    # mean of bu[t+P]-bu[t]
+    print(f"P={P}: mean(beta(t+P)-beta(t))={np.rad2deg(d.mean()):.3f} deg, std={np.rad2deg(d.std()):.3f}")
+EOF
 ```
 
 ## [79] tool
@@ -2283,7 +3098,21 @@ P=2560: mean(beta(t+P)-beta(t))=13.113 deg, std=0.148
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
+print('beta unwrapped first,last:', bu[0], bu[-1], 'increase rad', bu[-1]-bu[0], 'deg', np.rad2deg(bu[-1]-bu[0]))
+print('alpha unwrapped first,last:', au[0], au[-1], 'increase deg', np.rad2deg(au[-1]-au[0]))
+# raw beta values
+rawb = df.beta.values
+print('raw beta first,last:', rawb[0], rawb[-1])
+# check number of wraps in beta
+print('raw beta jumps > 100:', np.sum(np.abs(np.diff(rawb))>100))
+EOF
 ```
 
 ## [81] tool
@@ -2309,7 +3138,21 @@ raw beta jumps > 100: 15
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+for P in [640,1280]:
+    for i in [0, 1000, 2000, 3000]:
+        if i+P < len(bu):
+            diff = bu[i+P]-bu[i]
+            print(f"P={P} i={t[i]:.0f}: beta(t+P)-beta(t)={np.rad2deg(diff):.3f} deg")
+    print()
+# how many times does beta wrap
+print('total change deg:', np.rad2deg(bu[-1]-bu[0]))
+EOF
 ```
 
 ## [83] tool
@@ -2366,7 +3209,30 @@ total change deg: 1151.6135
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
+p = np.polyfit(t, au, 1)
+ra = au - np.polyval(p, t)
+ra = ra - ra.mean()
+# fit Fourier with period 424: find amplitude of each harmonic via least squares on phase
+# define phase = 2pi*( (t/424) mod 1 )
+P=424
+th = 2*np.pi*(t/P)
+n_harm=10
+X=np.column_stack([np.ones_like(t)])
+for k in range(1,n_harm+1):
+    X=np.column_stack([X, np.sin(k*th), np.cos(k*th)])
+coef=np.linalg.lstsq(X, ra, rcond=None)[0]
+fit=X@coef
+print('alpha Fourier(424) residual std deg:', np.rad2deg((ra-fit).std()))
+for k in range(1, n_harm+1):
+    s,c=coef[2*k-1],coef[2*k]
+    print(f"  harm{k} amp_deg={np.rad2deg(np.hypot(s,c)):8.4f} phase={np.rad2deg(np.arctan2(s,c))%360:7.2f}")
+EOF
 ```
 
 ## [85] tool
@@ -2423,7 +3289,38 @@ alpha Fourier(424) residual std deg: 1.009414578341055
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+def fourier_resid(y, t, P, n_harm=12):
+    # fit y = c0 + c1 t + sum sin/cos(k*2pi t/P)
+    th = 2*np.pi*t/P
+    X=[np.ones_like(t), t]
+    for k in range(1,n_harm+1):
+        X.append(np.sin(k*th)); X.append(np.cos(k*th))
+    X=np.column_stack(X)
+    coef=np.linalg.lstsq(X,y,rcond=None)[0]
+    r=y-X@coef
+    return r.std(), coef, X
+
+best=(1e9,None,None)
+for P in np.linspace(1150, 1350, 81):
+    s,coef,X = fourier_resid(bu, t, P)
+    if s<best[0]: best=(s,P,coef)
+print('beta best P:', best[1], 'resid std:', best[0], 'deg', np.rad2deg(best[0]))
+# show harmonic amps
+P=best[1]; s,coef,X=fourier_resid(bu,t,P)
+th=2*np.pi*t/P
+print('slope deg/day:', np.rad2deg(coef[1]))
+for k in range(1,13):
+    s_,c_=(coef[2+2*(k-1)], coef[3+2*(k-1)])
+    print(f"  harm{k} amp_deg={np.rad2deg(np.hypot(s_,c_)):8.3f}")
+EOF
 ```
 
 ## [87] tool
@@ -2473,7 +3370,39 @@ slope deg/day: 0.2933586881414336
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def fourier_fit(y, t, P, n_harm=12):
+    th=2*np.pi*t/P
+    X=[np.ones_like(t), t]
+    for k in range(1,n_harm+1):
+        X.append(np.sin(k*th)); X.append(np.cos(k*th))
+    X=np.column_stack(X)
+    coef=np.linalg.lstsq(X,y,rcond=None)[0]
+    return y-X@coef, coef
+
+# residual after P=1280 fit, check FFT for 424 component
+r,_ = fourier_fit(bu,t,1280,12)
+n=len(r)
+freq=np.fft.rfftfreq(n, t[1]-t[0])
+spec=np.abs(np.fft.rfft(r-r.mean()))
+print('residual FFT peaks (periods):')
+idx=np.argsort(spec)[::-1][:10]
+seen=[]
+for i in idx:
+    f=freq[i]
+    if f<=0: continue
+    P=1/f
+    if any(abs(P-s)<s*0.02 for s in seen): continue
+    seen.append(P)
+    print(f"  P={P:9.3f} amp={spec[i]:8.1f}")
+print('resid std deg:', np.rad2deg(r.std()))
+EOF
 ```
 
 ## [89] tool
@@ -2591,7 +3520,23 @@ resid std deg: 3.9217723566271925
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+# For candidate period P, check constancy of bu[t+P]-bu[t] (mod some multiple)
+def step_constness(P):
+    d = bu[P:] - bu[:-P]
+    # measure fit to constant: std of (d - mean)
+    return d.std()
+
+for P in [640, 853, 1280, 2120, 2560, 3840, 424*3, 424*4, 424*2*3]:
+    if P<len(bu):
+        print(f"P={P}: std of beta(t+P)-beta(t) ={step_constness(P):.4f}  mean={np.rad2deg((bu[P:]-bu[:-P]).mean()):.2f}deg")
+EOF
 ```
 
 ## [91] tool
@@ -2628,7 +3573,29 @@ P=2544: std of beta(t+P)-beta(t) =0.1577  mean=747.19deg
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+# find P that makes bu[t+P]-bu[t] as constant as possible (minimize combined residual after integer turns)
+def scan(P, y):
+    d = y[P:] - y[:-P]
+    # remove best linear? no. measure scatter around mean
+    return d.std()
+best=None
+for P in range(1200, 1400):
+    s=scan(P, bu)
+    if best is None or s<best[0]:
+        best=(s,P)
+print('beta best P minimizing scatter:', best[1], 'std rad', best[0], 'deg', np.rad2deg(best[0]))
+P=best[1]
+d=bu[P:]-bu[:-P]
+print('mean step deg:', np.rad2deg(d.mean())%360, 'slope deg/day:', np.rad2deg(d.mean())/P)
+EOF
 ```
 
 ## [93] tool
@@ -2707,7 +3674,27 @@ mean step deg: 15.077843265875742 slope deg/day: 0.29371796653553306
 **tool call: bash**
 
 ```
+cd /workspace; timeout 150 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+def model_alpha(p):
+    om, phi, qr, qi, C = p
+    th = om*t + phi
+    q = qr + 1j*qi
+    z = 1 - q*np.exp(-1j*th)
+    return C + th + np.angle(z)
+
+res = least_squares(lambda p: model_alpha(p)-au, [2*np.pi/424, 0, 0.2, 0.1, 2*np.pi], max_nfev=50000)
+print('resid std deg:', np.rad2deg(res.fun.std()))
+om,phi,qr,qi,C=res.x
+print('P:',2*np.pi/om,'|q|:',np.hypot(qr,qi),'argq:',np.rad2deg(np.arctan2(qi,qr))%360)
+print('phi:',np.rad2deg(phi)%360,'C:',np.rad2deg(C)%360)
+EOF
 ```
 
 ## [95] tool
@@ -2751,7 +3738,44 @@ phi: 155.1305101475617 C: 78.63286150424972
 **tool call: bash**
 
 ```
+cd /workspace; timeout 150 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+# alpha fit for reference
+au = np.unwrap(np.deg2rad(df.alpha.values))
+def model_alpha(p):
+    om, phi, qr, qi, C = p
+    th = om*t+phi; z = 1-(qr+1j*qi)*np.exp(-1j*th)
+    return C+th+np.angle(z)
+ra=least_squares(lambda p: model_alpha(p)-au,[2*np.pi/424,0,0.2,0.1,2*np.pi],max_nfev=50000)
+oma,phia,qra,qia,Ca=ra.x
+print('alpha P',2*np.pi/oma,'Q arg',np.rad2deg(np.arctan2(qia,qra))%360,'|qA|',np.hypot(qra,qia))
+QA_arg = np.arctan2(qia,qra)
+
+# fit beta with qB having same direction (QA_arg), free magnitude mB, free omega,phi,C
+def model_beta(p):
+    om, phi, mB, C = p
+    th = om*t+phi
+    qB = mB*(np.cos(QA_arg)+1j*np.sin(QA_arg))
+    z = 1 - qB*np.exp(-1j*th)
+    return C+th+np.angle(z)
+best=None
+for om0 in [2*np.pi/1280, 2*np.pi/1272]:
+    for mB0 in [0.1,0.3,1.0,3.0]:
+        for phi0 in [0,1,2,3,4,5]:
+            try:
+                rb=least_squares(lambda p: model_beta(p)-bu,[om0,phi0,mB0,1.0],max_nfev=50000)
+                if best is None or rb.cost<best.cost: best=rb
+            except Exception as e: pass
+print('beta resid std deg:', np.rad2deg(best.fun.std()))
+omb,phib,mBb,Cb=best.x
+print('beta P',2*np.pi/omb,'|qB|',mBb,'phi',np.rad2deg(phib)%360)
+EOF
 ```
 
 ## [97] tool
@@ -2833,7 +3857,50 @@ beta P 1232.7776831379742 |qB| 0.71677113233873 phi 320.22386318473076
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a_raw = np.deg2rad(df.alpha.values)
+b_raw = np.deg2rad(df.beta.values)
 
+# Model: O(t)=rho e^{i(wo t+fo)}; Pa=Ra e^{i(wa t+fa)}; Pb=Rb e^{i(wb t+fb)}
+# alpha=arg(Pa-O), beta=arg(Pb-O). Set rho=1.
+def angles(p):
+    wo, fo, wa, fa, Ra, wb, fb, Rb = p
+    O = np.exp(1j*(wo*t+fo))
+    Pa = Ra*np.exp(1j*(wa*t+fa))
+    Pb = Rb*np.exp(1j*(wb*t+fb))
+    return np.angle(Pa-O), np.angle(Pb-O)
+
+def resid(p):
+    al, be = angles(p)
+    ra = np.angle(np.exp(1j*(al-a_raw)))
+    rb = np.angle(np.exp(1j*(be-b_raw)))
+    return np.concatenate([ra,rb])
+
+# inits
+p0 = [2*np.pi/424, 2.0, 2*np.pi/424, 1.0, 3.0, 2*np.pi/1280, 1.0, 3.0]
+low = [2*np.pi/500, -10, 2*np.pi/500,-10, 0.5, 2*np.pi/1600,-10, 0.5]
+high= [2*np.pi/300, 10, 2*np.pi/300, 10, 20, 2*np.pi/1000, 10, 20]
+best=None
+for fo in np.linspace(0,2*np.pi,6,endpoint=False):
+    for fa in np.linspace(0,2*np.pi,6,endpoint=False):
+        for fb in np.linspace(0,2*np.pi,6,endpoint=False):
+            p=[2*np.pi/424,fo,2*np.pi/424,fa,3.0,2*np.pi/1280,fb,3.0]
+            try:
+                r=least_squares(resid,p,bounds=(low,high),max_nfev=20000)
+                if best is None or r.cost<best.cost: best=r
+            except Exception: pass
+print('joint resid alpha std deg:', np.rad2deg(np.angle(np.exp(1j*(angles(best.x)[0]-a_raw))).std()))
+print('joint resid beta  std deg:', np.rad2deg(np.angle(np.exp(1j*(angles(best.x)[1]-b_raw))).std()))
+wo,fo,wa,fa,Ra,wb,fb,Rb=best.x
+print('wo P',2*np.pi/wo,'fo',np.rad2deg(fo)%360)
+print('wa P',2*np.pi/wa,'fa',np.rad2deg(fa)%360,'Ra',Ra)
+print('wb P',2*np.pi/wb,'fb',np.rad2deg(fb)%360,'Rb',Rb)
+EOF
 ```
 
 ## [99] tool
@@ -2857,7 +3924,44 @@ beta P 1232.7776831379742 |qB| 0.71677113233873 phi 320.22386318473076
 **tool call: bash**
 
 ```
+cd /workspace; timeout 190 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+a_raw = np.deg2rad(df.alpha.values)
+b_raw = np.deg2rad(df.beta.values)
 
+def angles(p):
+    wo, fo, wa, fa, Ra, wb, fb, Rb = p
+    O = np.exp(1j*(wo*t+fo))
+    Pa = Ra*np.exp(1j*(wa*t+fa))
+    Pb = Rb*np.exp(1j*(wb*t+fb))
+    return np.angle(Pa-O), np.angle(Pb-O)
+def resid(p):
+    al, be = angles(p)
+    return np.concatenate([np.angle(np.exp(1j*(al-a_raw))), np.angle(np.exp(1j*(be-b_raw)))])
+
+low = [2*np.pi/600, -10, 2*np.pi/600,-10, 0.5, 2*np.pi/1800,-10, 0.5]
+high= [2*np.pi/300, 10, 2*np.pi/300, 10, 30, 2*np.pi/900, 10, 30]
+best=None; cnt=0
+for fo in np.linspace(0,2*np.pi,4,endpoint=False):
+    for fa in [0,2,4]:
+        for fb in [0,2,4]:
+            p=[2*np.pi/424,fo,2*np.pi/424,fa,3.0,2*np.pi/1280,fb,3.0]
+            r=least_squares(resid,p,bounds=(low,high),max_nfev=8000)
+            cnt+=1
+            if best is None or r.cost<best.cost: best=r
+print('runs',cnt)
+al,be=angles(best.x)
+print('alpha resid std deg:', np.rad2deg(np.angle(np.exp(1j*(al-a_raw))).std()))
+print('beta  resid std deg:', np.rad2deg(np.angle(np.exp(1j*(be-b_raw))).std()))
+wo,fo,wa,fa,Ra,wb,fb,Rb=best.x
+print('wo P',2*np.pi/wo,'fo',np.rad2deg(fo)%360)
+print('wa P',2*np.pi/wa,'fa',np.rad2deg(fa)%360,'Ra',Ra)
+print('wb P',2*np.pi/wb,'fb',np.rad2deg(fb)%360,'Rb',Rb)
+EOF
 ```
 
 ## [101] tool
@@ -2923,7 +4027,40 @@ beta P 1232.7776831379742 |qB| 0.71677113233873 phi 320.22386318473076
 **tool call: bash**
 
 ```
+cd /workspace; timeout 150 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+# Fit beta with two-circle parallax: beta = C + arg(e^{i thB} - q*e^{i tho})
+# thB = wB t + fB ; tho = wo t + fo ; q complex
+def model_beta(p):
+    wB, fB, wo, fo, qr, qi, C = p
+    thB = wB*t + fB; tho = wo*t+fo
+    z = np.exp(1j*thB) - (qr+1j*qi)*np.exp(1j*tho)
+    return C + np.angle(z)
+
+# use observer period ~424, planet period ~1277
+best=None
+import itertools
+for (wB0, wo0) in [(2*np.pi/1277,2*np.pi/424),(2*np.pi/1280,2*np.pi/424),(2*np.pi/1277,2*np.pi/848),(2*np.pi/1286,2*np.pi/424)]:
+    for fB in [0,2,4,6]:
+        for fo in [0,2,4,6]:
+            for qr,qi in [(0.1,0.1),(0.3,0.3),(0.5,0.2),(0.2,-0.3),(0.4,0.5),(0.05,0.05)]:
+                try:
+                    r=least_squares(lambda p: model_beta(p)-bu,[wB0,fB,wo0,fo,qr,qi,0.0],max_nfev=3000)
+                    if best is None or r.cost<best.cost: best=r
+                except Exception: pass
+print('beta moving-observer model resid std deg:', np.rad2deg(best.fun.std()))
+wB,fB,wo,fo,qr,qi,C=best.x
+print('P_B',2*np.pi/wB,'fB',np.rad2deg(fB)%360)
+print('P_o',2*np.pi/wo,'fo',np.rad2deg(fo)%360)
+print('q',np.hypot(qr,qi),'argq',np.rad2deg(np.arctan2(qi,qr))%360)
+EOF
 ```
 
 ## [103] tool
@@ -2977,7 +4114,37 @@ q 1.4820096182360287 argq 151.86275378714245
 **tool call: bash**
 
 ```
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def fourier_resid(y, t, P, n_harm=15):
+    th=2*np.pi*t/P
+    X=[np.ones_like(t), t]
+    for k in range(1,n_harm+1):
+        X.append(np.sin(k*th)); X.append(np.cos(k*th))
+    X=np.column_stack(X)
+    coef=np.linalg.lstsq(X,y,rcond=None)[0]
+    r=y-X@coef
+    return r.std()
+
+# coarse then refine
+bestP=None; bests=1e9
+for P in np.arange(1200,1360,2):
+    s=fourier_resid(bu,t,P)
+    if s<bests: bests=s; bestP=P
+print('coarse best P',bestP,'resid',np.rad2deg(bests))
+# refine
+bestP2=None; bests2=1e9
+for P in np.arange(bestP-80,bestP+80,0.5):
+    s=fourier_resid(bu,t,P)
+    if s<bests2: bests2=s; bestP2=P
+print('refined best P',bestP2,'resid',np.rad2deg(bests2))
+# try 424 + 1280 combined two-period fit later
+EOF
 ```
 
 ## [105] tool
@@ -3050,7 +4217,38 @@ refined best P 1279.0 resid 3.913403699114898
 **tool call: bash**
 
 ```
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def build_basis(t, fo, fb, know=4, knb=6):
+    X=[np.ones_like(t), t]
+    for k in range(1,know+1):
+        X.append(np.sin(2*np.pi*k*fo*t)); X.append(np.cos(2*np.pi*k*fo*t))
+    for k in range(1,knb+1):
+        X.append(np.sin(2*np.pi*k*fb*t)); X.append(np.cos(2*np.pi*k*fb*t))
+    for k in range(1,3):
+        for j in range(1,4):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fo+s*j*fb)*t)); X.append(np.cos(2*np.pi*(k*fo+s*j*fb)*t))
+    return np.column_stack(X)
+
+best=None
+fo_center=1/424.10; fb_center=1/1280
+fos=np.linspace(1/424.2,1/423.9,25)
+fbs=np.linspace(1/1290,1/1265,40)
+for fo in fos:
+    for fb in fbs:
+        X=build_basis(t,fo,fb)
+        coef=np.linalg.lstsq(X,bu,rcond=None)[0]
+        s=(bu-X@coef).std()
+        if best is None or s<best[0]:
+            best=(s,fo,fb)
+print('best resid deg:', np.rad2deg(best[0]),'fo',best[1],'P_o',1/best[1],'fb',best[2],'P_B',1/best[2])
+EOF
 ```
 
 ## [107] tool
@@ -3079,7 +4277,45 @@ best resid deg: 1.0601557953992322 fo 0.0023573785950023575 P_o 424.2 fb 0.00077
 **tool call: bash**
 
 ```
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def build_basis(t, fo, fb, know=4, knb=6):
+    X=[np.ones_like(t), t]
+    cols=2
+    for k in range(1,know+1):
+        X.append(np.sin(2*np.pi*k*fo*t)); X.append(np.cos(2*np.pi*k*fo*t))
+    for k in range(1,knb+1):
+        X.append(np.sin(2*np.pi*k*fb*t)); X.append(np.cos(2*np.pi*k*fb*t))
+    for k in range(1,3):
+        for j in range(1,4):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fo+s*j*fb)*t)); X.append(np.cos(2*np.pi*(k*fo+s*j*fb)*t))
+    return np.column_stack(X)
+
+def resid(fo,fb):
+    X=build_basis(t,fo,fb)
+    coef=np.linalg.lstsq(X,bu,rcond=None)[0]
+    return (bu-X@coef).std()
+
+# hierarchical refine
+ranges=[(1/424.5,1/423.7,40),(1/1295,1/1260,60)]
+fo, fb = 1/424.2, 1/1290
+for it in range(3):
+    fo_lo,fo_hi = fo-0.0000003, fo+0.0000003
+    fb_lo,fb_hi = fb-0.00000005, fb+0.00000005
+    best=None
+    for f in np.linspace(fo_lo,fo_hi,30):
+        for g in np.linspace(fb_lo,fb_hi,30):
+            s=resid(f,g)
+            if best is None or s<best[0]: best=(s,f,g)
+    s,fo,fb=best
+    print(f'iter{it}: resid deg {np.rad2deg(s):.4f} fo={fo} P_o={1/fo:.5f} fb={fb} P_B={1/fb:.5f}')
+EOF
 ```
 
 ## [109] tool
@@ -3108,7 +4344,29 @@ iter2: resid deg 1.0538 fo=0.0023564785950023577 P_o=424.36201 fb=0.000775043798
 **tool call: bash**
 
 ```
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+def alpha_resid(P, n_harm=12):
+    th=2*np.pi*t/P
+    X=[np.ones_like(t),t]
+    for k in range(1,n_harm+1):
+        X.append(np.sin(k*th));X.append(np.cos(k*th))
+    X=np.column_stack(X)
+    coef=np.linalg.lstsq(X,au,rcond=None)[0]
+    return (au-X@coef).std()
+
+# find precise P
+best=None
+for P in np.arange(423.9,424.4,0.005):
+    s=alpha_resid(P)
+    if best is None or s<best[0]: best=(s,P)
+print('alpha precise P:', best[1], 'resid deg', np.rad2deg(best[0]))
+EOF
 ```
 
 ## [111] tool
@@ -3147,7 +4405,46 @@ alpha precise P: 424.12999999999977 resid deg 0.7194845283502467
 **tool call: bash**
 
 ```
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+fo = 1/424.13
 
+def build_basis(t, fb, know=4, knb=8):
+    X=[np.ones_like(t), t]
+    for k in range(1,know+1):
+        X.append(np.sin(2*np.pi*k*fo*t)); X.append(np.cos(2*np.pi*k*fo*t))
+    for k in range(1,knb+1):
+        X.append(np.sin(2*np.pi*k*fb*t)); X.append(np.cos(2*np.pi*k*fb*t))
+    for k in range(1,3):
+        for j in range(1,5):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fo+s*j*fb)*t)); X.append(np.cos(2*np.pi*(k*fo+s*j*fb)*t))
+    return np.column_stack(X)
+
+def resid(fb):
+    X=build_basis(t,fb)
+    coef=np.linalg.lstsq(X,bu,rcond=None)[0]
+    return (bu-X@coef).std()
+
+best=None
+for fb in np.linspace(1/1350,1/1200,150):
+    s=resid(fb)
+    if best is None or s<best[0]: best=(s,fb)
+print('fo fixed 1/424.13; best fb resid deg', np.rad2deg(best[0]), 'P_B', 1/best[1])
+fb=best[1]
+# refine
+for it in range(3):
+    best2=None
+    for g in np.linspace(fb-0.0000002,fb+0.0000002,40):
+        s=resid(g)
+        if best2 is None or s<best2[0]: best2=(s,g)
+    s,fb=best2
+    print(f'iter{it}: resid {np.rad2deg(s):.4f} P_B={1/fb:.5f}')
+EOF
 ```
 
 ## [113] tool
@@ -3197,7 +4494,42 @@ iter2: resid 0.7402 P_B=1300.77644
 **tool call: bash**
 
 ```
+cd /workspace; timeout 150 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares, differential_evolution
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+# Fit alpha first: alpha = C + arg(P - O), O = rho e^{i(wo t+fo)}, P fixed point vector
+# Equivalent: alpha = C + arg(1 - q e^{i(wo t+fo)}) form with q complex
+def model_alpha(p):
+    wo, fo, qr, qi, C = p
+    z = 1 - (qr+1j*qi)*np.exp(1j*(wo*t+fo))
+    return C + np.angle(z)
+ra=least_squares(lambda p: model_alpha(p)-au,[2*np.pi/424.13,0,0.2,0.1,2*np.pi],max_nfev=50000)
+wo,fo,qr,qi,C=ra.x
+print('alpha resid deg', np.rad2deg(ra.fun.std()))
+print('P_o',2*np.pi/wo,'q alpha',np.hypot(qr,qi),'argq',np.rad2deg(np.arctan2(qi,qr))%360,'fo',np.rad2deg(fo)%360)
+
+# Now beta = Cb + arg( e^{i thB} - qb e^{i(wo t+fo)} ), qb complex (observer/planetB ratio)
+# thB = wB t + fB
+def model_beta(p):
+    wB, fB, qbr, qbi, Cb = p
+    z = np.exp(1j*(wB*t+fB)) - (qbr+1j*qbi)*np.exp(1j*(wo*t+fo))
+    return Cb + np.angle(z)
+best=None
+for wB0 in [2*np.pi/1300,2*np.pi/1280,2*np.pi/1350]:
+    for fB in [0,2,4,6]:
+        for qmag in [0.3,0.8,1.5,3]:
+            rb=least_squares(lambda p: model_beta(p)-bu,[wB0,fB,qmag,0.3,0.0],max_nfev=5000)
+            if best is None or rb.cost<best.cost: best=rb
+print('beta model resid deg', np.rad2deg(best.fun.std()))
+wB,fB,qbr,qbi,Cb=best.x
+print('P_B',2*np.pi/wB,'fB',np.rad2deg(fB)%360,'qb',np.hypot(qbr,qbi),'argqb',np.rad2deg(np.arctan2(qbi,qbr))%360)
+EOF
 ```
 
 ## [115] tool
@@ -3221,7 +4553,43 @@ P_B 1388.8490919103767 fB 177.28580255722977 qb 0.27408803679384613 argqb 5.6926
 **tool call: bash**
 
 ```
+cd /workspace; timeout 150 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+# THIS alpha model worked before: th=w*t+phi; z=1-q*exp(-1j*th); C+th+angle(z)
+def model_alpha(p):
+    w, phi, qr, qi, C = p
+    th = w*t+phi
+    z = 1 - (qr+1j*qi)*np.exp(-1j*th)
+    return C + th + np.angle(z)
+ra=least_squares(lambda p: model_alpha(p)-au,[2*np.pi/424.13,0,0.2,0.1,2*np.pi],max_nfev=50000)
+w,phi,qr,qi,C=ra.x
+print('alpha resid deg', np.rad2deg(ra.fun.std()))
+print('P',2*np.pi/w,'|q|',np.hypot(qr,qi),'argq',np.rad2deg(np.arctan2(qi,qr))%360,'phi',np.rad2deg(phi)%360)
+
+# This alpha model = C + th + arg(1 - q e^{-i th}) = arg(e^{ith} - q) + C.
+# So alpha = bearing from observer at q to planet at e^{ith} (th=w t+phi). Observer fixed at q.
+# Now beta with SAME observer q: beta = Cb + arg( e^{i thB} - q ) where thB = wB t + fB
+def model_beta(p):
+    wB, fB, Cb = p
+    thB = wB*t+fB
+    z = np.exp(1j*thB) - (qr+1j*qi)
+    return Cb + np.angle(z)
+best=None
+for wB0 in [2*np.pi/1300,2*np.pi/1280,2*np.pi/1350,2*np.pi/1450]:
+    for fB in np.linspace(0,2*np.pi,12,endpoint=False):
+        rb=least_squares(lambda p: model_beta(p)-bu,[wB0,fB,0.0],max_nfev=5000)
+        if best is None or rb.cost<best.cost: best=rb
+print('beta (fixed observer) resid deg', np.rad2deg(best.fun.std()))
+wB,fB,Cb=best.x
+print('P_B',2*np.pi/wB,'fB',np.rad2deg(fB)%360)
+EOF
 ```
 
 ## [117] tool
@@ -3279,7 +4647,45 @@ P_B 251.5520536801917 fB 32.17953963198869
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def solve_kepler(M, e):
+    E=M.copy()
+    for _ in range(60):
+        E=E-(E-e*np.sin(E)-M)/(1-e*np.cos(E))
+    return E
+
+def beta_ellipse(p):
+    n, e, varpi, M0, a, qr, qi, C = p
+    M = n*t+M0
+    E = solve_kepler(M, e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    r = a*(1-e*np.cos(E))
+    L = varpi + nu
+    pos = r*np.exp(1j*L)
+    z = pos - (qr+1j*qi)
+    return C + np.angle(z)
+
+best=None
+n0=2*np.pi/1300
+for e0 in [0.1,0.3,0.5]:
+    for varpi in [0,2,4]:
+        for M0 in [0,2,4]:
+            for a0 in [1,2,4]:
+                try:
+                    r=least_squares(lambda p: beta_ellipse(p)-bu,[n0,e0,varpi,M0,a0,0.1,0.1,0.0],max_nfev=8000)
+                    if best is None or r.cost<best.cost: best=r
+                except Exception: pass
+print('beta ellipse resid deg', np.rad2deg(best.fun.std()))
+n,e,varpi,M0,a,qr,qi,C=best.x
+print('P_B',2*np.pi/n,'e',e,'varpi',np.rad2deg(varpi)%360,'M0',np.rad2deg(M0)%360,'a',a,'|q|',np.hypot(qr,qi))
+EOF
 ```
 
 ## [119] tool
@@ -3298,7 +4704,37 @@ P_B 251.5520536801917 fB 32.17953963198869
 **tool call: bash**
 
 ```
+cd /workspace; timeout 120 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
 
+def solve_kepler(M, e):
+    E=M.copy()
+    for _ in range(60):
+        E=E-(E-e*np.sin(E)-M)/(1-e*np.cos(E))
+    return E
+
+def beta_ellipse(p):
+    n, e, varpi, M0, a, qr, qi, C = p
+    M = n*t+M0; E = solve_kepler(M, e)
+    nu = 2*np.arctan2(np.sqrt(1+e)*np.sin(E/2), np.sqrt(1-e)*np.cos(E/2))
+    r = a*(1-e*np.cos(E)); L = varpi + nu
+    pos = r*np.exp(1j*L)
+    return C + np.angle(pos - (qr+1j*qi))
+
+best=None
+for e0 in [0.1,0.3,0.5]:
+    for a0 in [1,2,4]:
+        r=least_squares(lambda p: beta_ellipse(p)-bu,[2*np.pi/1300,e0,2.0,2.0,a0,0.1,0.1,0.0],max_nfev=6000)
+        if best is None or r.cost<best.cost: best=r
+print('beta ellipse resid deg', np.rad2deg(best.fun.std()))
+n,e,varpi,M0,a,qr,qi,C=best.x
+print('P_B',2*np.pi/n,'e',round(e,3),'varpi',np.rad2deg(varpi)%360,'M0',np.rad2deg(M0)%360,'a',round(a,3),'|q|',round(np.hypot(qr,qi),3))
+EOF
 ```
 
 ## [121] tool
@@ -3342,7 +4778,38 @@ P_B 658.878966914146 e 0.998 varpi 358.80515946209465 M0 117.95823862503843 a 4.
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+fo = 1/424.13; fb = 1/1300.78
+def build_basis(tt, fb, know=4, knb=8):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,know+1):
+        X.append(np.sin(2*np.pi*k*fo*tt)); X.append(np.cos(2*np.pi*k*fo*tt))
+    for k in range(1,knb+1):
+        X.append(np.sin(2*np.pi*k*fb*tt)); X.append(np.cos(2*np.pi*k*fb*tt))
+    for k in range(1,3):
+        for j in range(1,5):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fo+s*j*fb)*tt)); X.append(np.cos(2*np.pi*(k*fo+s*j*fb)*tt))
+    return np.column_stack(X)
 
+# validation: train on t<3300, predict t>=3300
+mask = t<3300
+Xtr = build_basis(t[mask], fb)
+coef = np.linalg.lstsq(Xtr, bu[mask], rcond=None)[0]
+Xte = build_basis(t[~mask], fb)
+pred = Xte@coef
+actual = bu[~mask]
+err = np.angle(np.exp(1j*(pred-actual)))
+print('validation on t>=3300: mean abs err deg', np.rad2deg(np.abs(err)).mean(), 'std err deg', np.rad2deg(err.std()))
+# also full fit residual
+Xall=build_basis(t,fb); coef2=np.linalg.lstsq(Xall,bu,rcond=None)[0]
+print('full residual deg', np.rad2deg((bu-Xall@coef2).std()))
+EOF
 ```
 
 ## [123] tool
@@ -3376,7 +4843,23 @@ full residual deg 0.7402165799300321
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+# min scatter of bu[t+P]-bu[t] over P
+best=None
+for P in np.arange(900, 2500, 1.0):
+    d = bu[int(P):] - bu[:-int(P)]
+    s = d.std()
+    if best is None or s<best[0]: best=(s,P)
+print('best P', best[1], 'scatter deg', np.rad2deg(best[0]))
+P=best[0][1]
+d=bu[int(P):]-bu[:-int(P)]
+print('mean step deg', np.rad2deg(d.mean())%360)
+EOF
 ```
 
 ## [125] tool
@@ -3419,7 +4902,19 @@ best P 1277.0 scatter deg 4.55409766030632
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Po=424.13
+for m in [1,2,3,4,5,6,7,8,9,10]:
+    P=m*Po
+    if int(P)<len(bu):
+        d=bu[int(P):]-bu[:-int(P)]
+        print(f"P={m}*{Po}={P:.2f}: scatter deg={np.rad2deg(d.std()):8.3f} mean step %360={np.rad2deg(d.mean())%360:8.3f}")
+EOF
 ```
 
 ## [127] tool
@@ -3467,7 +4962,39 @@ P=9*424.13=3817.17: scatter deg=  13.863 mean step %360=  38.255
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+def periodic_resid(y, t, P, nh=15):
+    th=2*np.pi*t/P
+    X=[np.ones_like(t),t]
+    for k in range(1,nh+1):
+        X.append(np.sin(k*th)); X.append(np.cos(k*th))
+    X=np.column_stack(X)
+    c=np.linalg.lstsq(X,y,rcond=None)[0]
+    return (y-X@c).std()
+
+# search P for beta in range around 1272-1278 finely
+best=None
+for P in np.arange(1265,1285,0.05):
+    s=periodic_resid(bu,t,P)
+    if best is None or s<best[0]: best=(s,P)
+print('beta best single-period P:', best[1], 'resid deg', np.rad2deg(best[0]))
+P=best[1]
+print('P/3 =', P/3, '  P_o from alpha ~424.13; ratio', P/424.13)
+# Now fit alpha period precisely
+best2=None
+for P in np.arange(424.0,424.4,0.002):
+    s=periodic_resid(au,t,P)
+    if best2 is None or s<best2[0]: best2=(s,P)
+print('alpha best P:', best2[1], 'resid deg', np.rad2deg(best2[0]))
+print('3*alpha P =', 3*best2[1])
+EOF
 ```
 
 ## [129] tool
@@ -3532,7 +5059,49 @@ alpha best P: 424.1280000000006 resid deg 0.7190366342819599
 **tool call: bash**
 
 ```
+cd /workspace; timeout 280 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import differential_evolution
+df = pd.read_csv('data/train.csv')
+t_full = df.t.values.astype(float)
+a_raw = np.deg2rad(df.alpha.values); b_raw = np.deg2rad(df.beta.values)
+# subsample for speed
+idx = np.arange(0, len(t_full), 4)
+t = t_full[idx]; a = a_raw[idx]; b = b_raw[idx]
 
+# Model: O = rho e^{i(wo t+fo)}, rho=1
+# alpha = arg(Ra e^{i(wa t+fa)} - O), beta = arg(Rb e^{i(wb t+fb)} - O)
+def model_angles(p):
+    wo,fo,wa,fa,Ra,wb,fb,Rb = p
+    O = np.exp(1j*(wo*t+fo))
+    A = Ra*np.exp(1j*(wa*t+fa))
+    B = Rb*np.exp(1j*(wb*t+fb))
+    return np.angle(A-O), np.angle(B-O)
+def resid(p):
+    al,be = model_angles(p)
+    ra = np.angle(np.exp(1j*(al-a)))
+    rb = np.angle(np.exp(1j*(be-b)))
+    return np.concatenate([ra,rb])
+
+lo=[2*np.pi/430, -10, 2*np.pi/430,-10, 1.0, 2*np.pi/1400,-10, 1.0]
+hi=[2*np.pi/380, 10, 2*np.pi/380, 10, 10.0, 2*np.pi/1000, 10, 10.0]
+res = differential_evolution(resid, list(zip(lo,hi)), maxiter=400, popsize=20, tol=1e-9, seed=1, polish=True, workers=1)
+print('best cost:', res.fun)
+p=res.x
+wo,fo,wa,fa,Ra,wb,fb,Rb=p
+print('wo P',2*np.pi/wo,'fo',np.rad2deg(fo)%360)
+print('wa P',2*np.pi/wa,'fa',np.rad2deg(fa)%360,'Ra',Ra)
+print('wb P',2*np.pi/wb,'fb',np.rad2deg(fb)%360,'Rb',Rb)
+al,be=model_angles(p)
+# full residual
+O = np.exp(1j*(wo*t_full+fo))
+A = Ra*np.exp(1j*(wa*t_full+fa))
+B = Rb*np.exp(1j*(wb*t_full+fb))
+al_f = np.angle(A-O); be_f=np.angle(B-O)
+print('full alpha resid deg', np.rad2deg(np.angle(np.exp(1j*(al_f-a_raw))).std()))
+print('full beta  resid deg', np.rad2deg(np.angle(np.exp(1j*(be_f-b_raw))).std()))
+EOF
 ```
 
 ## [131] tool
@@ -3564,7 +5133,41 @@ RuntimeError: func(x, *args) must return a scalar value
 **tool call: bash**
 
 ```
+cd /workspace; timeout 280 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import differential_evolution
+df = pd.read_csv('data/train.csv')
+t_full = df.t.values.astype(float)
+a_raw = np.deg2rad(df.alpha.values); b_raw = np.deg2rad(df.beta.values)
+idx = np.arange(0, len(t_full), 5)
+t = t_full[idx]; a = a_raw[idx]; b = b_raw[idx]
 
+def model_angles(p):
+    wo,fo,wa,fa,Ra,wb,fb,Rb = p
+    O = np.exp(1j*(wo*t+fo))
+    A = Ra*np.exp(1j*(wa*t+fa))
+    B = Rb*np.exp(1j*(wb*t+fb))
+    return np.angle(A-O), np.angle(B-O)
+def obj(p):
+    al,be = model_angles(p)
+    ra = np.angle(np.exp(1j*(al-a)))
+    rb = np.angle(np.exp(1j*(be-b)))
+    return np.mean(ra**2)+np.mean(rb**2)
+
+lo=[2*np.pi/430, -10, 2*np.pi/430,-10, 1.0, 2*np.pi/1400,-10, 1.0]
+hi=[2*np.pi/380, 10, 2*np.pi/380, 10, 10.0, 2*np.pi/1000, 10, 10.0]
+res = differential_evolution(obj, list(zip(lo,hi)), maxiter=300, popsize=15, tol=1e-8, seed=2, polish=True)
+print('best obj:', res.fun)
+p=res.x
+wo,fo,wa,fa,Ra,wb,fb,Rb=p
+print('wo P',2*np.pi/wo,'fo',np.rad2deg(fo)%360)
+print('wa P',2*np.pi/wa,'fa',np.rad2deg(fa)%360,'Ra',Ra)
+print('wb P',2*np.pi/wb,'fb',np.rad2deg(fb)%360,'Rb',Rb)
+O = np.exp(1j*(wo*t_full+fo)); A = Ra*np.exp(1j*(wa*t_full+fa)); B = Rb*np.exp(1j*(wb*t_full+fb))
+print('full alpha resid deg', np.rad2deg(np.angle(np.exp(1j*(np.angle(A-O)-a_raw))).std()))
+print('full beta  resid deg', np.rad2deg(np.angle(np.exp(1j*(np.angle(B-O)-b_raw))).std()))
+EOF
 ```
 
 ## [133] tool
@@ -3616,7 +5219,46 @@ full beta  resid deg 29.306552314717738
 **tool call: bash**
 
 ```
+cd /workspace; timeout 120 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
 
+def periodic_fit(y, t, P, nh=25, return_coef=False):
+    th=2*np.pi*t/P
+    X=[np.ones_like(t),t]
+    for k in range(1,nh+1):
+        X.append(np.sin(k*th)); X.append(np.cos(k*th))
+    X=np.column_stack(X)
+    c=np.linalg.lstsq(X,y,rcond=None)[0]
+    r=y-X@c
+    if return_coef: return r, c, X
+    return r.std()
+
+P=3*424.128
+s=periodic_fit(bu,t,P)
+print('beta periodic P=3*alpha=%.2f resid deg: %s'%(P, np.rad2deg(s)))
+# validation: train on t<3300 predict rest
+mask=t<3300
+def fit_predict(loc, P, nh=25):
+    r,c,X=periodic_fit(bu[loc],t[loc],P,nh,return_coef=True)
+    Xte=np.column_stack([[np.ones_like(t[~loc]),t[~loc]]+[np.sin(k*2*np.pi*t[~loc]/P) if True else 0 for k in range(1,nh+1) for _ in (0,1)]])
+    return None
+# simpler: build matrix
+def build(tt,P,nh):
+    X=[np.ones_like(tt),tt]
+    for k in range(1,nh+1):
+        X.append(np.sin(k*2*np.pi*tt/P)); X.append(np.cos(k*2*np.pi*tt/P))
+    return np.column_stack(X)
+for P in [1272.38, 1277, 1280]:
+    Xtr=build(t[mask],P,25); c=np.linalg.lstsq(Xtr,bu[mask],rcond=None)[0]
+    Xte=build(t[~mask],P,25); pred=Xte@c
+    err=np.angle(np.exp(1j*(pred-bu[~mask])))
+    print(f"P={P}: val err std deg {np.rad2deg(err.std()):.2f}, mean abs {np.rad2deg(np.abs(err)).mean():.2f}")
+EOF
 ```
 
 ## [135] tool
@@ -3660,7 +5302,29 @@ P=1280: val err std deg 7.40, mean abs 6.29
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+def build(tt,P,nh):
+    X=[np.ones_like(tt),tt]
+    for k in range(1,nh+1):
+        X.append(np.sin(k*2*np.pi*tt/P)); X.append(np.cos(k*2*np.pi*tt/P))
+    return np.column_stack(X)
+# validation: train t<3000, validate t in [3600,4142] (far holdout)
+tr = t<3000; va = t>3600
+results=[]
+for P in np.arange(1200,1400,4):
+    Xtr=build(t[tr],P,20); c=np.linalg.lstsq(Xtr,bu[tr],rcond=None)[0]
+    Xva=build(t[va],P,20); err=np.angle(np.exp(1j*(Xva@c-bu[va])))
+    results.append((np.rad2deg(err.std()),P))
+results.sort()
+print("top periods by validation error (train<3000, val>3600):")
+for e,P in results[:8]:
+    print(f"  P={P:.1f} val_err_std={e:.2f} deg")
+EOF
 ```
 
 ## [137] tool
@@ -3763,7 +5427,32 @@ top periods by validation error (train<3000, val>3600):
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import differential_evolution
+df = pd.read_csv('data/train.csv')
+t_full = df.t.values.astype(float)
+b_raw = np.deg2rad(df.beta.values)
+idx = np.arange(0,len(t_full),4)
+t=t_full[idx]; b=b_raw[idx]
+# beta = C + arg(e^{i(wb t+fb)} - q), q complex free
+def obj(p):
+    wb,fb,qr,qi,C = p
+    z = np.exp(1j*(wb*t+fb)) - (qr+1j*qi)
+    pred = C + np.angle(z)
+    err = np.angle(np.exp(1j*(pred-b)))
+    return np.mean(err**2)
+lo=[2*np.pi/1400,-10,-5,-5,-10]
+hi=[2*np.pi/1000, 10, 5, 5, 10]
+res=differential_evolution(obj,list(zip(lo,hi)),maxiter=300,popsize=12,tol=1e-9,seed=3,polish=True)
+print('best obj',res.fun)
+wb,fb,qr,qi,C=res.x
+z_full=np.exp(1j*(wb*t_full+fb))-(qr+1j*qi)
+pred=C+np.angle(z_full)
+print('beta circular free-q resid deg', np.rad2deg(np.angle(np.exp(1j*(pred-b_raw))).std()))
+print('P_B',2*np.pi/wb,'fb',np.rad2deg(fb)%360,'|q|',np.hypot(qr,qi),'argq',np.rad2deg(np.arctan2(qi,qr))%360)
+EOF
 ```
 
 ## [139] tool
@@ -3802,7 +5491,24 @@ P_B 1232.7024152431543 fb 174.53153715923224 |q| 0.7173629735597903 argq 104.552
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 120 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+def build(tt,P,nh):
+    X=[np.ones_like(tt),tt]
+    for k in range(1,nh+1):
+        X.append(np.sin(k*2*np.pi*tt/P)); X.append(np.cos(k*2*np.pi*tt/P))
+    return np.column_stack(X)
+for P in [1272.38, 1284]:
+    X=build(t,P,25); c=np.linalg.lstsq(X,bu,rcond=None)[0]
+    r=bu-X@c
+    print(f"P={P}: resid std {np.rad2deg(r.std()):.3f} deg. Decimated residual:")
+    for i in range(0,len(t),300):
+        print(f"   t={t[i]:5.0f} res={np.rad2deg(r[i]):7.2f}")
+EOF
 ```
 
 ## [141] tool
@@ -3860,7 +5566,41 @@ P=1284: resid std 4.094 deg. Decimated residual:
 **tool call: bash**
 
 ```
+cd /workspace; timeout 280 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import differential_evolution
+df = pd.read_csv('data/train.csv')
+t_full = df.t.values.astype(float)
+b_raw = np.deg2rad(df.beta.values)
+idx = np.arange(0,len(t_full),4)
+t=t_full[idx]; b=b_raw[idx]
 
+# beta = C + arg( Rb e^{i(wb t+fb)} - e^{i(wo t+fo)} )  (observer rho=1)
+def obj(p):
+    wo,fo,wb,fb,Rb,C = p
+    z = Rb*np.exp(1j*(wb*t+fb)) - np.exp(1j*(wo*t+fo))
+    pred = C + np.angle(z)
+    err = np.angle(np.exp(1j*(pred-b)))
+    return np.mean(err**2)
+lo=[2*np.pi/450,-10, 2*np.pi/1400,-10, 0.5,-10]
+hi=[2*np.pi/380, 10, 2*np.pi/1000, 10, 10, 10]
+res=differential_evolution(obj,list(zip(lo,hi)),maxiter=400,popsize=15,tol=1e-9,seed=4,polish=True)
+print('best obj',res.fun)
+wo,fo,wb,fb,Rb,C=res.x
+z_full=Rb*np.exp(1j*(wb*t_full+fb))-np.exp(1j*(wo*t_full+fo))
+pred=C+np.angle(z_full)
+print('beta moving-observer resid deg', np.rad2deg(np.angle(np.exp(1j*(pred-b_raw))).std()))
+print('P_o',2*np.pi/wo,'fo',np.rad2deg(fo)%360)
+print('P_B',2*np.pi/wb,'fb',np.rad2deg(fb)%360,'Rb',Rb)
+# validation
+tr=t_full<3000; va=t_full>3600
+def angles(tv,p):
+    wo,fo,wb,fb,Rb,C=p
+    return C+np.angle(Rb*np.exp(1j*(wb*tv+fb))-np.exp(1j*(wo*tv+fo)))
+err=np.angle(np.exp(1j*(angles(t_full[va],res.x)-b_raw[va])))
+print('validation (t>3600) err std deg', np.rad2deg(err.std()))
+EOF
 ```
 
 ## [143] tool
@@ -3908,7 +5648,29 @@ validation (t>3600) err std deg 13.686847348253476
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
+def periodic_std(y,t,P,nh):
+    X=[np.ones_like(t),t]
+    for k in range(1,nh+1):
+        X.append(np.sin(k*2*np.pi*t/P));X.append(np.cos(k*2*np.pi*t/P))
+    X=np.column_stack(X); c=np.linalg.lstsq(X,y,rcond=None)[0]
+    return (y-X@c).std()
+# search common period L where both alpha and beta periodic residual small
+best=None
+for L in np.arange(1200, 5600, 20):
+    sa=periodic_std(au,t,L,8)
+    sb=periodic_std(bu,t,L,8)
+    s=sa+sb
+    if best is None or s<best[0]: best=(s,L,sa,sb)
+print('best common L:', best[1], 'alpha_resid_deg', np.rad2deg(best[2]), 'beta_resid_deg', np.rad2deg(best[3]))
+print('L/424.13 =', best[1]/424.13)
+EOF
 ```
 
 ## [145] tool
@@ -3955,7 +5717,37 @@ L/424.13 = 3.01794261193502
 **tool call: bash**
 
 ```
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+def build(tt,P,nh):
+    X=[np.ones_like(tt),tt]
+    for k in range(1,nh+1):
+        X.append(np.sin(k*2*np.pi*tt/P)); X.append(np.cos(k*2*np.pi*tt/P))
+    return np.column_stack(X)
 
+# validation 1: train<3000, val>3600 (far)
+# validation 2: train<3600, val>3900 (mid)
+tr1=t<3000; va1=t>3600
+tr2=t<3600; va2=t>3900
+results=[]
+for P in np.arange(1260,1310,1.0):
+    X1=build(t[tr1],P,20); c1=np.linalg.lstsq(X1,bu[tr1],rcond=None)[0]
+    e1=np.angle(np.exp(1j*(build(t[va1],P,20)@c1-bu[va1]))).std()
+    X2=build(t[tr2],P,20); c2=np.linalg.lstsq(X2,bu[tr2],rcond=None)[0]
+    e2=np.angle(np.exp(1j*(build(t[va2],P,20)@c2-bu[va2]))).std()
+    # also in-sample full residual
+    Xf=build(t,P,20); cf=np.linalg.lstsq(Xf,bu,rcond=None)[0]
+    ins=np.rad2deg((bu-Xf@cf).std())
+    results.append((e1+e2, P, np.rad2deg(e1), np.rad2deg(e2), ins))
+results.sort()
+print("P | far_val | mid_val | insample_resid")
+for s,P,e1,e2,ins in results[:10]:
+    print(f"  P={P:.0f} far={e1:.2f} mid={e2:.2f} ins={ins:.2f}")
+EOF
 ```
 
 ## [147] tool
@@ -3992,7 +5784,41 @@ P | far_val | mid_val | insample_resid
 **tool call: bash**
 
 ```
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Po=424.13
+def build(tt,PB,nhB=6,nhO=3,ncross=0):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,nhB+1):
+        X.append(np.sin(k*2*np.pi*tt/PB));X.append(np.cos(k*2*np.pi*tt/PB))
+    for k in range(1,nhO+1):
+        X.append(np.sin(k*2*np.pi*tt/Po));X.append(np.cos(k*2*np.pi*tt/Po))
+    for k in range(1,ncross+1):
+        for j in range(1,ncross+1):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k/PB+s*j/Po)*tt));X.append(np.cos(2*np.pi*(k/PB+s*j/Po)*tt))
+    return np.column_stack(X)
 
+tr1=t<3000; va1=t>3600
+tr2=t<3600; va2=t>3900
+results=[]
+for PB in np.arange(1260,1310,2.0):
+    X1=build(t[tr1],PB); c1=np.linalg.lstsq(X1,bu[tr1],rcond=None)[0]
+    e1=np.angle(np.exp(1j*(build(t[va1],PB)@c1-bu[va1]))).std()
+    X2=build(t[tr2],PB); c2=np.linalg.lstsq(X2,bu[tr2],rcond=None)[0]
+    e2=np.angle(np.exp(1j*(build(t[va2],PB)@c2-bu[va2]))).std()
+    Xf=build(t,PB); cf=np.linalg.lstsq(Xf,bu,rcond=None)[0]
+    ins=np.rad2deg((bu-Xf@cf).std())
+    results.append((e1+e2, PB, np.rad2deg(e1), np.rad2deg(e2), ins))
+results.sort()
+print("P | far | mid | ins (with observer 424 component)")
+for s,PB,e1,e2,ins in results[:12]:
+    print(f"  PB={PB:.0f} far={e1:.2f} mid={e2:.2f} ins={ins:.2f}")
+EOF
 ```
 
 ## [149] tool
@@ -4035,7 +5861,42 @@ P | far | mid | ins (with observer 424 component)
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import differential_evolution, least_squares
+df = pd.read_csv('data/train.csv')
+t_full = df.t.values.astype(float)
+b_raw = np.deg2rad(df.beta.values)
+a_raw = np.deg2rad(df.alpha.values)
+idx=np.arange(0,len(t_full),4); t=t_full[idx]; b=b_raw[idx]
 
+# beta = C + arg( Rb e^{i(wb t+fb)} - e^{i(wo t+fo)} ), wb = wo/3
+def obj(p):
+    wo,fo,fb,Rb,C=p
+    wb=wo/3
+    z = Rb*np.exp(1j*(wb*t+fb)) - np.exp(1j*(wo*t+fo))
+    pred=C+np.angle(z)
+    err=np.angle(np.exp(1j*(pred-b)))
+    return np.mean(err**2)
+lo=[2*np.pi/440,-10,-10,0.5,-10]
+hi=[2*np.pi/380,10,10,10,10]
+res=differential_evolution(obj,list(zip(lo,hi)),maxiter=400,popsize=15,tol=1e-10,seed=5,polish=True)
+print('obj',res.fun)
+wo,fo,fb,Rb,C=res.x
+wb=wo/3
+z=Rb*np.exp(1j*(wb*t_full+fb))-np.exp(1j*(wo*t_full+fo))
+pred=C+np.angle(z)
+print('resid deg', np.rad2deg(np.angle(np.exp(1j*(pred-b_raw))).std()))
+print('T_o',2*np.pi/wo,'T_B',2*np.pi/wb)
+print('fo',np.rad2deg(fo)%360,'fb',np.rad2deg(fb)%360,'Rb',Rb)
+# validation
+tr=t_full<3000; va=t_full>3600
+def ang(tv):
+    return C+np.angle(Rb*np.exp(1j*(wb*tv+fb))-np.exp(1j*(wo*tv+fo)))
+err=np.angle(np.exp(1j*(ang(t_full[va])-b_raw[va])))
+print('validation far err std deg', np.rad2deg(err.std()))
+EOF
 ```
 
 ## [151] tool
@@ -4110,7 +5971,44 @@ validation far err std deg 26.939399918792226
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Po=424.13
+def build(tt,PB,nhB=6,nhO=3):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,nhB+1):
+        X.append(np.sin(k*2*np.pi*tt/PB));X.append(np.cos(k*2*np.pi*tt/PB))
+    for k in range(1,nhO+1):
+        X.append(np.sin(k*2*np.pi*tt/Po));X.append(np.cos(k*2*np.pi*tt/Po))
+    return np.column_stack(X)
 
+# pick PB via far validation
+tr1=t<3000; va1=t>3600
+best=None
+for PB in np.arange(1265,1280,0.5):
+    X=build(t[tr1],PB); c=np.linalg.lstsq(X,bu[tr1],rcond=None)[0]
+    e=np.angle(np.exp(1j*(build(t[va1],PB)@c-bu[va1]))).std()
+    if best is None or e<best[0]: best=(e,PB)
+print('best PB by far val:', best[1], 'far err', np.rad2deg(best[0]))
+PB=best[1]
+# fit full model
+Xfull=build(t,PB); cfull=np.linalg.lstsq(Xfull,bu,rcond=None)[0]
+ins=np.rad2deg((bu-Xfull@cfull).std())
+print('full in-sample resid deg:', ins)
+
+test = pd.read_csv('data/test.csv')
+tt=test.t.values.astype(float)
+Xte=build(tt,PB)
+pred=Xte@cfull
+pred_deg=np.rad2deg(pred)%360
+print("test predictions (deg wrapped):")
+for tt_i, pp in zip(tt, pred_deg):
+    print(f"  t={tt_i:.0f} beta_pred={pp:.3f}")
+EOF
 ```
 
 ## [153] tool
@@ -4155,7 +6053,38 @@ test predictions (deg wrapped):
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Po=424.13
+PB=1268.0
+def build(tt,nhB=6,nhO=3):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,nhB+1):
+        X.append(np.sin(k*2*np.pi*tt/PB));X.append(np.cos(k*2*np.pi*tt/PB))
+    for k in range(1,nhO+1):
+        X.append(np.sin(k*2*np.pi*tt/Po));X.append(np.cos(k*2*np.pi*tt/Po))
+    return np.column_stack(X)
+# fit on t<trunc, predict beyond, compute error vs horizon
+for trunc in [3000, 3300, 3600, 3800]:
+    m=t<trunc
+    X=build(t[m]); c=np.linalg.lstsq(X,bu[m],rcond=None)[0]
+    Xte=build(t); pred=Xte@c
+    err=np.angle(np.exp(1j*(pred-bu)))
+    # error beyond trunc
+    beyond=~m
+    if beyond.sum()>0:
+        h=t[beyond]-trunc
+        e=err[beyond]
+        # bin by horizon
+        for hmin,hmax in [(0,200),(200,400),(400,700),(700,1000)]:
+            mm=(h>=hmin)&(h<hmax)
+            if mm.sum()>0:
+                print(f"trunc={trunc} horizon[{hmin},{hmax}] n={mm.sum()} err_rmse={np.rad2deg(np.sqrt((e[mm]**2).mean())):.2f} maxabs={np.rad2deg(np.abs(e[mm]).max()):.2f}")
+EOF
 ```
 
 ## [155] tool
@@ -4212,7 +6141,37 @@ trunc=3800 horizon[200,400] n=143 err_rmse=9.09 maxabs=11.60
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+Po=424.13
+def build(tt,fb,nhB=5,nhO=3,ncross=2):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt));X.append(np.cos(2*np.pi*k*fb*tt))
+    for k in range(1,nhO+1):
+        X.append(np.sin(2*np.pi*k*tt/Po));X.append(np.cos(2*np.pi*k*tt/Po))
+    for k in range(1,ncross+1):
+        for j in range(1,ncross+1):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fb+s*j/Po)*tt));X.append(np.cos(2*np.pi*(k*fb+s*j/Po)*tt))
+    return np.column_stack(X)
+tr=t<3000; va=t>3600
+results=[]
+for fb in np.linspace(1/1300,1/1250,60):
+    X=build(t[tr],fb); c=np.linalg.lstsq(X,bu[tr],rcond=None)[0]
+    e=np.angle(np.exp(1j*(build(t[va],fb)@c-bu[va]))).std()
+    Xf=build(t,fb); cf=np.linalg.lstsq(Xf,bu,rcond=None)[0]
+    ins=np.rad2deg((bu-Xf@cf).std())
+    results.append((e,fb,ins))
+results.sort()
+print("fb | far_val | in_sample")
+for e,fb,ins in results[:10]:
+    print(f"  fb={fb:.6f} P_B={1/fb:.2f} far={np.rad2deg(e):.3f} ins={ins:.3f}")
+EOF
 ```
 
 ## [157] tool
@@ -4271,7 +6230,29 @@ fb | far_val | in_sample
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+au = np.unwrap(np.deg2rad(df.alpha.values))
+def periodic_std(y,t,P,nh):
+    X=[np.ones_like(t),t]
+    for k in range(1,nh+1):
+        X.append(np.sin(k*2*np.pi*t/P));X.append(np.cos(k*2*np.pi*t/P))
+    X=np.column_stack(X); c=np.linalg.lstsq(X,y,rcond=None)[0]
+    return (y-X@c).std()
+# search To such that alpha periodic To and beta periodic 3*To, both low residual
+best=None
+for To in np.arange(420, 430, 0.05):
+    sa=periodic_std(au,t,To,12)
+    sb=periodic_std(bu,t,3*To,25)
+    s=sa+sb
+    if best is None or s<best[0]: best=(s,To,sa,sb)
+print('best To', best[1], 'alpha_resid_deg', np.rad2deg(best[2]), 'beta_resid_deg', np.rad2deg(best[3]))
+print('3*To', 3*best[1])
+EOF
 ```
 
 ## [159] tool
@@ -4299,7 +6280,43 @@ best To 424.55000000000103 alpha_resid_deg 0.7730678768747599 beta_resid_deg 4.1
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 280 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+def build(tt,fo,fb,nhB=5,nhO=3,ncross=2):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt));X.append(np.cos(2*np.pi*k*fb*tt))
+    for k in range(1,nhO+1):
+        X.append(np.sin(2*np.pi*k*fo*tt));X.append(np.cos(2*np.pi*k*fo*tt))
+    for k in range(1,ncross+1):
+        for j in range(1,ncross+1):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fb+s*j*fo)*tt));X.append(np.cos(2*np.pi*(k*fb+s*j*fo)*tt))
+    return np.column_stack(X)
+def resid(fo,fb):
+    X=build(t,fo,fb); c=np.linalg.lstsq(X,bu,rcond=None)[0]
+    return (bu-X@c).std()
+# coarse 2D
+best=None
+for fo in np.linspace(1/424.5,1/423.8,15):
+    for fb in np.linspace(1/1290,1/1250,30):
+        s=resid(fo,fb)
+        if best is None or s<best[0]: best=(s,fo,fb)
+print('coarse best resid deg', np.rad2deg(best[0]), 'fo',best[1],'Po',1/best[1],'fb',best[2],'PB',1/best[2])
+s,fo,fb=best
+for it in range(3):
+    best2=None
+    for f in np.linspace(fo-2e-7,fo+2e-7,15):
+        for g in np.linspace(fb-2e-7,fb+2e-7,15):
+            ss=resid(f,g)
+            if best2 is None or ss<best2[0]: best2=(ss,f,g)
+    s,fo,fb=best2
+    print(f'iter{it}: resid deg {np.rad2deg(s):.4f} Po={1/fo:.5f} PB={1/fb:.5f} PB/Po={1/fb/(1/fo):.6f}')
+EOF
 ```
 
 ## [161] tool
@@ -4353,7 +6370,40 @@ iter2: resid deg 1.0917 Po=424.60815 PB=1290.99923 PB/Po=3.040449
 **tool call: bash**
 
 ```
-
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+fo=1/424.13
+def build(tt,fb,nhB=5,nhO=3,ncross=2):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt));X.append(np.cos(2*np.pi*k*fb*tt))
+    for k in range(1,nhO+1):
+        X.append(np.sin(2*np.pi*k*fo*tt));X.append(np.cos(2*np.pi*k*fo*tt))
+    for k in range(1,ncross+1):
+        for j in range(1,ncross+1):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fb+s*j*fo)*tt));X.append(np.cos(2*np.pi*(k*fb+s*j*fo)*tt))
+    return np.column_stack(X)
+tr=t<3000; va=t>3600
+# refine fb by far-validation
+best=None
+for fb in np.linspace(1/1280,1/1260,80):
+    X=build(t[tr],fb); c=np.linalg.lstsq(X,bu[tr],rcond=None)[0]
+    e=np.angle(np.exp(1j*(build(t[va],fb)@c-bu[va]))).std()
+    if best is None or e<best[0]: best=(e,fb)
+print('val-optimal fb',best[1],'PB',1/best[1],'far_val deg',np.rad2deg(best[0]))
+fb=best[1]
+# full fit
+Xf=build(t,fb); cf=np.linalg.lstsq(Xf,bu,rcond=None)[0]
+ins=np.rad2deg((bu-Xf@cf).std())
+print('full in-sample resid deg', ins)
+# save model info to file for later use
+np.save('/workspace/model_params.npy', {'fb':fb,'fo':fo,'cf':cf}, allow_pickle=True)
+EOF
 ```
 
 ## [163] tool
@@ -4399,7 +6449,37 @@ full in-sample resid deg 1.1912246082663442
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+test = pd.read_csv('data/test.csv')
+tt = test.t.values.astype(float)
 
+def build_model(tt, fo, fb, nhB=6, nhO=4, ncross=2):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt));X.append(np.cos(2*np.pi*k*fb*tt))
+    for k in range(1,nhO+1):
+        X.append(np.sin(2*np.pi*k*fo*tt));X.append(np.cos(2*np.pi*k*fo*tt))
+    for k in range(1,ncross+1):
+        for j in range(1,ncross+1):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fb+s*j*fo)*tt));X.append(np.cos(2*np.pi*(k*fb+s*j*fo)*tt))
+    return np.column_stack(X)
+
+for fb in [1/1272.4, 1/1280.0]:
+    fo=1/424.13
+    Xtr=build_model(t,fo,fb); c=np.linalg.lstsq(Xtr,bu,rcond=None)[0]
+    ins=np.rad2deg((bu-Xtr@c).std())
+    pred=build_model(tt,fo,fb)@c
+    pred_deg=np.rad2deg(pred)%360
+    print(f"fb=1/{1/fb:.1f}  in-sample resid={ins:.3f} deg")
+    for a,b_ in zip(tt,pred_deg):
+        print(f"   t={a:.0f} pred={b_:.3f}")
+EOF
 ```
 
 ## [165] tool
@@ -4460,7 +6540,40 @@ fb=1/1280.0  in-sample resid=1.186 deg
 **tool call: bash**
 
 ```
+cd /workspace; timeout 250 python << 'EOF'
+import pandas as pd
+import numpy as np
+df = pd.read_csv('data/train.csv')
+t = df.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(df.beta.values))
+fo=1/424.13; fb=1/1272.4
+def build(tt, nhB=6, nhO=4, ncross=2):
+    X=[np.ones_like(tt), tt]
+    for k in range(1,nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt));X.append(np.cos(2*np.pi*k*fb*tt))
+    for k in range(1,nhO+1):
+        X.append(np.sin(2*np.pi*k*fo*tt));X.append(np.cos(2*np.pi*k*fo*tt))
+    for k in range(1,ncross+1):
+        for j in range(1,ncross+1):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fb+s*j*fo)*tt));X.append(np.cos(2*np.pi*(k*fb+s*j*fo)*tt))
+    return np.column_stack(X)
 
+# fit on t<trunc, predict forward, compute error vs horizon
+for trunc in [3000, 3300, 3500, 3700]:
+    m=t<trunc
+    X=build(t[m]); c=np.linalg.lstsq(X,bu[m],rcond=None)[0]
+    pred=build(t)@c
+    err=np.angle(np.exp(1j*(pred-bu)))
+    beyond=~m
+    h=t[beyond]-trunc
+    e=err[beyond]
+    print(f"trunc={trunc}: max horizon {h.max():.0f}")
+    for hmin,hmax in [(0,150),(150,300),(300,500),(500,750),(750,1100)]:
+        mm=(h>=hmin)&(h<hmax)
+        if mm.sum()>0:
+            print(f"   h[{hmin},{hmax}] rmse={np.rad2deg(np.sqrt((e[mm]**2).mean())):6.2f} p95={np.rad2deg(np.quantile(np.abs(e[mm]),0.95)):6.2f}")
+EOF
 ```
 
 ## [167] tool
@@ -4645,7 +6758,64 @@ Let me write the final prediction script
 **tool call: bash**
 
 ```
+cd /workspace; cat > predict.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+# Load data
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(train.beta.values))
+tt = test.t.values.astype(float)
+
+# Two-frequency quasi-periodic model for unwrapped beta.
+# f_o = 1/424.13 (observer period, from alpha's exact periodicity)
+# f_b = 1/1272.4  (planet period, ~3*observer period; validated)
+fo = 1/424.13
+fb = 1/1272.4
+
+def build(tt_, nhB=6, nhO=4, ncross=2):
+    X = [np.ones_like(tt_), tt_]
+    for k in range(1, nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt_)); X.append(np.cos(2*np.pi*k*fb*tt_))
+    for k in range(1, nhO+1):
+        X.append(np.sin(2*np.pi*k*fo*tt_)); X.append(np.cos(2*np.pi*k*fo*tt_))
+    for k in range(1, ncross+1):
+        for j in range(1, ncross+1):
+            for s in [1, -1]:
+                X.append(np.sin(2*np.pi*(k*fb + s*j*fo)*tt_))
+                X.append(np.cos(2*np.pi*(k*fb + s*j*fo)*tt_))
+    return np.column_stack(X)
+
+Xtr = build(t)
+coef = np.linalg.lstsq(Xtr, bu, rcond=None)[0]
+Xte = build(tt)
+pred_unwrapped = Xte @ coef
+pred_deg = np.rad2deg(pred_unwrapped) % 360.0
+
+# Observation noise estimate (std of measurement noise)
+noise_std = 1.0  # degrees, from day-to-day diff analysis
+
+# Extrapolation/model uncertainty grows with horizon beyond training end (t=4142)
+h = tt - 4142.0
+model_std = 1.2 + 0.003*h
+half = 1.96 * np.sqrt(model_std**2 + noise_std**2)
+
+lower = (pred_deg - half) % 360.0
+upper = (pred_deg + half) % 360.0
+
+out = pd.DataFrame({
+    't': tt.astype(int),
+    'y_pred': np.round(pred_deg, 4),
+    'y_lower': np.round(lower, 4),
+    'y_upper': np.round(upper, 4),
+})
+out.to_csv('predictions.csv', index=False)
+print(out)
+print("\nrows:", len(out))
+EOF
+python predict.py
 ```
 
 ## [169] tool
@@ -4726,7 +6896,30 @@ rows: 10
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(train.beta.values))
+fo=1/424.13; fb=1/1272.4
+def build(tt_, nhB=6, nhO=4, ncross=2):
+    X=[np.ones_like(tt_),tt_]
+    for k in range(1,nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt_));X.append(np.cos(2*np.pi*k*fb*tt_))
+    for k in range(1,nhO+1):
+        X.append(np.sin(2*np.pi*k*fo*tt_));X.append(np.cos(2*np.pi*k*fo*tt_))
+    for k in range(1,ncross+1):
+        for j in range(1,ncross+1):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fb+s*j*fo)*tt_));X.append(np.cos(2*np.pi*(k*fb+s*j*fo)*tt_))
+    return np.column_stack(X)
+Xtr=build(t); c=np.linalg.lstsq(Xtr,bu,rcond=None)[0]
+pred=build(t)@c
+# check last 20 training points prediction vs actual
+for i in range(len(t)-15,len(t)):
+    print(f"t={t[i]:.0f} actual={np.rad2deg(bu[i])%360:8.3f} pred={np.rad2deg(pred[i])%360:8.3f} err={np.rad2deg(np.angle(np.exp(1j*(pred[i]-bu[i])))):7.3f}")
+EOF
 ```
 
 ## [171] tool
@@ -4781,7 +6974,57 @@ t=4142 actual= 348.363 pred= 349.243 err=  0.880
 **tool call: bash**
 
 ```
+cd /workspace; cat > predict.py << 'EOF'
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(train.beta.values))
+tt = test.t.values.astype(float)
+
+# Quasi-periodic model: observer period (from alpha) + planet period (~3x)
+fo = 1/424.13
+fb = 1/1272.4
+
+def build(tt_, nhB=6, nhO=4, ncross=2):
+    X = [np.ones_like(tt_), tt_]
+    for k in range(1, nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt_)); X.append(np.cos(2*np.pi*k*fb*tt_))
+    for k in range(1, nhO+1):
+        X.append(np.sin(2*np.pi*k*fo*tt_)); X.append(np.cos(2*np.pi*k*fo*tt_))
+    for k in range(1, ncross+1):
+        for j in range(1, ncross+1):
+            for s in [1, -1]:
+                X.append(np.sin(2*np.pi*(k*fb + s*j*fo)*tt_))
+                X.append(np.cos(2*np.pi*(k*fb + s*j*fo)*tt_))
+    return np.column_stack(X)
+
+Xtr = build(t)
+coef = np.linalg.lstsq(Xtr, bu, rcond=None)[0]
+pred_deg = np.rad2deg(build(tt) @ coef) % 360.0
+
+# Prediction interval for a new noisy measurement.
+noise_std = 0.8   # observation noise (deg)
+h = tt - 4142.0   # horizon beyond training end
+model_std = 1.3 + 0.0038*h   # extrapolation uncertainty grows with horizon
+half = 1.96 * np.sqrt(model_std**2 + noise_std**2)
+
+lower = (pred_deg - half) % 360.0
+upper = (pred_deg + half) % 360.0
+
+out = pd.DataFrame({
+    't': tt.astype(int),
+    'y_pred': np.round(pred_deg, 4),
+    'y_lower': np.round(lower, 4),
+    'y_upper': np.round(upper, 4),
+})
+out.to_csv('predictions.csv', index=False)
+print(out)
+print("rows:", len(out))
+EOF
+python predict.py
 ```
 
 ## [173] tool
@@ -4831,7 +7074,55 @@ rows: 10
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy.optimize import least_squares
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+b_raw = np.deg2rad(train.beta.values)
+bu = np.unwrap(b_raw)
 
+wo = 2*np.pi/424.13
+wb = 2*np.pi/1272.4
+
+# beta = C + arg( Rb e^{i(wb t+fb)} - rho e^{i(wo t+fo)} )
+def model_beta(p):
+    Rb, fb, rho, fo, C = p
+    z = Rb*np.exp(1j*(wb*t+fb)) - rho*np.exp(1j*(wo*t+fo))
+    return C + np.angle(z)
+
+best=None
+for Rb in [1,2,4,8]:
+    for rho in [0.5,1,2]:
+        for fb in np.linspace(0,2*np.pi,8,endpoint=False):
+            for fo in np.linspace(0,2*np.pi,8,endpoint=False):
+                try:
+                    r=least_squares(lambda p: model_beta(p)-bu,[Rb,fb,rho,fo,0.0],max_nfev=3000)
+                    if best is None or r.cost<best.cost: best=r
+                except Exception: pass
+print('in-sample resid deg:', np.rad2deg(best.fun.std()))
+Rb,fb,rho,fo,C=best.x
+print('Rb',Rb,'fb',np.rad2deg(fb)%360,'rho',rho,'fo',np.rad2deg(fo)%360)
+# validation
+tr=t<3000; va=t>3600
+def ang(tt,p):
+    Rb,fb,rho,fo,C=p
+    return C+np.angle(Rb*np.exp(1j*(wb*tt+fb))-rho*np.exp(1j*(wo*tt+fo)))
+# refit on train part
+best2=None
+btr=bu[tr]
+def model_beta2(p):
+    Rb,fb,rho,fo,C=p
+    z=Rb*np.exp(1j*(wb*t[tr]+fb))-rho*np.exp(1j*(wo*t[tr]+fo))
+    return C+np.angle(z)
+for Rb in [1,2,4,8]:
+    for rho in [0.5,1,2]:
+        r=least_squares(lambda p: model_beta2(p)-btr,[Rb,2.0,rho,1.0,0.0],max_nfev=3000)
+        if best2 is None or r.cost<best2.cost: best2=r
+err=np.angle(np.exp(1j*(ang(t[va],best2.x)-b_raw[va])))
+print('validation (t>3600, fit t<3000) err std deg:', np.rad2deg(err.std()), 'p95 abs:', np.rad2deg(np.quantile(np.abs(err),0.95)))
+EOF
 ```
 
 ## [175] tool
@@ -4880,7 +7171,14 @@ validation (t>3600, fit t<3000) err std deg: 16.977380433799407 p95 abs: 76.4760
 **tool call: bash**
 
 ```
-
+cd /workspace; cat predictions.csv; echo "---"; python -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv'); te=pd.read_csv('data/test.csv')
+print('test rows:',len(te),'pred rows:',len(p))
+print('t match:', (p.t.values==te.t.values).all())
+print('lower<=pred<=upper (linear):', (p.y_lower<=p.y_pred).all() and (p.y_pred<=p.y_upper).all())
+print('all in [0,360):', ((p.y_pred>=0)&(p.y_pred<360)).all() and ((p.y_lower>=0)&(p.y_lower<360)).all() and ((p.y_upper>=0)&(p.y_upper<360)).all())
+"
 ```
 
 ## [177] tool
@@ -4983,7 +7281,35 @@ Let me do a final validation to choose between candidate planet periods and conf
 **tool call: bash**
 
 ```
+cd /workspace; timeout 200 python << 'EOF'
+import pandas as pd
+import numpy as np
+train = pd.read_csv('data/train.csv')
+t = train.t.values.astype(float)
+bu = np.unwrap(np.deg2rad(train.beta.values))
+fo=1/424.13
+def build(tt_, fb, nhB=6, nhO=4, ncross=2):
+    X=[np.ones_like(tt_),tt_]
+    for k in range(1,nhB+1):
+        X.append(np.sin(2*np.pi*k*fb*tt_));X.append(np.cos(2*np.pi*k*fb*tt_))
+    for k in range(1,nhO+1):
+        X.append(np.sin(2*np.pi*k*fo*tt_));X.append(np.cos(2*np.pi*k*fo*tt_))
+    for k in range(1,ncross+1):
+        for j in range(1,ncross+1):
+            for s in [1,-1]:
+                X.append(np.sin(2*np.pi*(k*fb+s*j*fo)*tt_));X.append(np.cos(2*np.pi*(k*fb+s*j*fo)*tt_))
+    return np.column_stack(X)
 
+# multiple validation splits
+trs=[(t<3000, t>3600), (t<3300, t>3900), (t<3100, t>3700)]
+for fb,label in [(1/1272.4,'1272.4'),(1/1280,'1280.0'),(1/1284,'1284.0')]:
+    tot=0
+    for tr,va in trs:
+        X=build(t[tr],fb); c=np.linalg.lstsq(X,bu[tr],rcond=None)[0]
+        e=np.angle(np.exp(1j*(build(t[va],fb)@c-bu[va]))).std()
+        tot+=np.rad2deg(e)
+    print(f"fb={label}: total far-val std = {tot:.3f} deg")
+EOF
 ```
 
 ## [179] tool
@@ -5016,7 +7342,17 @@ The predictions are validated. Let me do a final review of the model and predict
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+# Final sanity check: verify continuity of predicted beta near training end
+import pandas as pd, numpy as np
+train=pd.read_csv('data/train.csv')
+test=pd.read_csv('data/test.csv')
+print("Training beta last 5 values (wrapped):")
+print(np.round(train.beta.values[-5:],2))
+print("\nPredictions:")
+print(pd.read_csv('predictions.csv').to_string(index=False))
+print("\nTest t range:", test.t.min(), test.t.max(), "| training t max:", train.t.max())
+EOF
 ```
 
 ## [181] tool
@@ -5068,7 +7404,7 @@ The 10 rows match `data/test.csv` exactly, with all columns present and angles i
 **tool call: bash**
 
 ```
-
+cd /workspace; cat predictions.csv
 ```
 
 ## [183] tool
@@ -5142,7 +7478,18 @@ The predictions file is complete and validated. Let me do a final verification o
 **tool call: bash**
 
 ```
-
+cd /workspace; python << 'EOF'
+import pandas as pd
+p = pd.read_csv('predictions.csv')
+te = pd.read_csv('data/test.csv')
+assert list(p.columns) == ['t','y_pred','y_lower','y_upper'], p.columns
+assert len(p) == len(te) == 10
+assert (p.t.values == te.t.values).all()
+assert ((p.y_lower <= p.y_pred) & (p.y_pred <= p.y_upper)).all()
+assert (p[['y_pred','y_lower','y_upper']] >= 0).all().all()
+assert (p[['y_pred','y_lower','y_upper']] < 360).all().all()
+print("All checks passed. predictions.csv is valid and complete.")
+EOF
 ```
 
 ## [187] tool

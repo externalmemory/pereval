@@ -49,7 +49,7 @@ Estimate the population tail quantiles for all 100 blocks described in data/task
 **tool call: bash**
 
 ```
-
+cd data 2>/dev/null; cat task.txt; echo "---"; ls; echo "---"; pwd
 ```
 
 ## [3] tool
@@ -692,7 +692,7 @@ task.txt
 **tool call: bash**
 
 ```
-
+cd /workspace && head -5 data/blocks.csv && echo "---" && wc -l data/blocks.csv
 ```
 
 ## [5] tool
@@ -719,7 +719,22 @@ block,x
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 << 'EOF'
+import pandas as pd
+df = pd.read_csv('data/blocks.csv')
+g = df.groupby('block')['x'].agg(['count','min','max','mean','std','median'])
+# get max and second max
+secmax = df.groupby('block')['x'].apply(lambda s: s.nlargest(2).iloc[-1])
+maxv = df.groupby('block')['x'].max()
+import numpy as np
+blocks = df['block'].unique()
+print("block m n max secondmax ratio(max/secondmax)")
+for b in sorted(blocks):
+    s = df[df['block']==b]['x'].values
+    srt=np.sort(s)
+    smax=srt[-1]; s2=srt[-2]
+    print(b, srt[-1], srt[-2], round(srt[-1]/max(abs(x) for x in srt),3) if max(abs(x) for x in srt)>0 else 0, )
+EOF
 ```
 
 ## [7] tool
@@ -848,7 +863,43 @@ block m n max secondmax ratio(max/secondmax)
 **tool call: bash**
 
 ```
+cd /workspace && cat > fit.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import minimize
 
+def nll(params, x):
+    xi, logs, lognu = params
+    sigma = np.exp(logs)
+    nu = np.exp(lognu)+1.0  # nu>1
+    return -np.sum(td.logpdf(x, nu, loc=xi, scale=sigma))
+
+def fit_t(x):
+    med = np.median(x)
+    mad = np.median(np.abs(x-med))
+    s0 = max(mad*1.4826, 1e-6)
+    xi0=med; ls0=np.log(s0); lnu0=np.log(4.0)
+    best=None
+    for init in [(xi0,ls0,lnu0),(np.mean(x),np.log(max(np.std(x),1e-6)),np.log(4.0))]:
+        try:
+            r=minimize(nll,[init[0],init[1],init[2]],args=(x,),method='Nelder-Mead',
+                       options={'maxiter':4000,'xatol':1e-6,'fatol':1e-9})
+            if best is None or r.fun<best.fun:
+                best=r
+        except Exception:
+            pass
+    xi,b,s = best.x
+    sigma=np.exp(s); nu=np.exp(b)+1.0
+    return xi,sigma,nu
+
+# test on one block
+df=pd.read_csv('data/blocks.csv')
+b1=df[df['block']==1]['x'].values
+print(fit_t(b1))
+b8=df[df['block']==8]['x'].values
+print(fit_t(b8))
+EOF
+python3 fit.py
 ```
 
 ## [9] tool
@@ -898,7 +949,50 @@ block m n max secondmax ratio(max/secondmax)
 **tool call: bash**
 
 ```
+cd /workspace && cat > fit2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import minimize
 
+def nll2(p, x):
+    xi, logsigma, lognu = p
+    sigma = np.exp(logsigma); nu=np.exp(lognu)+1.2
+    return -np.sum(td.logpdf(x, nu, loc=xi, scale=sigma))
+
+def fit_t2(x):
+    x=np.asarray(x,float)
+    rng=np.ptp(x)
+    if rng==0: rng=1.0
+    med=np.median(x)
+    mad=np.median(np.abs(x-med))
+    if mad==0: mad=np.std(x)
+    s0=max(mad*1.4826, rng*0.05, 1e-8)
+    vmax=max(5.0*rng, 1e-6)
+    vmin=min(rng*0.003,1e-6)
+    bounds=[(-20*rng,20*rng),(np.log(vmin),np.log(vmax)),(np.log(0.05),np.log(80.0))]
+    def nll(p):
+        xi,ls,ln=p
+        sigma=np.exp(ls); nu=np.exp(ln)+1.2
+        return -np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+    inits=[(med,np.log(s0),np.log(4.0)),(np.mean(x),np.log(max(np.std(x),1e-9)),np.log(4.0))]
+    best=None
+    for it in inits:
+        try:
+            r=minimize(nll,it,method='L-BFGS-B',bounds=bounds,options={'maxiter':3000})
+            if best is None or r.fun<best.fun: best=r
+        except Exception as e:
+            pass
+    xi=np.exp(best.x[1]) if False else best.x[0]
+    sigma=np.exp(best.x[1]); nu=np.exp(best.x[2])+1.2
+    return xi,sigma,nu
+
+df=pd.read_csv('data/blocks.csv')
+for b in [1,2,3,8,16,19,33,41,55,88]:
+    x=df[df['block']==b]['x'].values
+    xi,sigma,nu=fit_t2(x)
+    print(b, "xi=%.3f sigma=%.3f nu=%.2f"%(xi,sigma,nu), "q95=%.2f q99=%.2f"%(td.ppf(0.95,nu,loc=xi,scale=sigma),td.ppf(0.99,nu,loc=xi,scale=sigma)))
+EOF
+python3 fit2.py
 ```
 
 ## [11] tool
@@ -1023,7 +1117,46 @@ block m n max secondmax ratio(max/secondmax)
 **tool call: bash**
 
 ```
+cd /workspace && cat > mapfit.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import minimize
 
+def map_fit(x, nu_shape_center=4.0, nu_log_sd=0.35):
+    x=np.asarray(x,float)
+    rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); 
+    mad=np.median(np.abs(x-med))
+    s0=max(mad*1.4826, rng*0.05, 1e-8)
+    vmax=max(8.0*rng, 1e-6)
+    vmin=min(rng*0.003, 1e-8)
+    def obj(p):
+        xi,ls,ln=p
+        sigma=np.exp(ls); nu=np.exp(ln)+1.2
+        ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+        prior=-0.5*((np.log(nu-1.2)-np.log(nu_shape_center-1.2))/nu_log_sd)**2
+        return -(ll+prior)
+    bounds=[(-20*rng,20*rng),(np.log(vmin),np.log(vmax)),(np.log(0.05),np.log(60))]
+    inits=[(med,np.log(s0),np.log(3.0)),(np.mean(x),np.log(max(np.std(x),1e-9)),np.log(3.0))]
+    best=None
+    for it in inits:
+        try:
+            r=minimize(obj,it,method='L-BFGS-B',bounds=bounds,options={'maxiter':3000})
+            if best is None or r.fun<best.fun: best=r
+        except Exception:
+            pass
+    xi=best.x[0]; sigma=np.exp(best.x[1]); nu=np.exp(best.x[2])+1.2
+    return xi,sigma,nu
+
+df=pd.read_csv('data/blocks.csv')
+for b in [1,2,3,8,16,19,33,41,55,88,92,72,28,35]:
+    x=df[df['block']==b]['x'].values
+    xi,sigma,nu=map_fit(x)
+    print(b,"xi=%.2f sigma=%.2f nu=%.2f | q90=%.2f q95=%.2f q99=%.2f"%(xi,sigma,nu,
+        td.ppf(0.90,nu,loc=xi,scale=sigma),td.ppf(0.95,nu,loc=xi,scale=sigma),td.ppf(0.99,nu,loc=xi,scale=sigma)))
+EOF
+python3 mapfit.py
 ```
 
 ## [13] tool
@@ -1087,7 +1220,62 @@ block m n max secondmax ratio(max/secondmax)
 **tool call: bash**
 
 ```
+cd /workspace && cat > boot.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import minimize
 
+def map_fit(x, nu_center=4.0, nu_log_sd=0.35):
+    x=np.asarray(x,float)
+    rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x)
+    mad=np.median(np.abs(x-med))
+    s0=max(mad*1.4826, rng*0.05, 1e-8)
+    vmax=max(8.0*rng, 1e-6); vmin=min(rng*0.003,1e-8)
+    def obj(p):
+        xi,ls,ln=p
+        sigma=np.exp(ls); nu=np.exp(ln)+1.2
+        ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+        prior=-0.5*((np.log(nu-1.2)-np.log(nu_center-1.2))/nu_log_sd)**2
+        return -(ll+prior)
+    bounds=[(-20*rng,20*rng),(np.log(vmin),np.log(vmax)),(np.log(0.05),np.log(60))]
+    inits=[(med,np.log(s0),np.log(3.0)),(np.mean(x),np.log(max(np.std(x),1e-9)),np.log(3.0))]
+    best=None
+    for it in inits:
+        try:
+            r=minimize(obj,it,method='L-BFGS-B',bounds=bounds,options={'maxiter':2000})
+            if best is None or r.fun<best.fun: best=r
+        except Exception:
+            pass
+    return best.x[0],np.exp(best.x[1]),np.exp(best.x[2])+1.2
+
+def boot_block(x, B=400, seed=0):
+    rngm=np.random.default_rng(seed)
+    xi,sigma,nu=map_fit(x)
+    Q90=[];Q95=[];Q99=[]
+    for _ in range(B):
+        xs=td.rvs(nu,loc=xi,scale=sigma,size=10,random_state=rngm)
+        if np.ptp(xs)<1e-12: xs=np.ptp(x)+rngm.normal(0,1e-6,10)
+        xi2,s2,n2=map_fit(xs)
+        Q90.append(td.ppf(0.90,n2,loc=xi2,scale=s2))
+        Q95.append(td.ppf(0.95,n2,loc=xi2,scale=s2))
+        Q99.append(td.ppf(0.99,n2,loc=xi2,scale=s2))
+    Q90=np.array(Q90);Q95=np.array(Q95);Q99=np.array(Q99)
+    return dict(map=(xi,sigma,nu),Q90=Q90,Q95=Q95,Q99=Q99)
+
+df=pd.read_csv('data/blocks.csv')
+for b in [1,92,8,16,33]:
+    x=df[df['block']==b]['x'].values
+    r=boot_block(x,B=400,seed=b)
+    Q95=r['Q95']
+    print(b,"MAP q95=%.2f | post q95 med=%.2f 0.95q=%.2f | q90 0.90q=%.2f q99 0.99q=%.2f | lo=%.2f hi=%.2f"%(
+      td.ppf(0.95,r['map'][2],loc=r['map'][0],scale=r['map'][1]),
+      np.median(Q95),np.quantile(Q95,0.95),
+      np.quantile(r['Q90'],0.90),np.quantile(r['Q99'],0.99),
+      np.quantile(Q95,0.025),np.quantile(Q95,0.975)))
+EOF
+python3 boot.py
 ```
 
 ## [15] tool
@@ -1160,7 +1348,66 @@ block m n max secondmax ratio(max/secondmax)
 **tool call: bash**
 
 ```
+cd /workspace && cat > gen.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import minimize
 
+def map_fit(x, nu_center=4.0, nu_log_sd=0.35):
+    x=np.asarray(x,float)
+    rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x)
+    mad=np.median(np.abs(x-med))
+    s0=max(mad*1.4826, rng*0.05, 1e-8)
+    vmax=max(8.0*rng, 1e-6); vmin=min(rng*0.003,1e-8)
+    def obj(p):
+        xi,ls,ln=p
+        sigma=np.exp(ls); nu=np.exp(ln)+1.2
+        ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+        prior=-0.5*((np.log(nu-1.2)-np.log(nu_center-1.2))/nu_log_sd)**2
+        return -(ll+prior)
+    bounds=[(-20*rng,20*rng),(np.log(vmin),np.log(vmax)),(np.log(0.05),np.log(60))]
+    inits=[(med,np.log(s0),np.log(3.0)),(np.mean(x),np.log(max(np.std(x),1e-9)),np.log(3.0))]
+    best=None
+    for it in inits:
+        try:
+            r=minimize(obj,it,method='L-BFGS-B',bounds=bounds,options={'maxiter':2000})
+            if best is None or r.fun<best.fun: best=r
+        except Exception:
+            pass
+    return best.x[0],np.exp(best.x[1]),np.exp(best.x[2])+1.2
+
+def process_block(x, B, seed):
+    rngm=np.random.default_rng(seed)
+    xi,sigma,nu=map_fit(x)
+    Q90=np.empty(B);Q95=np.empty(B);Q99=np.empty(B)
+    for i in range(B):
+        xs=td.rvs(nu,loc=xi,scale=sigma,size=10,random_state=rngm)
+        xi2,s2,n2=map_fit(xs)
+        Q90[i]=td.ppf(0.90,n2,loc=xi2,scale=s2)
+        Q95[i]=td.ppf(0.95,n2,loc=xi2,scale=s2)
+        Q99[i]=td.ppf(0.99,n2,loc=xi2,scale=s2)
+    q90=np.quantile(Q90,0.90)
+    q95=np.quantile(Q95,0.95)
+    q99=np.quantile(Q99,0.99)
+    lo,hi=np.quantile(Q95,[0.025,0.975])
+    return q90,q95,q99,lo,hi
+
+df=pd.read_csv('data/blocks.csv')
+blocks=sorted(df['block'].unique())
+rows=[]
+B=300
+for b in blocks:
+    x=df[df['block']==b]['x'].values
+    q90,q95,q99,lo,hi=process_block(x,B,seed=b)
+    rows.append((b,round(q90,6),round(q95,6),round(q99,6),round(lo,6),round(hi,6)))
+out=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+out.to_csv('predictions.csv',index=False)
+print(out.head(10))
+print(out.shape)
+EOF
+time python3 gen.py
 ```
 
 ## [17] tool
@@ -1208,7 +1455,68 @@ block m n max secondmax ratio(max/secondmax)
 **tool call: bash**
 
 ```
+cd /workspace && cat > mcmc_gen.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
 
+def quick_fit(x):
+    x=np.asarray(x,float)
+    rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    s0=max(mad*1.4826, rng*0.05, 1e-8)
+    return med, s0, 4.0
+
+def logpost(p, x):
+    xi,ls,ln=p
+    sigma=np.exp(ls); nu=np.exp(ln)+1.2
+    ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+    prior=-0.5*((np.log(nu-1.2)-np.log(4.0-1.2))/0.35)**2
+    # vague priors on xi (normal, wide) and logsigma (uniform-ish via weak)
+    prior += -0.5*(xi/ (max(np.ptp(x),1e-6)*20))**2
+    return ll+prior
+
+def mcmc_block(x, N=4000, seed=0):
+    rng=np.random.default_rng(seed)
+    x=np.asarray(x,float)
+    rngr=np.ptp(x)
+    if rngr==0: rngr=1e-6
+    xi0,s0,nu0=quick_fit(x)
+    p=np.array([xi0, np.log(s0), np.log(nu0-1.2)])
+    lp=logpost(p,x)
+    step=np.array([rngr*0.05, 0.25, 0.20])
+    Q90=np.empty(N);Q95=np.empty(N);Q99=np.empty(N);accept=0
+    for i in range(N):
+        cand=p+step*rng.normal(size=3)
+        if cand[1]>np.log(max(rngr*1000,1e-6)): cand[1]=p[1]
+        lpc=logpost(cand,x)
+        if np.log(rng.random())<lpc-lp:
+            p=cand;lp=lpc;accept+=1
+        xi=p[0]; sigma=np.exp(p[1]); nu=np.exp(p[2])+1.2
+        Q90[i]=td.ppf(0.90,nu,loc=xi,scale=sigma)
+        Q95[i]=td.ppf(0.95,nu,loc=xi,scale=sigma)
+        Q99[i]=td.ppf(0.99,nu,loc=xi,scale=sigma)
+    burn=N//2
+    return Q90[burn:],Q95[burn:],Q99[burn:]
+
+df=pd.read_csv('data/blocks.csv')
+blocks=sorted(df['block'].unique())
+rows=[]
+N=4000
+for bi,b in enumerate(blocks):
+    x=df[df['block']==b]['x'].values
+    Q90,Q95,Q99=mcmc_block(x,N=N,seed=b)
+    q90=np.quantile(Q90,0.90)
+    q95=np.quantile(Q95,0.95)
+    q99=np.quantile(Q99,0.99)
+    lo,hi=np.quantile(Q95,[0.025,0.975])
+    rows.append((b,round(q90,6),round(q95,6),round(q99,6),round(lo,6),round(hi,6)))
+out=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+out.to_csv('predictions.csv',index=False)
+print(out.head(12))
+print(out.shape)
+EOF
+time python3 mcmc_gen.py
 ```
 
 ## [19] tool
@@ -1328,7 +1636,78 @@ sys	0m0.648s
 **tool call: bash**
 
 ```
+cd /workspace && cat > mcmc2.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import brentq
 
+def quick_fit(x):
+    x=np.asarray(x,float); rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    return med, max(mad*1.4826, rng*0.05, 1e-8), 4.0
+
+def logpost(p, x, center=4.0, wid=0.5):
+    xi,ls,ln=p
+    sigma=np.exp(ls); nu=np.exp(ln)+1.2
+    ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+    prior=-0.5*((np.log(nu-1.2)-np.log(center-1.2))/wid)**2
+    prior += -0.5*(xi/(max(np.ptp(x),1e-6)*20))**2
+    return ll+prior
+
+def mcmc_block(x, N=4000, seed=0, center=4.0, wid=0.5):
+    rng=np.random.default_rng(seed)
+    x=np.asarray(x,float); rngr=np.ptp(x)
+    if rngr==0: rngr=1e-6
+    xi0,s0,nu0=quick_fit(x)
+    p=np.array([xi0, np.log(s0), np.log(nu0-1.2)])
+    lp=logpost(p,x,center,wid)
+    step=np.array([rngr*0.05,0.25,0.20])
+    P=np.empty((N,3))
+    for i in range(N):
+        cand=p+step*rng.normal(size=3)
+        lpc=logpost(cand,x,center,wid)
+        if np.log(rng.random())<lpc-lp:
+            p=cand;lp=lpc
+        P[i]=p
+    return P[N//2:]
+
+def predictive_quantile(P, tau, x, center=4.0, wid=0.5):
+    # find c s.t. mean_i F_i(c)=tau
+    lo=-np.inf; hi=np.inf
+    vals=[]
+    for p in P:
+        xi=p[0];sigma=np.exp(p[1]);nu=np.exp(p[2])+1.2
+        vals.append((nu,xi,sigma))
+    vals=np.array(vals)
+    rngr=np.ptp(x)
+    # bracket
+    c=0
+    # use a wide search
+    def g(c):
+        return np.mean(td.cdf(c, vals[:,0], loc=vals[:,1], scale=vals[:,2]))-tau
+    # find bracket
+    a=0.0;b=0.0
+    # start from plug-in
+    # do a bisection over large range
+    cmin,cmax=-50*rngr, 50*rngr
+    # ensure proper
+    return brentq(g, cmin, cmax)
+
+df=pd.read_csv('data/blocks.csv')
+for b in [1,92,4,8,16,9,33,2]:
+    x=df[df['block']==b]['x'].values
+    P=mcmc_block(x,N=4000,seed=b,center=4.0,wid=0.5)
+    # posterior of Q95
+    xi=P[:,0];sig=np.exp(P[:,1]);nu=np.exp(P[:,2])+1.2
+    Q95=td.ppf(0.95,nu,loc=xi,scale=sig)
+    Q90=td.ppf(0.90,nu,loc=xi,scale=sig)
+    Q99=td.ppf(0.99,nu,loc=xi,scale=sig)
+    q90p=predictive_quantile(P,0.90,x); q95p=predictive_quantile(P,0.95,x); q99p=predictive_quantile(P,0.99,x)
+    print(b,"pred q90=%.2f q95=%.2f q99=%.2f | postQ95 med=%.2f lo=%.2f hi=%.2f | postQ90 0.9q=%.2f"%(
+        q90p,q95p,q99p,np.median(Q95),np.quantile(Q95,0.025),np.quantile(Q95,0.975),np.quantile(Q90,0.90)))
+EOF
+time python3 mcmc2.py
 ```
 
 ## [21] tool
@@ -1420,7 +1799,61 @@ sys	0m0.108s
 **tool call: bash**
 
 ```
+cd /workspace && cat > cmp.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import brentq
 
+def quick_fit(x):
+    x=np.asarray(x,float); rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    return med, max(mad*1.4826, rng*0.05, 1e-8), 4.0
+
+def logpost(p, x, center, wid):
+    xi,ls,ln=p
+    sigma=np.exp(ls); nu=np.exp(ln)+1.2
+    ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+    prior=-0.5*((np.log(nu-1.2)-np.log(center-1.2))/wid)**2
+    prior += -0.5*(xi/(max(np.ptp(x),1e-6)*20))**2
+    return ll+prior
+
+def mcmc_block(x, N=4000, seed=0, center=4.0, wid=0.5):
+    rng=np.random.default_rng(seed)
+    x=np.asarray(x,float); rngr=np.ptp(x)
+    if rngr==0: rngr=1e-6
+    xi0,s0,nu0=quick_fit(x)
+    p=np.array([xi0, np.log(s0), np.log(nu0-1.2)])
+    lp=logpost(p,x,center,wid)
+    step=np.array([rngr*0.05,0.25,0.20])
+    P=np.empty((N,3))
+    for i in range(N):
+        cand=p+step*rng.normal(size=3)
+        lpc=logpost(cand,x,center,wid)
+        if np.log(rng.random())<lpc-lp:
+            p=cand;lp=lpc
+        P[i]=p
+    return P[N//2:]
+
+def predq(P, tau, x):
+    vals=np.array([[p[0],np.exp(p[1]),np.exp(p[2])+1.2] for p in P])
+    rngr=max(np.ptp(x),1e-6)
+    def g(c): return np.mean(td.cdf(c,vals[:,2],loc=vals[:,0],scale=vals[:,1]))-tau
+    return brentq(g,-50*rngr,50*rngr)
+
+df=pd.read_csv('data/blocks.csv')
+for b in [4,92,9,8,16,1,2,72,5]:
+    x=df[df['block']==b]['x'].values
+    res=[]
+    for c in [3,4,6]:
+        P=mcmc_block(x,N=3000,seed=b,center=c,wid=0.5)
+        res.append([predq(P,0.9,x),predq(P,0.95,x),predq(P,0.99,x)])
+    print(b,"max=%.2f"%(x.max()), 
+          "c3:%s"%[round(r,1) for r in res[0]],
+          "c4:%s"%[round(r,1) for r in res[1]],
+          "c6:%s"%[round(r,1) for r in res[2]])
+EOF
+time python3 cmp.py
 ```
 
 ## [23] tool
@@ -1603,7 +2036,44 @@ sys	0m0.198s
 **tool call: bash**
 
 ```
+cd /workspace && cat > dist_nu.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import minimize
 
+def map_fit(x, nucent):
+    x=np.asarray(x,float)
+    rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    s0=max(mad*1.4826,rng*0.05,1e-8)
+    def obj(p):
+        xi,ls,ln=p
+        sigma=np.exp(ls); nu=np.exp(ln)+1.2
+        ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+        prior=-0.5*((np.log(nu-1.2)-np.log(nucent-1.2))/0.5)**2
+        return -(ll+prior)
+    bounds=[(-20*rng,20*rng),(np.log(rng*0.003),np.log(max(8*rng,1e-6))),(np.log(0.05),np.log(60))]
+    best=None
+    for it in [(med,np.log(s0),np.log(3.0)),(np.mean(x),np.log(max(np.std(x),1e-9)),np.log(3.0))]:
+        try:
+            r=minimize(obj,it,method='L-BFGS-B',bounds=bounds,options={'maxiter':1500})
+            if best is None or r.fun<best.fun: best=r
+        except: pass
+    return np.exp(best.x[2])+1.2
+
+df=pd.read_csv('data/blocks.csv')
+nus=[]
+for b in sorted(df['block'].unique()):
+    x=df[df['block']==b]['x'].values
+    nus.append(map_fit(x,4.0))
+nus=np.array(nus)
+print("nu quantiles:", np.percentile(nus,[10,25,50,75,90]))
+print("mean nu:", nus.mean())
+import collections
+print("min",nus.min(),"max",nus.max())
+EOF
+python3 dist_nu.py
 ```
 
 ## [25] tool
@@ -1660,7 +2130,85 @@ min 2.575791796204415 max 4.482298679457722
 **tool call: bash**
 
 ```
+cd /workspace && cat > final_gen.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import brentq
 
+NUCENT=5.0; WID=0.6
+
+def quick_fit(x):
+    x=np.asarray(x,float); rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    s0=max(mad*1.4826, rng*0.05, 1e-8)
+    return med, s0
+
+def logpost(p, x):
+    xi,ls,ln=p
+    sigma=np.exp(ls); nu=np.exp(ln)+1.2
+    ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+    rng=max(np.ptp(x),1e-6)
+    s0=med_scale(x)
+    prior=-0.5*((np.log(nu-1.2)-np.log(NUCENT-1.2))/WID)**2
+    prior += -0.5*(xi/(rng*20))**2
+    prior += -0.5*((ls-np.log(s0))/1.5)**2
+    return ll+prior
+
+def med_scale(x):
+    x=np.asarray(x,float); rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    return max(mad*1.4826, rng*0.05, 1e-8)
+
+def mcmc_block(x, N=5000, seed=0):
+    rng=np.random.default_rng(seed)
+    x=np.asarray(x,float); rngr=np.ptp(x)
+    if rngr==0: rngr=1e-6
+    xi0,s0=quick_fit(x)
+    p=np.array([xi0, np.log(s0), np.log(3.5)])
+    lp=logpost(p,x)
+    step=np.array([rngr*0.05,0.22,0.22])
+    P=np.empty((N,3))
+    acc=0
+    for i in range(N):
+        cand=p+step*rng.normal(size=3)
+        lpc=logpost(cand,x)
+        if np.log(rng.random())<lpc-lp:
+            p=cand;lp=lpc;acc+=1
+        P[i]=p
+    return P[N//2:]
+
+def predq(P, tau, x):
+    vals=np.array([[p[0],np.exp(p[1]),np.exp(p[2])+1.2] for p in P])
+    rngr=max(np.ptp(x),1e-6)
+    def g(c): return np.mean(td.cdf(c,vals[:,2],loc=vals[:,0],scale=vals[:,1]))-tau
+    a=-200*rngr; b=200*rngr
+    return brentq(g,a,b)
+
+def process(x, seed):
+    P=mcmc_block(x,N=5000,seed=seed)
+    q90=predq(P,0.90,x)
+    q95=predq(P,0.95,x)
+    q99=predq(P,0.99,x)
+    xi=P[:,0]; sig=np.exp(P[:,1]); nu=np.exp(P[:,2])+1.2
+    Q95=td.ppf(0.95,nu,loc=xi,scale=sig)
+    lo,hi=np.quantile(Q95,[0.025,0.975])
+    return q90,q95,q99,lo,hi
+
+df=pd.read_csv('data/blocks.csv')
+blocks=sorted(df['block'].unique())
+rows=[]
+for b in blocks:
+    x=df[df['block']==b]['x'].values
+    q90,q95,q99,lo,hi=process(x,seed=b)
+    rows.append((b,round(q90,6),round(q95,6),round(q99,6),round(lo,6),round(hi,6)))
+out=pd.DataFrame(rows,columns=['block','q90','q95','q99','lo','hi'])
+out.to_csv('predictions.csv',index=False)
+print(out.to_string(index=False))
+print("rows:",len(out))
+EOF
+time python3 final_gen.py
 ```
 
 ## [27] tool
@@ -1804,7 +2352,17 @@ rows: 100
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 << 'EOF'
+import pandas as pd
+df=pd.read_csv('predictions.csv')
+print(df.columns.tolist())
+print("rows",len(df),"blocks unique",df['block'].nunique(),"min/max block",df['block'].min(),df['block'].max())
+# monotonic check
+ok=((df['q90']<df['q95'])&(df['q95']<df['q99'])&(df['lo']<df['hi'])).all()
+print("monotonic q90<q95<q99 and lo<hi:", ok)
+print(df.isnull().any().any(), "missing")
+print(df.head())
+EOF
 ```
 
 ## [29] tool
@@ -1879,7 +2437,54 @@ False missing
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > seedcheck.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import t as td
+from scipy.optimize import brentq
+NUCENT=5.0; WID=0.6
+def quick_fit(x):
+    x=np.asarray(x,float); rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    return med, max(mad*1.4826, rng*0.05, 1e-8)
+def med_scale(x):
+    x=np.asarray(x,float); rng=np.ptp(x)
+    if rng==0: rng=1e-6
+    med=np.median(x); mad=np.median(np.abs(x-med))
+    return max(mad*1.4826, rng*0.05, 1e-8)
+def logpost(p,x):
+    xi,ls,ln=p; sigma=np.exp(ls); nu=np.exp(ln)+1.2
+    ll=np.sum(td.logpdf(x,nu,loc=xi,scale=sigma))
+    rng=max(np.ptp(x),1e-6); s0=med_scale(x)
+    prior=-0.5*((np.log(nu-1.2)-np.log(NUCENT-1.2))/WID)**2
+    prior += -0.5*(xi/(rng*20))**2 + -0.5*((ls-np.log(s0))/1.5)**2
+    return ll+prior
+def mcmc(x,N=5000,seed=0):
+    rng=np.random.default_rng(seed); x=np.asarray(x,float); rngr=np.ptp(x)
+    if rngr==0: rngr=1e-6
+    xi0,s0=quick_fit(x); p=np.array([xi0,np.log(s0),np.log(3.5)]); lp=logpost(p,x)
+    step=np.array([rngr*0.05,0.22,0.22]); P=np.empty((N,3))
+    for i in range(N):
+        cand=p+step*rng.normal(size=3); lpc=logpost(cand,x)
+        if np.log(rng.random())<lpc-lp: p=cand;lp=lpc
+        P[i]=p
+    return P[N//2:]
+def predq(P,tau,x):
+    vals=np.array([[p[0],np.exp(p[1]),np.exp(p[2])+1.2] for p in P]); rngr=max(np.ptp(x),1e-6)
+    def g(c): return np.mean(td.cdf(c,vals[:,2],loc=vals[:,0],scale=vals[:,1]))-tau
+    a=-500*rngr;b=500*rngr
+    if g(a)*g(b)>0: b=5000*rngr
+    return brentq(g,a,b)
+df=pd.read_csv('data/blocks.csv')
+for b in [1,8,16,25,88]:
+    x=df[df['block']==b]['x'].values
+    outs=[]
+    for s in [1,2,3]:
+        P=mcmc(x,N=5000,seed=s)
+        outs.append((predq(P,.9,x),predq(P,.95,x),predq(P,.99,x)))
+    print(b,[ [round(o[0],1),round(o[1],1),round(o[2],1)] for o in outs])
+EOF
+python3 seedcheck.py
 ```
 
 ## [31] tool
@@ -1922,7 +2527,7 @@ The `predictions.csv` is complete with 100 rows. Let me do a final verification 
 **tool call: bash**
 
 ```
-
+cd /workspace && head -3 predictions.csv && echo "..." && tail -3 predictions.csv && wc -l predictions.csv
 ```
 
 ## [33] tool

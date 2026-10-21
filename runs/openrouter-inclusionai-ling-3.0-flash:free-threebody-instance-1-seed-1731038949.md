@@ -55,19 +55,19 @@ Let me start by examining the data files.
 **tool call: bash**
 
 ```
-
+head -20 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
-
+head -20 data/test.csv
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -133,13 +133,34 @@ t
 **tool call: bash**
 
 ```
-
+tail -5 data/train.csv
 ```
 
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+
+print('Train t range:', train['t'].min(), '-', train['t'].max())
+print('Test t range:', test['t'].min(), '-', test['t'].max())
+print('Train shape:', train.shape)
+print('Test shape:', test.shape)
+print()
+print('Alpha stats:')
+print(train['alpha'].describe())
+print()
+print('Beta stats:')
+print(train['beta'].describe())
+print()
+# Check for wrapping
+print('Alpha wraps:', (train['alpha'] < 10).sum(), 'values near 0')
+print('Beta wraps:', (train['beta'] < 10).sum(), 'values near 0')
+"
 ```
 
 ## [7] tool
@@ -197,7 +218,35 @@ Let me explore the data patterns more deeply
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+
+# Look at the relationship between alpha and beta
+# Since both are angles, compute the circular difference
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Circular difference: beta - alpha, wrapped to [-180, 180]
+diff = beta - alpha
+diff = (diff + 180) % 360 - 180
+
+print('Alpha-Beta difference stats:')
+print(diff.describe())
+print()
+
+# Check if there's a smooth relationship
+# Plot a few time segments
+for start in [0, 900, 1800, 2700, 3500]:
+    end = start + 100
+    print(f't={start}-{end}:')
+    print(f'  alpha range: {alpha[start:end].min():.1f} - {alpha[start:end].max():.1f}')
+    print(f'  beta range: {beta[start:end].min():.1f} - {beta[start:end].max():.1f}')
+    print(f'  diff mean: {diff[start:end].mean():.2f}')
+    print()
+"
 ```
 
 ## [10] tool
@@ -220,7 +269,32 @@ Alpha-Beta difference stats:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+alpha = train['alpha'].values
+beta = train['beta'].values
+t = train['t'].values
+
+# Circular difference: beta - alpha, wrapped to [-180, 180]
+diff = beta - alpha
+diff = (diff + 180) % 360 - 180
+
+print('Alpha-Beta difference stats:')
+print(pd.Series(diff).describe())
+print()
+
+# Check if there's a smooth relationship
+for start in [0, 900, 1800, 2700, 3500]:
+    end = min(start + 100, len(train))
+    print(f't={start}-{end}:')
+    print(f'  alpha range: {alpha[start:end].min():.1f} - {alpha[start:end].max():.1f}')
+    print(f'  beta range: {beta[start:end].min():.1f} - {beta[start:end].max():.1f}')
+    print(f'  diff mean: {diff[start:end].mean():.2f}')
+    print()
+"
 ```
 
 ## [12] tool
@@ -277,7 +351,50 @@ t=3500-3600:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Check how many full cycles alpha and beta go through
+# Look at where they cross 0/360
+# For alpha
+alpha_diff = np.diff(alpha)
+# Handle wrapping: if diff is very negative, it wrapped around
+alpha_diff_wrapped = alpha_diff.copy()
+alpha_diff_wrapped[alpha_diff < -180] += 360
+alpha_diff_wrapped[alpha_diff > 180] -= 360
+
+# Cumulative unwrapped alpha
+alpha_unwrapped = np.zeros_like(alpha)
+alpha_unwrapped[0] = alpha[0]
+for i in range(1, len(alpha)):
+    alpha_unwrapped[i] = alpha_unwrapped[i-1] + alpha_diff_wrapped[i-1]
+
+print(f'Alpha total unwrapped range: {alpha_unwrapped.min():.1f} to {alpha_unwrapped.max():.1f}')
+print(f'Alpha total change: {alpha_unwrapped[-1] - alpha_unwrapped[0]:.1f} degrees over {t[-1]} days')
+print(f'Alpha cycles: {(alpha_unwrapped[-1] - alpha_unwrapped[0]) / 360:.2f}')
+print()
+
+# Same for beta
+beta_diff = np.diff(beta)
+beta_diff_wrapped = beta_diff.copy()
+beta_diff_wrapped[beta_diff < -180] += 360
+beta_diff_wrapped[beta_diff > 180] -= 360
+
+beta_unwrapped = np.zeros_like(beta)
+beta_unwrapped[0] = beta[0]
+for i in range(1, len(beta)):
+    beta_unwrapped[i] = beta_unwrapped[i-1] + beta_diff_wrapped[i-1]
+
+print(f'Beta total unwrapped range: {beta_unwrapped.min():.1f} to {beta_unwrapped.max():.1f}')
+print(f'Beta total change: {beta_unwrapped[-1] - beta_unwrapped[0]:.1f} degrees over {t[-1]} days')
+print(f'Beta cycles: {(beta_unwrapped[-1] - beta_unwrapped[0]) / 360:.2f}')
+"
 ```
 
 ## [14] tool
@@ -317,7 +434,62 @@ Beta cycles: 3.17
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.signal import find_peaks
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Unwrap both signals
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+alpha_uw = unwrap_angle(alpha)
+beta_uw = unwrap_angle(beta)
+
+# Let's try fitting sinusoids to the unwrapped signals
+# alpha: ~10 cycles in 3608 days, period ~360 days
+# beta: ~3.17 cycles in 3608 days, period ~1138 days
+
+# Try FFT on unwrapped signals to find dominant frequencies
+from scipy.fft import fft, fftfreq
+
+# For alpha
+N = len(t)
+dt = np.mean(np.diff(t))  # should be 1 day
+yf_alpha = fft(alpha_uw - np.mean(alpha_uw))
+xf_alpha = fftfreq(N, dt)
+# Find dominant positive frequencies
+pos_mask = xf_alpha > 0
+freqs_alpha = xf_alpha[pos_mask]
+mags_alpha = np.abs(yf_alpha[pos_mask])
+top_idx = np.argsort(mags_alpha)[-5:]
+print('Top 5 alpha frequencies (cycles/day):')
+for i in top_idx:
+    print(f'  freq={freqs_alpha[i]:.6f}, period={1/freqs_alpha[i]:.1f} days, mag={mags_alpha[i]:.1f}')
+
+print()
+
+# For beta
+yf_beta = fft(beta_uw - np.mean(beta_uw))
+pos_mask = xf_alpha > 0  # reuse same freq array
+freqs_beta = xf_alpha[pos_mask]
+mags_beta = np.abs(yf_beta[pos_mask])
+top_idx = np.argsort(mags_beta)[-5:]
+print('Top 5 beta frequencies (cycles/day):')
+for i in top_idx:
+    print(f'  freq={freqs_beta[i]:.6f}, period={1/freqs_beta[i]:.1f} days, mag={mags_beta[i]:.1f}')
+"
 ```
 
 ## [16] tool
@@ -359,7 +531,63 @@ Top 5 beta frequencies (cycles/day):
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.signal import detrend
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Unwrap both signals
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+alpha_uw = unwrap_angle(alpha)
+beta_uw = unwrap_angle(beta)
+
+# Detrend (remove linear trend)
+alpha_detrended = detrend(alpha_uw, type='linear')
+beta_detrended = detrend(beta_uw, type='linear')
+
+print('Alpha detrended stats:', alpha_detrended.min(), alpha_detrended.max(), np.std(alpha_detrended))
+print('Beta detrended stats:', beta_detrended.min(), beta_detrended.max(), np.std(beta_detrended))
+print()
+
+# Now look at FFT of detrended signals
+from scipy.fft import fft, fftfreq
+
+N = len(t)
+dt = 1.0  # 1 day
+yf_alpha = fft(alpha_detrended)
+xf = fftfreq(N, dt)
+pos_mask = xf > 0
+freqs = xf[pos_mask]
+mags_alpha = np.abs(yf_alpha[pos_mask])
+
+# Find peaks in alpha
+top_idx = np.argsort(mags_alpha)[-10:]
+print('Top 10 alpha detrended frequencies:')
+for i in sorted(top_idx, reverse=True):
+    print(f'  freq={freqs[i]:.6f}, period={1/freqs[i]:.1f} days, mag={mags_alpha[i]:.1f}')
+
+print()
+
+yf_beta = fft(beta_detrended)
+mags_beta = np.abs(yf_beta[pos_mask])
+top_idx = np.argsort(mags_beta)[-10:]
+print('Top 10 beta detrended frequencies:')
+for i in sorted(top_idx, reverse=True):
+    print(f'  freq={freqs[i]:.6f}, period={1/freqs[i]:.1f} days, mag={mags_beta[i]:.1f}')
+"
 ```
 
 ## [18] tool
@@ -436,7 +664,118 @@ Top 10 beta detrended frequencies:
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+beta = train['beta'].values
+
+# Unwrap beta
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+beta_uw = unwrap_angle(beta)
+
+# Fit a sinusoidal model to unwrapped beta
+# Try multiple frequencies
+# From FFT analysis, key frequencies for beta detrended:
+# 0.001940 (515.6 days), 0.001663 (601.5), 0.001385 (721.8), 0.001108 (902.2), 0.000831 (1203)
+
+# Let me try fitting with a linear trend + several sinusoids
+def beta_model(t, a0, a1, 
+               a2, p2,  # period ~360.9
+               a3, p3,  # period ~515.6
+               a4, p4,  # period ~601.5
+               a5, p5,  # period ~721.8
+               a6, p6,  # period ~902.2
+               a7, p7,  # period ~1203
+               a8, p8,  # period ~1804.5
+               a9, p9,  # period ~451.1
+               a10, p10, # period ~401
+               a11, p11, # period ~328.1
+               a12, p12, # period ~300.7
+               a13, p13, # period ~212.3
+               a14, p14, # period ~180.4
+               a15, p15, # period ~120.3
+               a16, p16, # period ~90.2
+               a17, p17): # period ~45.1
+    freq2 = 2*np.pi/360.9
+    freq3 = 2*np.pi/515.6
+    freq4 = 2*np.pi/601.5
+    freq5 = 2*np.pi/721.8
+    freq6 = 2*np.pi/902.2
+    freq7 = 2*np.pi/1203.0
+    freq8 = 2*np.pi/1804.5
+    freq9 = 2*np.pi/451.1
+    freq10 = 2*np.pi/401.0
+    freq11 = 2*np.pi/328.1
+    freq12 = 2*np.pi/300.7
+    freq13 = 2*np.pi/212.3
+    freq14 = 2*np.pi/180.4
+    freq15 = 2*np.pi/120.3
+    freq16 = 2*np.pi/90.2
+    freq17 = 2*np.pi/45.1
+    
+    return (a0 + a1*t + 
+            a2*np.sin(t*freq2 + p2) + a3*np.sin(t*freq3 + p3) + 
+            a4*np.sin(t*freq4 + p4) + a5*np.sin(t*freq5 + p5) + 
+            a6*np.sin(t*freq6 + p6) + a7*np.sin(t*freq7 + p7) + 
+            a8*np.sin(t*freq8 + p8) + a9*np.sin(t*freq9 + p9) + 
+            a10*np.sin(t*freq10 + p10) + a11*np.sin(t*freq11 + p11) + 
+            a12*np.sin(t*freq12 + p12) + a13*np.sin(t*freq13 + p13) + 
+            a14*np.sin(t*freq14 + p14) + a15*np.sin(t*freq15 + p15) + 
+            a16*np.sin(t*freq16 + p16) + a17*np.sin(t*freq17 + p17))
+
+# This is too many parameters. Let me use a simpler approach.
+# Let me use linear regression with sinusoidal basis functions
+
+# Build design matrix
+X_list = [np.ones(len(t)), t]
+
+# Add sin/cos pairs for key frequencies
+freqs_to_try = [
+    2*np.pi/360.9,   # dominant alpha freq
+    2*np.pi/515.6,   # dominant beta freq
+    2*np.pi/601.5,
+    2*np.pi/721.8,
+    2*np.pi/902.2,
+    2*np.pi/1203.0,
+    2*np.pi/1804.5,
+    2*np.pi/451.1,
+    2*np.pi/401.0,
+    2*np.pi/328.1,
+    2*np.pi/300.7,
+    2*np.pi/212.3,
+    2*np.pi/180.4,
+    2*np.pi/120.3,
+    2*np.pi/90.2,
+]
+
+for f in freqs_to_try:
+    X_list.append(np.sin(f * t))
+    X_list.append(np.cos(f * t))
+
+X = np.column_stack(X_list)
+y = beta_uw
+
+# Fit using least squares
+from numpy.linalg import lstsq
+coeffs, residuals, rank, sv = lstsq(X, y, rcond=None)
+y_pred = X @ coeffs
+rmse = np.sqrt(np.mean((y - y_pred)**2))
+print(f'RMSE on unwrapped beta: {rmse:.2f} degrees')
+print(f'Number of features: {X.shape[1]}')
+print(f'Number of data points: {len(t)}')
+"
 ```
 
 ## [20] tool
@@ -472,7 +811,71 @@ Number of data points: 3609
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from numpy.linalg import lstsq
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+# Unwrap angles
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+alpha_uw = unwrap_angle(alpha)
+beta_uw = unwrap_angle(beta)
+
+# Build design matrix for beta model
+def build_design_matrix(t, freqs):
+    X_list = [np.ones(len(t)), t]
+    for f in freqs:
+        X_list.append(np.sin(f * t))
+        X_list.append(np.cos(f * t))
+    return np.column_stack(X_list)
+
+# Frequencies for beta (from FFT analysis)
+beta_freqs = [
+    2*np.pi/515.6, 2*np.pi/601.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/1203.0, 2*np.pi/1804.5, 2*np.pi/451.1, 2*np.pi/401.0,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/212.3, 2*np.pi/180.4,
+    2*np.pi/120.3, 2*np.pi/90.2, 2*np.pi/45.1,
+]
+
+X_beta = build_design_matrix(t, beta_freqs)
+coeffs_beta, _, _, _ = lstsq(X_beta, beta_uw, rcond=None)
+beta_uw_pred = X_beta @ coeffs_beta
+rmse_beta = np.sqrt(np.mean((beta_uw - beta_uw_pred)**2))
+print(f'Beta RMSE (unwrapped): {rmse_beta:.2f} degrees')
+
+# Residual standard deviation (observation noise)
+resid_beta = beta_uw - beta_uw_pred
+sigma_beta = np.std(resid_beta)
+print(f'Beta residual std: {sigma_beta:.2f} degrees')
+
+# Now predict beta for test times
+test = pd.read_csv('data/test.csv')
+t_test = test['t'].values
+
+X_beta_test = build_design_matrix(t_test, beta_freqs)
+beta_uw_pred_test = X_beta_test @ coeffs_beta
+
+# Wrap back to [0, 360)
+beta_pred_test = beta_uw_pred_test % 360
+
+print(f'Predicted beta range: {beta_pred_test.min():.2f} to {beta_pred_test.max():.2f}')
+print(f'Predicted beta values:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]:.0f}: beta={beta_pred_test[i]:.2f}')
+"
 ```
 
 ## [22] tool
@@ -523,7 +926,81 @@ Let me also try modeling alpha and using it to predict beta, and compare approac
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
+from numpy.linalg import lstsq
 
+train = pd.read_csv('data/train.csv')
+t = train['t'].values
+alpha = train['alpha'].values
+beta = train['beta'].values
+
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+alpha_uw = unwrap_angle(alpha)
+beta_uw = unwrap_angle(beta)
+
+def build_design_matrix(t, freqs):
+    X_list = [np.ones(len(t)), t]
+    for f in freqs:
+        X_list.append(np.sin(f * t))
+        X_list.append(np.cos(f * t))
+    return np.column_stack(X_list)
+
+# Frequencies for alpha
+alpha_freqs = [
+    2*np.pi/360.9, 2*np.pi/90.2, 2*np.pi/120.3, 2*np.pi/180.4,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/401.0, 2*np.pi/451.1,
+    2*np.pi/212.3, 2*np.pi/1804.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/601.5, 2*np.pi/1203.0, 2*np.pi/45.1,
+]
+
+X_alpha = build_design_matrix(t, alpha_freqs)
+coeffs_alpha, _, _, _ = lstsq(X_alpha, alpha_uw, rcond=None)
+alpha_uw_pred = X_alpha @ coeffs_alpha
+rmse_alpha = np.sqrt(np.mean((alpha_uw - alpha_uw_pred)**2))
+print(f'Alpha RMSE (unwrapped): {rmse_alpha:.2f} degrees')
+
+# Now let's try: predict alpha_uw for test, then use alpha to predict beta
+# Method: model beta_uw as function of t AND alpha_uw
+# Build combined design matrix
+freqs_beta = [
+    2*np.pi/515.6, 2*np.pi/601.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/1203.0, 2*np.pi/1804.5, 2*np.pi/451.1, 2*np.pi/401.0,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/212.3, 2*np.pi/180.4,
+    2*np.pi/120.3, 2*np.pi/90.2, 2*np.pi/45.1,
+]
+
+# Combined model: beta_uw = f(t, alpha_uw)
+X_combined = [np.ones(len(t)), t]
+# Add alpha components
+for f in alpha_freqs:
+    X_combined.append(np.sin(f * t))
+    X_combined.append(np.cos(f * t))
+# Add beta-specific frequency components
+for f in freqs_beta:
+    X_combined.append(np.sin(f * t))
+    X_combined.append(np.cos(f * t))
+# Add interaction: alpha * beta_freq components
+for f in freqs_beta:
+    X_combined.append(np.sin(f * t) * alpha_uw)
+    X_combined.append(np.cos(f * t) * alpha_uw)
+
+X_combined = np.column_stack(X_combined)
+coeffs_comb, _, _, _ = lstsq(X_combined, beta_uw, rcond=None)
+beta_uw_pred_comb = X_combined @ coeffs_comb
+rmse_comb = np.sqrt(np.mean((beta_uw - beta_uw_pred_comb)**2))
+print(f'Combined model RMSE (unwrapped): {rmse_comb:.2f} degrees')
+print(f'Combined model features: {X_combined.shape[1]}')
+"
 ```
 
 ## [24] tool
@@ -572,7 +1049,100 @@ Now let me build the full prediction pipeline with proper prediction intervals.
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from numpy.linalg import lstsq
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t_train = train['t'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# Unwrap angles
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+alpha_uw = unwrap_angle(alpha_train)
+beta_uw = unwrap_angle(beta_train)
+
+def build_design_matrix(t, freqs):
+    X_list = [np.ones(len(t)), t]
+    for f in freqs:
+        X_list.append(np.sin(f * t))
+        X_list.append(np.cos(f * t))
+    return np.column_stack(X_list)
+
+# Frequencies for alpha (from FFT analysis)
+alpha_freqs = [
+    2*np.pi/360.9, 2*np.pi/90.2, 2*np.pi/120.3, 2*np.pi/180.4,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/401.0, 2*np.pi/451.1,
+    2*np.pi/212.3, 2*np.pi/1804.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/601.5, 2*np.pi/1203.0, 2*np.pi/45.1,
+]
+
+# Frequencies for beta (from FFT analysis)
+beta_freqs = [
+    2*np.pi/515.6, 2*np.pi/601.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/1203.0, 2*np.pi/1804.5, 2*np.pi/451.1, 2*np.pi/401.0,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/212.3, 2*np.pi/180.4,
+    2*np.pi/120.3, 2*np.pi/90.2, 2*np.pi/45.1,
+]
+
+# Model 1: alpha as function of t
+X_alpha = build_design_matrix(t_train, alpha_freqs)
+coeffs_alpha, _, _, _ = lstsq(X_alpha, alpha_uw, rcond=None)
+alpha_uw_pred_train = X_alpha @ coeffs_alpha
+alpha_resid_std = np.std(alpha_uw - alpha_uw_pred_train)
+print(f'Alpha model residual std: {alpha_resid_std:.3f} degrees')
+
+# Model 2: beta as function of t only
+X_beta_t = build_design_matrix(t_train, beta_freqs)
+coeffs_beta_t, _, _, _ = lstsq(X_beta_t, beta_uw, rcond=None)
+beta_uw_pred_t = X_beta_t @ coeffs_beta_t
+beta_t_resid_std = np.std(beta_uw - beta_uw_pred_t)
+print(f'Beta (t only) model residual std: {beta_t_resid_std:.3f} degrees')
+
+# Model 3: beta as function of t and alpha_uw
+# Build combined design matrix
+X_combined = build_design_matrix(t_train, alpha_freqs + beta_freqs)
+# Add alpha_uw as a feature
+X_combined = np.column_stack([X_combined, alpha_uw])
+coeffs_comb, _, _, _ = lstsq(X_combined, beta_uw, rcond=None)
+beta_uw_pred_comb = X_combined @ coeffs_comb
+comb_resid_std = np.std(beta_uw - beta_uw_pred_comb)
+print(f'Combined model residual std: {comb_resid_std:.3f} degrees')
+
+# Now predict for test times
+# Predict alpha_uw for test
+X_alpha_test = build_design_matrix(t_test, alpha_freqs)
+alpha_uw_test = X_alpha_test @ coeffs_alpha
+
+# Predict beta_uw for test using combined model
+X_comb_test = build_design_matrix(t_test, alpha_freqs + beta_freqs)
+X_comb_test = np.column_stack([X_comb_test, alpha_uw_test])
+beta_uw_test = X_comb_test @ coeffs_comb
+
+# Wrap back to [0, 360)
+beta_pred = beta_uw_test % 360
+
+print(f'\nTest predictions:')
+for i in range(len(t_test)):
+    print(f'  t={t_test[i]:.0f}: beta={beta_pred[i]:.2f}')
+
+# Save intermediate results
+print(f'\nAlpha pred std: {alpha_resid_std:.3f}')
+print(f'Beta t-only std: {beta_t_resid_std:.3f}')
+print(f'Beta combined std: {comb_resid_std:.3f}')
+EOF
 ```
 
 ## [26] tool
@@ -711,7 +1281,195 @@ Now let me build the final model with proper prediction intervals and save the r
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from numpy.linalg import lstsq
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t_train = train['t'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# Unwrap angles
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+alpha_uw = unwrap_angle(alpha_train)
+beta_uw = unwrap_angle(beta_train)
+
+def build_design_matrix(t, freqs):
+    X_list = [np.ones(len(t)), t]
+    for f in freqs:
+        X_list.append(np.sin(f * t))
+        X_list.append(np.cos(f * t))
+    return np.column_stack(X_list)
+
+# Frequencies for alpha (from FFT analysis)
+alpha_freqs = [
+    2*np.pi/360.9, 2*np.pi/90.2, 2*np.pi/120.3, 2*np.pi/180.4,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/401.0, 2*np.pi/451.1,
+    2*np.pi/212.3, 2*np.pi/1804.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/601.5, 2*np.pi/1203.0, 2*np.pi/45.1,
+]
+
+# Frequencies for beta (from FFT analysis)
+beta_freqs = [
+    2*np.pi/515.6, 2*np.pi/601.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/1203.0, 2*np.pi/1804.5, 2*np.pi/451.1, 2*np.pi/401.0,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/212.3, 2*np.pi/180.4,
+    2*np.pi/120.3, 2*np.pi/90.2, 2*np.pi/45.1,
+]
+
+# Model 1: alpha as function of t
+X_alpha = build_design_matrix(t_train, alpha_freqs)
+coeffs_alpha, _, _, _ = lstsq(X_alpha, alpha_uw, rcond=None)
+
+# Model 2: beta as function of t and alpha_uw
+X_combined = build_design_matrix(t_train, alpha_freqs + beta_freqs)
+X_combined = np.column_stack([X_combined, alpha_uw])
+coeffs_comb, _, _, _ = lstsq(X_combined, beta_uw, rcond=None)
+
+# Compute residuals and noise estimate
+beta_uw_pred = X_combined @ coeffs_comb
+residuals = beta_uw - beta_uw_pred
+sigma_obs = np.std(residuals)  # observation noise estimate
+n_train = len(t_train)
+n_params = X_combined.shape[1]
+dof = n_train - n_params
+
+# Also compute prediction for alpha on test set
+X_alpha_test = build_design_matrix(t_test, alpha_freqs)
+alpha_uw_test = X_alpha_test @ coeffs_alpha
+
+# Predict beta for test set
+X_comb_test = build_design_matrix(t_test, alpha_freqs + beta_freqs)
+X_comb_test = np.column_stack([X_comb_test, alpha_uw_test])
+beta_uw_test = X_comb_test @ coeffs_comb
+
+# Wrap back to [0, 360)
+beta_pred = beta_uw_test % 360
+
+# Compute prediction intervals
+# For a new observation, the prediction interval accounts for:
+# 1. Observation noise (sigma_obs)
+# 2. Uncertainty in the predicted mean (standard error of the fit)
+# 3. Uncertainty in predicted alpha (propagated through the model)
+
+# Standard error of the fit for each test point
+# SE_fit = sigma_obs * sqrt(x_new @ (X^T X)^{-1} @ x_new^T)
+# But this is complex with the combined model. Let me compute it.
+
+# Compute (X^T X)^{-1}
+XtX = X_combined.T @ X_combined
+XtX_inv = np.linalg.inv(XtX)
+
+# For each test point, compute the leverage
+# The test design matrix includes alpha_uw_test as a feature
+# So we need to compute x_new @ XtX_inv @ x_new^T for each test point
+
+# For the combined model, the test design matrix is:
+# [sin/cos(alpha_freqs), sin/cos(beta_freqs), alpha_uw]
+# This is the same structure as X_combined
+
+# Compute prediction standard error for each test point
+se_fit = np.zeros(len(t_test))
+for i in range(len(t_test)):
+    x_new = X_comb_test[i, :]
+    se_fit[i] = sigma_obs * np.sqrt(x_new @ XtX_inv @ x_new)
+
+# Total prediction uncertainty:
+# - Observation noise: sigma_obs
+# - Fit uncertainty: se_fit
+# - Alpha prediction uncertainty: need to propagate
+
+# For alpha prediction uncertainty, the alpha model has residual std alpha_resid_std
+alpha_resid_std = 0.748  # from earlier computation
+
+# The sensitivity of beta to alpha: how much does beta change per degree of alpha?
+# This is captured by the coefficient of alpha_uw in the combined model
+alpha_coeff = coeffs_comb[-1]  # last coefficient is for alpha_uw
+
+# Propagated uncertainty from alpha prediction
+# Var(beta) includes (alpha_coeff)^2 * Var(alpha_pred)
+# Var(alpha_pred) for test points includes both observation noise and parameter uncertainty
+
+# For alpha prediction on test set:
+X_alpha_test_full = build_design_matrix(t_test, alpha_freqs)
+# Compute alpha prediction SE
+XtX_alpha = X_alpha_test_full.T @ X_alpha_test_full  # This is wrong - need training X
+# Actually, let me compute it properly
+XtX_alpha_train = X_alpha.T @ X_alpha
+XtX_alpha_inv = np.linalg.inv(XtX_alpha_train)
+
+alpha_se = np.zeros(len(t_test))
+for i in range(len(t_test)):
+    x_new = X_alpha_test_full[i, :]
+    alpha_se[i] = alpha_resid_std * np.sqrt(x_new @ XtX_alpha_inv @ x_new)
+
+# Total prediction variance for beta
+# = sigma_obs^2 + se_fit^2 + alpha_coeff^2 * (alpha_resid_std^2 + alpha_se^2)
+# Wait, this is getting complicated. Let me simplify.
+
+# The total prediction variance for a new beta observation is approximately:
+# Var = sigma_obs^2 + se_fit^2 + alpha_coeff^2 * alpha_pred_var
+# where alpha_pred_var includes both observation noise and parameter uncertainty
+
+# Actually, the simplest and most correct approach:
+# The prediction interval should account for the observation noise in beta.
+# The residual std sigma_obs already captures the noise in beta after accounting
+# for the relationship with alpha and t.
+# 
+# The additional uncertainty from alpha prediction is already partially captured
+# in the model - if alpha is predicted with some error, that error propagates
+# to beta through the model. But this is a systematic effect, not random noise.
+# 
+# For a conservative prediction interval, I should add the alpha prediction
+# uncertainty propagated through the model.
+
+# Total prediction std for each test point
+total_pred_std = np.sqrt(sigma_obs**2 + se_fit**2 + (alpha_coeff**2) * (alpha_resid_std**2 + alpha_se**2))
+
+# 95% prediction interval using t-distribution
+t_val = stats.t.ppf(0.975, dof)
+
+y_lower = beta_pred - t_val * total_pred_std
+y_upper = beta_pred + t_val * total_pred_std
+
+# Ensure angles are in [0, 360)
+y_lower = y_lower % 360
+y_upper = y_upper % 360
+
+# Handle wrapping: if lower > upper, the interval wraps around 360
+# For the CSV, we just need the values; the interpretation is clear
+
+# Create output dataframe
+output = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print("Predictions:")
+print(output.to_string(index=False))
+print(f"\nSigma_obs (observation noise): {sigma_obs:.3f}")
+print(f"t-value (95%): {t_val:.4f}")
+print(f"Alpha coeff (sensitivity): {alpha_coeff:.4f}")
+
+# Save to predictions.csv
+output.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+EOF
 ```
 
 ## [28] tool
@@ -772,7 +1530,164 @@ The NaN values are from numerical issues with the large design matrix. Let me fi
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from numpy.linalg import lstsq
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t_train = train['t'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# Unwrap angles
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+alpha_uw = unwrap_angle(alpha_train)
+beta_uw = unwrap_angle(beta_train)
+
+def build_design_matrix(t, freqs):
+    X_list = [np.ones(len(t)), t]
+    for f in freqs:
+        X_list.append(np.sin(f * t))
+        X_list.append(np.cos(f * t))
+    return np.column_stack(X_list)
+
+# Frequencies for alpha (from FFT analysis)
+alpha_freqs = [
+    2*np.pi/360.9, 2*np.pi/90.2, 2*np.pi/120.3, 2*np.pi/180.4,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/401.0, 2*np.pi/451.1,
+    2*np.pi/212.3, 2*np.pi/1804.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/601.5, 2*np.pi/1203.0, 2*np.pi/45.1,
+]
+
+# Frequencies for beta (from FFT analysis)
+beta_freqs = [
+    2*np.pi/515.6, 2*np.pi/601.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/1203.0, 2*np.pi/1804.5, 2*np.pi/451.1, 2*np.pi/401.0,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/212.3, 2*np.pi/180.4,
+    2*np.pi/120.3, 2*np.pi/90.2, 2*np.pi/45.1,
+]
+
+# Model 1: alpha as function of t
+X_alpha = build_design_matrix(t_train, alpha_freqs)
+coeffs_alpha, _, _, _ = lstsq(X_alpha, alpha_uw, rcond=None)
+
+# Model 2: beta as function of t and alpha_uw
+X_combined = build_design_matrix(t_train, alpha_freqs + beta_freqs)
+X_combined = np.column_stack([X_combined, alpha_uw])
+coeffs_comb, _, _, _ = lstsq(X_combined, beta_uw, rcond=None)
+
+# Compute residuals and noise estimate
+beta_uw_pred = X_combined @ coeffs_comb
+residuals = beta_uw - beta_uw_pred
+sigma_obs = np.std(residuals)  # observation noise estimate
+n_train = len(t_train)
+n_params = X_combined.shape[1]
+dof = n_train - n_params
+
+print(f'Sigma_obs (observation noise): {sigma_obs:.3f} degrees')
+print(f'Degrees of freedom: {dof}')
+print(f'Number of parameters: {n_params}')
+
+# Predict alpha for test set
+X_alpha_test = build_design_matrix(t_test, alpha_freqs)
+alpha_uw_test = X_alpha_test @ coeffs_alpha
+
+# Predict beta for test set
+X_comb_test = build_design_matrix(t_test, alpha_freqs + beta_freqs)
+X_comb_test = np.column_stack([X_comb_test, alpha_uw_test])
+beta_uw_test = X_comb_test @ coeffs_comb
+
+# Wrap back to [0, 360)
+beta_pred = beta_uw_test % 360
+
+# For prediction intervals, use a simpler approach:
+# The prediction interval for a new observation is:
+# y_pred ± t_{0.025, dof} * sqrt(sigma_obs^2 + se_fit^2)
+# 
+# For large datasets with many observations, se_fit is typically very small
+# compared to sigma_obs. Let me compute it properly but more carefully.
+
+# Use ridge regression to avoid singular matrix issues
+from sklearn.linear_model import Ridge
+
+# Fit ridge regression for the combined model
+ridge = Ridge(alpha=1e-6, fit_intercept=False)
+ridge.fit(X_combined, beta_uw)
+beta_uw_pred_ridge = ridge.predict(X_combined)
+resid_ridge = beta_uw - beta_uw_pred_ridge
+sigma_obs_ridge = np.std(resid_ridge)
+print(f'Ridge Sigma_obs: {sigma_obs_ridge:.3f} degrees')
+
+# Compute prediction intervals using the simpler approach
+# For a new observation, the 95% prediction interval is approximately:
+# y_pred ± t * sigma_obs * sqrt(1 + 1/n + (x_new - x_bar)^2 / Sxx)
+# But for multiple regression, this is more complex.
+# 
+# A reasonable approximation for large n is:
+# y_pred ± t * sigma_obs * sqrt(1 + p/n)
+# where p is the number of parameters and n is the number of observations
+
+# But actually, the simplest correct approach:
+# The prediction interval for a new observation is:
+# y_pred ± t_{0.025, dof} * sigma_obs * sqrt(1 + h)
+# where h is the leverage of the new point
+
+# For a rough but conservative estimate, use h ≈ p/n (average leverage)
+# Or just use sqrt(1 + p/n) ≈ 1 for large n
+
+# Let me compute the leverage properly using the ridge approach
+# For ridge, the hat matrix is H = X(X^TX + lambda*I)^{-1}X^T
+# The leverage for point i is h_i = x_i^T (X^TX + lambda*I)^{-1} x_i
+
+# But this is getting complicated. Let me just use a simple approach:
+# prediction interval = y_pred ± t * sigma_obs * sqrt(1 + p/n)
+
+p = n_params
+n = n_train
+leverage_factor = np.sqrt(1 + p/n)
+print(f'Leverage factor: {leverage_factor:.4f}')
+
+t_val = stats.t.ppf(0.975, dof)
+margin = t_val * sigma_obs * leverage_factor
+
+print(f'Margin (95% PI half-width): {margin:.3f} degrees')
+
+# Compute prediction intervals
+y_lower = (beta_pred - margin) % 360
+y_upper = (beta_pred + margin) % 360
+
+# Create output dataframe
+output = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print("\nPredictions:")
+print(output.to_string(index=False))
+
+# Save to predictions.csv
+output.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+
+# Verify
+verify = pd.read_csv('predictions.csv')
+print(f'\nVerification: {len(verify)} rows, columns: {list(verify.columns)}')
+print(verify.to_string(index=False))
+EOF
 ```
 
 ## [30] tool
@@ -891,7 +1806,178 @@ Let me refine the model with a more robust approach and proper prediction interv
 **tool call: bash**
 
 ```
+python3 << 'EOF'
+import pandas as pd
+import numpy as np
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t_train = train['t'].values
+alpha_train = train['alpha'].values
+beta_train = train['beta'].values
+t_test = test['t'].values
+
+# Unwrap angles
+def unwrap_angle(angles):
+    diff = np.diff(angles)
+    diff = (diff + 180) % 360 - 180
+    result = np.zeros_like(angles)
+    result[0] = angles[0]
+    for i in range(1, len(angles)):
+        result[i] = result[i-1] + diff[i-1]
+    return result
+
+alpha_uw = unwrap_angle(alpha_train)
+beta_uw = unwrap_angle(beta_train)
+
+# Use a cleaner approach: model unwrapped beta as sum of sinusoids + linear trend
+# Select frequencies based on FFT peaks
+# Key frequencies for beta (after removing linear trend):
+# 515.6, 601.5, 721.8, 902.2, 1203.0, 1804.5, 451.1, 401.0, 328.1, 300.7, 212.3, 180.4, 120.3, 90.2
+
+# Also include alpha frequencies since alpha carries information about beta
+# Key alpha frequencies: 360.9, 90.2, 120.3, 180.4, 328.1, 300.7, 401.0, 451.1, 212.3, 1804.5, 721.8, 902.2, 601.5, 1203.0, 45.1
+
+# Let me use a unified set of frequencies and model both alpha and beta
+# as functions of t, then use the alpha model to predict alpha for test,
+# and the combined model to predict beta.
+
+# For a cleaner model, let me use ridge regression with cross-validation
+# to select the regularization parameter
+
+from sklearn.linear_model import RidgeCV
+
+# Build design matrix
+def build_X(t, freqs, include_alpha_uw=False, alpha_uw=None):
+    X_list = [np.ones(len(t)), t]
+    for f in freqs:
+        X_list.append(np.sin(f * t))
+        X_list.append(np.cos(f * t))
+    if include_alpha_uw and alpha_uw is not None:
+        X_list.append(alpha_uw)
+    return np.column_stack(X_list)
+
+# Unified frequencies (union of alpha and beta frequencies)
+all_freqs = list(set([
+    2*np.pi/360.9, 2*np.pi/90.2, 2*np.pi/120.3, 2*np.pi/180.4,
+    2*np.pi/328.1, 2*np.pi/300.7, 2*np.pi/401.0, 2*np.pi/451.1,
+    2*np.pi/212.3, 2*np.pi/1804.5, 2*np.pi/721.8, 2*np.pi/902.2,
+    2*np.pi/601.5, 2*np.pi/1203.0, 2*np.pi/45.1,
+    2*np.pi/515.6,
+]))
+
+print(f'Number of frequencies: {len(all_freqs)}')
+print(f'Number of features: {2*len(all_freqs) + 2 + 1}')  # sin/cos for each + intercept + t + alpha_uw
+
+# Model 1: alpha as function of t (for prediction)
+X_alpha = build_X(t_train, all_freqs)
+alpha_ridge = RidgeCV(alphas=[1e-8, 1e-6, 1e-4, 1e-2, 1, 10], cv=5, fit_intercept=False)
+alpha_ridge.fit(X_alpha, alpha_uw)
+alpha_uw_pred_train = alpha_ridge.predict(X_alpha)
+alpha_resid_std = np.std(alpha_uw - alpha_uw_pred_train)
+print(f'Alpha model residual std: {alpha_resid_std:.3f} degrees')
+
+# Model 2: beta as function of t and alpha_uw
+X_beta = build_X(t_train, all_freqs, include_alpha_uw=True, alpha_uw=alpha_uw)
+beta_ridge = RidgeCV(alphas=[1e-8, 1e-6, 1e-4, 1e-2, 1, 10], cv=5, fit_intercept=False)
+beta_ridge.fit(X_beta, beta_uw)
+beta_uw_pred_train = beta_ridge.predict(X_beta)
+beta_resid_std = np.std(beta_uw - beta_uw_pred_train)
+print(f'Beta model residual std: {beta_resid_std:.3f} degrees')
+print(f'Best alpha: {beta_ridge.alpha_}')
+
+# Predict alpha for test
+X_alpha_test = build_X(t_test, all_freqs)
+alpha_uw_test = alpha_ridge.predict(X_alpha_test)
+
+# Predict beta for test
+X_beta_test = build_X(t_test, all_freqs, include_alpha_uw=True, alpha_uw=alpha_uw_test)
+beta_uw_test = beta_ridge.predict(X_beta_test)
+beta_pred = beta_uw_test % 360
+
+# Compute prediction intervals
+# For ridge regression, we can estimate the prediction uncertainty
+# using the residuals and the effective degrees of freedom
+
+n_train = len(t_train)
+sigma_obs = beta_resid_std
+
+# For ridge, the effective degrees of freedom is trace(H) where H is the hat matrix
+# A rough approximation: dof ≈ n_train * (1 - lambda / (lambda + singular_values))
+# But for simplicity, let's use the residual std directly
+
+# Prediction interval for a new observation:
+# y_pred ± t_{0.025, n-p} * sigma_obs * sqrt(1 + leverage)
+# For a rough estimate, leverage ≈ p/n for most points
+
+# Let me compute the proper standard error using the ridge model
+# The prediction variance is: sigma^2 * x_new^T (X^T X + lambda I)^{-1} x_new * sigma^2
+# Actually, for ridge, the prediction interval is more complex
+
+# Let me use a simpler approach: 
+# The observation noise is sigma_obs
+# The model uncertainty is small for large n
+# So the 95% PI is approximately: y_pred ± t * sigma_obs * sqrt(1 + p/n)
+
+# But actually, let me compute it more carefully
+# For the ridge model, the standard error of prediction includes:
+# 1. Observation noise: sigma_obs
+# 2. Model uncertainty: depends on the leverage
+
+# Let me compute the leverage for each test point
+# For ridge: H = X(X^T X + lambda I)^{-1} X^T
+# Leverage h_i = x_i^T (X^T X + lambda I)^{-1} x_i
+
+XtX_lambda = X_beta.T @ X_beta + beta_ridge.alpha_ * np.eye(X_beta.shape[1])
+XtX_lambda_inv = np.linalg.inv(XtX_lambda)
+
+# Compute leverage for test points
+leverage = np.zeros(len(t_test))
+for i in range(len(t_test)):
+    x_new = X_beta_test[i, :]
+    leverage[i] = x_new @ XtX_lambda_inv @ x_new
+
+# Prediction standard error
+# se_pred = sigma_obs * sqrt(1 + leverage)
+se_pred = sigma_obs * np.sqrt(1 + leverage)
+
+# t-value for 95% prediction interval
+dof_ridge = n_train - np.trace(X_beta @ XtX_lambda_inv @ X_beta.T)
+# Actually, let me just use n_train - p as degrees of freedom
+p_eff = np.trace(X_beta @ XtX_lambda_inv @ X_beta.T)
+dof_ridge = n_train - p_eff
+t_val = stats.t.ppf(0.975, dof_ridge)
+
+print(f'Effective parameters: {p_eff:.1f}')
+print(f'Degrees of freedom: {dof_ridge:.1f}')
+print(f't-value: {t_val:.4f}')
+print(f'Max leverage: {leverage.max():.4f}')
+print(f'Mean leverage: {leverage.mean():.4f}')
+
+# 95% prediction intervals
+y_lower = (beta_pred - t_val * se_pred) % 360
+y_upper = (beta_pred + t_val * se_pred) % 360
+
+# Create output dataframe
+output = pd.DataFrame({
+    't': t_test,
+    'y_pred': beta_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+print("\nPredictions:")
+print(output.to_string(index=False))
+
+# Save to predictions.csv
+output.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+
+# Verify
+verify = pd.read_csv('predictions.csv')
+print(f'\nVerification: {len(verify)} rows, columns: {list(verify.columns)}')
+EOF
 ```
 
 ## [32] tool
@@ -950,7 +2036,25 @@ Let me verify the final output file is correct
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+pred = pd.read_csv('predictions.csv')
+print('Shape:', pred.shape)
+print('Columns:', list(pred.columns))
+print('dtypes:', pred.dtypes.to_dict())
+print()
+print(pred.to_string(index=False))
+print()
+# Check all angles are in [0, 360)
+print('y_pred in [0,360):', ((pred['y_pred'] >= 0) & (pred['y_pred'] < 360)).all())
+print('y_lower in [0,360):', ((pred['y_lower'] >= 0) & (pred['y_lower'] < 360)).all())
+print('y_upper in [0,360):', ((pred['y_upper'] >= 0) & (pred['y_upper'] < 360)).all())
+# Check lower < upper
+print('lower < upper:', (pred['y_lower'] < pred['y_upper']).all())
+# Check t values match test
+test = pd.read_csv('data/test.csv')
+print('t values match:', (pred['t'].values == test['t'].values).all())
+"
 ```
 
 ## [34] tool

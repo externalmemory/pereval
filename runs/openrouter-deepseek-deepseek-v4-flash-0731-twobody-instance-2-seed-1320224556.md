@@ -52,7 +52,7 @@ Predict alpha with a 95% interval for every t in data/test.csv and write predict
 **tool call: bash**
 
 ```
-
+cd data && head -20 train.csv && echo "---" && wc -l train.csv test.csv && echo "---" && head -test.csv && echo "---test---" && head test.csv && tail train.csv
 ```
 
 ## [3] tool
@@ -92,7 +92,7 @@ t,alpha
 **tool call: bash**
 
 ```
-
+cd data && cat test.csv && echo "---" && tail -30 train.csv
 ```
 
 ## [5] tool
@@ -594,7 +594,66 @@ residual std: 0.4164445144042344
 **tool call: bash**
 
 ```
+cd / && cat > /tmp/make.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train['t'].values
+u = np.degrees(np.unwrap(np.radians(train['alpha'].values)))
+
+K=4
+def fitmodel(P):
+    cols = [np.ones_like(t), t]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*t/P))
+        cols.append(np.cos(2*np.pi*k*t/P))
+    X = np.column_stack(cols)
+    beta, *_ = np.linalg.lstsq(X, u, rcond=None)
+    return beta, X
+def obj(lnP):
+    beta, X = fitmodel(np.exp(lnP))
+    return np.mean((u - X@beta)**2)
+r = minimize_scalar(obj, bounds=(np.log(300), np.log(600)), method='bounded')
+P = np.exp(r.x)
+beta, X = fitmodel(P)
+resid = u - X@beta
+sigma = resid.std()
+n = len(u)
+p = X.shape[1]
+
+print("P", P, "sigma_noise", sigma, "dof", n-p)
+
+def predict(tt, P, beta):
+    cols = [np.ones_like(tt), tt]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*tt/P))
+        cols.append(np.cos(2*np.pi*k*tt/P))
+    return np.column_stack(cols)
+
+tt = test['t'].values
+Xnew = predict(tt, P, beta)
+y = Xnew @ beta
+# wrap to 0..360
+yw = y % 360.0
+
+# covariance of beta (assuming homoscedastic within-sample noise)
+covb = sigma**2 * np.linalg.inv(X.T @ X)
+var_pred = np.einsum('ij,jk,ik->i', Xnew, covb, Xnew)
+total_var = sigma**2 + var_pred
+z = stats.norm.ppf(0.975)
+lower = (y - z*np.sqrt(total_var)) % 360.0
+upper = (y + z*np.sqrt(total_var)) % 360.0
+
+print("sigma_pred contribution max:", np.sqrt(var_pred).max())
+
+out = pd.DataFrame({'t':test['t'], 'y_pred':yw, 'y_lower':lower, 'y_upper':upper})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+EOF
+python /tmp/make.py
 ```
 
 ## [19] tool
@@ -633,7 +692,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'data/train.csv'
 **tool call: bash**
 
 ```
-
+pwd && ls -la && find / -name "train.csv" 2>/dev/null | head
 ```
 
 ## [21] tool
@@ -651,7 +710,64 @@ drwxr-xr-x 2 root root 4096 Aug 11 00:09 data
 **tool call: bash**
 
 ```
+cd /workspace && cat > make.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train['t'].values
+u = np.degrees(np.unwrap(np.radians(train['alpha'].values)))
+
+K=4
+def fitmodel(P):
+    cols = [np.ones_like(t), t]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*t/P))
+        cols.append(np.cos(2*np.pi*k*t/P))
+    X = np.column_stack(cols)
+    beta, *_ = np.linalg.lstsq(X, u, rcond=None)
+    return beta, X
+def obj(lnP):
+    beta, X = fitmodel(np.exp(lnP))
+    return np.mean((u - X@beta)**2)
+r = minimize_scalar(obj, bounds=(np.log(300), np.log(600)), method='bounded')
+P = np.exp(r.x)
+beta, X = fitmodel(P)
+resid = u - X@beta
+sigma = resid.std()
+n = len(u)
+p = X.shape[1]
+
+print("P", P, "sigma_noise", sigma, "dof", n-p)
+
+def predict(tt, P, beta):
+    cols = [np.ones_like(tt), tt]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*tt/P))
+        cols.append(np.cos(2*np.pi*k*tt/P))
+    return np.column_stack(cols)
+
+tt = test['t'].values
+Xnew = predict(tt, P, beta)
+y = Xnew @ beta
+yw = y % 360.0
+
+covb = sigma**2 * np.linalg.inv(X.T @ X)
+var_pred = np.einsum('ij,jk,ik->i', Xnew, covb, Xnew)
+total_var = sigma**2 + var_pred
+z = stats.norm.ppf(0.975)
+lower = (y - z*np.sqrt(total_var)) % 360.0
+upper = (y + z*np.sqrt(total_var)) % 360.0
+
+print("sigma_pred contribution max:", np.sqrt(var_pred).max())
+
+out = pd.DataFrame({'t':test['t'], 'y_pred':yw, 'y_lower':lower, 'y_upper':upper})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+EOF
+python make.py
 ```
 
 ## [23] tool
@@ -708,7 +824,88 @@ sigma_pred contribution max: 0.028289552204894486
 **tool call: bash**
 
 ```
+cd /workspace && cat > sim.py << 'EOF'
+import pandas as pd, numpy as np
+from scipy.optimize import minimize_scalar
+from scipy import stats
 
+train = pd.read_csv('data/train.csv')
+test = pd.read_csv('data/test.csv')
+t = train['t'].values
+u = np.degrees(np.unwrap(np.radians(train['alpha'].values)))
+tt = test['t'].values
+K=4
+
+def fitmodel(P, tv, yv):
+    cols = [np.ones_like(tv), tv]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*tv/P))
+        cols.append(np.cos(2*np.pi*k*tv/P))
+    X = np.column_stack(cols)
+    beta, *_ = np.linalg.lstsq(X, yv, rcond=None)
+    return beta, X
+
+def obj_wrap(lnP):
+    beta, X = fitmodel(np.exp(lnP), t, u)
+    return np.mean((u - X@beta)**2)
+
+r = minimize_scalar(obj_wrap, bounds=(np.log(300), np.log(600)), method='bounded')
+P = np.exp(r.x)
+beta, X = fitmodel(P, t, u)
+resid = u - X@beta
+sigma = resid.std()
+print("P",P,"sigma",sigma)
+
+# simulation-based prediction interval
+rng = np.random.default_rng(0)
+nit = 1500
+y_sims = np.zeros((nit, len(tt)))
+for i in range(nit):
+    ysim = X@beta + rng.choice(resid, size=len(u), replace=True)
+    # refit P
+    def o2(lnP):
+        b, Xx = fitmodel(np.exp(lnP), t, ysim)
+        return np.mean((ysim - Xx@b)**2)
+    rr = minimize_scalar(o2, bounds=(np.log(415), np.log(433)), method='bounded')
+    Ps = np.exp(rr.x)
+    b, Xtr = fitmodel(Ps, t, ysim)
+    cols = [np.ones_like(tt), tt]
+    for k in range(1, K+1):
+        cols.append(np.sin(2*np.pi*k*tt/Ps))
+        cols.append(np.cos(2*np.pi*k*tt/Ps))
+    Xnew = np.column_stack(cols)
+    mu = Xnew @ b
+    # add fresh measurement noise
+    y_sims[i] = mu + rng.normal(0, sigma, size=len(tt))
+
+# wrap sims
+yw_sims = y_sims % 360.0
+# compute quantile interval on wrapped values: use circular? For each test point center around pred
+center = np.median(yw_sims, axis=0)
+# unwrap sims around center
+yw_c = yw_sims.copy()
+for j in range(len(tt)):
+    for i in range(nit):
+        while yw_c[i,j] - center[j] > 180: yw_c[i,j]-=360
+        while yw_c[i,j] - center[j] < -180: yw_c[i,j]+=360
+low = np.percentile(yw_c, 2.5, axis=0) % 360
+high = np.percentile(yw_c, 97.5, axis=0) % 360
+pred = np.percentile(yw_c, 50, axis=0) % 360
+# point estimate from full fit
+cols = [np.ones_like(tt), tt]
+for k in range(1, K+1):
+    cols.append(np.sin(2*np.pi*k*tt/P))
+    cols.append(np.cos(2*np.pi*k*tt/P))
+Xnew0 = np.column_stack(cols)
+y0 = (Xnew0 @ beta) % 360
+
+out = pd.DataFrame({'t':test['t'], 'y_pred':np.round(y0,6), 'y_lower':np.round(low,6), 'y_upper':np.round(high,6)})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+# check widths
+print("widths:", np.round(high-low,3))
+EOF
+python sim.py
 ```
 
 ## [25] tool
@@ -747,7 +944,7 @@ widths: [1.594 1.609 1.664 1.655 1.671 1.649 1.619 1.657 1.586 1.615]
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && echo "---" && python -c "import pandas as pd; d=pd.read_csv('predictions.csv'); print(d.shape); print((d['y_lower']<d['y_upper']).all())"
 ```
 
 ## [27] tool
@@ -777,7 +974,13 @@ The predictions are ready. Let me verify the model quality once more to ensure t
 **tool call: bash**
 
 ```
-
+cd /workspace && python -c "
+import pandas as pd, numpy as np
+d=pd.read_csv('predictions.csv')
+t=pd.read_csv('data/test.csv')
+print('rows match test:', len(d)==len(t), (d['t'].values==t['t'].values).all())
+print('columns:', list(d.columns))
+"
 ```
 
 ## [29] tool

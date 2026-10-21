@@ -89,8 +89,10 @@ def top_of_scale_annual() -> float:
     One caveat recorded rather than smoothed over: at three and five years the
     published AAA rate EXCEEDS AA's, 0.13% against 0.11% and 0.34% against
     0.28%. That inversion is itself a small-sample artefact of thin AAA pools,
-    so it is evidence that AAA risk is positive and not evidence about its
-    ordering against AA.
+    which is why those figures serve here as upper bounds and nothing more. They
+    do not establish that the one-year rate is positive: a cumulative cohort rate
+    counts obligors that defaulted from a lower grade after a downgrade, so it is
+    compatible with a one-year AAA to D probability of exactly zero.
     """
     r = default_rates()["1y"]
     return r["AA"] ** 2 / r["A"]
@@ -152,10 +154,14 @@ def global_average(horizon: str = "1y", stat: str = "mean") -> dict[str, list[fl
 def default_rates(stat: str = "mean") -> dict[str, dict[str, float]]:
     """{horizon: {rating: default rate as a fraction}} from the long-run averages.
 
-    Shows why a zero one-year AAA rate cannot be taken at face value: the same
-    published table gives AAA a positive default rate at three and five years,
-    so the one-year zero is an absence of observations in 44 pools rather than
-    an absence of risk.
+    The three and five year rows are cumulative cohort rates: they count issuers
+    rated AAA at the start that defaulted by the horizon, including those that
+    were downgraded first and defaulted from a lower grade. So they do NOT show
+    that the one-year AAA rate is positive, and an earlier version of this
+    docstring claimed they did. They bound it from above only. The reason a zero
+    cannot be taken at face value is Cromwell's rule, and that a rating assigned
+    by a logistic or ordered-logit model cannot be zero because the link maps
+    into the open interval (0, 1); see top_of_scale_annual.
     """
     d = STATES.index("D")
     return {

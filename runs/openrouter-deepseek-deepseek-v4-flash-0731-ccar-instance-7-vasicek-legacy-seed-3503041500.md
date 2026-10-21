@@ -56,7 +56,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+cd /root 2>/dev/null; ls; echo "---"; ls data 2>/dev/null; echo "---pwd---"; pwd
 ```
 
 ## [3] tool
@@ -77,7 +77,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+find / -name "scenario.csv" 2>/dev/null; echo "---"; find / -name "train.csv" -path "*data*" 2>/dev/null | head
 ```
 
 ## [5] tool
@@ -92,7 +92,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+cd /workspace && head -20 data/train.csv && echo "---" && cat data/scenario.csv && echo "---" && wc -l data/train.csv data/scenario.csv
 ```
 
 ## [7] tool
@@ -145,7 +145,16 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.shape)
+print(df.isnull().sum())
+print()
+for c in df.columns:
+    if c!='quarter':
+        print(c, df[c].min(), df[c].max(), df[c].mean())
+"
 ```
 
 ## [9] tool
@@ -205,7 +214,12 @@ default_rate 0.003167 0.093801 0.0316942125
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+pd.set_option('display.width',200)
+print(df.tail(30).to_string())
+"
 ```
 
 ## [11] tool
@@ -260,7 +274,23 @@ default_rate 0.003167 0.093801 0.0316942125
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+dr = df['default_rate']
+# correlations of raw levels
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    print(c, np.corrcoef(df[c].fillna(df[c].mean()), dr)[0,1].round(3))
+print()
+# correlations with log-changes
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    diff = np.log(df[c]).diff()
+    print(c+'_logch', np.corrcoef(diff.fillna(0), dr)[0,1].round(3))
+print()
+print('unemp_log', np.corrcoef(np.log(df['unemployment']), dr)[0,1].round(3))
+print('vix_log', np.corrcoef(np.log(df['vix']), dr)[0,1].round(3))
+print('spread_log', np.corrcoef(np.log(df['bbb_spread']), dr)[0,1].round(3))
+"
 ```
 
 ## [13] tool
@@ -336,7 +366,19 @@ spread_log nan
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_yoy'] = np.log(df[c]) - np.log(df[c].shift(4))
+    df[c+'_qoq'] = np.log(df[c]).diff()
+df['unemp_chg'] = df['unemployment'].diff()
+df['vix_chg'] = df['vix'].diff()
+df['spread_chg'] = df['bbb_spread'].diff()
+df['dr'] = df['default_rate']
+df['logit_dr'] = np.log(df['dr']/(1-df['dr']))
+print(df[['quarter','dr','logit_dr','unemployment','bbb_spread','vix','gdp_yoy','hpi_yoy','sp500_yoy','djia_yoy','nasdaq_yoy']].tail(20).to_string())
+"
 ```
 
 ## [15] tool
@@ -383,7 +425,41 @@ spread_log nan
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_yoy'] = np.log(df[c]) - np.log(df[c].shift(4))
+    df[c+'_qoq'] = np.log(df[c]).diff()
+df['dr'] = df['default_rate']
+df['logit_dr'] = np.log(df['dr']/(1-df['dr']))
+df['unemp_chg'] = df['unemployment'].diff(1)
+df['vix_l'] = df['vix']
+df['spread_l'] = df['bbb_spread']
 
+def fit(feats, target='dr', start=15):
+    d = df[start:].dropna(subset=feats+[target])
+    X = sm.add_constant(d[feats])
+    r = sm.OLS(d[target], X).fit()
+    return r
+
+feat_sets = [
+ ['unemployment','bbb_spread','vix'],
+ ['unemployment','bbb_spread','vix','gdp_yoy'],
+ ['unemployment','bbb_spread','vix','gdp_yoy','hpi_yoy'],
+ ['unemployment','bbb_spread','vix','gdp_yoy','hpi_yoy','sp500_yoy'],
+ ['unemployment','bbb_spread','vix','gdp_yoy','hpi_yoy','djia_yoy'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_yoy','hpi_yoy','sp500_yoy','cpi_yoy'],
+]
+for feats in feat_sets:
+    r = fit(feats)
+    print(feats)
+    print('  R2=%.3f  adjR2=%.3f  n=%d'%(r.rsquared, r.rsquared_adj, int(r.nobs)))
+    print('  coefs:', {k:round(v,4) for k,v in r.params.items()})
+"
 ```
 
 ## [17] tool
@@ -435,7 +511,24 @@ spread_log nan
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_yoy'] = np.log(df[c]) - np.log(df[c].shift(4))
+    df[c+'_qoq'] = np.log(df[c]).diff()
+df['dr'] = df['default_rate']
+# build scenario features: yoy needs training 4 qtrs ago
+# train quarters 1..80, scenario 81..89
+tr = df.set_index('quarter')
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    sc[c+'_yoy'] = np.log(sc[c]) - np.log(tr.loc[sc['quarter']-4, c].values)
+    sc[c+'_qoq'] = np.log(sc[c]) - np.log(tr.loc[sc['quarter']-1, c].values)
+print('scenario features:')
+print(sc[['quarter','unemployment','bbb_spread','vix','gdp_yoy','hpi_yoy','sp500_yoy','djia_yoy','nasdaq_yoy']].to_string())
+"
 ```
 
 ## [19] tool
@@ -482,7 +575,23 @@ KeyError: '[81, 82, 83, 84, 85] not in index'
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_yoy'] = np.log(df[c]) - np.log(df[c].shift(4))
+    df[c+'_qoq'] = np.log(df[c]).diff()
+df['dr'] = df['default_rate']
+tr = df.set_index('quarter')
+prev = tr.reindex(sc['quarter']-4).reset_index(drop=True)
+prev1 = tr.reindex(sc['quarter']-1).reset_index(drop=True)
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    sc[c+'_yoy'] = np.log(sc[c]) - np.log(prev[c].values)
+    sc[c+'_qoq'] = np.log(sc[c]) - np.log(prev1[c].values)
+print(sc[['quarter','unemployment','bbb_spread','vix','gdp_yoy','hpi_yoy','sp500_yoy','djia_yoy','nasdaq_yoy']].to_string())
+"
 ```
 
 ## [21] tool
@@ -555,7 +664,40 @@ KeyError: '[81, 82, 83, 84, 85] not in index'
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_qoq'] = np.log(df[c]).diff()
+df['dr'] = df['default_rate']
+df['logit_dr'] = np.log(df['dr']/(1-df['dr']))
+df['unemp_chg'] = df['unemployment'].diff()
+df['vix_chg'] = df['vix'].diff()
+df['spread_chg'] = df['bbb_spread'].diff()
 
+def fit(feats, target='dr', start=15):
+    d = df.dropna(subset=feats+[target])
+    d = d[d['quarter']>=start]
+    X = sm.add_constant(d[feats])
+    r = sm.OLS(d[target], X).fit()
+    return r, d
+
+sets = [
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq','djia_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq','nasdaq_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq','sp500_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq'],
+ ['unemployment','bbb_spread','vix','hpi_qoq'],
+ ['unemployment','bbb_spread','vix','unemp_chg','spread_chg','vix_chg'],
+]
+for feats in sets:
+    r,d = fit(feats)
+    print(feats, 'n=%d'%len(d))
+    print('  R2=%.3f adj=%.3f'%(r.rsquared, r.rsquared_adj))
+    print('  ', {k:round(v,4) for k,v in r.params.items()})
+"
 ```
 
 ## [23] tool
@@ -606,7 +748,16 @@ KeyError: '[81, 82, 83, 84, 85] not in index'
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+dr = df['default_rate'].values
+for lag in [1,2,3,4,5,8]:
+    print('lag',lag,'acf', np.corrcoef(dr[:-lag], dr[lag:])[0,1].round(3))
+print()
+print('default rate stats: mean %.4f std %.4f min %.4f max %.4f'%(dr.mean(), dr.std(), dr.min(), dr.max()))
+print('last 10:', [round(x,4) for x in dr[-10:]])
+"
 ```
 
 ## [25] tool
@@ -648,7 +799,11 @@ last 10: [np.float64(0.0352), np.float64(0.0391), np.float64(0.0304), np.float64
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+print(df[['quarter','default_rate','unemployment','gdp']].to_string())
+"
 ```
 
 ## [27] tool
@@ -804,7 +959,42 @@ last 10: [np.float64(0.0352), np.float64(0.0391), np.float64(0.0304), np.float64
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_qoq'] = np.log(df[c]).diff()
+    df[c+'_yoy'] = np.log(df[c]) - np.log(df[c].shift(4))
+df['dr'] = df['default_rate']
+df['logit'] = np.log(df['dr']/(1-df['dr']))
+tr = df.set_index('quarter')
+prev = tr.reindex(sc['quarter']-1).reset_index(drop=True)
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    sc[c+'_qoq'] = np.log(sc[c]) - np.log(prev[c].values)
 
+def fitpred(feats, target='dr', start=15):
+    d = df.dropna(subset=feats+[target])
+    d=d[d['quarter']>=start]
+    X = sm.add_constant(d[feats]); r=sm.OLS(d[target],X).fit()
+    Xs = sm.add_constant(sc[feats])
+    p = r.predict(Xs)
+    return r,p
+
+sets = [
+ ['unemployment','bbb_spread','vix'],
+ ['unemployment','bbb_spread','vix','gdp_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq','nasdaq_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq','sp500_qoq'],
+]
+for feats in sets:
+    r,p = fitpred(feats)
+    print(feats,'n=%d'%int(r.nobs))
+    print('  pred:', [round(x,4) for x in p.values])
+EOF
+python3 explore.py
 ```
 
 ## [29] tool
@@ -842,7 +1032,45 @@ last 10: [np.float64(0.0352), np.float64(0.0391), np.float64(0.0304), np.float64
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+# combined for computing scenario qoq using prior (train q80 + scenario)
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_qoq'] = np.log(df[c]).diff()
+# build full chain: append scenario to train for diff purposes
+full = pd.concat([df[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']], sc[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']]], ignore_index=True)
+full = full.set_index('quarter')
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    full[c+'_qoq'] = np.log(full[c]).diff()
+sc = sc.merge(full[['gdp_qoq','hpi_qoq','sp500_qoq','djia_qoq','nasdaq_qoq']].reset_index(), on='quarter', how='left')
+df['dr'] = df['default_rate']
 
+def fitpred(feats, target='dr', start=15):
+    d = df.dropna(subset=feats+[target])
+    d=d[d['quarter']>=start]
+    X = sm.add_constant(d[feats]); r=sm.OLS(d[target],X).fit()
+    Xs = sm.add_constant(sc[feats])
+    p = r.predict(Xs)
+    return r,p
+
+sets = [
+ ['unemployment','bbb_spread','vix'],
+ ['unemployment','bbb_spread','vix','gdp_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq','nasdaq_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq','sp500_qoq'],
+ ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq','djia_qoq'],
+]
+for feats in sets:
+    r,p = fitpred(feats)
+    print(feats,'n=%d'%int(r.nobs))
+    print('  pred:', [round(x,4) for x in p.values])
+    print('  coefs:', {k:round(v,4) for k,v in r.params.items()})
+EOF
+python3 explore.py
 ```
 
 ## [31] tool
@@ -914,7 +1142,39 @@ last 10: [np.float64(0.0352), np.float64(0.0391), np.float64(0.0304), np.float64
 **tool call: bash**
 
 ```
+cd /workspace && cat > explore2.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_qoq'] = np.log(df[c]).diff()
+full = pd.concat([df[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']], sc[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']]], ignore_index=True)
+full = full.set_index('quarter')
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    full[c+'_qoq'] = np.log(full[c]).diff()
+sc = sc.merge(full[['gdp_qoq','hpi_qoq','sp500_qoq','djia_qoq','nasdaq_qoq']].reset_index(), on='quarter', how='left')
+df['dr'] = df['default_rate']
+df['logit'] = np.log(df['dr']/(1-df['dr']))
 
+def fitpred(feats, target='logit', start=15):
+    d = df.dropna(subset=feats+[target]); d=d[d['quarter']>=start]
+    X = sm.add_constant(d[feats]); r=sm.OLS(d[target],X).fit()
+    Xs = sm.add_constant(sc[feats]); p = r.predict(Xs)
+    if target=='logit':
+        p = 1/(1+np.exp(-p))
+    return r,p
+
+sets=[['unemployment','bbb_spread','vix','gdp_qoq'],
+      ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq'],
+      ['unemployment','bbb_spread','vix']]
+for feats in sets:
+    r,p=fitpred(feats)
+    print(feats,'logit n=%d'%int(r.nobs))
+    print('  pred logit->dr:', [round(x,4) for x in p.values])
+    print('  coefs:', {k:round(v,4) for k,v in r.params.items()})
+EOF
+python3 explore2.py
 ```
 
 ## [33] tool
@@ -960,7 +1220,28 @@ last 10: [np.float64(0.0352), np.float64(0.0391), np.float64(0.0304), np.float64
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > explore3.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_qoq'] = np.log(df[c]).diff()
+df['dr'] = df['default_rate']
+df['logit'] = np.log(df['dr']/(1-df['dr']))
+def fit(feats,start=15):
+    d=df.dropna(subset=feats+['logit']); d=d[d['quarter']>=start]
+    X=sm.add_constant(d[feats]); r=sm.OLS(d['logit'],X).fit()
+    return r
+for feats in [['unemployment','bbb_spread','gdp_qoq','hpi_qoq'],
+              ['unemployment','bbb_spread','vix','gdp_qoq','hpi_qoq'],
+              ['unemployment','bbb_spread','vix','gdp_qoq'],
+              ['bbb_spread','gdp_qoq','hpi_qoq','unemployment','vix','nasdaq_qoq']]:
+    r=fit(feats)
+    print(feats)
+    print('  adjR2=%.3f n=%d'%(r.rsquared_adj,int(r.nobs)))
+    print(r.summary2().tables[1][['Coef.','Std.Err.','P>|t|']].to_string())
+EOF
+python3 explore3.py
 ```
 
 ## [35] tool
@@ -1064,7 +1345,53 @@ nasdaq_qoq    0.564466  0.523493  2.853025e-01
 **tool call: bash**
 
 ```
+cd /workspace && cat > gen.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy import stats
 
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    df[c+'_qoq'] = np.log(df[c]).diff()
+# combined chain for scenario qoq
+full = pd.concat([df[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']],
+                  sc[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']]], ignore_index=True)
+full = full.set_index('quarter')
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    full[c+'_qoq'] = np.log(full[c]).diff()
+sc = sc.merge(full[['gdp_qoq','hpi_qoq','sp500_qoq','djia_qoq','nasdaq_qoq']].reset_index(), on='quarter', how='left')
+
+df['dr'] = df['default_rate']
+df['logit'] = np.log(df['dr']/(1-df['dr']))
+
+feats = ['unemployment','bbb_spread','gdp_qoq','hpi_qoq']
+d = df.dropna(subset=feats+['logit'])
+# start from q14 (features available)
+d = d[d['quarter']>=14]
+X = sm.add_constant(d[feats])
+r = sm.OLS(d['logit'], X).fit()
+print('n=',int(r.nobs),'adjR2=',round(r.rsquared_adj,3),'sigma=',round(np.sqrt(r.mse_resid),4))
+Xs = sm.add_constant(sc[feats])
+logit_hat = r.predict(Xs)
+sigma = np.sqrt(r.mse_resid)
+# leverage
+XtX = np.linalg.inv(X.T @ X)
+h = np.array([x @ XtX @ x for x in Xs.values])
+tcrit = stats.t.ppf(0.975, r.df_resid)
+se = sigma*np.sqrt(1+h)
+lo = logit_hat - tcrit*se
+hi = logit_hat + tcrit*se
+def sig(z): return 1/(1+np.exp(-z))
+pred = sig(logit_hat)
+print('scenario quarters:', sc['quarter'].values)
+print('point:', [round(x,4) for x in pred])
+print('lower:', [round(x,4) for x in sig(lo)])
+print('upper:', [round(x,4) for x in sig(hi)])
+print('leverage h:', [round(x,4) for x in h])
+print('se:', [round(x,4) for x in se])
+EOF
+python3 gen.py
 ```
 
 ## [37] tool
@@ -1099,7 +1426,39 @@ se: [np.float64(0.3727), np.float64(0.3715), np.float64(0.3711), np.float64(0.37
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > explore4.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+full = pd.concat([df[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']],
+                  sc[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']]], ignore_index=True)
+full = full.set_index('quarter')
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    full[c+'_yoy'] = np.log(full[c]) - np.log(full[c].shift(4))
+    full[c+'_qoq'] = np.log(full[c]).diff()
+sc = sc.merge(full[['gdp_yoy','hpi_yoy','sp500_yoy','djia_yoy','nasdaq_yoy','cpi_yoy']].reset_index(), on='quarter', how='left')
+df = df.merge(full[['gdp_yoy','hpi_yoy','sp500_yoy','djia_yoy','nasdaq_yoy','cpi_yoy']].reset_index(), on='quarter', how='left')
+df['dr']=df['default_rate']; df['logit']=np.log(df['dr']/(1-df['dr']))
+def fit(feats,start=15):
+    d=df.dropna(subset=feats+['logit']); d=d[d['quarter']>=start]
+    X=sm.add_constant(d[feats]); r=sm.OLS(d['logit'],X).fit(); return r
+sets=[['unemployment','bbb_spread','gdp_yoy'],
+      ['unemployment','bbb_spread','gdp_yoy','hpi_yoy'],
+      ['unemployment','bbb_spread','vix','gdp_yoy','hpi_yoy'],
+      ['unemployment','bbb_spread','gdp_yoy','hpi_yoy','sp500_yoy'],
+      ['unemployment','bbb_spread','gdp_yoy','hpi_yoy','djia_yoy'],
+      ['bbb_spread','gdp_yoy','hpi_yoy','unemployment'],
+      ['unemployment','bbb_spread','gdp_yoy','hpi_yoy','vix','nasdaq_yoy']]
+for feats in sets:
+    r=fit(feats)
+    print(feats,'n=%d adjR2=%.3f'%(int(r.nobs),r.rsquared_adj))
+    print('  ', {k:round(v,3) for k,v in r.params.items()})
+    Xs=sm.add_constant(sc[feats])
+    p=1/(1+np.exp(-r.predict(Xs)))
+    print('  pred:',[round(x,4) for x in p.values])
+EOF
+python3 explore4.py
 ```
 
 ## [39] tool
@@ -1156,7 +1515,35 @@ se: [np.float64(0.3727), np.float64(0.3715), np.float64(0.3711), np.float64(0.37
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > explore5.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+full = pd.concat([df[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']],
+                  sc[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']]], ignore_index=True)
+full = full.set_index('quarter')
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    full[c+'_yoy'] = np.log(full[c]) - np.log(full[c].shift(4))
+sc = sc.merge(full[['gdp_yoy','hpi_yoy','sp500_yoy','djia_yoy','nasdaq_yoy','cpi_yoy']].reset_index(), on='quarter', how='left')
+df = df.merge(full[['gdp_yoy','hpi_yoy','sp500_yoy','djia_yoy','nasdaq_yoy','cpi_yoy']].reset_index(), on='quarter', how='left')
+df['dr']=df['default_rate']; df['logit']=np.log(df['dr']/(1-df['dr']))
+def fit(feats,start=15):
+    d=df.dropna(subset=feats+['logit']); d=d[d['quarter']>=start]
+    X=sm.add_constant(d[feats]); r=sm.OLS(d['logit'],X).fit(); return r
+for feats in [['bbb_spread','gdp_yoy','hpi_yoy'],
+              ['bbb_spread','gdp_yoy','hpi_yoy','vix'],
+              ['bbb_spread','gdp_yoy','hpi_yoy','unemployment'],
+              ['bbb_spread','gdp_yoy','hpi_yoy','vix','unemployment']]:
+    r=fit(feats)
+    print(feats,'n=%d adjR2=%.3f sigma=%.4f'%(int(r.nobs),r.rsquared_adj,np.sqrt(r.mse_resid)))
+    print('  ', {k:round(v,3) for k,v in r.params.items()})
+    print('  pvals:', {k:round(v,3) for k,v in r.pvalues.items()})
+    Xs=sm.add_constant(sc[feats])
+    p=1/(1+np.exp(-r.predict(Xs)))
+    print('  pred:',[round(x,4) for x in p.values])
+EOF
+python3 explore5.py
 ```
 
 ## [41] tool
@@ -1213,7 +1600,64 @@ se: [np.float64(0.3727), np.float64(0.3715), np.float64(0.3711), np.float64(0.37
 **tool call: bash**
 
 ```
+cd /workspace && cat > make_predictions.py << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy import stats
 
+# ---- Load ----
+df = pd.read_csv('data/train.csv').copy()
+sc = pd.read_csv('data/scenario.csv').copy()
+
+# ---- Feature engineering: 4-quarter log changes (yoy) computed on combined train+scenario chain ----
+full = pd.concat([df[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']],
+                  sc[['quarter']+['gdp','hpi','sp500','djia','nasdaq','cpi']]],
+                 ignore_index=True).set_index('quarter')
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    full[c+'_yoy'] = np.log(full[c]) - np.log(full[c].shift(4))
+
+sc = sc.merge(full[['gdp_yoy','hpi_yoy']].reset_index(), on='quarter', how='left')
+df = df.merge(full[['gdp_yoy','hpi_yoy']].reset_index(), on='quarter', how='left')
+
+# ---- Target: logit of default rate ----
+df['dr'] = df['default_rate']
+df['logit'] = np.log(df['dr']/(1-df['dr']))
+
+# ---- Model: logit(default) ~ bbb_spread + gdp_yoy + hpi_yoy ----
+feats = ['bbb_spread','gdp_yoy','hpi_yoy']
+d = df.dropna(subset=feats+['logit'])
+X = sm.add_constant(d[feats])
+r = sm.OLS(d['logit'], X).fit()
+
+# ---- Scenario predictions with 95% prediction intervals on logit scale ----
+Xs = sm.add_constant(sc[feats])
+logit_hat = r.predict(Xs)
+sigma = np.sqrt(r.mse_resid)
+XtX = np.linalg.inv(X.T @ X)
+h = np.array([x @ XtX @ x for x in Xs.values])
+tcrit = stats.t.ppf(0.975, r.df_resid)
+se = sigma*np.sqrt(1+h)
+logit_lo = logit_hat - tcrit*se
+logit_hi = logit_hat + tcrit*se
+
+def sig(z): return 1/(1+np.exp(-z))
+
+out = pd.DataFrame({
+    'quarter': sc['quarter'],
+    'y_pred': sig(logit_hat),
+    'y_lower': sig(logit_lo),
+    'y_upper': sig(logit_hi),
+})
+out['y_pred'] = out['y_pred'].clip(0,1)
+out['y_lower'] = out['y_lower'].clip(0,1)
+out['y_upper'] = out['y_upper'].clip(0,1)
+out.to_csv('predictions.csv', index=False)
+print(out.to_string())
+print()
+print('rows:', len(out))
+print('model R2=',round(r.rsquared_adj,3),'sigma_logit=',round(sigma,4),'df_resid=',r.df_resid)
+EOF
+python3 make_predictions.py
 ```
 
 ## [43] tool
@@ -1252,7 +1696,18 @@ model R2= 0.646 sigma_logit= 0.3185 df_resid= 62.0
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+p = pd.read_csv('predictions.csv')
+sc = pd.read_csv('data/scenario.csv')
+assert list(p.columns)==['quarter','y_pred','y_lower','y_upper'], p.columns
+assert len(p)==len(sc)==9
+assert (p['quarter'].values==sc['quarter'].values).all()
+assert (p['y_lower']<=p['y_pred']).all() and (p['y_pred']<=p['y_upper']).all()
+assert (p[['y_pred','y_lower','y_upper']].values>=0).all() and (p[['y_pred','y_lower','y_upper']].values<=1).all()
+print('All checks passed.')
+print(p.describe())
+"
 ```
 
 ## [45] tool
@@ -1344,7 +1799,7 @@ Please proceed to the next step using your best judgement.
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -la predictions.csv && echo "---" && cat predictions.csv
 ```
 
 ## [49] tool

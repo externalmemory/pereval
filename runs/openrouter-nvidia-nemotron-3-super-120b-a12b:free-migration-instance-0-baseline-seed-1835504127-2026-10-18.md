@@ -126,7 +126,7 @@ Project the cohort in data/portfolio.csv over the scenario and write predictions
 **tool call: bash**
 
 ```
-
+ls -la data/
 ```
 
 ## [3] tool
@@ -152,7 +152,7 @@ drwxr-xr-x 1 root root  4096 Oct 18 15:12 ..
 **tool call: bash**
 
 ```
-
+head -20 data/transitions.csv
 ```
 
 ## [5] tool
@@ -190,7 +190,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/transitions.csv | sort -u | wc -l
 ```
 
 ## [7] tool
@@ -209,7 +209,7 @@ year,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 **tool call: bash**
 
 ```
-
+head -5 data/macro_history.csv
 ```
 
 ## [9] tool
@@ -234,7 +234,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+wc -l data/macro_history.csv
 ```
 
 ## [11] tool
@@ -253,7 +253,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+tail -5 data/macro_history.csv
 ```
 
 ## [13] tool
@@ -276,7 +276,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+tail -5 data/transitions.csv
 ```
 
 ## [15] tool
@@ -299,7 +299,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+grep -c "^41," data/transitions.csv
 ```
 
 ## [17] tool
@@ -318,7 +318,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 **tool call: bash**
 
 ```
-
+cut -d, -f1 data/transitions.csv | sort -u | tail -5
 ```
 
 ## [19] tool
@@ -341,7 +341,7 @@ year
 **tool call: bash**
 
 ```
-
+awk -F, 'NR>1 {print $1}' data/transitions.csv | sort -n | uniq | tail -10
 ```
 
 ## [21] tool
@@ -371,7 +371,7 @@ year
 **tool call: bash**
 
 ```
-
+cat data/scenario.csv
 ```
 
 ## [23] tool
@@ -401,7 +401,7 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cat data/portfolio.csv
 ```
 
 ## [25] tool
@@ -427,7 +427,7 @@ CCC/C,290
 **tool call: bash**
 
 ```
-
+awk -F, 'NR>1 {sum+=$2} END{print sum}' data/portfolio.csv
 ```
 
 ## [27] tool
@@ -448,7 +448,7 @@ CCC/C,290
 **tool call: bash**
 
 ```
-
+cat data/policy.json
 ```
 
 ## [29] tool
@@ -2290,7 +2290,7 @@ Number of rows in predictions.csv: 16
 **tool call: bash**
 
 ```
-
+wc -l predictions.csv
 ```
 
 ## [49] tool
@@ -2311,7 +2311,7 @@ Number of rows in predictions.csv: 16
 **tool call: bash**
 
 ```
-
+wc -l matrices.csv
 ```
 
 ## [51] tool
@@ -2340,7 +2340,7 @@ Number of rows in predictions.csv: 16
 **tool call: bash**
 
 ```
-
+cut -d, -f1 predictions.csv | sort -u
 ```
 
 ## [53] tool

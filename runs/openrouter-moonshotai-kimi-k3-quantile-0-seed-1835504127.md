@@ -49,13 +49,13 @@ Estimate the population tail quantiles for all 100 blocks described in data/task
 **tool call: bash**
 
 ```
-
+cat data/task.txt
 ```
 
 **tool call: bash**
 
 ```
-
+head -30 data/blocks.csv; wc -l data/blocks.csv
 ```
 
 ## [3] tool
@@ -464,7 +464,38 @@ block,x
 **tool call: bash**
 
 ```
-
+cat > /tmp/inspect.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+# parse m from task.txt
+import re
+text=open('data/task.txt').read()
+ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
+print('blocks', df.block.nunique(), 'rows', len(df), 'm parsed', len(ms), min(ms.values()), max(ms.values()))
+rows=[]
+for b,g in df.groupby('block'):
+    x=g.x.values
+    rows.append(dict(block=b,m=ms[b],n=len(x),mean=x.mean(),sd=x.std(ddof=1),med=np.median(x),mad=stats.median_abs_deviation(x,scale='normal'),min=x.min(),max=x.max(),q1=np.quantile(x,.1),q9=np.quantile(x,.9),skew=stats.skew(x,bias=False),kurt=stats.kurtosis(x,bias=False)))
+s=pd.DataFrame(rows)
+pd.set_option('display.width',200)
+print(s.head(20).to_string(index=False))
+print(s[['mean','sd','med','mad','min','max','skew','kurt']].describe().to_string())
+print('largest |skew|', s.reindex(s.skew.abs().sort_values(ascending=False).index).head(10)[['block','m','skew','kurt','min','max','sd','med','mad']].to_string(index=False))
+print('largest kurt', s.reindex(s.kurt.sort_values(ascending=False).index).head(10)[['block','m','skew','kurt','min','max','sd','med','mad']].to_string(index=False))
+# check zeros and duplicates
+print('zeros', (df.x==0).sum(), 'dups within block', df.duplicated(['block','x']).sum())
+# normalized by MAD, pool upper tail maybe
+vals=[]
+for b,g in df.groupby('block'):
+    x=g.x.values; med=np.median(x); mad=stats.median_abs_deviation(x,scale=1.0) # unscaled MAD
+    z=(x-med)/(mad if mad>0 else x.std())
+    vals.extend(z)
+z=np.array(vals)
+print('pooled z quantiles', np.quantile(z,[.01,.05,.1,.5,.9,.95,.99]))
+print('pooled z >2 count', (z>2).sum(), '>3', (z>3).sum(), '>5', (z>5).sum(), 'n',len(z))
+EOF
+python /tmp/inspect.py
 ```
 
 ## [6] tool
@@ -511,7 +542,39 @@ AttributeError: partially initialized module 'numpy' has no attribute 'int8' (mo
 **tool call: bash**
 
 ```
-
+rm -f /tmp/inspect.py; cat > /tmp/summarize_blocks.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+import re
+text=open('data/task.txt').read()
+ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
+print('blocks', df.block.nunique(), 'rows', len(df), 'm parsed', len(ms), min(ms.values()), max(ms.values()))
+rows=[]
+for b,g in df.groupby('block'):
+    x=g.x.values
+    rows.append(dict(block=b,m=ms[b],n=len(x),mean=x.mean(),sd=x.std(ddof=1),med=np.median(x),mad=stats.median_abs_deviation(x,scale='normal'),min=x.min(),max=x.max(),skew=stats.skew(x,bias=False),kurt=stats.kurtosis(x,bias=False)))
+s=pd.DataFrame(rows)
+pd.set_option('display.width',200)
+print(s.head(20).to_string(index=False))
+print(s[['mean','sd','med','mad','min','max','skew','kurt']].describe().to_string())
+print('largest |skew|')
+print(s.reindex(s.skew.abs().sort_values(ascending=False).index).head(15)[['block','m','skew','kurt','min','max','sd','med','mad']].to_string(index=False))
+print('largest kurt')
+print(s.reindex(s.kurt.sort_values(ascending=False).index).head(15)[['block','m','skew','kurt','min','max','sd','med','mad']].to_string(index=False))
+print('zeros', (df.x==0).sum(), 'dups within block', df.duplicated(['block','x']).sum())
+vals=[]
+for b,g in df.groupby('block'):
+    x=g.x.values; med=np.median(x); mad=stats.median_abs_deviation(x,scale=1.0)
+    scale=mad if mad>1e-12 else x.std(ddof=1)
+    z=(x-med)/scale
+    vals.extend(z)
+z=np.array(vals)
+print('pooled z quantiles', np.quantile(z,[.001,.005,.01,.05,.1,.5,.9,.95,.99,.995,.999]))
+for c in [1,1.5,2,2.5,3,4,5,7,10,15,20]:
+    print('z>',c,(z>c).sum(), 'z<-', -c,(z<-c).sum())
+EOF
+python /tmp/summarize_blocks.py
 ```
 
 ## [8] tool
@@ -567,7 +630,8 @@ largest |skew|
 **tool call: bash**
 
 ```
-
+perl -0777 -pi -e "s/s\.skew/s['skew']/g; s/s\.kurt/s['kurt']/g" /tmp/summarize_blocks.py
+python /tmp/summarize_blocks.py | sed -n '25,200p'
 ```
 
 ## [10] tool
@@ -591,7 +655,42 @@ SyntaxError: invalid syntax. Perhaps you forgot a comma?
 **tool call: bash**
 
 ```
-
+cat > /tmp/summarize_blocks.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+import re
+text=open('data/task.txt').read()
+ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
+print('blocks', df.block.nunique(), 'rows', len(df), 'm parsed', len(ms), min(ms.values()), max(ms.values()))
+rows=[]
+for b,g in df.groupby('block'):
+    x=g.x.values
+    rows.append(dict(block=b,m=ms[b],n=len(x),mean=x.mean(),sd=x.std(ddof=1),med=np.median(x),mad=stats.median_abs_deviation(x,scale='normal'),min=x.min(),max=x.max(),skew=stats.skew(x,bias=False),kurt=stats.kurtosis(x,bias=False)))
+s=pd.DataFrame(rows)
+pd.set_option('display.width',200)
+print(s[['mean','sd','med','mad','min','max','skew','kurt']].describe().to_string())
+print('largest |skew|')
+print(s.reindex(s['skew'].abs().sort_values(ascending=False).index).head(20)[['block','m','skew','kurt','min','max','sd','med','mad']].to_string(index=False))
+print('largest kurt')
+print(s.reindex(s['kurt'].sort_values(ascending=False).index).head(20)[['block','m','skew','kurt','min','max','sd','med','mad']].to_string(index=False))
+print('zeros', (df.x==0).sum(), 'dups within block', df.duplicated(['block','x']).sum())
+vals=[]; vals_sd=[]; vals_iqr=[]
+for b,g in df.groupby('block'):
+    x=g.x.values; med=np.median(x); mad=stats.median_abs_deviation(x,scale=1.0)
+    scale=mad if mad>1e-12 else x.std(ddof=1)
+    vals.extend((x-med)/scale)
+    vals_sd.extend((x-x.mean())/x.std(ddof=1))
+    q1,q3=np.quantile(x,[.25,.75]); iqr=q3-q1
+    vals_iqr.extend((x-med)/(iqr if iqr>1e-12 else scale))
+z=np.array(vals); zs=np.array(vals_sd); zi=np.array(vals_iqr)
+print('pooled z(MAD raw) quantiles', np.quantile(z,[.001,.005,.01,.05,.1,.5,.9,.95,.99,.995,.999]))
+print('pooled z(SD) quantiles', np.quantile(zs,[.001,.005,.01,.05,.1,.5,.9,.95,.99,.995,.999]))
+print('pooled z(IQR) quantiles', np.quantile(zi,[.001,.005,.01,.05,.1,.5,.9,.95,.99,.995,.999]))
+for c in [1,1.5,2,2.5,3,4,5,7,10,15,20,30]:
+    print('MADz>',c,(z>c).sum(), 'z<-', -c,(z<-c).sum(), 'SDz>',c,(zs>c).sum(), 'SDz<-', -c,(zs<-c).sum())
+EOF
+python /tmp/summarize_blocks.py
 ```
 
 ## [12] tool
@@ -756,7 +855,52 @@ MADz> 30 2 z<- -30 0 SDz> 30 0 SDz<- -30 0
 **tool call: bash**
 
 ```
+cat > /tmp/fit_models.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+import re, math
+text=open('data/task.txt').read()
+ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
 
+def nll_normal(params,x):
+    mu,logs=params; sig=np.exp(logs)
+    return -np.sum(stats.norm.logpdf(x,mu,sig))
+def nll_t(params,x,nu):
+    mu,logs=params; sig=np.exp(logs)
+    return -np.sum(stats.t.logpdf(x,nu,mu,sig))
+rows=[]
+for b,g in df.groupby('block'):
+    x=g.x.values; n=len(x)
+    res=optimize.minimize(nll_normal,[np.mean(x),np.log(np.std(x,ddof=1))],args=(x,),method='Nelder-Mead')
+    llN=-res.fun; muN,ls=res.x; sigN=np.exp(ls)
+    best=None
+    for nu in [2.5,3,4,5,6,8,10,15,30,1e6]:
+        res=optimize.minimize(nll_t,[muN,np.log(sigN)],args=(x,nu),method='Nelder-Mead')
+        ll=-res.fun
+        # same k=2 for fixed nu; compare ll
+        if best is None or ll>best[0]: best=(ll,nu,res.x)
+    llT,nuT,par=best; muT=par[0]; sigT=np.exp(par[1])
+    # pickands tail index using top 4? quantile function estimate: (x_(n)-x_(n-k)) etc
+    xs=np.sort(x)
+    # Hill on positive exceedances over median for upper deviations
+    med=np.median(x); dev=np.sort(x[x>med]-med)
+    hill=np.nan
+    if len(dev)>=4:
+        k=min(4,len(dev)-1)
+        # use k largest deviations, threshold dev[-k-1]
+        y=dev[-k:]; u=dev[-k-1]
+        hill=np.mean(np.log(y/u))
+    rows.append(dict(block=b,m=ms[b],llN=llN,llT=llT,dll=llT-llN,nu=nuT,muN=muN,sigN=sigN,muT=muT,sigT=sigT,hill=hill,med=med,max=x.max(),second=xs[-2],min=x.min()))
+s=pd.DataFrame(rows)
+pd.set_option('display.width',220)
+print(s[['dll','nu','sigN','sigT','hill']].describe().to_string())
+print('t better count', (s.dll>0).sum(), 'mean dll', s.dll.mean())
+print(s.reindex(s.dll.sort_values(ascending=False).index).head(25)[['block','m','dll','nu','sigN','sigT','hill','med','max','second','min']].to_string(index=False))
+print('hill quantiles', s.hill.quantile([0,.1,.25,.5,.75,.9,1]).to_string())
+print(s.reindex(s.hill.sort_values(ascending=False).index).head(25)[['block','m','hill','dll','med','max','second','min','sigN']].to_string(index=False))
+EOF
+python /tmp/fit_models.py
 ```
 
 ## [14] tool
@@ -863,7 +1007,44 @@ hill quantiles 0.00    0.567207
 **tool call: bash**
 
 ```
-
+cat > /tmp/ratios.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+import re
+text=open('data/task.txt').read()
+ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
+rows=[]
+for b,g in df.groupby('block'):
+    x=np.sort(g.x.values); med=np.median(x)
+    pos=x[x>med]-med
+    neg=med-x[x<med]
+    U=np.median(pos) if len(pos) else np.nan
+    L=np.median(neg) if len(neg) else np.nan
+    # upper semi interquartile: median of top half deviations? same as U
+    # use mean absolute positive deviation and upper quartile of positive dev
+    rows.append(dict(block=b,m=ms[b],med=med,U=U,L=L,max=x[-1],second=x[-2],third=x[-3],min=x[0],
+                     rmax=(x[-1]-med)/U if U>0 else np.inf, rsecond=(x[-2]-med)/U if U>0 else np.inf,
+                     rthird=(x[-3]-med)/U if U>0 else np.inf,
+                     lrmax=(med-x[0])/L if L>0 else np.inf,
+                     npos=len(pos)))
+s=pd.DataFrame(rows)
+pd.set_option('display.width',220)
+print(s[['U','rmax','rsecond','rthird','lrmax']].replace([np.inf],np.nan).describe(percentiles=[.05,.1,.25,.5,.75,.9,.95,.99]).to_string())
+print('largest rmax')
+print(s.reindex(s.rmax.sort_values(ascending=False).index).head(30)[['block','m','med','U','max','second','third','rmax','rsecond','rthird','min']].to_string(index=False))
+print('smallest rmax')
+print(s.reindex(s.rmax.sort_values().index).head(20)[['block','m','med','U','max','second','third','rmax','rsecond','rthird','min']].to_string(index=False))
+# Correlation of rmax with sample kurt/skew and t likelihood
+from scipy.stats import skew,kurtosis
+rows2=[]
+for b,g in df.groupby('block'):
+    x=g.x.values; rows2.append((b,skew(x,bias=False),kurtosis(x,bias=False),x.std(ddof=1)))
+r2=pd.DataFrame(rows2,columns=['block','skew','kurt','sd'])
+s=s.merge(r2,on='block')
+print(s[['rmax','rsecond','skew','kurt','sd']].corr().to_string())
+EOF
+python /tmp/ratios.py
 ```
 
 ## [16] tool
@@ -967,7 +1148,17 @@ sd      -0.030924  0.043876  0.061335 -0.084122  1.000000
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, numpy as np
+df=pd.read_csv('data/blocks.csv')
+mins=[]
+for b,g in df.groupby('block'):
+    xs=np.sort(g.x.values)
+    mins.append((b,xs[-1],xs[-2],xs[-3],xs[-4],xs[-5],np.sum(xs>0)))
+print('min max', min(x[1] for x in mins), 'min 4th', min(x[4] for x in mins), 'min 5th', min(x[5] for x in mins))
+print([x for x in mins if x[4]<=0])
+print('npos min', min(x[6] for x in mins), [x for x in mins if x[6]<5])
+EOF
 ```
 
 ## [18] tool
@@ -994,7 +1185,35 @@ npos min 1 [(3, np.float64(85.33), np.float64(61.08), np.float64(20.96), np.floa
 **tool call: bash**
 
 ```
-
+cat > /tmp/fit_t_free.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+import re
+text=open('data/task.txt').read(); ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
+def nll(params,x):
+    lnu,mu,logs=params; nu=np.exp(lnu); sig=np.exp(logs)
+    if nu<0.3 or nu>1000 or sig<=0: return 1e100
+    return -np.sum(stats.t.logpdf(x,nu,mu,sig))
+rows=[]
+for b,g in df.groupby('block'):
+    x=g.x.values
+    best=(np.inf,None)
+    for start_nu in [0.5,1,2,5,20]:
+        for start_mu in [np.median(x),np.mean(x)]:
+            for start_sig in [stats.median_abs_deviation(x,scale='normal'), x.std(ddof=1)]:
+                res=optimize.minimize(nll,[np.log(start_nu),start_mu,np.log(start_sig)],args=(x,),method='Nelder-Mead',options={'maxiter':2000})
+                if res.fun<best[0]: best=(res.fun,res.x)
+    lnu,mu,logs=best[1]; nu=np.exp(lnu); sig=np.exp(logs); ll=-best[0]
+    rows.append(dict(block=b,m=ms[b],nu=nu,mu=mu,sig=sig,ll=ll,q90=mu+sig*stats.t.ppf(.9,nu),q95=mu+sig*stats.t.ppf(.95,nu),q99=mu+sig*stats.t.ppf(.99,nu),max=x.max(),med=np.median(x)))
+s=pd.DataFrame(rows)
+pd.set_option('display.width',200)
+print(s[['nu','sig','q95','q99']].describe().to_string())
+print(s.reindex(s.nu.sort_values().index).head(30)[['block','m','nu','mu','sig','q90','q95','q99','max','med']].to_string(index=False))
+print('q99<max count', (s.q99<s['max']).sum(), 'q95<max', (s.q95<s['max']).sum())
+print(s.reindex((s.q99-s['max']).sort_values().index).head(20)[['block','m','nu','q95','q99','max','med']].to_string(index=False))
+EOF
+python /tmp/fit_t_free.py
 ```
 
 ## [20] tool
@@ -1154,7 +1373,68 @@ q99<max count 1 q95<max 63
 **tool call: bash**
 
 ```
+cat > /tmp/method_variants.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+import re, math
+text=open('data/task.txt').read(); ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
 
+def fit_loglog(x, rmin=6, weight='linear', gamma_prior=None, maxg=5):
+    xs=np.sort(x); n=len(xs); med=np.median(xs)
+    rs=np.arange(rmin,n+1)
+    p=rs/(n+1); t=1/(1-p)
+    D=xs[rmin-1:]-med
+    mask=D>0
+    if mask.sum()<2:
+        return None
+    y=np.log(D[mask]); z=np.log(t[mask])
+    if weight=='linear': w=(rs[mask]-rmin+1).astype(float)
+    elif weight=='top': w=(rs[mask].astype(float))**2
+    else: w=np.ones(mask.sum())
+    # WLS for slope gamma and intercept logA, optional ridge toward prior mean with strength lam (in slope)
+    zbar=np.average(z,weights=w); ybar=np.average(y,weights=w)
+    Szz=np.average((z-zbar)**2,weights=w); Szy=np.average((z-zbar)*(y-ybar),weights=w)
+    if gamma_prior is None:
+        gamma=Szy/Szz if Szz>0 else 0.5
+        logA=ybar-gamma*zbar
+    else:
+        mu,lam=gamma_prior # prior gamma~N(mu, 1/lam) in slope; add lam*(gamma-mu)^2
+        gamma=(Szy + lam*mu)/(Szz+lam) if Szz+lam>0 else mu
+        logA=ybar-gamma*zbar
+    gamma=float(np.clip(gamma,0,maxg))
+    # recompute intercept given clipped gamma
+    logA=ybar-gamma*zbar
+    A=np.exp(logA)
+    return med,A,gamma,mask.sum()
+
+def pred(x, tau, **kw):
+    f=fit_loglog(x, **kw)
+    if f is None:
+        med=np.median(x); mad=stats.median_abs_deviation(x,scale='normal')
+        return med+mad*stats.norm.ppf(tau)
+    med,A,g,np_=f
+    t=1/(1-tau)
+    return med + A*(t**g)
+
+variants=[('r6_ols',dict(rmin=6,weight='ones')),('r6_lin',dict(rmin=6,weight='linear')),('r7_lin',dict(rmin=7,weight='linear')),('r8_lin',dict(rmin=8,weight='linear')),('r6_prior',dict(rmin=6,weight='linear',gamma_prior=(0.6,2.0))),('r7_prior',dict(rmin=7,weight='linear',gamma_prior=(0.6,2.0)))]
+sel_blocks=[4,7,12,22,27,38,47,71,77,85,92,100]
+for name,kw in variants:
+    print('\nVAR',name)
+    rows=[]
+    for b in sel_blocks:
+        x=df[df.block==b].x.values
+        rows.append([b, ms[b], pred(x,.9,**kw), pred(x,.95,**kw), pred(x,.99,**kw), np.max(x), np.median(x), fit_loglog(x,**kw)[2] if fit_loglog(x,**kw) else np.nan])
+    print(pd.DataFrame(rows,columns=['b','m','q90','q95','q99','max','med','gamma']).to_string(index=False))
+# summary of gamma and ratios for all
+for name,kw in variants:
+    gs=[]; q99max=[]; q95max=[]
+    for b,g in df.groupby('block'):
+        x=g.x.values; f=fit_loglog(x,**kw)
+        if f: gs.append(f[2]); q99max.append(pred(x,.99,**kw)/x.max()); q95max.append(pred(x,.95,**kw)/x.max())
+    print(name,'gamma med',np.median(gs),'q95/max med',np.median(q95max),'q99/max med',np.median(q99max),'q99<max frac',np.mean(np.array(q99max)<1))
+EOF
+python /tmp/method_variants.py
 ```
 
 ## [22] tool
@@ -1281,7 +1561,78 @@ r7_prior gamma med 0.6507449372279863 q95/max med 1.1916240141258068 q99/max med
 **tool call: bash**
 
 ```
+cat > /tmp/gev_fit.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+import re
+text=open('data/task.txt').read(); ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
 
+def fit_gev_quant(x, rmin=1, weight='ones', xi_prior=None, xibounds=(-0.6,1.8)):
+    xs=np.sort(x); n=len(xs)
+    rs=np.arange(rmin,n+1)
+    p=rs/(n+1); t=1/(1-p)
+    y=xs[rmin-1:]
+    if weight=='ones': w=np.ones(len(rs))
+    elif weight=='linear': w=rs.astype(float)
+    elif weight=='tail': w=(rs.astype(float))**2
+    elif weight=='tailprob': w=1/(1-p) # t
+    # model params: a, logb, xi (with prior ridge on xi)
+    def qfun(par,t):
+        a,logb,xi=par; b=np.exp(logb)
+        if abs(xi)<1e-6:
+            return a+b*np.log(t)
+        return a + b/xi*(np.power(t,xi)-1.0)
+    def obj(par):
+        a,logb,xi=par
+        if xi<xibounds[0] or xi>xibounds[1]: return 1e100+(xi-xibounds[1])**2*1e100 if xi>xibounds[1] else 1e100+(xibounds[0]-xi)**2*1e100
+        pred=qfun(par,t)
+        val=np.sum(w*(pred-y)**2)
+        if xi_prior is not None:
+            mu,sd=xi_prior
+            val += ((xi-mu)/sd)**2 * np.sum(w) * (np.std(y)**2) # scale? maybe too strong
+        return val
+    # start from median and slope vs logt
+    med=np.median(y)
+    # robust scale: fit line y~a+b log t
+    z=np.log(t)
+    A=np.vstack([np.ones_like(z),z]).T
+    coef=np.linalg.lstsq(A,y,rcond=None)[0]
+    starts=[]
+    for xi0 in [-0.2,0,0.2,0.5,0.8,1.2]:
+        starts.append([coef[0], np.log(max(coef[1],1e-6)), xi0])
+    best=None
+    for st in starts:
+        res=optimize.minimize(obj,st,method='Nelder-Mead',options={'maxiter':5000})
+        if best is None or res.fun<best.fun: best=res
+    a,logb,xi=best.x; b=np.exp(logb)
+    def q(tau):
+        tt=1/(1-tau)
+        return qfun([a,logb,xi],tt)
+    return a,b,xi,q,best.fun
+
+variants=[('all_ones',dict(rmin=1,weight='ones')),('all_tailw',dict(rmin=1,weight='tailprob')),('r5_tailw',dict(rmin=5,weight='tailprob')),('r6_tailw',dict(rmin=6,weight='tailprob')),('r6_lin',dict(rmin=6,weight='linear'))]
+sel=[4,7,12,22,27,38,47,71,77,85,92,100]
+for name,kw in variants:
+    print('\n',name)
+    rows=[]
+    for b in sel:
+        x=df[df.block==b].x.values
+        a,bb,xi,q,fun=fit_gev_quant(x,**kw)
+        rows.append([b,ms[b],q(.9),q(.95),q(.99),x.max(),np.median(x),xi])
+    print(pd.DataFrame(rows,columns=['b','m','q90','q95','q99','max','med','xi']).to_string(index=False))
+for name,kw in variants:
+    xis=[]; q95max=[]; q99max=[]; fail=0
+    for b,g in df.groupby('block'):
+        x=g.x.values
+        try:
+            a,bb,xi,q,fun=fit_gev_quant(x,**kw)
+            xis.append(xi); q95max.append(q(.95)/x.max()); q99max.append(q(.99)/x.max())
+        except Exception as e:
+            fail+=1
+    print(name,'xi med',np.median(xis),'q10',np.quantile(xis,.1),'q90',np.quantile(xis,.9),'q95/max med',np.median(q95max),'q99/max med',np.median(q99max),'q99<max',np.mean(np.array(q99max)<1),'fail',fail)
+EOF
+python /tmp/gev_fit.py
 ```
 
 ## [24] tool
@@ -1409,7 +1760,87 @@ r6_lin xi med -0.12059809307041097 q10 -0.5999999999919077 q90 1.799999978606915
 **tool call: bash**
 
 ```
+cat > /tmp/gh_fit.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+import re, math
+text=open('data/task.txt').read(); ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
+zcache={}
+def z_for_p(p): return stats.norm.ppf(p)
 
+def wfun(z,g,h):
+    # Tukey g-and-h factor without location/scale
+    e=np.exp(h*z*z/2.0)
+    if abs(g)<1e-8:
+        return z*e
+    # stable (exp(g z)-1)/g
+    return np.expm1(g*z)/g * e
+
+def fit_gh(x, g0=0.0, sg=0.6, h0=0.18, sh=0.22, hmax=0.9, gmax=1.5, weight='upper', ridge_scale=True):
+    xs=np.sort(x); n=len(xs); p=(np.arange(1,n+1))/(n+1); z=stats.norm.ppf(p)
+    if weight=='ones': wt=np.ones(n)
+    elif weight=='upper': wt=1/(1-p)  # emphasize upper tail linearly in t
+    elif weight=='z2': wt=(z-z.min()+0.1)**2
+    else: wt=np.ones(n)
+    y=xs
+    sy=np.std(y,ddof=1) if np.std(y,ddof=1)>0 else 1.0
+    def linfit(g,h):
+        w=wfun(z,g,h)
+        # weighted least squares y = A + B w
+        W=wt
+        sw=np.sum(W); sww=np.sum(W*w*w); swy=np.sum(W*w*y); syw=np.sum(W*y); s1=np.sum(W)
+        den=sww*s1-sw*sw
+        if den<=1e-12:
+            B=sy/np.std(w) if np.std(w)>0 else sy; A=np.median(y)
+        else:
+            B=(s1*swy-sw*syw)/den
+            A=(syw-B*sw)/s1
+        pred=A+B*w
+        rss=np.sum(W*(y-pred)**2)
+        return A,B,rss
+    def obj(par):
+        g,h=par
+        if h<0 or h>hmax or g<-gmax or g>gmax: return 1e100
+        A,B,rss=linfit(g,h)
+        if B<=0: rss += 1e6*(abs(B)+1)
+        pen=((g-g0)/sg)**2 + ((h-h0)/sh)**2
+        # scale penalty by RSS scale: use normalized objective log? We'll use rss + lambda*sy^2*pen*n
+        lam=0.5*n  # strength
+        return rss + lam*(sy**2)*pen
+    best=None
+    for gstart in [-0.8,-0.3,0,0.3,0.8]:
+        for hstart in [0,0.1,0.25,0.5,0.8]:
+            res=optimize.minimize(obj,[gstart,hstart],method='Nelder-Mead',options={'maxiter':3000})
+            if best is None or res.fun<best.fun: best=res
+    g,h=best.x; A,B,rss=linfit(g,h)
+    def q(tau):
+        zz=stats.norm.ppf(tau)
+        return A+B*wfun(np.array([zz]),g,h)[0]
+    return A,B,g,h,q,best.fun
+
+variants=[('h018',dict(h0=0.18,sh=0.22,g0=0,sg=0.6,weight='upper')),
+          ('h010',dict(h0=0.10,sh=0.18,g0=0,sg=0.5,weight='upper')),
+          ('h025',dict(h0=0.25,sh=0.20,g0=0,sg=0.5,weight='upper')),
+          ('h018ones',dict(h0=0.18,sh=0.22,g0=0,sg=0.6,weight='ones')),
+          ('h010strong',dict(h0=0.10,sh=0.12,g0=0,sg=0.4,weight='upper'))]
+sel=[4,7,12,22,27,38,47,71,77,85,92,100]
+for name,kw in variants:
+    print('\n',name)
+    rows=[]
+    for b in sel:
+        x=df[df.block==b].x.values
+        A,B,g,h,q,fun=fit_gh(x,**kw)
+        rows.append([b,ms[b],q(.9),q(.95),q(.99),x.max(),np.median(x),g,h])
+    print(pd.DataFrame(rows,columns=['b','m','q90','q95','q99','max','med','g','h']).to_string(index=False))
+for name,kw in variants:
+    hs=[]; gs=[]; q95max=[]; q99max=[]; q90max=[]
+    for b,gg in df.groupby('block'):
+        x=gg.x.values; A,B,g,h,q,fun=fit_gh(x,**kw)
+        hs.append(h); gs.append(g); q95max.append(q(.95)/x.max()); q99max.append(q(.99)/x.max()); q90max.append(q(.9)/x.max())
+    print(name,'h med',np.median(hs),'h q90',np.quantile(hs,.9),'g med',np.median(gs),'q90/max',np.median(q90max),'q95/max',np.median(q95max),'q99/max',np.median(q99max),'q99<max',np.mean(np.array(q99max)<1))
+EOF
+python /tmp/gh_fit.py
 ```
 
 ## [26] tool
@@ -1522,7 +1953,61 @@ h010strong h med 0.09438604436575213 h q90 0.13793200816447934 g med -0.04349086
 **tool call: bash**
 
 ```
+python - <<'EOF'
+# Reuse functions by importing file? Simpler: modify h0/sh in a small loop by exec of file with replaced variants? We'll import via runpy not easy due prints.
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+import re
+text=open('data/task.txt').read(); ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
+def wfun(z,g,h):
+    e=np.exp(h*z*z/2.0)
+    if abs(g)<1e-8: return z*e
+    return np.expm1(g*z)/g * e
 
+def fit_gh(x, g0=0.0, sg=0.5, h0=0.0, sh=0.15, hmax=0.8, gmax=1.2, weight='upper'):
+    xs=np.sort(x); n=len(xs); p=(np.arange(1,n+1))/(n+1); z=stats.norm.ppf(p); y=xs
+    if weight=='upper': wt=1/(1-p)
+    elif weight=='ones': wt=np.ones(n)
+    elif weight=='quad': wt=(1/(1-p))**2
+    sy=np.std(y,ddof=1) or 1.0
+    def linfit(g,h):
+        w=wfun(z,g,h); W=wt
+        s1=np.sum(W); sw=np.sum(W*w); sww=np.sum(W*w*w); syw=np.sum(W*y); swy=np.sum(W*w*y)
+        den=sww*s1-sw*sw
+        if den<=1e-12:
+            B=sy/np.std(w) if np.std(w)>1e-12 else sy; A=np.median(y)
+        else:
+            B=(s1*swy-sw*syw)/den; A=(syw-B*sw)/s1
+        rss=np.sum(W*(y-(A+B*w))**2)
+        return A,B,rss
+    def obj(par):
+        g,h=par
+        if h<0 or h>hmax or abs(g)>gmax: return 1e100
+        A,B,rss=linfit(g,h)
+        if B<=0: rss += 1e8*(1-B)
+        pen=((g-g0)/sg)**2+((h-h0)/sh)**2
+        return rss + (0.7*n)*(sy**2)*pen
+    best=None
+    for gs in [-0.8,-0.3,0,0.3,0.8]:
+        for hs in [0,0.05,0.15,0.3,0.6]:
+            res=optimize.minimize(obj,[gs,hs],method='Nelder-Mead',options={'maxiter':2500})
+            if best is None or res.fun<best.fun: best=res
+    g,h=best.x; A,B,rss=linfit(g,h)
+    def q(tau):
+        return A+B*wfun(np.array([stats.norm.ppf(tau)]),g,h)[0]
+    return A,B,g,h,q
+sel=[4,7,12,22,27,37,38,47,71,77,85,92,100]
+for h0,sh,sg in [(0,0.08,0.4),(0,0.12,0.5),(0.03,0.10,0.5),(0.05,0.10,0.5),(0,0.15,0.5),(0.02,0.08,0.4)]:
+    print('\nh0',h0,'sh',sh,'sg',sg)
+    rows=[]; hs=[]; q99max=[]; q95max=[]
+    for b,gdf in df.groupby('block'):
+        x=gdf.x.values; A,B,g,h,q=fit_gh(x,h0=h0,sh=sh,sg=sg)
+        hs.append(h); q99max.append(q(.99)/x.max()); q95max.append(q(.95)/x.max())
+        if b in sel: rows.append([b,q(.9),q(.95),q(.99),x.max(),g,h])
+    print(pd.DataFrame(rows,columns=['b','q90','q95','q99','max','g','h']).to_string(index=False))
+    print('h med',np.median(hs),'hq90',np.quantile(hs,.9),'q95/max',np.median(q95max),'q99/max',np.median(q99max),'q99max q90',np.quantile(q99max,.9))
+EOF
 ```
 
 ## [28] tool
@@ -1651,7 +2136,46 @@ h med 0.02046471669824865 hq90 0.023796373696820167 q95/max 1.1536949656490427 q
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+# minimal copy fit h0=0.02 sh0.08
+def wfun(z,g,h):
+    e=np.exp(h*z*z/2.0)
+    if abs(g)<1e-8: return z*e
+    return np.expm1(g*z)/g*e
+def fit(x,h0=0.02,sh=0.08,sg=0.4,weight='upper'):
+    xs=np.sort(x); n=len(xs); p=(np.arange(1,n+1))/(n+1); z=stats.norm.ppf(p); y=xs
+    wt=1/(1-p) if weight=='upper' else np.ones(n)
+    sy=np.std(y,ddof=1)
+    def linfit(g,h):
+        w=wfun(z,g,h); W=wt; s1=W.sum(); sw=(W*w).sum(); sww=(W*w*w).sum(); syw=(W*y).sum(); swy=(W*w*y).sum(); den=sww*s1-sw*sw
+        B=(s1*swy-sw*syw)/den; A=(syw-B*sw)/s1; rss=np.sum(W*(y-(A+B*w))**2); return A,B,rss
+    def obj(par):
+        g,h=par
+        if h<0 or h>0.8 or abs(g)>1.2: return 1e100
+        A,B,rss=linfit(g,h); pen=(g/sg)**2+(h/sh)**2
+        return rss+(0.7*n)*sy*sy*pen
+    best=None
+    for gs in [-0.5,0,0.5]:
+        for hs in [0,0.05,0.2]:
+            r=optimize.minimize(obj,[gs,hs],method='Nelder-Mead')
+            if best is None or r.fun<best.fun: best=r
+    g,h=best.x; A,B,rss=linfit(g,h); return A,B,g,h
+x=np.array([25.4,39.79,22.79,39.84,70.77,61.57,53.1,49.87,29.35,31.19])
+A,B,g,h=fit(x)
+print(A,B,g,h,'mean sd',x.mean(),x.std(ddof=1),'med',np.median(x))
+for tau in [.9,.95,.99]:
+    zz=stats.norm.ppf(tau); print(tau,A+B*wfun(np.array([zz]),g,h)[0])
+print('Fmax under gh approx')
+# invert numerically for F(max)
+for val in [x.max(), x.mean()+1.645*x.std(ddof=1), x.mean()+2.326*x.std(ddof=1)]:
+    # find p such that q(p)=val by brentq
+    f=lambda p: A+B*wfun(np.array([stats.norm.ppf(p)]),g,h)[0]-val
+    lo,hi=1e-6,1-1e-6
+    import scipy.optimize as opt
+    print(val, opt.brentq(f,lo,hi))
+EOF
 ```
 
 ## [30] tool
@@ -1723,7 +2247,117 @@ Fmax under gh approx
 **tool call: bash**
 
 ```
+cat > /tmp/candidate.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+import re, math
+text=open('data/task.txt').read(); ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
 
+def wfun(z,g,h):
+    z=np.asarray(z,float); e=np.exp(h*z*z/2.0)
+    if abs(g)<1e-8: return z*e
+    return np.expm1(g*z)/g*e
+
+def fit_gh(x,h0=0.02,sh=0.08,sg=0.4,g0=0.0,hmax=0.8,gmax=1.2):
+    xs=np.sort(np.asarray(x,float)); n=len(xs); p=(np.arange(1,n+1))/(n+1); z=stats.norm.ppf(p); y=xs
+    wt=1/(1-p)
+    sy=np.std(y,ddof=1)
+    if not np.isfinite(sy) or sy<=0: sy=1.0
+    def linfit(g,h):
+        w=wfun(z,g,h); W=wt
+        s1=np.sum(W); sw=np.sum(W*w); sww=np.sum(W*w*w); syw=np.sum(W*y); swy=np.sum(W*w*y)
+        den=sww*s1-sw*sw
+        if den<=1e-10:
+            B=sy/(np.std(w) if np.std(w)>1e-12 else 1.0); A=np.median(y)
+        else:
+            B=(s1*swy-sw*syw)/den; A=(syw-B*sw)/s1
+        if not np.isfinite(B) or B<=0:
+            B=sy; A=np.median(y)
+        rss=np.sum(W*(y-(A+B*w))**2)
+        return A,B,rss
+    def obj(par):
+        g,h=par
+        if h<0 or h>hmax or g<-gmax or g>gmax: return 1e100
+        A,B,rss=linfit(g,h)
+        pen=((g-g0)/sg)**2+((h-h0)/sh)**2
+        return rss + (0.7*n)*(sy**2)*pen
+    best=None
+    for gs in [-0.8,-0.3,0.0,0.3,0.8]:
+        for hs in [0.0,0.02,0.05,0.15,0.4]:
+            res=optimize.minimize(obj,[gs,hs],method='Nelder-Mead',options={'maxiter':3000,'xatol':1e-6,'fatol':1e-6})
+            if best is None or res.fun<best.fun: best=res
+    g,h=best.x; A,B,rss=linfit(g,h)
+    return A,B,float(g),float(h)
+
+def make_qfun(A,B,g,h):
+    def q_of_p(p):
+        p=np.asarray(p,float)
+        return A+B*wfun(stats.norm.ppf(p),g,h)
+    return q_of_p
+
+def make_Ffun(A,B,g,h,x):
+    q=make_qfun(A,B,g,h)
+    lo=q(np.array([1e-7]))[0]; hi=q(np.array([1-1e-7]))[0]
+    # expand hi for bounded h=0 g<0? q(1-1e-7) close asymptote; ok. If nonfinite, use data range.
+    if not np.isfinite(lo): lo=np.min(x)-10*(np.std(x) or 1)
+    if not np.isfinite(hi): hi=np.max(x)+10*(np.std(x) or 1)
+    def F(v):
+        v=float(v)
+        if v<=lo: return 0.0
+        if v>=hi: return 1.0
+        f=lambda p: float(q(np.array([p]))[0])-v
+        try:
+            return optimize.brentq(f,1e-7,1-1e-7,xtol=1e-10,rtol=1e-10,maxiter=100)
+        except Exception:
+            # bisection fallback
+            a,b=1e-7,1-1e-7
+            for _ in range(100):
+                c=(a+b)/2
+                if float(q(np.array([c]))[0])<v: a=c
+                else: b=c
+            return (a+b)/2
+    return F
+
+def mixture_quantile(x,m,tau,A,B,g,h):
+    x=np.asarray(x,float); n=len(x); F=make_Ffun(A,B,g,h,x)
+    q=make_qfun(A,B,g,h)
+    xs=np.sort(x)
+    scale=np.std(x,ddof=1)
+    if not np.isfinite(scale) or scale<=0: scale=max(1.0,np.ptp(x)/10)
+    lo=min(xs[0]-5*scale, float(q(np.array([1e-6]))[0])-5*scale)
+    hi=max(xs[-1]+5*scale, float(q(np.array([1-1e-6]))[0])+5*scale)
+    def C(v):
+        s=np.searchsorted(xs,v,side='right') # count observed <= v
+        Fv=F(v)
+        return (s+(m-n)*Fv)/m
+    # ensure bracket
+    # For tau very high, hi should have C~1
+    for _ in range(120):
+        mid=(lo+hi)/2
+        if C(mid) < tau: lo=mid
+        else: hi=mid
+    return hi
+
+sel=[4,7,12,22,27,37,38,47,71,77,85,92,100]
+rows=[]
+for b,gdf in df.groupby('block'):
+    x=gdf.x.values; m=ms[b]; A,B,g,h=fit_gh(x)
+    raw=[make_qfun(A,B,g,h)(np.array([tau]))[0] for tau in [.9,.95,.99]]
+    mix=[mixture_quantile(x,m,tau,A,B,g,h) for tau in [.9,.95,.99]]
+    if b in sel: rows.append([b,m,*raw,*mix,x.max(),g,h])
+print(pd.DataFrame(rows,columns=['b','m','raw90','raw95','raw99','mix90','mix95','mix99','max','g','h']).to_string(index=False))
+# summary differences
+qs=[]
+for b,gdf in df.groupby('block'):
+    x=gdf.x.values; m=ms[b]; A,B,g,h=fit_gh(x)
+    mix=[mixture_quantile(x,m,tau,A,B,g,h) for tau in [.9,.95,.99]]
+    raw=[make_qfun(A,B,g,h)(np.array([tau]))[0] for tau in [.9,.95,.99]]
+    qs.append([mix[i]-raw[i] for i in range(3)])
+qs=np.array(qs)
+print('mix-raw median',np.median(qs,axis=0),'mean',qs.mean(axis=0),'min',qs.min(axis=0),'max',qs.max(axis=0))
+EOF
+python /tmp/candidate.py
 ```
 
 ## [32] tool
@@ -1771,7 +2405,14 @@ mix-raw median [ 9.99200722e-16 -2.90972873e-01 -2.68841835e-01] mean [-0.157558
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+exec(open('/tmp/candidate.py').read().split("sel=")[0])
+for b in [22,38,47,71,92,4,7,100]:
+    x=df[df.block==b].x.values; A,B,g,h=fit_gh(x)
+    z=stats.norm.ppf(.95); se=B*np.sqrt(1/10 + z*z/(2*9))*(1+10*h)
+    q95=mixture_quantile(x,ms[b],.95,A,B,g,h); q99=mixture_quantile(x,ms[b],.99,A,B,g,h)
+    print(b,'A',A,'B',B,'g',g,'h',h,'q95',q95,'se',se,'hi2',max(q99,q95+2*se,x.max()),'x8',np.sort(x)[7])
+EOF
 ```
 
 ## [34] tool
@@ -1811,7 +2452,116 @@ mix-raw median [ 9.99200722e-16 -2.90972873e-01 -2.68841835e-01] mean [-0.157558
 **tool call: bash**
 
 ```
+cat > /tmp/write_pred.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+import re, math, os
+text=open('data/task.txt').read(); ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
 
+def wfun(z,g,h):
+    z=np.asarray(z,float); e=np.exp(h*z*z/2.0)
+    if abs(g)<1e-8: return z*e
+    return np.expm1(g*z)/g*e
+
+def fit_gh(x,h0=0.02,sh=0.08,sg=0.4,g0=0.0,hmax=0.8,gmax=1.2):
+    xs=np.sort(np.asarray(x,float)); n=len(xs); p=(np.arange(1,n+1))/(n+1); z=stats.norm.ppf(p); y=xs
+    wt=1/(1-p)
+    sy=np.std(y,ddof=1)
+    if not np.isfinite(sy) or sy<=0: sy=1.0
+    def linfit(g,h):
+        w=wfun(z,g,h); W=wt
+        s1=np.sum(W); sw=np.sum(W*w); sww=np.sum(W*w*w); syw=np.sum(W*y); swy=np.sum(W*w*y)
+        den=sww*s1-sw*sw
+        if den<=1e-10:
+            B=sy/(np.std(w) if np.std(w)>1e-12 else 1.0); A=np.median(y)
+        else:
+            B=(s1*swy-sw*syw)/den; A=(syw-B*sw)/s1
+        if not np.isfinite(B) or B<=0 or B<=1e-12:
+            B=sy; A=np.median(y)
+        rss=np.sum(W*(y-(A+B*w))**2)
+        return A,B,rss
+    def obj(par):
+        g,h=par
+        if h<0 or h>hmax or g<-gmax or g>gmax: return 1e100
+        A,B,rss=linfit(g,h)
+        pen=((g-g0)/sg)**2+((h-h0)/sh)**2
+        return rss + (0.7*n)*(sy**2)*pen
+    best=None
+    for gs in [-0.8,-0.3,0.0,0.3,0.8]:
+        for hs in [0.0,0.02,0.05,0.15,0.4]:
+            res=optimize.minimize(obj,[gs,hs],method='Nelder-Mead',options={'maxiter':3000,'xatol':1e-7,'fatol':1e-7})
+            if best is None or res.fun<best.fun: best=res
+    g,h=best.x; A,B,rss=linfit(g,h)
+    return A,B,float(g),float(h)
+
+def q_of_p(A,B,g,h,p):
+    return float(A+B*wfun(np.array([stats.norm.ppf(p)]),g,h)[0])
+
+def F_of_v(A,B,g,h,x,v):
+    # numerical inverse of q_of_p
+    lo=q_of_p(A,B,g,h,1e-7); hi=q_of_p(A,B,g,h,1-1e-7)
+    sd=np.std(x,ddof=1); sd=sd if np.isfinite(sd) and sd>0 else 1.0
+    if not np.isfinite(lo): lo=np.min(x)-10*sd
+    if not np.isfinite(hi): hi=np.max(x)+10*sd
+    if v<=lo: return 0.0
+    if v>=hi: return 1.0
+    f=lambda p: q_of_p(A,B,g,h,p)-v
+    try:
+        return optimize.brentq(f,1e-7,1-1e-7,xtol=1e-10,rtol=1e-10,maxiter=100)
+    except Exception:
+        a,b=1e-7,1-1e-7
+        for _ in range(100):
+            c=(a+b)/2
+            if q_of_p(A,B,g,h,c)<v: a=c
+            else: b=c
+        return (a+b)/2
+
+def mixture_quantile(x,m,tau,A,B,g,h):
+    x=np.asarray(x,float); n=len(x); xs=np.sort(x)
+    sd=np.std(x,ddof=1); sd=sd if np.isfinite(sd) and sd>0 else max(1.0,np.ptp(x)/10)
+    lo=min(xs[0]-5*sd, q_of_p(A,B,g,h,1e-6)-5*sd)
+    hi=max(xs[-1]+5*sd, q_of_p(A,B,g,h,1-1e-6)+5*sd)
+    def C(v):
+        s=np.searchsorted(xs,v,side='right')
+        return (s+(m-n)*F_of_v(A,B,g,h,x,v))/m
+    # bisection for monotone C with jumps
+    for _ in range(100):
+        mid=(lo+hi)/2
+        if C(mid) < tau: lo=mid
+        else: hi=mid
+    return hi
+
+rows=[]
+for b in range(1,101):
+    x=df[df.block==b].x.values; m=ms[b]
+    A,B,g,h=fit_gh(x)
+    q90=mixture_quantile(x,m,.90,A,B,g,h)
+    q95=mixture_quantile(x,m,.95,A,B,g,h)
+    q99=mixture_quantile(x,m,.99,A,B,g,h)
+    xs=np.sort(x); x8=xs[7]  # third largest; conservative lower bound for population 95% quantile
+    z95=stats.norm.ppf(.95)
+    se=B*np.sqrt(1/len(x) + z95*z95/(2*(len(x)-1)))*(1+10*h)
+    lo=min(q95, x8)
+    hi=max(q99, q95+2.0*se, xs[-1], lo)
+    # If hi is not finite, fall back to a large multiple of range
+    if not np.isfinite(hi): hi=xs[-1]+10*(np.ptp(xs)+1)
+    rows.append(dict(block=b,q90=q90,q95=q95,q99=q99,lo=lo,hi=hi))
+out=pd.DataFrame(rows)
+# sanity: monotonic q90<=q95<=q99; enforce
+for col in ['q90','q95','q99','lo','hi']:
+    out[col]=out[col].astype(float)
+# enforce q90<=q95<=q99 and lo<=q95? lo may be <= q95 by construction; hi>=q95
+bad=(out.q90>out.q95)|(out.q95>out.q99)|(out.lo>out.q95)|(out.hi<out.q95)
+print('bad monotonic/interval rows', bad.sum())
+if bad.sum(): print(out[bad])
+out.to_csv('predictions.csv',index=False,float_format='%.10g')
+print(out.head().to_string(index=False))
+print('rows',len(out),'cols',list(out.columns))
+print('any nan',out.isna().any().any(),'q99<max frac', (out.q99<df.groupby('block').x.max().values).sum())
+EOF
+python /tmp/write_pred.py
+ls -l predictions.csv && head -5 predictions.csv && tail -3 predictions.csv
 ```
 
 ## [36] tool
@@ -1853,7 +2603,12 @@ block,q90,q95,q99,lo,hi
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+exec(open('/tmp/write_pred.py').read().split('rows=[]')[0])
+for b in [1,2,3,4,14,17,27,39,43,45,56,59,64,78,86,97,99]:
+    x=df[df.block==b].x.values; A,B,g,h=fit_gh(x); m=ms[b]
+    print(b,'g,h,B',round(g,3),round(h,3),round(B,3),'med',round(np.median(x),2),'mean',round(x.mean(),2),'sd',round(x.std(ddof=1),2),'minmax',x.min(),x.max(),'q95',round(mixture_quantile(x,m,.95,A,B,g,h),2),'q99',round(mixture_quantile(x,m,.99,A,B,g,h),2))
+EOF
 ```
 
 ## [38] tool
@@ -1897,7 +2652,17 @@ block,q90,q95,q99,lo,hi
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+exec(open('/tmp/write_pred.py').read().split('rows=[]')[0])
+gs=[]; hs=[]; Bs=[]; sds=[]; meds=[]; means=[]
+for b,gdf in df.groupby('block'):
+    x=gdf.x.values; A,B,g,h=fit_gh(x); gs.append(g); hs.append(h); Bs.append(B); sds.append(x.std(ddof=1)); meds.append(np.median(x)); means.append(x.mean())
+import numpy as np
+print('g quantiles',np.quantile(gs,[0,.1,.25,.5,.75,.9,1]))
+print('h quantiles',np.quantile(hs,[0,.1,.25,.5,.75,.9,1]))
+print('B/sd quantiles',np.quantile(np.array(Bs)/np.array(sds),[0,.1,.25,.5,.75,.9,1]))
+print('A-med quantiles',np.quantile(np.array(means)-np.array(meds),[0,.5,1]))
+EOF
 ```
 
 ## [40] tool
@@ -1964,7 +2729,20 @@ A-med quantiles [-30.106      0.343843 130.153   ]
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, numpy as np
+pred=pd.read_csv('predictions.csv')
+df=pd.read_csv('data/blocks.csv')
+mx=df.groupby('block').x.max(); mn=df.groupby('block').x.min()
+p=pred.set_index('block')
+print('q90>max', (p.q90>mx).sum(), 'q95>max', (p.q95>mx).sum(), 'q99>max', (p.q99>mx).sum())
+print('q90>max blocks', list(p.index[p.q90>mx])[:20])
+print(p.assign(max=mx,min=mn).loc[p.q90>mx].head(20).to_string())
+# ratio summaries
+print((p.q90/mx).describe())
+print((p.q95/mx).describe())
+print((p.q99/mx).describe())
+EOF
 ```
 
 ## [42] tool
@@ -2063,7 +2841,103 @@ dtype: float64
 **tool call: bash**
 
 ```
+cat > /tmp/sim_eval.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+import time
+# bring in functions from write_pred but faster (fewer starts) by redefining fit_gh with fewer starts
 
+def wfun(z,g,h):
+    z=np.asarray(z,float); e=np.exp(h*z*z/2.0)
+    if abs(g)<1e-8: return z*e
+    return np.expm1(g*z)/g*e
+
+def fit_gh_fast(x,h0=0.02,sh=0.08,sg=0.4,hmax=0.8,gmax=1.2):
+    xs=np.sort(np.asarray(x,float)); n=len(xs); p=(np.arange(1,n+1))/(n+1); z=stats.norm.ppf(p); y=xs; wt=1/(1-p)
+    sy=np.std(y,ddof=1); sy=sy if np.isfinite(sy) and sy>0 else 1.0
+    def linfit(g,h):
+        w=wfun(z,g,h); W=wt; s1=W.sum(); sw=(W*w).sum(); sww=(W*w*w).sum(); syw=(W*y).sum(); swy=(W*w*y).sum(); den=sww*s1-sw*sw
+        if den<=1e-10: B=sy; A=np.median(y)
+        else: B=(s1*swy-sw*syw)/den; A=(syw-B*sw)/s1
+        if B<=0 or not np.isfinite(B): B=sy; A=np.median(y)
+        rss=np.sum(W*(y-(A+B*w))**2); return A,B,rss
+    def obj(par):
+        g,h=par
+        if h<0 or h>hmax or abs(g)>gmax: return 1e100
+        A,B,rss=linfit(g,h); return rss+(0.7*n)*sy*sy*(((g)/sg)**2+((h-h0)/sh)**2)
+    best=None
+    for gs in [-0.3,0,0.3]:
+        for hs in [0,0.05,0.2]:
+            r=optimize.minimize(obj,[gs,hs],method='Nelder-Mead',options={'maxiter':1000})
+            if best is None or r.fun<best.fun: best=r
+    g,h=best.x; A,B,rss=linfit(g,h); return A,B,g,h
+
+def q_gh(x,tau):
+    A,B,g,h=fit_gh_fast(x)
+    return float(A+B*wfun(np.array([stats.norm.ppf(tau)]),g,h)[0])
+
+def q_normpred(x,tau):
+    n=len(x); xbar=np.mean(x); s=np.std(x,ddof=1)
+    return xbar + s*np.sqrt((n+1)/n)*stats.t.ppf(tau,n-1)
+
+def q_robust_upper(x,tau):
+    n=len(x); med=np.median(x); pos=x[x>med]-med
+    if len(pos)==0 or np.median(pos)<=0:
+        s=np.std(x,ddof=1); return med+s*np.sqrt((n+1)/n)*stats.t.ppf(tau,n-1)
+    U=np.median(pos)/0.6744897501960817
+    return med + U*np.sqrt((n+1)/n)*stats.t.ppf(tau,n-1)
+
+def q_sample(x,tau):
+    # simple: linear interpolation of order stats at p=i/(n+1); for tau beyond max, use normal robust extrapolation
+    xs=np.sort(x); n=len(xs); p=(np.arange(1,n+1))/(n+1)
+    if tau<=p[-1]:
+        return np.interp(tau,p,xs)
+    return q_robust_upper(x,tau)
+
+def pinball_loss(q, X, tau):
+    d=X-q
+    return np.mean(np.where(d>=0,tau*d,(tau-1)*d))
+
+# true distributions standardized (approx mean0 var1 where applicable)
+scenarios={
+ 'normal': dict(rv=lambda N: np.random.normal(0,1,N), q=lambda tau: stats.norm.ppf(tau)),
+ 't5': dict(rv=lambda N: np.random.standard_t(5,N)/np.sqrt(5/3), q=lambda tau: stats.t.ppf(tau,5)/np.sqrt(5/3)),
+ 't3': dict(rv=lambda N: np.random.standard_t(3,N)/np.sqrt(3), q=lambda tau: stats.t.ppf(tau,3)/np.sqrt(3)),
+ 'skewnorm': dict(rv=lambda N: (lambda a: (stats.skewnorm.rvs(a,size=N)-stats.skewnorm.mean(a))/stats.skewnorm.std(a))(6), q=lambda tau: (stats.skewnorm.ppf(tau,6)-stats.skewnorm.mean(6))/stats.skewnorm.std(6)),
+ 'gh': dict(rv=lambda N: (lambda z,g,h: (np.expm1(g*z)/g)*np.exp(h*z*z/2))(np.random.normal(size=N),0.3,0.12), q=lambda tau: (lambda z,g,h: (np.expm1(g*z)/g)*np.exp(h*z*z/2))(stats.norm.ppf(tau),0.3,0.12)),
+ 'contam5': dict(rv=lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(0,6,N)), q=None),
+ 'contam1big': dict(rv=lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), np.random.normal(12,3,N)), q=None),
+}
+estimators={'gh':q_gh,'normpred':q_normpred,'robust':q_robust_upper,'sample':q_sample}
+rng=np.random.default_rng(123)
+np.random.seed(123)
+for name,sc in scenarios.items():
+    # true quantiles: if q None, estimate from huge sample
+    if sc['q'] is None:
+        big=sc['rv'](1000000)
+        trueq={tau:np.quantile(big,tau) for tau in [.9,.95,.99]}
+        # for loss, use a fresh big population for expectation
+        Xloss=sc['rv'](300000)
+    else:
+        trueq={tau:sc['q'](tau) for tau in [.9,.95,.99]}
+        Xloss=sc['rv'](300000)
+    # center/scale loss population? rv already standardized for most; contamination not standardized, use as is
+    opt={tau:pinball_loss(trueq[tau],Xloss,tau) for tau in [.9,.95,.99]}
+    sums={e:{tau:0.0 for tau in [.9,.95,.99]} for e in estimators}
+    nsim=200
+    for sim in range(nsim):
+        x=sc['rv'](10)
+        for e,func in estimators.items():
+            for tau in [.9,.95,.99]:
+                try: q=func(x,tau)
+                except Exception as ex: q=np.nan
+                if not np.isfinite(q): q=q_normpred(x,tau)
+                sums[e][tau]+=pinball_loss(q,Xloss,tau)-opt[tau]
+    print('\nSCEN',name,'trueq',trueq)
+    for e in estimators:
+        print(e, {tau:round(sums[e][tau]/nsim,5) for tau in [.9,.95,.99]}, 'sum', round(sum(sums[e][tau] for tau in [.9,.95,.99])/nsim,5))
+EOF
+python /tmp/sim_eval.py
 ```
 
 ## [44] tool
@@ -2136,7 +3010,34 @@ sample {0.9: np.float64(0.10011), 0.95: np.float64(0.03456), 0.99: np.float64(0.
 **tool call: bash**
 
 ```
+cat >> /tmp/sim_eval.py <<'EOF'
 
+# additional scenarios focused on asymmetric contamination
+scenarios2={
+ 'leftout5': dict(rv=lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(-8,2,N)), q=None),
+ 'rightout5': dict(rv=lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(8,2,N)), q=None),
+ 'leftout1': dict(rv=lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), np.random.normal(-12,2,N)), q=None),
+ 'bothout5': dict(rv=lambda N: np.where(np.random.rand(N)<0.9, np.random.normal(0,1,N), np.where(np.random.rand(N)<0.5,np.random.normal(-8,2,N),np.random.normal(8,2,N))), q=None),
+}
+for name,sc in scenarios2.items():
+    big=sc['rv'](1000000)
+    trueq={tau:np.quantile(big,tau) for tau in [.9,.95,.99]}
+    Xloss=sc['rv'](300000)
+    opt={tau:pinball_loss(trueq[tau],Xloss,tau) for tau in [.9,.95,.99]}
+    sums={e:{tau:0.0 for tau in [.9,.95,.99]} for e in estimators}
+    nsim=300
+    for sim in range(nsim):
+        x=sc['rv'](10)
+        for e,func in estimators.items():
+            for tau in [.9,.95,.99]:
+                try: q=func(x,tau)
+                except Exception: q=q_normpred(x,tau)
+                sums[e][tau]+=pinball_loss(q,Xloss,tau)-opt[tau]
+    print('\nSCEN',name,'trueq',trueq)
+    for e in estimators:
+        print(e, {tau:round(sums[e][tau]/nsim,5) for tau in [.9,.95,.99]}, 'sum', round(sum(sums[e][tau] for tau in [.9,.95,.99])/nsim,5))
+EOF
+python /tmp/sim_eval.py | tail -40
 ```
 
 ## [46] tool
@@ -2162,7 +3063,36 @@ sample {0.9: np.float64(0.10011), 0.95: np.float64(0.03456), 0.99: np.float64(0.
 **tool call: bash**
 
 ```
-
+cat > /tmp/sim_eval2.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+# define estimators quickly (reuse from sim_eval but no old scenarios)
+exec(open('/tmp/sim_eval.py').read().split("# true distributions")[0])
+scenarios2={
+ 'leftout5': dict(rv=lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(-8,2,N))),
+ 'rightout5': dict(rv=lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(8,2,N))),
+ 'leftout1': dict(rv=lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), np.random.normal(-12,2,N))),
+ 'bothout5': dict(rv=lambda N: np.where(np.random.rand(N)<0.9, np.random.normal(0,1,N), np.where(np.random.rand(N)<0.5,np.random.normal(-8,2,N),np.random.normal(8,2,N)))),
+ 'normplus_oneleft': dict(rv=lambda N: np.r_[np.random.normal(0,1,N-1), -8.0] if False else np.where(np.random.rand(N)<1-1/N, np.random.normal(0,1,N), -8.0)),
+}
+np.random.seed(456)
+for name,sc in scenarios2.items():
+    big=sc['rv'](500000); trueq={tau:np.quantile(big,tau) for tau in [.9,.95,.99]}; Xloss=sc['rv'](150000)
+    opt={tau:pinball_loss(trueq[tau],Xloss,tau) for tau in [.9,.95,.99]}
+    sums={e:{tau:0.0 for tau in [.9,.95,.99]} for e in estimators}
+    nsim=120
+    for sim in range(nsim):
+        x=sc['rv'](10)
+        for e,func in estimators.items():
+            for tau in [.9,.95,.99]:
+                try: q=func(x,tau)
+                except Exception: q=q_normpred(x,tau)
+                sums[e][tau]+=pinball_loss(q,Xloss,tau)-opt[tau]
+    print('\nSCEN',name,'trueq',trueq)
+    for e in estimators:
+        print(e, {tau:round(sums[e][tau]/nsim,5) for tau in [.9,.95,.99]}, 'sum', round(sum(sums[e][tau] for tau in [.9,.95,.99])/nsim,5))
+EOF
+python /tmp/sim_eval2.py
 ```
 
 ## [48] tool
@@ -2192,7 +3122,16 @@ NameError: name 'estimators' is not defined
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+# Patch sim_eval2: replace the exec line with full definitions from sim_eval up to estimators by reading file and cutting before scenarios loop.
+src=open('/tmp/sim_eval.py').read()
+cut=src.index("scenarios={")
+defs=src[:cut]
+# remove rng seed maybe fine
+new=defs+"\n"+open('/tmp/sim_eval2.py').read().split("scenarios2=",1)[1]
+open('/tmp/sim_eval2b.py','w').write("import numpy as np\nfrom scipy import stats, optimize\n"+new)
+EOF
+python /tmp/sim_eval2b.py
 ```
 
 ## [50] tool
@@ -2225,7 +3164,74 @@ NameError: name 'scenarios2' is not defined
 **tool call: bash**
 
 ```
+cat > /tmp/sim_eval2c.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
 
+def wfun(z,g,h):
+    z=np.asarray(z,float); e=np.exp(h*z*z/2.0)
+    if abs(g)<1e-8: return z*e
+    return np.expm1(g*z)/g*e
+
+def fit_gh_fast(x,h0=0.02,sh=0.08,sg=0.4,hmax=0.8,gmax=1.2):
+    xs=np.sort(np.asarray(x,float)); n=len(xs); p=(np.arange(1,n+1))/(n+1); z=stats.norm.ppf(p); y=xs; wt=1/(1-p)
+    sy=np.std(y,ddof=1); sy=sy if np.isfinite(sy) and sy>0 else 1.0
+    def linfit(g,h):
+        w=wfun(z,g,h); W=wt; s1=W.sum(); sw=(W*w).sum(); sww=(W*w*w).sum(); syw=(W*y).sum(); swy=(W*w*y).sum(); den=sww*s1-sw*sw
+        if den<=1e-10: B=sy; A=np.median(y)
+        else: B=(s1*swy-sw*syw)/den; A=(syw-B*sw)/s1
+        if B<=0 or not np.isfinite(B): B=sy; A=np.median(y)
+        rss=np.sum(W*(y-(A+B*w))**2); return A,B,rss
+    def obj(par):
+        g,h=par
+        if h<0 or h>hmax or abs(g)>gmax: return 1e100
+        A,B,rss=linfit(g,h); return rss+(0.7*n)*sy*sy*(((g)/sg)**2+((h-h0)/sh)**2)
+    best=None
+    for gs in [-0.3,0,0.3]:
+        for hs in [0,0.05,0.2]:
+            r=optimize.minimize(obj,[gs,hs],method='Nelder-Mead',options={'maxiter':800})
+            if best is None or r.fun<best.fun: best=r
+    g,h=best.x; A,B,rss=linfit(g,h); return A,B,g,h
+
+def q_gh(x,tau):
+    A,B,g,h=fit_gh_fast(x)
+    return float(A+B*wfun(np.array([stats.norm.ppf(tau)]),g,h)[0])
+def q_normpred(x,tau):
+    n=len(x); return np.mean(x)+np.std(x,ddof=1)*np.sqrt((n+1)/n)*stats.t.ppf(tau,n-1)
+def q_robust_upper(x,tau):
+    n=len(x); med=np.median(x); pos=x[x>med]-med
+    if len(pos)==0 or np.median(pos)<=0: return q_normpred(x,tau)
+    U=np.median(pos)/0.6744897501960817
+    return med+U*np.sqrt((n+1)/n)*stats.t.ppf(tau,n-1)
+def pinball_loss(q,X,tau):
+    d=X-q; return np.mean(np.where(d>=0,tau*d,(tau-1)*d))
+estimators={'gh':q_gh,'normpred':q_normpred,'robust':q_robust_upper}
+scenarios2={
+ 'leftout5': lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(-8,2,N)),
+ 'rightout5': lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(8,2,N)),
+ 'leftout1': lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), np.random.normal(-12,2,N)),
+ 'bothout5': lambda N: np.where(np.random.rand(N)<0.9, np.random.normal(0,1,N), np.where(np.random.rand(N)<0.5,np.random.normal(-8,2,N),np.random.normal(8,2,N))),
+ 'right_point1': lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), 12.0),
+ 'left_point1': lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), -12.0),
+}
+np.random.seed(456)
+for name,rv in scenarios2.items():
+    big=rv(500000); trueq={tau:np.quantile(big,tau) for tau in [.9,.95,.99]}; Xloss=rv(150000)
+    opt={tau:pinball_loss(trueq[tau],Xloss,tau) for tau in [.9,.95,.99]}
+    sums={e:{tau:0.0 for tau in [.9,.95,.99]} for e in estimators}
+    nsim=150
+    for sim in range(nsim):
+        x=rv(10)
+        for e,func in estimators.items():
+            for tau in [.9,.95,.99]:
+                try: q=func(x,tau)
+                except Exception: q=q_normpred(x,tau)
+                sums[e][tau]+=pinball_loss(q,Xloss,tau)-opt[tau]
+    print('\nSCEN',name,'trueq',{k:round(v,4) for k,v in trueq.items()})
+    for e in estimators:
+        print(e, {tau:round(sums[e][tau]/nsim,5) for tau in [.9,.95,.99]}, 'sum', round(sum(sums[e][tau] for tau in [.9,.95,.99])/nsim,5))
+EOF
+python /tmp/sim_eval2c.py
 ```
 
 ## [52] tool
@@ -2289,7 +3295,56 @@ robust {0.9: np.float64(0.0355), 0.95: np.float64(0.03399), 0.99: np.float64(0.0
 **tool call: bash**
 
 ```
-
+cat > /tmp/sim_hybrid.py <<'EOF'
+import numpy as np
+from scipy import stats, optimize
+# use definitions from sim_eval2c
+exec(open('/tmp/sim_eval2c.py').read().split('scenarios2=')[0])
+# add scenarios from first eval too
+def rv_normal(N): return np.random.normal(0,1,N)
+def rv_t5(N): return np.random.standard_t(5,N)/np.sqrt(5/3)
+def rv_t3(N): return np.random.standard_t(3,N)/np.sqrt(3)
+def rv_skew(N):
+    a=6; return (stats.skewnorm.rvs(a,size=N)-stats.skewnorm.mean(a))/stats.skewnorm.std(a)
+def rv_gh(N):
+    z=np.random.normal(size=N); g=0.3; h=0.12; return np.expm1(g*z)/g*np.exp(h*z*z/2)
+scenarios={
+ 'normal':rv_normal,'t5':rv_t5,'t3':rv_t3,'skewnorm':rv_skew,'gh':rv_gh,
+ 'leftout5': lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(-8,2,N)),
+ 'rightout5': lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(8,2,N)),
+ 'left_point1': lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), -12.0),
+ 'right_point1': lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), 12.0),
+ 'bothout5': lambda N: np.where(np.random.rand(N)<0.9, np.random.normal(0,1,N), np.where(np.random.rand(N)<0.5,np.random.normal(-8,2,N),np.random.normal(8,2,N))),
+}
+def q_hybrid(x,tau,c=1.5):
+    med=np.median(x); left=med-np.min(x); right=np.max(x)-med
+    if left > c*max(right,1e-12):
+        return q_gh(x,tau)  # opposite-side/left outlier: use robust skew fit
+    return q_normpred(x,tau)
+def q_hybrid2(x,tau,c=1.5):
+    med=np.median(x); left=med-np.min(x); right=np.max(x)-med
+    if left > c*max(right,1e-12):
+        return q_robust_upper(x,tau)
+    return q_normpred(x,tau)
+ests={'normpred':q_normpred,'gh':q_gh,'hybrid_gh':q_hybrid,'hybrid_rob':q_hybrid2,'robust':q_robust_upper}
+np.random.seed(789)
+for name,rv in scenarios.items():
+    big=rv(500000); trueq={tau:np.quantile(big,tau) for tau in [.9,.95,.99]}; Xloss=rv(150000)
+    opt={tau:pinball_loss(trueq[tau],Xloss,tau) for tau in [.9,.95,.99]}
+    sums={e:{tau:0.0 for tau in [.9,.95,.99]} for e in ests}
+    nsim=150
+    for sim in range(nsim):
+        x=rv(10)
+        for e,func in ests.items():
+            for tau in [.9,.95,.99]:
+                try: q=func(x,tau)
+                except Exception: q=q_normpred(x,tau)
+                sums[e][tau]+=pinball_loss(q,Xloss,tau)-opt[tau]
+    print('\n',name)
+    for e in ests:
+        print(e, round(sum(sums[e][tau] for tau in [.9,.95,.99])/nsim,5), {tau:round(sums[e][tau]/nsim,5) for tau in [.9,.95,.99]})
+EOF
+python /tmp/sim_hybrid.py
 ```
 
 ## [54] tool
@@ -2380,7 +3435,23 @@ robust 0.2766 {0.9: np.float64(0.04512), 0.95: np.float64(0.04383), 0.99: np.flo
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, numpy as np
+df=pd.read_csv('data/blocks.csv')
+blocks=[]
+for b,g in df.groupby('block'):
+    x=g.x.values; med=np.median(x); left=med-x.min(); right=x.max()-med
+    ratio=left/(right if right>1e-12 else np.inf)
+    if left>1.5*max(right,1e-12): blocks.append((b,round(ratio,2),x.min(),med,x.max()))
+print(len(blocks), blocks)
+# Also list high right dominance ratio right/left >? for info
+right=[]
+for b,g in df.groupby('block'):
+    x=g.x.values; med=np.median(x); left=med-x.min(); right=x.max()-med
+    ratio=right/(left if left>1e-12 else np.inf)
+    if ratio>3: right.append((b,round(ratio,2),x.min(),med,x.max()))
+print('right>3 left',len(right), right[:50])
+EOF
 ```
 
 ## [56] tool
@@ -2406,7 +3477,12 @@ AttributeError: 'numpy.float64' object has no attribute 'append'
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, numpy as np
+pred=pd.read_csv('predictions.csv').set_index('block')
+for b in [40,44,61,83,9,25,51,53,58,79,82,94,2,27,39,43,55,59,70]:
+    print(b, pred.loc[b].to_dict())
+EOF
 ```
 
 ## [58] tool
@@ -2454,7 +3530,15 @@ AttributeError: 'numpy.float64' object has no attribute 'append'
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats
+df=pd.read_csv('data/blocks.csv')
+for b in [40,44,61,83,9,25,51,53,58,79,82,94]:
+    x=df[df.block==b].x.values; n=len(x); loc=x.mean(); scale=x.std(ddof=1)*np.sqrt((n+1)/n)
+    qs=[loc+scale*stats.t.ppf(tau,n-1) for tau in [.9,.95,.99]]
+    med=np.median(x); print(b,'left/right',round(med-x.min(),3),round(x.max()-med,3),'norm', [round(v,4) for v in qs], 'mean sd',round(loc,4),round(x.std(ddof=1),4))
+EOF
 ```
 
 ## [60] tool
@@ -2487,7 +3571,19 @@ AttributeError: 'numpy.float64' object has no attribute 'append'
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, numpy as np
+df=pd.read_csv('data/blocks.csv')
+blocks=[]
+for b,g in df.groupby('block'):
+    x=g.x.values; med=np.median(x); left=med-x.min(); right=x.max()-med
+    pos=x[x>med]-med
+    U=np.median(pos) if len(pos) and np.median(pos)>0 else np.std(x,ddof=1)
+    cond=(left>1.5*max(right,1e-12)) and (left>4*max(U,1e-12))
+    if cond: blocks.append((b,round(left/right,2),round(left/U,2),x.min(),med,x.max(),U))
+print(len(blocks))
+for row in blocks: print(row)
+EOF
 ```
 
 ## [62] tool
@@ -2525,7 +3621,19 @@ AttributeError: 'numpy.float64' object has no attribute 'append'
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, numpy as np
+df=pd.read_csv('data/blocks.csv')
+blocks=[]
+for b,g in df.groupby('block'):
+    xs=np.sort(g.x.values); med=np.median(xs); left=med-xs[0]; right=xs[-1]-med
+    pos=xs[xs>med]-med; U=np.median(pos) if len(pos) and np.median(pos)>0 else np.std(xs,ddof=1)
+    gap=xs[1]-xs[0]
+    cond=(left>1.5*max(right,1e-12)) and (left>3*max(U,1e-12)) and (gap>2*max(U,1e-12))
+    if cond: blocks.append((b,round(left/right,2),round(left/U,2),round(gap/U,2),xs[0],xs[1],med,xs[-1]))
+print(len(blocks))
+for row in blocks: print(row)
+EOF
 ```
 
 ## [64] tool
@@ -2578,7 +3686,126 @@ AttributeError: 'numpy.float64' object has no attribute 'append'
 **tool call: bash**
 
 ```
+cat > /tmp/write_pred_hybrid.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy import stats, optimize
+import re
+text=open('data/task.txt').read(); ms={int(b):int(m) for b,m in re.findall(r'Block\s+(\d+)\s+\(population size m = (\d+)\):', text)}
+df=pd.read_csv('data/blocks.csv')
+# gh functions (same as before)
+def wfun(z,g,h):
+    z=np.asarray(z,float); e=np.exp(h*z*z/2.0)
+    if abs(g)<1e-8: return z*e
+    return np.expm1(g*z)/g*e
 
+def fit_gh(x,h0=0.02,sh=0.08,sg=0.4,g0=0.0,hmax=0.8,gmax=1.2):
+    xs=np.sort(np.asarray(x,float)); n=len(xs); p=(np.arange(1,n+1))/(n+1); z=stats.norm.ppf(p); y=xs; wt=1/(1-p)
+    sy=np.std(y,ddof=1); sy=sy if np.isfinite(sy) and sy>0 else 1.0
+    def linfit(g,h):
+        w=wfun(z,g,h); W=wt; s1=W.sum(); sw=(W*w).sum(); sww=(W*w*w).sum(); syw=(W*y).sum(); swy=(W*w*y).sum(); den=sww*s1-sw*sw
+        if den<=1e-10: B=sy/(np.std(w) if np.std(w)>1e-12 else 1.0); A=np.median(y)
+        else: B=(s1*swy-sw*syw)/den; A=(syw-B*sw)/s1
+        if not np.isfinite(B) or B<=1e-12: B=sy; A=np.median(y)
+        rss=np.sum(W*(y-(A+B*w))**2); return A,B,rss
+    def obj(par):
+        g,h=par
+        if h<0 or h>hmax or abs(g)>gmax: return 1e100
+        A,B,rss=linfit(g,h); return rss+(0.7*n)*sy*sy*(((g-g0)/sg)**2+((h-h0)/sh)**2)
+    best=None
+    for gs in [-0.8,-0.3,0.0,0.3,0.8]:
+        for hs in [0.0,0.02,0.05,0.15,0.4]:
+            r=optimize.minimize(obj,[gs,hs],method='Nelder-Mead',options={'maxiter':2500,'xatol':1e-7,'fatol':1e-7})
+            if best is None or r.fun<best.fun: best=r
+    g,h=best.x; A,B,rss=linfit(g,h); return A,B,float(g),float(h)
+
+def q_gh_p(A,B,g,h,p): return float(A+B*wfun(np.array([stats.norm.ppf(p)]),g,h)[0])
+def F_gh_v(A,B,g,h,x,v):
+    lo=q_gh_p(A,B,g,h,1e-7); hi=q_gh_p(A,B,g,h,1-1e-7); sd=np.std(x,ddof=1); sd=sd if np.isfinite(sd) and sd>0 else 1.0
+    if not np.isfinite(lo): lo=np.min(x)-10*sd
+    if not np.isfinite(hi): hi=np.max(x)+10*sd
+    if v<=lo: return 0.0
+    if v>=hi: return 1.0
+    f=lambda p: q_gh_p(A,B,g,h,p)-v
+    try: return optimize.brentq(f,1e-7,1-1e-7,xtol=1e-10,rtol=1e-10,maxiter=80)
+    except Exception:
+        a,b=1e-7,1-1e-7
+        for _ in range(90):
+            c=(a+b)/2
+            if q_gh_p(A,B,g,h,c)<v: a=c
+            else: b=c
+        return (a+b)/2
+
+def mixture_quantile_generic(x,m,tau,Ffun,qref_hi=None,qref_lo=None):
+    x=np.asarray(x,float); n=len(x); xs=np.sort(x); sd=np.std(x,ddof=1); sd=sd if np.isfinite(sd) and sd>0 else max(1.0,np.ptp(x)/10)
+    lo=xs[0]-5*sd if qref_lo is None else min(xs[0]-5*sd,qref_lo-5*sd)
+    hi=xs[-1]+5*sd if qref_hi is None else max(xs[-1]+5*sd,qref_hi+5*sd)
+    def C(v):
+        s=np.searchsorted(xs,v,side='right')
+        return (s+(m-n)*Ffun(v))/m
+    for _ in range(100):
+        mid=(lo+hi)/2
+        if C(mid)<tau: lo=mid
+        else: hi=mid
+    return hi
+
+def left_outlier(xs):
+    xs=np.sort(np.asarray(xs,float)); med=np.median(xs); left=med-xs[0]; right=xs[-1]-med
+    pos=xs[xs>med]-med
+    U=np.median(pos) if len(pos) and np.median(pos)>1e-12 else np.std(xs,ddof=1)
+    if not np.isfinite(U) or U<=1e-12: U=np.std(xs,ddof=1) if np.std(xs,ddof=1)>0 else 1.0
+    gap=xs[1]-xs[0]
+    return (left>1.5*max(right,1e-12)) and (left>3*U) and (gap>2*U)
+
+def norm_F(loc,scale,dfnu):
+    def F(v): return stats.t.cdf((v-loc)/scale,dfnu)
+    return F
+
+def gh_hi_lo(x,m,A,B,g,h,q95,q99):
+    xs=np.sort(x); z95=stats.norm.ppf(.95); n=len(x)
+    se=B*np.sqrt(1/n+z95*z95/(2*(n-1)))*(1+10*h)
+    lo=min(q95,xs[7])
+    hi=max(q99,q95+2.0*se,xs[-1],lo)
+    return lo,hi
+
+rows=[]; flags=[]
+for b in range(1,101):
+    x=df[df.block==b].x.values.astype(float); m=ms[b]; n=len(x); xs=np.sort(x)
+    A,B,g,h=fit_gh(x)
+    # gh candidate
+    qgh={tau:mixture_quantile_generic(x,m,tau,lambda v,A=A,B=B,g=g,h=h: F_gh_v(A,B,g,h,x,v), qref_hi=q_gh_p(A,B,g,h,1-1e-6), qref_lo=q_gh_p(A,B,g,h,1e-6)) for tau in [.9,.95,.99]}
+    logh,hih=gh_hi_lo(x,m,A,B,g,h,qgh[.95],qgh[.99])
+    # normal predictive candidate
+    xbar=x.mean(); s=x.std(ddof=1); dfnu=n-1; scale=s*np.sqrt((n+1)/n)
+    F=norm_F(xbar,scale,dfnu)
+    qref_hi=xbar+scale*stats.t.ppf(1-1e-6,dfnu); qref_lo=xbar+scale*stats.t.ppf(1e-6,dfnu)
+    qn={tau:mixture_quantile_generic(x,m,tau,F,qref_hi=qref_hi,qref_lo=qref_lo) for tau in [.9,.95,.99]}
+    z95=stats.norm.ppf(.95)
+    se_n=s*np.sqrt(1/n+z95*z95/(2*(n-1)))
+    lon=min(qn[.95],xs[7]); hin=max(qn[.99], qn[.95]+2.0*se_n, xs[-1], lon)
+    use_gh=left_outlier(x)
+    if use_gh:
+        q90,q95,q99=qgh[.9],qgh[.95],qgh[.99]; lo,hi=logh,hih
+    else:
+        q90,q95,q99=qn[.9],qn[.95],qn[.99]
+        # conservative upper: take the larger of normal-predictive hi and gh hi; lower remains order-statistic bound
+        lo=min(q95,xs[7])
+        hi=max(hin,hih,q99,xs[-1],lo)
+    rows.append(dict(block=b,q90=q90,q95=q95,q99=q99,lo=lo,hi=hi))
+    flags.append((b,use_gh,qn[.95],qgh[.95],qn[.99],qgh[.99],hin,hih))
+out=pd.DataFrame(rows)
+bad=(out.q90>out.q95)|(out.q95>out.q99)|(out.lo>out.q95)|(out.hi<out.q95)
+print('bad',bad.sum(),'use_gh',sum(f[1] for f in flags))
+print('used gh blocks',[f[0] for f in flags if f[1]])
+# show biggest changes vs current predictions.csv
+old=pd.read_csv('predictions.csv').set_index('block')
+new=out.set_index('block')
+diff=(new[['q90','q95','q99']]-old[['q90','q95','q99']])
+print('diff abs median',diff.abs().median(),'max',diff.abs().max())
+print(diff.abs().sort_values('q95',ascending=False).head(15).assign(oldq95=old.q95,newq95=new.q95).to_string())
+out.to_csv('/tmp/predictions_hybrid.csv',index=False,float_format='%.10g')
+print(out.head().to_string(index=False))
+EOF
+python /tmp/write_pred_hybrid.py
 ```
 
 ## [66] tool
@@ -2634,7 +3861,21 @@ block
 **tool call: bash**
 
 ```
-
+cp /tmp/predictions_hybrid.csv predictions.csv
+python - <<'EOF'
+import pandas as pd, numpy as np
+p=pd.read_csv('predictions.csv')
+print(p.shape)
+print(p.columns.tolist())
+print(p.isna().sum())
+print('rows',len(p),'blocks unique',p.block.nunique(),'range',p.block.min(),p.block.max())
+print('monotonic bad', ((p.q90>p.q95)|(p.q95>p.q99)|(p.lo>p.q95)|(p.hi<p.q95)).sum())
+df=pd.read_csv('data/blocks.csv'); mx=df.groupby('block').x.max(); mn=df.groupby('block').x.min()
+pp=p.set_index('block')
+print('q90>max',(pp.q90>mx).sum(),'q95>max',(pp.q95>mx).sum(),'q99>max',(pp.q99>mx).sum())
+print(pp.assign(max=mx,min=mn).loc[[28,47,71,83,92,39,22,4,27,38]].to_string())
+EOF
+head -5 predictions.csv; wc -l predictions.csv
 ```
 
 ## [68] tool
@@ -2701,7 +3942,40 @@ block,q90,q95,q99,lo,hi
 **tool call: bash**
 
 ```
+cat > /tmp/interval_sim.py <<'EOF'
+import numpy as np
+from scipy import stats
 
+def q_normpred(x,tau):
+    n=len(x); return np.mean(x)+np.std(x,ddof=1)*np.sqrt((n+1)/n)*stats.t.ppf(tau,n-1)
+def interval_norm(x):
+    n=len(x); xs=np.sort(x); q95=q_normpred(x,.95); q99=q_normpred(x,.99)
+    s=np.std(x,ddof=1); z95=stats.norm.ppf(.95)
+    se=s*np.sqrt(1/n+z95*z95/(2*(n-1)))
+    lo=min(q95,xs[7]); hi=max(q99,q95+2*se,xs[-1],lo)
+    return lo,hi
+scenarios={
+ 'normal':lambda N: np.random.normal(0,1,N),
+ 't5':lambda N: np.random.standard_t(5,N)/np.sqrt(5/3),
+ 't3':lambda N: np.random.standard_t(3,N)/np.sqrt(3),
+ 'leftout5': lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(-8,2,N)),
+ 'rightout5': lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(8,2,N)),
+ 'right_point1': lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), 12.0),
+ 'bothout5': lambda N: np.where(np.random.rand(N)<0.9, np.random.normal(0,1,N), np.where(np.random.rand(N)<0.5,np.random.normal(-8,2,N),np.random.normal(8,2,N))),
+}
+np.random.seed(321)
+for name,rv in scenarios.items():
+    big=rv(1000000); tq=np.quantile(big,.95)
+    cover=0; cover_lo=0; cover_hi=0; nsim=5000; widths=[]
+    for _ in range(nsim):
+        x=rv(10); lo,hi=interval_norm(x)
+        if lo<=tq<=hi: cover+=1
+        if lo<=tq: cover_lo+=1
+        if tq<=hi: cover_hi+=1
+        widths.append(hi-lo)
+    print(name,'trueq95',round(tq,4),'cover',cover/nsim,'lo_ok',cover_lo/nsim,'hi_ok',cover_hi/nsim,'width med',np.median(widths))
+EOF
+python /tmp/interval_sim.py
 ```
 
 ## [70] tool
@@ -2741,7 +4015,15 @@ bothout5 trueq95 3.1772 cover 0.7536 lo_ok 0.9876 hi_ok 0.766 width med 6.484676
 **tool call: bash**
 
 ```
-
+python - <<'EOF'
+import pandas as pd, csv, os
+p=pd.read_csv('predictions.csv')
+assert list(p.columns)==['block','q90','q95','q99','lo','hi'], p.columns
+assert len(p)==100 and p['block'].tolist()==list(range(1,101))
+assert not p.isna().any().any()
+assert ((p.q90<=p.q95)&(p.q95<=p.q99)&(p.lo<=p.q95)&(p.q95<=p.hi)).all()
+print('OK', os.path.getsize('predictions.csv'))
+EOF
 ```
 
 ## [72] tool
@@ -2774,7 +4056,39 @@ OK 5644
 **tool call: bash**
 
 ```
+cat > /tmp/sim_df.py <<'EOF'
+import numpy as np
+from scipy import stats
 
+def pinball_loss(q,X,tau):
+    d=X-q; return np.mean(np.where(d>=0,tau*d,(tau-1)*d))
+def q_t(x,tau,df):
+    n=len(x); return np.mean(x)+np.std(x,ddof=1)*np.sqrt((n+1)/n)*stats.t.ppf(tau,df)
+scenarios={
+ 'normal':lambda N: np.random.normal(0,1,N),
+ 't5':lambda N: np.random.standard_t(5,N)/np.sqrt(5/3),
+ 't3':lambda N: np.random.standard_t(3,N)/np.sqrt(3),
+ 'gh':lambda N: (lambda z,g,h: np.expm1(g*z)/g*np.exp(h*z*z/2))(np.random.normal(size=N),0.3,0.12),
+ 'rightout5': lambda N: np.where(np.random.rand(N)<0.95, np.random.normal(0,1,N), np.random.normal(8,2,N)),
+ 'rightout1': lambda N: np.where(np.random.rand(N)<0.99, np.random.normal(0,1,N), np.random.normal(8,2,N)),
+}
+np.random.seed(111)
+dfs=[5,6,7,9,12,20]
+for name,rv in scenarios.items():
+    big=rv(800000); trueq={tau:np.quantile(big,tau) for tau in [.9,.95,.99]}; X=rv(200000)
+    opt={tau:pinball_loss(trueq[tau],X,tau) for tau in [.9,.95,.99]}
+    sums={df:{tau:0.0 for tau in [.9,.95,.99]} for df in dfs}
+    nsim=3000
+    for _ in range(nsim):
+        x=rv(10)
+        for df in dfs:
+            for tau in [.9,.95,.99]:
+                sums[df][tau]+=pinball_loss(q_t(x,tau,df),X,tau)-opt[tau]
+    print('\n',name)
+    for df in dfs:
+        print('df',df,'sum',round(sum(sums[df][tau] for tau in [.9,.95,.99])/nsim,5), {tau:round(sums[df][tau]/nsim,5) for tau in [.9,.95,.99]})
+EOF
+python /tmp/sim_df.py
 ```
 
 ## [74] tool

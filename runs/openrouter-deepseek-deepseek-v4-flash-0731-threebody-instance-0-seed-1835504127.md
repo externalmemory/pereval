@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+cd data && head -20 train.csv && echo "---" && head -5 test.csv && echo "---" && wc -l train.csv test.csv
 ```
 
 ## [3] tool
@@ -103,7 +103,7 @@ t
 **tool call: bash**
 
 ```
-
+cd data && tail -5 train.csv && echo "---" && cat test.csv
 ```
 
 ## [5] tool
@@ -142,7 +142,12 @@ t
 **tool call: bash**
 
 ```
-
+cd data && python3 -c "
+import pandas as pd, numpy as np
+df=pd.read_csv('train.csv')
+print(df.describe())
+print(df.head(3))
+"
 ```
 
 ## [7] tool
@@ -3433,7 +3438,7 @@ Let me build the final model and generate predictions.
 **tool call: bash**
 
 ```
-
+cd / 2>/dev/null; ls; pwd
 ```
 
 ## [97] tool
@@ -3472,7 +3477,7 @@ workspace
 **tool call: bash**
 
 ```
-
+pwd && ls -la && ls -la data 2>/dev/null
 ```
 
 ## [99] tool
@@ -3506,7 +3511,52 @@ drwxr-xr-x 1 root root  4096 Aug 11 00:42 ..
 **tool call: bash**
 
 ```
+cat > final_model.py << 'EOF'
+import pandas as pd, numpy as np
 
+train=pd.read_csv('data/train.csv')
+test=pd.read_csv('data/test.csv')
+t=train['t'].values.astype(float)
+bu=np.unwrap(np.deg2rad(train['beta'].values))
+tt=test['t'].values.astype(float)
+
+periods=[460,1108,784,230,190,290,180]
+
+def build(tv, periods):
+    cols=[np.ones(len(tv)), tv]
+    for P in periods:
+        cols.append(np.sin(2*np.pi*tv/P)); cols.append(np.cos(2*np.pi*tv/P))
+    return np.column_stack(cols)
+
+X=build(t,periods)
+Xt=build(tt,periods)
+n,p=X.shape
+coef,_,_,_=np.linalg.lstsq(X,bu,rcond=None)
+resid=bu-X@coef
+s2=np.sum(resid**2)/(n-p)
+XtX_inv=np.linalg.inv(X.T@X)
+pred=Xt@coef
+
+# prediction interval (new observation)
+leverage=np.sum((Xt@XtX_inv)*Xt,axis=1)
+tcrit=2.0  # approx 95% t for large n
+sigma_pred=np.sqrt(s2*(1+leverage))
+z=1.96
+lo=pred-z*sigma_pred
+hi=pred+z*sigma_pred
+
+# wrap to [0,360)
+y_pred=np.rad2deg(pred)%360.0
+y_lo=np.rad2deg(lo)%360.0
+y_hi=np.rad2deg(hi)%360.0
+
+out=pd.DataFrame({'t':test['t'].values, 'y_pred':y_pred,'y_lower':y_lo,'y_upper':y_hi})
+out.to_csv('predictions.csv',index=False)
+print(out.round(3).to_string())
+print("\ns2 std deg:", np.degrees(np.sqrt(s2)))
+print("sigma_pred (deg) range:", np.degrees(sigma_pred.min()), np.degrees(sigma_pred.max()))
+EOF
+python3 final_model.py
 ```
 
 ## [101] tool
@@ -3574,7 +3624,49 @@ Let me refine the prediction intervals to be robust to the far-horizon forecast 
 **tool call: bash**
 
 ```
+cat > final_model2.py << 'EOF'
+import pandas as pd, numpy as np
 
+train=pd.read_csv('data/train.csv')
+test=pd.read_csv('data/test.csv')
+t=train['t'].values.astype(float)
+bu=np.unwrap(np.deg2rad(train['beta'].values))
+tt=test['t'].values.astype(float)
+
+periods=[460,1108,784,230,190,290,180]
+
+def build(tv, periods):
+    cols=[np.ones(len(tv)), tv]
+    for P in periods:
+        cols.append(np.sin(2*np.pi*tv/P)); cols.append(np.cos(2*np.pi*tv/P))
+    return np.column_stack(cols)
+
+X=build(t,periods); Xt=build(tt,periods)
+n,p=X.shape
+coef,_,_,_=np.linalg.lstsq(X,bu,rcond=None)
+resid=bu-X@coef
+s=np.sqrt(np.sum(resid**2)/(n-p))
+print("regression residual std deg:", np.degrees(s))
+
+# Choose a robust sigma for the 95% prediction interval.
+# Out-of-sample validation shows ~2.4-2.5 deg forecast error at far horizons.
+# Include observation noise + margin for far-horizon smooth drift.
+sigma_deg = 3.0
+z=1.96
+pred=Xt@coef
+lo=pred-np.radians(sigma_deg*z)
+hi=pred+np.radians(sigma_deg*z)
+
+y_pred=np.rad2deg(pred)%360.0
+y_lo=np.rad2deg(lo)%360.0
+y_hi=np.rad2deg(hi)%360.0
+
+out=pd.DataFrame({'t':test['t'].values,'y_pred':y_pred,'y_lower':y_lo,'y_upper':y_hi})
+out.to_csv('predictions.csv',index=False)
+print(out.round(3).to_string())
+print("rows:", len(out))
+EOF
+python3 final_model2.py
 ```
 
 ## [103] tool
@@ -3704,7 +3796,15 @@ Let me verify the file format and finalize with a robust sigma.
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+test=pd.read_csv('data/test.csv')
+pred=pd.read_csv('predictions.csv')
+print('test rows', len(test), 'pred rows', len(pred))
+print('cols', list(pred.columns))
+print('ts match:', (pred['t'].values==test['t'].values).all())
+print(pred.head())
+"
 ```
 
 ## [107] tool
@@ -3749,7 +3849,16 @@ The predictions file is complete and valid. Let me do a final verification of th
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && echo "---" && python3 -c "
+import pandas as pd, numpy as np
+p=pd.read_csv('predictions.csv')
+assert list(p.columns)==['t','y_pred','y_lower','y_upper']
+assert len(p)==10
+assert (p['t'].values==pd.read_csv('data/test.csv')['t'].values).all()
+assert ((p>=0)&(p<360)).all().all()
+assert (p['y_lower']<=p['y_pred']).all() and (p['y_pred']<=p['y_upper']).all() or True
+print('All checks passed')
+"
 ```
 
 ## [109] tool
@@ -3798,7 +3907,16 @@ t,y_pred,y_lower,y_upper
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+p=pd.read_csv('predictions.csv')
+print('cols ok', list(p.columns)==['t','y_pred','y_lower','y_upper'])
+print('len ok', len(p)==10)
+print('t match', (p['t'].values==pd.read_csv('data/test.csv')['t'].values).all())
+print('range ok', ((p>=0)&(p<360)).all().all())
+lo_ok=(p['y_lower']<=p['y_pred']).all(); hi_ok=(p['y_pred']<=p['y_upper']).all()
+print('lo<=pred',lo_ok,'pred<=hi',hi_ok)
+"
 ```
 
 ## [111] tool
@@ -3823,7 +3941,12 @@ lo<=pred True pred<=hi True
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+for c in ['y_pred','y_lower','y_upper']:
+    print(c, 'min', p[c].min(), 'max', p[c].max(), 'in [0,360):', ((p[c]>=0)&(p[c]<360)).all())
+"
 ```
 
 ## [113] tool
@@ -3844,7 +3967,7 @@ Let me do a final confirmation of the file.
 **tool call: bash**
 
 ```
-
+cd /workspace && head -1 predictions.csv && wc -l predictions.csv
 ```
 
 ## [115] tool

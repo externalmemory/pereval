@@ -88,7 +88,7 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la /mnt/data/
 ```
 
 ## [3] tool
@@ -108,7 +108,7 @@ ls: cannot access '/mnt/data/': No such file or directory
 **tool call: bash**
 
 ```
-
+pwd
 ```
 
 ## [5] tool
@@ -127,7 +127,7 @@ ls: cannot access '/mnt/data/': No such file or directory
 **tool call: bash**
 
 ```
-
+ls -la /workspace
 ```
 
 ## [7] tool
@@ -149,7 +149,7 @@ drwxr-xr-x 2 root root 4096 Oct 13 16:35 data
 **tool call: bash**
 
 ```
-
+ls -la /workspace/data
 ```
 
 ## [9] tool
@@ -174,7 +174,7 @@ drwxr-xr-x 1 root root  4096 Oct 13 16:35 ..
 **tool call: bash**
 
 ```
-
+head -n 10 /workspace/data/history.csv
 ```
 
 ## [11] tool
@@ -208,7 +208,7 @@ A,9,7.002681463164512,-0.011635459036739883,0.0466,0.6777530053721394,0.0249
 **tool call: bash**
 
 ```
-
+cat /workspace/data/forecast.csv
 ```
 
 ## [13] tool
@@ -237,7 +237,7 @@ quarter,unemployment,hpi_growth
 **tool call: bash**
 
 ```
-
+cut -d, -f1 /workspace/data/history.csv | sort | uniq
 ```
 
 ## [15] tool
@@ -261,7 +261,7 @@ segment
 **tool call: bash**
 
 ```
-
+cat /workspace/data/policy.json
 ```
 
 ## [17] tool
@@ -411,7 +411,7 @@ segment
 **tool call: bash**
 
 ```
-
+cat /workspace/data/pools.csv
 ```
 
 ## [19] tool
@@ -450,7 +450,7 @@ C4,C,9752120.0,40
 **tool call: bash**
 
 ```
-
+awk -F, '{print $1}' /workspace/data/history.csv | sort | uniq -c
 ```
 
 ## [21] tool
@@ -1516,7 +1516,7 @@ Saved predictions.csv to /workspace/predictions.csv
 **tool call: bash**
 
 ```
-
+cat /workspace/predictions.csv
 ```
 
 ## [39] tool
@@ -1636,7 +1636,7 @@ All checks passed.
 **tool call: bash**
 
 ```
-
+head -c 200 /workspace/predictions.csv
 ```
 
 ## [43] tool

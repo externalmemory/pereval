@@ -56,7 +56,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-
+cd / && ls -la && find . -maxdepth 3 -name "*.csv" 2>/dev/null | head
 ```
 
 ## [3] tool
@@ -94,7 +94,7 @@ drwxr-xr-x   1 root root 4096 Aug 11 05:29 workspace
 **tool call: bash**
 
 ```
-
+cd /workspace && head -20 data/train.csv && echo "---SCENARIO---" && cat data/scenario.csv && echo "---" && wc -l data/train.csv data/scenario.csv
 ```
 
 ## [5] tool
@@ -149,7 +149,17 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+print(df.shape)
+print(df.isna().sum())
+print()
+print(df[['quarter','default_rate']].describe())
+print(df['default_rate'].min(), df['default_rate'].max())
+print('last train rows:')
+print(df.tail(10))
+"
 ```
 
 ## [7] tool
@@ -207,7 +217,14 @@ last train rows:
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi','default_rate']:
+    if c in df.columns:
+        print(c, 'train min/max:', df[c].min(), df[c].max(), 'scenario min/max:', (sc[c].min(),sc[c].max()) if c in sc.columns else '-')
+"
 ```
 
 ## [9] tool
@@ -243,7 +260,15 @@ default_rate train min/max: 0.005478 0.078009 scenario min/max: -
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+# correlation of features with default_rate, and with logit
+import scipy.stats as st
+for c in ['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']:
+    s=df.dropna(subset=[c,'default_rate'])
+    print(c, 'corr default:', round(s[c].corr(s['default_rate']),3), 'corr logit:', round(s[c].corr(np.log(s['default_rate']/(1-s['default_rate']))),3), 'n',len(s))
+"
 ```
 
 ## [11] tool
@@ -282,7 +307,16 @@ cpi corr default: 0.361 corr logit: 0.384 n 80
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+feats=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+print('rows with all:', df.dropna(subset=feats).shape)
+print(df.dropna(subset=feats)[['quarter','default_rate']])
+# check autocorrelation of default rate
+d=df['default_rate'].values
+print('lag1 corr:', np.corrcoef(d[:-1],d[1:])[0,1])
+"
 ```
 
 ## [13] tool
@@ -378,7 +412,17 @@ lag1 corr: 0.45317964134095545
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+feats=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+sub=df.dropna(subset=feats+['default_rate'])
+y=np.log(sub['default_rate']/(1-sub['default_rate']))
+X=sm.add_constant(sub[feats])
+m=sm.OLS(y,X).fit()
+print(m.summary())
+"
 ```
 
 ## [15] tool
@@ -459,7 +503,19 @@ strong multicollinearity or other numerical problems.
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+y=np.log(df['default_rate']/(1-df['default_rate']))
+# full-complete predictors
+for feats in [ ['gdp','unemployment','cpi','nasdaq'], ['unemployment','cpi','nasdaq'], ['gdp','nasdaq','vix'], ['unemployment','vix','nasdaq'], ['vix','unemployment'], ['gdp','hpi','cpi'] ]:
+    sub=df.dropna(subset=feats)
+    X=sm.add_constant(sub[feats].apply(lambda c:c if c.notna().all() else c.fillna(c.mean())))
+    m=sm.OLS(np.log(sub['default_rate']/(1-sub['default_rate'])), X).fit()
+    print(feats, 'n=',len(sub),'R2=',round(m.rsquared,3),'aic=',round(m.aic,1))
+    print('  coefs:', {k:round(v,4) for k,v in m.params.items()})
+"
 ```
 
 ## [17] tool
@@ -525,7 +581,21 @@ strong multicollinearity or other numerical problems.
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+feats=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+sub=df.dropna(subset=feats)
+y=np.log(sub['default_rate']/(1-sub['default_rate']))
+X=sm.add_constant(sub[feats])
+m=sm.OLS(y,X).fit()
+Xs=sm.add_constant(sc[feats])
+pred=m.get_prediction(Xs).summary_frame(alpha=0.05)
+print('full model scenario (logit space):')
+print(pred[['mean','mean_ci_lower','mean_ci_upper']].apply(np.exp))
+"
 ```
 
 ## [19] tool
@@ -572,7 +642,22 @@ full model scenario (logit space):
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+from sklearn.linear_model import LassoCV, Lasso
+from sklearn.preprocessing import StandardScaler
+df = pd.read_csv('data/train.csv')
+feats=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+sub=df.dropna(subset=feats).copy()
+y=np.log(sub['default_rate']/(1-sub['default_rate'])).values
+X=sub[feats].values
+Xs=StandardScaler().fit_transform(X)
+l=LassoCV(cv=5, random_state=0).fit(Xs,y)
+print('lasso alpha', round(l.alpha_,4))
+print(dict(zip(feats,np.round(l.coef_,4))))
+print('intercept', round(l.intercept_,4))
+print('R2', round(l.score(Xs,y),3))
+"
 ```
 
 ## [21] tool
@@ -618,7 +703,31 @@ R2 0.425
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+feats=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+# log-transform positive series
+logfeats=['gdp','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+traind=df.copy(); scd=sc.copy()
+for f in logfeats:
+    traind[f+'_l']=np.log(traind[f]); scd[f+'_l']=np.log(scd[f])
+cols=['gdp_l','unemployment','hpi_l','bbb_spread_l','sp500_l','djia_l','nasdaq_l','vix_l','cpi_l']
+sub=traind.dropna(subset=cols+['default_rate'])
+y=np.log(sub['default_rate']/(1-sub['default_rate']))
+X=sm.add_constant(sub[cols])
+m=sm.OLS(y,X).fit()
+print('R2',round(m.rsquared,3))
+print(m.params)
+Xs=sm.add_constant(scd[cols])
+pf=m.get_prediction(Xs).summary_frame(alpha=0.05)
+from scipy.special import expit
+print('scenario point (logit mean):', np.round(expit(pf['mean']),4))
+print('mean lower:',np.round(expit(pf['mean_ci_lower']),4),'upper:',np.round(expit(pf['mean_ci_upper']),4))
+print('obs lower:',np.round(expit(pf['obs_ci_lower']),4),'obs upper:',np.round(expit(pf['obs_ci_upper']),4))
+"
 ```
 
 ## [23] tool
@@ -717,7 +826,20 @@ Name: obs_ci_upper, dtype: float64
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+feats=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+sub=df.dropna(subset=feats)
+def mfit(cols):
+    X=sm.add_constant(sub[cols]); y=np.log(sub['default_rate']/(1-sub['default_rate']))
+    m=sm.OLS(y,X).fit(); return m
+for cols in [ ['unemployment','vix','nasdaq','hpi'], ['unemployment','vix','nasdaq'], ['vix','nasdaq'], ['unemployment','vix'], ['bbb_spread','unemployment','vix'], ['gdp','unemployment'] ]:
+    m=mfit(cols)
+    print(cols,'R2',round(m.rsquared,3),'| pvals',[round(p,3) for p in m.pvalues])
+"
 ```
 
 ## [25] tool
@@ -768,7 +890,21 @@ Name: obs_ci_upper, dtype: float64
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy.special import expit
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+sub=df.dropna(subset=['unemployment','vix','nasdaq','hpi','bbb_spread'])
+for cols in [ ['unemployment','vix','nasdaq'], ['bbb_spread','unemployment','vix'], ['unemployment','vix'], ['bbb_spread','unemployment','nasdaq'], ['unemployment','nasdaq'] ]:
+    y=np.log(sub['default_rate']/(1-sub['default_rate']))
+    X=sm.add_constant(sub[cols]); m=sm.OLS(y,X).fit()
+    Xs=sm.add_constant(sc[cols])
+    pf=m.get_prediction(Xs).summary_frame(alpha=0.05)
+    print(cols,'R2',round(m.rsquared,3),'params',{k:round(v,3) for k,v in m.params.items()})
+    print('   ends:', np.round(expit(pf['mean'][[0,-1]]),4), 'obsCI last:', np.round(expit(pf['obs_ci_lower'][-1]),3), np.round(expit(pf['obs_ci_upper'][-1]),3))
+"
 ```
 
 ## [27] tool
@@ -813,7 +949,23 @@ KeyError: '[-1] not in index'
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy.special import expit
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+sub=df.dropna(subset=['unemployment','vix','nasdaq','hpi','bbb_spread'])
+for cols in [ ['unemployment','vix','nasdaq'], ['bbb_spread','unemployment','vix'], ['unemployment','vix'], ['bbb_spread','unemployment','nasdaq'], ['unemployment','nasdaq'], ['unemployment','vix','bbb_spread','hpi'] ]:
+    y=np.log(sub['default_rate']/(1-sub['default_rate']))
+    X=sm.add_constant(sub[cols]); m=sm.OLS(y,X).fit()
+    Xs=sm.add_constant(sc[cols])
+    pf=m.get_prediction(Xs).summary_frame(alpha=0.05)
+    pred=expit(pf['mean'].values); lo=expit(pf['obs_ci_lower'].values); hi=expit(pf['obs_ci_upper'].values)
+    print(cols,'R2',round(m.rsquared,3),'params',{k:round(v,3) for k,v in m.params.items()})
+    print('   pred:', np.round(pred,4))
+    print('   obsCI last:', np.round(lo[-1],3), np.round(hi[-1],3))
+"
 ```
 
 ## [29] tool
@@ -890,7 +1042,21 @@ KeyError: '[-1] not in index'
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+feats=['gdp','unemployment','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+logfeats=['gdp','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+traind=df.copy()
+for f in logfeats: traind[f+'_l']=np.log(traind[f])
+cols=['gdp_l','unemployment','hpi_l','bbb_spread_l','sp500_l','djia_l','nasdaq_l','vix_l','cpi_l']
+sub=traind.dropna(subset=cols+['default_rate'])
+y=np.log(sub['default_rate']/(1-sub['default_rate']))
+X=sm.add_constant(sub[cols])
+m=sm.OLS(y,X).fit()
+print(m.summary2().tables[1][['Coef.','P>|t|']])
+"
 ```
 
 ## [31] tool
@@ -939,7 +1105,30 @@ cpi_l          6.877874  0.067305
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy.special import expit
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+logfeats=['gdp','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi']
+for f in logfeats:
+    df[f+'_l']=np.log(df[f])
+    sc[f+'_l']=np.log(sc[f])
+cols=['gdp_l','unemployment','hpi_l','bbb_spread_l','sp500_l','djia_l','nasdaq_l','vix_l','cpi_l']
+# impute missing in train by linear interpolation
+tr=df.copy()
+tr[cols]=tr[cols].interpolate(method='linear',limit_direction='both')
+tr[cols]=tr[cols].fillna(tr[cols].mean())
+y=np.log(tr['default_rate']/(1-tr['default_rate']))
+X=sm.add_constant(tr[cols])
+m=sm.OLS(y,X).fit()
+print('R2',round(m.rsquared,3))
+XS=sm.add_constant(sc[cols])
+pf=m.get_prediction(XS).summary_frame(alpha=0.05)
+print('pred:',np.round(expit(pf['mean'].values),4))
+print('obsCI:',np.round(expit(pf['obs_ci_lower'].values),3),'to',np.round(expit(pf['obs_ci_upper'].values),3))
+"
 ```
 
 ## [33] tool
@@ -971,7 +1160,25 @@ obsCI: [0.012 0.013 0.012 0.01  0.01  0.009 0.009 0.008 0.007] to [0.078 0.086 0
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+y=np.log(df['default_rate']/(1-df['default_rate']))
+for t,name in [('nasdaq','log_nasdaq'),('vix','log_vix'),('unemployment','unemployment')]:
+    if t=='nasdaq':
+        x=np.log(df['nasdaq'])
+    elif t=='vix':
+        x=np.log(df['vix'])
+    else:
+        x=df['unemployment']
+    X=sm.add_constant(x); m=sm.OLS(y,X).fit()
+    print(name,'slope',round(m.params[1],4),'p',round(m.pvalues[1],4),'R2',round(m.rsquared,3))
+# also logit default vs log nasdaq + log vix + unemployment on full 80
+X=sm.add_constant(pd.DataFrame({'lnas':np.log(df['nasdaq']),'lvix':np.log(df['vix']),'unemp':df['unemployment']}))
+m=sm.OLS(y,X).fit()
+print(m.summary2().tables[1][['Coef.','P>|t|']])
+"
 ```
 
 ## [35] tool
@@ -1012,7 +1219,16 @@ KeyError: 1
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+y=np.log(df['default_rate']/(1-df['default_rate']))
+feats=pd.DataFrame({'lnas':np.log(df['nasdaq']),'lvix':np.log(df['vix']),'unemp':df['unemployment']})
+X=sm.add_constant(feats)
+m=sm.OLS(y,X).fit()
+print(m.summary2().tables[1])
+"
 ```
 
 ## [37] tool
@@ -1057,7 +1273,18 @@ statsmodels.tools.sm_exceptions.MissingDataError: exog contains inf or nans
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sub=df.dropna(subset=['nasdaq','vix','unemployment']).copy()
+y=np.log(sub['default_rate']/(1-sub['default_rate']))
+feats=pd.DataFrame({'lnas':np.log(sub['nasdaq']),'lvix':np.log(sub['vix']),'unemp':sub['unemployment']})
+X=sm.add_constant(feats)
+m=sm.OLS(y,X).fit()
+print(m.summary2().tables[1])
+print('n',len(sub))
+"
 ```
 
 ## [39] tool
@@ -1089,7 +1316,27 @@ n 71
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy.special import expit
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+sub=df.dropna(subset=['nasdaq','vix','unemployment']).copy()
+for cols,scmap in [ (['lnas','lvix'], {'lnas':np.log(sc['nasdaq']),'lvix':np.log(sc['vix'])}),
+                    (['lnas','lvix','unemp'], {'lnas':np.log(sc['nasdaq']),'lvix':np.log(sc['vix']),'unemp':sc['unemployment']})
+                  ]:
+    y=np.log(sub['default_rate']/(1-sub['default_rate']))
+    fd={c:(np.log(sub['nasdaq']) if c=='lnas' else np.log(sub['vix']) if c=='lvix' else sub['unemployment']) for c in cols}
+    X=sm.add_constant(pd.DataFrame(fd))
+    m=sm.OLS(y,X).fit()
+    scf={c:scmap[c] for c in cols}
+    XS=sm.add_constant(pd.DataFrame(scf))
+    pf=m.get_prediction(XS).summary_frame(alpha=0.05)
+    print(cols,'R2',round(m.rsquared,3))
+    print('  pred:',np.round(expit(pf['mean'].values),4))
+    print('  obsCI last:',np.round(expit(pf['obs_ci_lower'].values[-1]),3),np.round(expit(pf['obs_ci_upper'].values[-1]),3))
+"
 ```
 
 ## [41] tool
@@ -1160,7 +1407,33 @@ n 71
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy.special import expit
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+sub=df.dropna(subset=['nasdaq','vix','unemployment']).copy()
+y=np.log(sub['default_rate']/(1-sub['default_rate']))
+cands={
+ 'lnas+lvix': ['lnas','lvix'],
+ 'lnas+lvix+lunemp': ['lnas','lvix','lunemp'],
+ 'lnas+lvix+unemp': ['lnas','lvix','unemp'],
+ 'lvix+lunemp': ['lvix','lunemp'],
+}
+for name,cols in cands.items():
+    fd={}
+    scm={}
+    for c in cols:
+        if c=='lnas': fd[c]=np.log(sub['nasdaq']); scm[c]=np.log(sc['nasdaq'])
+        elif c=='lvix': fd[c]=np.log(sub['vix']); scm[c]=np.log(sc['vix'])
+        elif c=='lunemp': fd[c]=np.log(sub['unemployment']); scm[c]=np.log(sc['unemployment'])
+        else: fd[c]=sub['unemployment']; scm[c]=sc['unemployment']
+    X=sm.add_constant(pd.DataFrame(fd)); m=sm.OLS(y,X).fit()
+    XS=sm.add_constant(pd.DataFrame(scm)); pf=m.get_prediction(XS).summary_frame(alpha=0.05)
+    print(name,'R2',round(m.rsquared,3),'params',{k:round(v,3) for k,v in m.params.items()})
+    print('   pred:',np.round(expit(pf['mean'].values),4))
+"
 ```
 
 ## [43] tool
@@ -1208,7 +1481,34 @@ lvix+lunemp R2 0.241 params {'const': -5.403, 'lvix': 0.922, 'lunemp': -0.678}
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sub=df.dropna(subset=['gdp','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi','unemployment']).copy()
+y=np.log(sub['default_rate']/(1-sub['default_rate']))
+# candidate transformed features
+F={}
+for c in ['gdp','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi','unemployment']:
+    F[c]=sub[c].values
+    F['l'+c]=np.log(sub[c].values)
+names=list(F.keys())
+import itertools
+# forward selection by AIC
+def fit(cols):
+    X=sm.add_constant(pd.DataFrame({c:F[c] for c in cols}))
+    m=sm.OLS(y,X).fit(); return m
+sel=[]; best_aic=1e9
+remaining=names
+for step in range(6):
+    best=None; ba=1e9
+    for c in remaining:
+        m=fit(sel+[c])
+        if m.aic<ba: ba=m.aic; best=c
+    if ba<best_aic: best_aic=ba; sel=sel+[best]; remaining=[x for x in remaining if x!=best]; print('add',best,'aic',round(ba,1),'R2',round(fit(sel).rsquared,3))
+    else: break
+print('final',sel)
+"
 ```
 
 ## [45] tool
@@ -1252,7 +1552,29 @@ ValueError: The indices for endog and exog are not aligned
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sub=df.dropna(subset=['gdp','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi','unemployment']).reset_index(drop=True)
+y=np.log(sub['default_rate']/(1-sub['default_rate']))
+F=pd.DataFrame(index=sub.index)
+for c in ['gdp','hpi','bbb_spread','sp500','djia','nasdaq','vix','cpi','unemployment']:
+    F[c]=sub[c].values; F['l'+c]=np.log(sub[c].values)
+names=list(F.columns)
+def fit(cols):
+    X=sm.add_constant(F[cols]); return sm.OLS(y,X).fit()
+sel=[]; best_aic=1e9; remaining=names[:]
+for step in range(6):
+    best=None; ba=1e9
+    for c in remaining:
+        try: m=fit(sel+[c])
+        except: continue
+        if m.aic<ba: ba=m.aic; best=c
+    if ba<best_aic: best_aic=ba; sel=sel+[best]; remaining=[x for x in remaining if x!=best]; print('add',best,'aic',round(ba,1),'R2',round(fit(sel).rsquared,3))
+    else: break
+print('final',sel,'aic',round(best_aic,1))
+"
 ```
 
 ## [47] tool
@@ -1304,7 +1626,11 @@ final ['cpi', 'lvix', 'vix'] aic 60.2
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+df = pd.read_csv('data/train.csv')
+print(df.sort_values('default_rate',ascending=False)[['quarter','default_rate','unemployment','vix','nasdaq','hpi','bbb_spread','gdp']].head(15).to_string(index=False))
+"
 ```
 
 ## [49] tool
@@ -1366,7 +1692,48 @@ I'll build the model and generate predictions. Let me write a complete self-cont
 **tool call: bash**
 
 ```
+cd /workspace && cat > model.py << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy.special import expit
 
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+
+# Model: logit(default_rate) ~ log(nasdaq) + log(vix) + unemployment
+# Fitted on rows where those are available (vix starts ~q10, so ~71 rows)
+need = ['nasdaq', 'vix', 'unemployment']
+sub = df.dropna(subset=need + ['default_rate']).copy()
+
+y = np.log(sub['default_rate'] / (1 - sub['default_rate']))
+X = sm.add_constant(sub[['lnas', 'lvix', 'unemp']].assign(
+    lnas=np.log(sub['nasdaq']),
+    lvix=np.log(sub['vix']),
+    unemp=sub['unemployment'].values,
+))
+
+XS = sm.add_constant(pd.DataFrame({
+    'lnas': np.log(sc['nasdaq']),
+    'lvix': np.log(sc['vix']),
+    'unemp': sc['unemployment'].values,
+}))
+
+model = sm.OLS(y, X).fit()
+pf = model.get_prediction(XS).summary_frame(alpha=0.05)
+
+out = pd.DataFrame({
+    'quarter': sc['quarter'],
+    'y_pred': expit(pf['mean'].values),
+    'y_lower': expit(pf['obs_ci_lower'].values),
+    'y_upper': expit(pf['obs_ci_upper'].values),
+})
+out.to_csv('predictions.csv', index=False)
+print(model.params)
+print(out.to_string(index=False))
+print('rows:', len(out))
+EOF
+python3 model.py
 ```
 
 ## [51] tool
@@ -1391,7 +1758,41 @@ KeyError: "None of [Index(['lnas', 'lvix', 'unemp'], dtype='str')] are in the [c
 **tool call: bash**
 
 ```
+cd /workspace && cat > model.py << 'EOF'
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from scipy.special import expit
 
+df = pd.read_csv('data/train.csv')
+sc = pd.read_csv('data/scenario.csv')
+
+sub = df.dropna(subset=['nasdaq', 'vix', 'unemployment', 'default_rate']).copy()
+y = np.log(sub['default_rate'] / (1 - sub['default_rate']))
+X = sm.add_constant(pd.DataFrame({
+    'lnas': np.log(sub['nasdaq'].values),
+    'lvix': np.log(sub['vix'].values),
+    'unemp': sub['unemployment'].values,
+}))
+XS = sm.add_constant(pd.DataFrame({
+    'lnas': np.log(sc['nasdaq'].values),
+    'lvix': np.log(sc['vix'].values),
+    'unemp': sc['unemployment'].values,
+}))
+model = sm.OLS(y, X).fit()
+pf = model.get_prediction(XS).summary_frame(alpha=0.05)
+out = pd.DataFrame({
+    'quarter': sc['quarter'],
+    'y_pred': expit(pf['mean'].values),
+    'y_lower': expit(pf['obs_ci_lower'].values),
+    'y_upper': expit(pf['obs_ci_upper'].values),
+})
+out.to_csv('predictions.csv', index=False)
+print(model.params)
+print(out.to_string(index=False))
+print('rows:', len(out))
+EOF
+python3 model.py
 ```
 
 ## [53] tool
@@ -1436,7 +1837,7 @@ ValueError: The indices for endog and exog are not aligned
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i "s/sub = df.dropna(subset=\['nasdaq', 'vix', 'unemployment', 'default_rate'\]).copy()/sub = df.dropna(subset=['nasdaq','vix','unemployment','default_rate']).reset_index(drop=True).copy()/" model.py && python3 model.py
 ```
 
 ## [55] tool
@@ -1504,7 +1905,31 @@ Let me validate competing model specifications with a rolling time-series split 
 **tool call: bash**
 
 ```
+cd /workspace && python3 << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+from scipy.special import expit
+df = pd.read_csv('data/train.csv').reset_index(drop=True)
+sub = df.dropna(subset=['nasdaq','vix','unemployment','default_rate']).reset_index(drop=True)
+yall = np.log(sub['default_rate']/(1-sub['default_rate']))
+F = pd.DataFrame({'lnas':np.log(sub['nasdaq'].values),'lvix':np.log(sub['vix'].values),'unemp':sub['unemployment'].values})
 
+def evalf(cols):
+    errs=[]
+    n=len(sub)
+    # rolling: train on first k, test on k+1 (one-step-ahead), starting k=40
+    for k in range(45,n):
+        tr=np.arange(k); te=k
+        X=sm.add_constant(F.iloc[tr][cols]); m=sm.OLS(yall.iloc[tr],X).fit()
+        Xt=sm.add_constant(F.iloc[[te]][cols]); p=m.predict(Xt)[0]
+        errs.append((yall.iloc[te]-p)**2)
+    return np.sqrt(np.mean(errs))
+
+for name,cols in [('lnas+lvix',['lnas','lvix']),
+                  ('lnas+lvix+unemp',['lnas','lvix','unemp']),
+                  ('lnas+lvix+unemp+unemp2',['lnas','lvix','unemp'])]:
+    print(name, round(evalf(cols),4))
+EOF
 ```
 
 ## [57] tool
@@ -1533,7 +1958,28 @@ ValueError: shapes (1,2) and (3,) not aligned: 2 (dim 1) != 3 (dim 0)
 **tool call: bash**
 
 ```
+cd /workspace && python3 << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sub = df.dropna(subset=['nasdaq','vix','unemployment','default_rate']).reset_index(drop=True)
+yall = np.log(sub['default_rate']/(1-sub['default_rate']))
+F = pd.DataFrame({'lnas':np.log(sub['nasdaq'].values),'lvix':np.log(sub['vix'].values),'unemp':sub['unemployment'].values})
 
+def evalf(cols):
+    errs=[]
+    n=len(sub)
+    for k in range(45,n):
+        tr=np.arange(k)
+        X=sm.add_constant(F.iloc[tr][cols]); m=sm.OLS(yall.iloc[tr],X).fit()
+        Xt=sm.add_constant(F.iloc[[k]][cols], has_constant='add'); p=m.predict(Xt)[0]
+        errs.append((yall.iloc[k]-p)**2)
+    return np.sqrt(np.mean(errs))
+
+for name,cols in [('lnas+lvix',['lnas','lvix']),
+                  ('lnas+lvix+unemp',['lnas','lvix','unemp'])]:
+    print(name, round(evalf(cols),4))
+EOF
 ```
 
 ## [59] tool
@@ -1572,7 +2018,25 @@ KeyError: 0
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sub = df.dropna(subset=['nasdaq','vix','unemployment','default_rate']).reset_index(drop=True)
+yall = np.log(sub['default_rate'].astype(float)/(1-sub['default_rate'].astype(float))).values
+F = pd.DataFrame({'lnas':np.log(sub['nasdaq'].values),'lvix':np.log(sub['vix'].values),'unemp':sub['unemployment'].values}).values
+names=['lnas','lvix','unemp']
+def evalf(cols):
+    ci=[names.index(c) for c in cols]; e=[]
+    n=len(sub)
+    for k in range(45,n):
+        Xtr=sm.add_constant(F[:k][:,ci]); m=sm.OLS(yall[:k],Xtr).fit()
+        Xt=sm.add_constant(F[k:k+1][:,ci]); p=m.predict(Xt)[0]
+        e.append((yall[k]-p)**2)
+    return np.sqrt(np.mean(e))
+print('lnas+lvix', round(evalf(['lnas','lvix']),4))
+print('lnas+lvix+unemp', round(evalf(['lnas','lvix','unemp']),4))
+EOF
 ```
 
 ## [61] tool
@@ -1605,7 +2069,26 @@ ValueError: shapes (1,2) and (3,) not aligned: 2 (dim 1) != 3 (dim 0)
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 << 'EOF'
+import pandas as pd, numpy as np
+import statsmodels.api as sm
+df = pd.read_csv('data/train.csv')
+sub = df.dropna(subset=['nasdaq','vix','unemployment','default_rate']).reset_index(drop=True)
+yall = np.log(sub['default_rate'].astype(float)/(1-sub['default_rate'].astype(float))).values
+F = {'lnas':np.log(sub['nasdaq'].values),'lvix':np.log(sub['vix'].values),'unemp':sub['unemployment'].values}
+def evalf(cols):
+    e=[]; n=len(sub)
+    for k in range(45,n):
+        Xtr=np.column_stack([[1.0]*k]+[F[c][:k] for c in cols])
+        m=sm.OLS(yall[:k],Xtr).fit()
+        Xt=np.array([1.0]+[F[c][k] for c in cols])
+        p=m.predict(Xt)[0]
+        e.append((yall[k]-p)**2)
+    return np.sqrt(np.mean(e))
+print('lnas+lvix', round(evalf(['lnas','lvix']),4))
+print('lnas+lvix+unemp', round(evalf(['lnas','lvix','unemp']),4))
+print('lnas+lvix+unemp+lunemp', round(evalf(['lnas','lvix','unemp']),4))
+EOF
 ```
 
 ## [63] tool
@@ -1634,7 +2117,15 @@ lnas+lvix+unemp+lunemp 0.4218
 **tool call: bash**
 
 ```
-
+cd /workspace && cat predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+print(p.columns.tolist())
+print(len(p))
+print('quarter matches scenario:', (p['quarter'].values==pd.read_csv('data/scenario.csv')['quarter'].values).all())
+print('monotonic y_pred rising:', p['y_pred'].is_monotonic_increasing)
+print('lower<upper all:', (p['y_lower']<p['y_upper']).all())
+"
 ```
 
 ## [65] tool
@@ -1682,7 +2173,13 @@ The predictions file is complete and valid. Let me do a final verification of th
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd
+p=pd.read_csv('predictions.csv')
+print('Final predictions.csv:')
+print(p.round(4).to_string(index=False))
+print('Rows:', len(p))
+"
 ```
 
 ## [67] tool
@@ -1760,7 +2257,26 @@ I'll do a final verification that everything is in order before submitting.
 **tool call: bash**
 
 ```
+cd /workspace && python3 << 'EOF'
+import pandas as pd
+import numpy as np
 
+pred = pd.read_csv('predictions.csv')
+scen = pd.read_csv('data/scenario.csv')
+
+# Required checks
+assert pred.columns.tolist() == ['quarter', 'y_pred', 'y_lower', 'y_upper'], "column mismatch"
+assert len(pred) == len(scen), "row count mismatch"
+assert (pred['quarter'].values == scen['quarter'].values).all(), "quarter mismatch"
+assert (pred['y_lower'] < pred['y_upper']).all(), "interval inversion"
+assert (pred[['y_lower','y_pred','y_upper']].values >= 0).all(), "negative values"
+assert (pred[['y_lower','y_pred','y_upper']].values < 1).all(), "values >= 1"
+assert np.isfinite(pred[['y_pred','y_lower','y_upper']].values).all(), "non-finite"
+
+print("All validation checks passed.")
+print("\nFinal output (rounded to 4dp):")
+print(pred.round(4).to_string(index=False))
+EOF
 ```
 
 ## [71] tool

@@ -72,6 +72,14 @@ def _rows(text):
     return list(csv.DictReader(io.StringIO(text)))
 
 
+def scenario_groups(rows):
+    """data/scenario.csv split by its `scenario` column, in file order."""
+    groups: dict[str, list] = {}
+    for r in rows:
+        groups.setdefault(str(r["scenario"]).strip(), []).append(r)
+    return groups
+
+
 def _annual_matrices(text):
     out = {}
     for r in _rows(text):
@@ -244,18 +252,20 @@ def _macro_features(history, scenario, n_years):
             np.column_stack([np.ones(n_scen)] + scen))
 
 
-def matrices_csv(mats: dict[int, np.ndarray]) -> str:
+def matrices_csv(mats: dict[str, dict[int, np.ndarray]]) -> str:
     """The quarterly matrices the solver actually used, in the requested layout."""
-    cols = ["quarter", "from_rating"] + [f"to_{s.replace('/', '_')}" for s in ORDER]
+    cols = (["scenario", "quarter", "from_rating"]
+            + [f"to_{s.replace('/', '_')}" for s in ORDER])
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=cols)
     w.writeheader()
-    for q in sorted(mats):
-        for i, frm in enumerate(LIVE):
-            row = {"quarter": q, "from_rating": frm}
-            for j, s in enumerate(ORDER):
-                row[f"to_{s.replace('/', '_')}"] = float(mats[q][i, j])
-            w.writerow(row)
+    for scen, by_quarter in mats.items():
+        for q in sorted(by_quarter):
+            for i, frm in enumerate(LIVE):
+                row = {"scenario": scen, "quarter": q, "from_rating": frm}
+                for j, st in enumerate(ORDER):
+                    row[f"to_{st.replace('/', '_')}"] = float(by_quarter[q][i, j])
+                w.writerow(row)
     return buf.getvalue()
 
 
@@ -287,19 +297,31 @@ def _fitted_annual_rates(mats, base, zfit):
 
 
 def predict(files: dict[str, str], method: str = "onefactor") -> str:
+    """One estimation on the history, then one projection per scenario.
+
+    The split matters and is the point of the task's shape: `base`, `zhat` and
+    the ridge coefficients are computed once, outside the scenario loop, and the
+    loop only pushes a different `Xs` through them. So the reference satisfies
+    the one-model instruction by construction rather than by discipline, which is
+    what makes it usable as the anchor that `matrix_one_model_discordance` is
+    read against.
+    """
     if method not in ("onefactor", "no_migration"):
         raise ValueError("method must be 'onefactor' or 'no_migration'")
     portfolio = _rows(files["data/portfolio.csv"])
     counts = np.array([float(r["obligors"]) for r in portfolio])
     mix = counts / counts.sum()
     checkpoints = json.loads(files["data/policy.json"])["checkpoints"]
+    groups = scenario_groups(_rows(files["data/scenario.csv"]))
 
-    quarterlies: dict[int, np.ndarray] = {}
+    quarterlies: dict[str, dict[int, np.ndarray]] = {}
+    dists: dict[str, dict[int, np.ndarray]] = {}
     if method == "no_migration":
-        dists = {q: np.concatenate([mix, [0.0]]) for q in checkpoints}
-        # the model is that nothing happens, so the matrices are the identity
-        for q in range(1, max(checkpoints) + 1):
-            quarterlies[q] = np.eye(len(ORDER))
+        for scen in groups:
+            dists[scen] = {q: np.concatenate([mix, [0.0]]) for q in checkpoints}
+            # the model is that nothing happens, so the matrices are the identity
+            quarterlies[scen] = {q: np.eye(len(ORDER))
+                                 for q in range(1, max(checkpoints) + 1)}
         hist_years = sorted(_annual_matrices(files["data/transitions.csv"]))
         backtest = _backtest_csv(hist_years, [0.0] * len(hist_years))
     else:
@@ -308,25 +330,28 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         years = sorted(mats)
         zhat = np.array([factor_mle(mats[y], base) for y in years])
         history = _rows(files["data/macro_history.csv"])
-        scenario = _rows(files["data/scenario.csv"])
-        X, Xs = _macro_features(history, scenario, len(years))
-        z = project_factor(X, Xs, zhat)
+        X = _macro_features(history, next(iter(groups.values())), len(years))[0]
         lam = _lambda_for_df(X, 1.0 + X.shape[0] / DF_DIVISOR)
-        backtest = _backtest_csv(
-            years, _fitted_annual_rates(mats, base, X @ _ridge(X, zhat, lam)))
-        v = np.concatenate([mix, [0.0]])
-        dists = {}
-        for t in range(max(checkpoints)):
-            m = conditional_matrix(base, float(z[t]), RHO_ASSUMED)
-            quarterlies[t + 1] = m
-            v = v @ m
-            if t + 1 in checkpoints:
-                dists[t + 1] = v.copy()
+        beta = _ridge(X, zhat, lam)
+        backtest = _backtest_csv(years, _fitted_annual_rates(mats, base, X @ beta))
+        for scen, rows in groups.items():
+            _, Xs = _macro_features(history, rows, len(years))
+            z = Xs @ beta
+            v = np.concatenate([mix, [0.0]])
+            quarterlies[scen], dists[scen] = {}, {}
+            for t in range(max(checkpoints)):
+                m = conditional_matrix(base, float(z[t]), RHO_ASSUMED)
+                quarterlies[scen][t + 1] = m
+                v = v @ m
+                if t + 1 in checkpoints:
+                    dists[scen][t + 1] = v.copy()
 
-    out = [{"quarter": q, "state": s, "share": float(dists[q][i])}
-           for q in sorted(dists) for i, s in enumerate(ORDER)]
+    out = [{"scenario": scen, "quarter": q, "state": st,
+            "share": float(dists[scen][q][i])}
+           for scen in dists for q in sorted(dists[scen])
+           for i, st in enumerate(ORDER)]
     buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=["quarter", "state", "share"])
+    w = csv.DictWriter(buf, fieldnames=["scenario", "quarter", "state", "share"])
     w.writeheader()
     w.writerows(out)
     return buf.getvalue(), matrices_csv(quarterlies), backtest
@@ -363,8 +388,11 @@ def backtest_diagnostics(files: dict[str, str]) -> dict:
     base = pooled_quarterly_base(mats)
     years = sorted(mats)
     zhat = np.array([factor_mle(mats[y], base) for y in years])
+    # X is built from the history alone, so which scenario group is passed for
+    # the discarded Xs makes no difference; the first one in the file is used.
+    groups = scenario_groups(_rows(files["data/scenario.csv"]))
     X, _ = _macro_features(_rows(files["data/macro_history.csv"]),
-                           _rows(files["data/scenario.csv"]), len(years))
+                           next(iter(groups.values())), len(years))
     n = X.shape[0]
     lam = _lambda_for_df(X, 1.0 + n / DF_DIVISOR)
     dof = _effective_df(X, lam)

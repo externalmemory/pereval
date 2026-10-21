@@ -86,13 +86,18 @@ Estimate lifetime expected losses and 95% prediction intervals; write prediction
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -5 data/*.csv && cat data/policy.json
 ```
 
 **tool call: bash**
 
 ```
-
+wc -l data/*.csv; echo ---; python3 -c "
+import pandas as pd
+for f in ['history','forecast','pools']:
+    d=pd.read_csv(f'data/{f}.csv')
+    print(f, d.shape); print(d.head()); print(d.describe()); print()
+"
 ```
 
 ## [3] tool
@@ -393,13 +398,13 @@ max    9.498719e+06           40.000000
 **tool call: bash**
 
 ```
-
+cd /home 2>/dev/null; pwd; ls; cat data/pools.csv
 ```
 
 **tool call: bash**
 
 ```
-
+mkdir -p work && cd work && cp -r ../data . 2>/dev/null || cp -r /root/data . 2>/dev/null; ls
 ```
 
 ## [6] tool
@@ -425,7 +430,7 @@ data
 **tool call: bash**
 
 ```
-
+cd /home && pwd && ls -la && cat data/pools.csv && ls work
 ```
 
 ## [9] tool
@@ -449,7 +454,7 @@ drwxr-xr-x 1 root root 4096 Oct 13 20:17 ..
 **tool call: bash**
 
 ```
-
+pwd; ls; find / -name pools.csv -not -path "*/work/*" 2>/dev/null
 ```
 
 ## [11] tool
@@ -471,7 +476,12 @@ work
 **tool call: bash**
 
 ```
-
+cd /workspace && cat data/pools.csv && python3 -c "
+import pandas as pd
+h=pd.read_csv('data/history.csv')
+print(h.groupby('segment').agg({'quarter':['min','max','count'],'pd':'mean','lgd':'mean','prepay':'mean','unemployment':'mean','hpi_growth':'mean'}))
+print(h.groupby('segment')[['pd','lgd','prepay']].describe().T)
+"
 ```
 
 ## [13] tool
@@ -535,6 +545,21 @@ prepay count  80.000000  80.000000  80.000000
 **tool call: bash**
 
 ```
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np, statsmodels.api as sm
+h=pd.read_csv('data/history.csv')
+# check econ path same across segments
+p=h.pivot(index='quarter',columns='segment',values=['unemployment','hpi_growth'])
+print((p['unemployment']['A']-p['unemployment']['B']).abs().max(), (p['hpi_growth']['A']-p['hpi_growth']['C']).abs().max())
+for seg in 'ABC':
+    d=h[h.segment==seg]
+    X=sm.add_constant(d[['unemployment','hpi_growth']])
+    for r in ['pd','lgd','prepay']:
+        m=sm.OLS(d[r],X).fit()
+        m2=sm.GLM(d[r],X,family=sm.families.Binomial()).fit()
+        print(seg,r,'R2=%.3f'%m.rsquared, 'p-unemp=%.3g'%m.pvalues['unemployment'],'p-hpi=%.3g'%m.pvalues['hpi_growth'],
+              'mean=%.4f'%d[r].mean())
+"
 
 ```
 
@@ -565,7 +590,20 @@ C prepay R2=0.963 p-unemp=1.09e-50 p-hpi=1.66e-27 mean=0.0926
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np, statsmodels.api as sm
+from sklearn.model_selection import TimeSeriesSplit
+h=pd.read_csv('data/history.csv')
+fc=pd.read_csv('data/forecast.csv')
+for seg in 'ABC':
+    d=h[h.segment==seg]
+    for r in ['pd','lgd','prepay']:
+        feats={'lin':['unemployment','hpi_growth'],
+               'quad':['unemployment','hpi_growth','unemployment:hpi_growth','I(unemployment**2)','I(hpi_growth**2)']}
+        for k,f in feats.items():
+            X=d.eval('1').to_frame('const') if False else sm.add_constant(d)
+            m=sm.OLS(d[r],sm.stats.stattools... 
+" 2>/dev/null; echo skip
 ```
 
 ## [17] tool
@@ -584,7 +622,32 @@ skip
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/eda.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.formula.api as smf
+h=pd.read_csv('data/history.csv')
+fc=pd.read_csv('data/forecast.csv')
+forms={
+ 'lin':'rate ~ unemployment + hpi_growth',
+ 'quad':'rate ~ unemployment + hpi_growth + I(unemployment**2) + I(hpi_growth**2) + unemployment:hpi_growth',
+}
+for seg in 'ABC':
+    d=h[h.segment==seg].copy()
+    for r in ['pd','lgd','prepay']:
+        d['rate']=d[r]
+        out=[]
+        for name,f in forms.items():
+            m=smf.ols(f,data=d).fit()
+            # time-series CV
+            errs=[]
+            idx=np.arange(len(d))
+            for tr,te in [(idx[:40],idx[40:60]),(idx[:60],idx[60:])]:
+                mm=smf.ols(f,data=d.iloc[tr]).fit()
+                pr=mm.predict(d.iloc[te])
+                errs.append(np.sqrt(np.mean((pr-d.iloc[te]['rate'])**2)))
+            out.append((name,np.round(errs,5).tolist(),np.round(m.params.values,4).tolist()))
+        print(seg,r,'std=%.5f'%d[r].std(), out)
+EOF
+python3 work/eda.py
 ```
 
 ## [19] tool
@@ -631,7 +694,34 @@ C prepay std=0.01594 [('lin', [0.00265, 0.00375], [0.1701, -0.0159, 0.2691]), ('
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/eda2.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.formula.api as smf
+import statsmodels.api as sm
+h=pd.read_csv('data/history.csv')
+forms={'lin':'rate ~ unemployment + hpi_growth',
+ 'quad':'rate ~ unemployment + hpi_growth + I(unemployment**2) + I(hpi_growth**2) + unemployment:hpi_growth',
+ 'cub':'rate ~ unemployment + hpi_growth + I(unemployment**2) + I(hpi_growth**2) + unemployment:hpi_growth + I(unemployment**3) + I(hpi_growth**3) + I(unemployment**2)*hpi_growth + unemployment*I(hpi_growth**2)',
+ }
+for seg in 'ABC':
+    d=h[h.segment==seg].copy()
+    for r in ['pd','lgd','prepay']:
+        d['rate']=d[r]
+        print('==',seg,r, 'mean %.4f std %.4f'%(d[r].mean(),d[r].std()))
+        for name,f in forms.items():
+            m=smf.ols(f,data=d).fit()
+            res=m.resid
+            idx=np.arange(len(d))
+            errs=[]
+            for tr,te in [(idx[:40],idx[40:55]),(idx[:55],idx[55:70]),(idx[:70],idx[70:])]:
+                mm=smf.ols(f,data=d.iloc[tr]).fit()
+                pr=mm.predict(d.iloc[te])
+                errs.append(np.sqrt(np.mean((pr-d.iloc[te]['rate'])**2)))
+            # extrapolation to forecast
+            fc=pd.read_csv('data/forecast.csv')
+            pr=smf.ols(f,data=d).fit().predict(fc)
+            print('  %-5s residstd=%.5f  cv=%s  fcpred=%s'%(name,res.std(ddof=m.df_model+1),np.round(errs,5),np.round(pr.values,4)))
+EOF
+python3 work/eda2.py
 ```
 
 ## [21] tool
@@ -723,7 +813,16 @@ C prepay std=0.01594 [('lin', [0.00265, 0.00375], [0.1701, -0.0159, 0.2691]), ('
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 -c "
+import pandas as pd, numpy as np
+h=pd.read_csv('data/history.csv')
+d=h[h.segment=='C'].copy()
+print(d[['quarter','unemployment','hpi_growth','pd','lgd','prepay']].head(12).to_string())
+print(d[['quarter','unemployment','hpi_growth','pd','lgd','prepay']].tail(12).to_string())
+print('max unemp rows'); print(d.nlargest(8,'unemployment')[['quarter','unemployment','hpi_growth','pd','lgd','prepay']].to_string())
+print('min hpi rows'); print(d.nsmallest(8,'hpi_growth')[['quarter','unemployment','hpi_growth','pd','lgd','prepay']].to_string())
+print('corr pd unemp', d.pd.corr(d.unemployment), 'lgd', d.lgd.corr(d.unemployment), 'prepay', d.prepay.corr(d.unemployment))
+"
 ```
 
 ## [23] tool
@@ -805,7 +904,40 @@ corr pd unemp 0.8452853947223385 lgd 0.5836996883619415 prepay -0.90948665484122
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/eda3.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.api as sm, statsmodels.formula.api as smf
+from scipy.stats import norm
+h=pd.read_csv('data/history.csv')
+fc=pd.read_csv('data/forecast.csv')
+quad='I(unemployment**2)+I(hpi_growth**2)+unemployment:hpi_growth'
+for seg in 'ABC':
+    d=h[h.segment==seg].copy()
+    for r in ['pd','lgd','prepay']:
+        y=d[r].values
+        X=sm.add_constant(d[['unemployment','hpi_growth']])
+        Xq=sm.add_constant(d[['unemployment','hpi_growth']]).join(
+            pd.DataFrame({'u2':d.unemployment**2,'h2':d.hpi_growth**2,'uh':d.unemployment*d.hpi_growth}))
+        res={}
+        res['lin']=y-sm.OLS(y,X).fit().predict(X)
+        res['quad']=y-sm.OLS(y,Xq).fit().predict(Xq)
+        try:
+            gp=sm.GLM(y,X,family=sm.families.Binomial(link=sm.families.links.Probit())).fit()
+            res['probit']=y-gp.predict(X)
+        except Exception as e: res['probit']=np.array([np.nan])
+        try:
+            gl=sm.GLM(y,X,family=sm.families.Gaussian(link=sm.families.links.Log())).fit()
+            res['log']=y-gl.predict(X)
+        except Exception: res['log']=np.array([np.nan])
+        # log-y OLS
+        res['logols']=y-np.exp(sm.OLS(np.log(y),X).fit().predict(X))
+        res['probitquad']=None
+        try:
+            gq=sm.GLM(y,Xq,family=sm.families.Binomial(link=sm.families.links.Probit())).fit()
+            res['probitquad']=y-gq.predict(Xq)
+        except Exception: pass
+        print(seg,r,'std=%.5f'%y.std(), {k:(None if v is None else round(float(np.nanstd(v,ddof=3)),5)) for k,v in res.items()})
+EOF
+python3 work/eda3.py
 ```
 
 ## [25] tool
@@ -868,7 +1000,30 @@ C prepay std=0.01584 {'lin': 0.00311, 'quad': 0.00262, 'probit': 0.00265, 'log':
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/eda4.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.api as sm
+h=pd.read_csv('data/history.csv')
+def feats(d):
+    u=d.unemployment.values; hpi=d.hpi_growth.values
+    return pd.DataFrame({'u':u,'h':hpi,'u2':u**2,'h2':hpi**2,'uh':u*hpi,'u3':u**3,'h3':hpi**3})
+for seg in 'ABC':
+    d=h[h.segment==seg]; F=feats(d); X=sm.add_constant(d[['unemployment','hpi_growth']].values)
+    Xq=np.column_stack([np.ones(len(d)),F.values])
+    for r in ['pd','lgd','prepay']:
+        y=d[r].values
+        models={}
+        models['lin']=y-sm.OLS(y,X).fit().predict(X)
+        models['quad']=y-sm.OLS(y,Xq).fit().predict(Xq)
+        models['probit']=y-sm.GLM(y,X,family=sm.families.Binomial(link=sm.families.links.Probit())).fit().predict(X)
+        models['log']=y-sm.GLM(y,X,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(X)
+        models['logquad']=y-sm.GLM(y,Xq,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xq)
+        print('==',seg,r)
+        for k,res in models.items():
+            c=[np.corrcoef(res,F[c])[0,1] for c in ['u','h','u2','h2','uh','u3','h3']]
+            lag=np.corrcoef(res[:-1],res[1:])[0,1]
+            print('   %-9s std=%.5f  max|corr feats|=%.3f  lag1=%.3f'%(k,np.std(res,ddof=7),np.max(np.abs(c)),lag))
+EOF
+python3 work/eda4.py
 ```
 
 ## [27] tool
@@ -958,7 +1113,28 @@ C prepay std=0.01584 {'lin': 0.00311, 'quad': 0.00262, 'probit': 0.00265, 'log':
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/eda5.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.api as sm
+h=pd.read_csv('data/history.csv')
+def F(d):
+    u=d.unemployment.values; hpi=d.hpi_growth.values
+    return np.column_stack([np.ones(len(d)),u,hpi,u**2,hpi**2,u*hpi])
+splits=[(0,40,40,55),(0,55,55,70),(0,70,70,80),(0,20,20,40),(0,30,40,60),(20,50,50,80),(40,70,70,80)]
+for seg in 'ABC':
+    d=h[h.segment==seg]; X=F(d)
+    for r in ['pd','lgd','prepay']:
+        y=d[r].values
+        out={}
+        for name,fit in [('quad',lambda yt,Xt: sm.OLS(yt,Xt).fit().predict),
+                         ('logquad',lambda yt,Xt: sm.GLM(yt,Xt,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict)]:
+            errs=[]
+            for a,b,c,e in splits:
+                pr=fit(y[a:b],X[a:b])(X[c:e])
+                errs.append(np.sqrt(np.mean((pr-y[c:e])**2)))
+            out[name]=np.round(errs,5)
+        print(seg,r,{k:v.tolist() for k,v in out.items()})
+EOF
+python3 work/eda5.py
 ```
 
 ## [29] tool
@@ -995,7 +1171,34 @@ C prepay {'quad': [0.00295, 0.00348, 0.00251, 0.00399, 0.00277, 0.00389, 0.00279
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/eda6.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.api as sm
+h=pd.read_csv('data/history.csv')
+def F(d):
+    u=d.unemployment.values; hpi=d.hpi_growth.values
+    return np.column_stack([np.ones(len(d)),u,hpi,u**2,hpi**2,u*hpi])
+def fitpred(name,ytr,Xtr,Xte):
+    if name=='lin':
+        X=sm.add_constant(Xtr[:,1:3]); return sm.OLS(ytr,X).fit().predict(sm.add_constant(Xte[:,1:3]))
+    if name=='quad': return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if name=='logquad': return sm.GLM(ytr,Xtr,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xte)
+    if name=='probit': return sm.GLM(ytr,sm.add_constant(Xtr[:,1:3]),family=sm.families.Binomial(link=sm.families.links.Probit())).fit().predict(sm.add_constant(Xte[:,1:3]))
+    if name=='log': return sm.GLM(ytr,sm.add_constant(Xtr[:,1:3]),family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(sm.add_constant(Xte[:,1:3]))
+models=['lin','quad','logquad','probit','log']
+for seg in 'ABC':
+    d=h[h.segment==seg]; X=F(d)
+    tests={'highu':d.unemployment.values>6.0,'lowh':d.hpi_growth.values<-0.01,
+           'extreme':(d.unemployment.values>6.0)|(d.hpi_growth.values<-0.01),
+           'lo':(d.unemployment.values<4.6)&(d.hpi_growth.values>0.03)}
+    for r in ['pd','lgd','prepay']:
+        y=d[r].values
+        print('==',seg,r)
+        for tn,mask in tests.items():
+            m=~mask
+            errs={k:np.sqrt(np.mean((fitpred(k,y[m],X[m],X[mask])-y[mask])**2)) for k in models}
+            print('   test=%s n=%d'%(tn,mask.sum()), {k:round(v,5) for k,v in errs.items()})
+EOF
+python3 work/eda6.py
 ```
 
 ## [31] tool
@@ -1107,7 +1310,30 @@ C prepay {'quad': [0.00295, 0.00348, 0.00251, 0.00399, 0.00277, 0.00389, 0.00279
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/eda7.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.api as sm
+h=pd.read_csv('data/history.csv'); fc=pd.read_csv('data/forecast.csv')
+def Xmat(d,deg='lin'):
+    u=d.unemployment.values; hpi=d.hpi_growth.values
+    if deg=='lin': return sm.add_constant(np.column_stack([u,hpi]))
+    return np.column_stack([np.ones(len(d)),u,hpi,u**2,hpi**2,u*hpi])
+print('forecast u:',np.round(fc.unemployment.values,3))
+print('forecast h:',np.round(fc.hpi_growth.values,4))
+for seg in 'ABC':
+    d=h[h.segment==seg]
+    for r in ['pd','lgd','prepay']:
+        y=d[r].values; Xl=Xmat(d,'lin'); Xq=Xmat(d,'q'); FCl=Xmat(fc,'lin'); FCq=Xmat(fc,'q')
+        p={}
+        p['lin']=sm.OLS(y,Xl).fit().predict(FCl)
+        p['quad']=sm.OLS(y,Xq).fit().predict(FCq)
+        p['log']=np.exp(sm.OLS(np.log(y),Xl).fit().predict(FCl))
+        p['glog']=sm.GLM(y,Xl,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(FCl)
+        p['glogq']=sm.GLM(y,Xq,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(FCq)
+        p['probit']=sm.GLM(y,Xl,family=sm.families.Binomial(link=sm.families.links.Probit())).fit().predict(FCl)
+        print(seg,r)
+        for k,v in p.items(): print('   %-7s'%k, np.round(v,4))
+EOF
+python3 work/eda7.py
 ```
 
 ## [33] tool
@@ -1242,7 +1468,33 @@ C prepay
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/eda8.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.api as sm
+h=pd.read_csv('data/history.csv')
+def Xm(d,q=False):
+    u=d.unemployment.values; hpi=d.hpi_growth.values
+    if q: return np.column_stack([np.ones(len(d)),u,hpi,u**2,hpi**2,u*hpi])
+    return sm.add_constant(np.column_stack([u,hpi]))
+def preds(seg,r):
+    d=h[h.segment==seg]; y=d[r].values
+    tr=(d.unemployment.values<6.0)&(d.hpi_growth.values>-0.005)
+    te=~tr
+    o={}
+    for name,mk in [('lin',False),('probit',False),('log',False),('quad',True),('logquad',True)]:
+        X=Xm(d,mk); Xtr,Xte=X[tr],X[te]
+        if name=='probit': pr=sm.GLM(y[tr],Xtr,family=sm.families.Binomial(link=sm.families.links.Probit())).fit().predict(Xte)
+        elif name=='log': pr=sm.GLM(y[tr],Xtr,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xte)
+        elif name=='logquad': pr=sm.GLM(y[tr],Xtr,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xte)
+        else: pr=sm.OLS(y[tr],Xtr).fit().predict(Xte)
+        o[name]=pr
+    df=pd.DataFrame({'q':d.quarter.values[te],'u':d.unemployment.values[te],'h':d.hpi_growth.values[te],'act':y[te]})
+    for k,v in o.items(): df[k]=np.round(v,4)
+    print('==',seg,r,'train n=%d test n=%d'%(tr.sum(),te.sum()))
+    print(df.sort_values('u').to_string(index=False))
+for seg in ['C']:
+    for r in ['pd','lgd','prepay']: preds(seg,r)
+EOF
+python3 work/eda8.py
 ```
 
 ## [35] tool
@@ -1329,7 +1581,7 @@ C prepay
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i "s/for seg in \['C'\]:/for seg in ['A','B']:/" work/eda8.py && python3 work/eda8.py
 ```
 
 ## [37] tool
@@ -1599,7 +1851,92 @@ Now let me build the main pipeline with a clear model spec.
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/build.py <<'EOF'
+import json, numpy as np, pandas as pd, statsmodels.api as sm
+from scipy.special import ndtr
+from scipy.stats import norm
 
+H = pd.read_csv('data/history.csv'); F = pd.read_csv('data/forecast.csv')
+P = pd.read_csv('data/pools.csv');   POL = json.load(open('data/policy.json'))
+FCQ, RQ, RHO, PERS = POL['forecast_quarters'], POL['reversion_quarters'], POL['rho'], POL['persistence']
+SEGS = sorted(H.segment.unique()); MAXT = int(P.remaining_quarters.max())
+
+def design(d):
+    return sm.add_constant(d[['unemployment','hpi_growth']].values.astype(float))
+
+def rate_path(seg, rate, form):
+    d = H[H.segment == seg]
+    y = d[rate].values.astype(float); X = design(d); Xf = design(F)
+    if form == 'lin':
+        fit = sm.OLS(y, X).fit(); pf = fit.predict(Xf)
+    elif form == 'log':
+        fit = sm.GLM(y, X, family=sm.families.Gaussian(link=sm.families.links.Log())).fit(); pf = fit.predict(Xf)
+    elif form == 'probit':
+        fit = sm.GLM(y, X, family=sm.families.Binomial(link=sm.families.links.Probit())).fit(); pf = fit.predict(Xf)
+    hist = y.mean()
+    pf = np.asarray(pf, float)[:FCQ]
+    if rate in ('pd', 'prepay'): pf = np.clip(pf, 1e-6, 0.999)
+    else:                        pf = np.clip(pf, 0.0, 1.0)
+    path = list(pf)
+    for k in range(1, RQ + 1):
+        w = k / RQ
+        path.append((1 - w) * pf[-1] + w * hist)
+    while len(path) < MAXT:
+        path.append(hist)
+    return np.array(path), hist
+
+FORMS = {'pd': 'log', 'lgd': 'lin', 'prepay': 'log'}
+
+def build_rates():
+    rates = {}
+    for s in SEGS:
+        rates[s] = {}
+        for r, f in FORMS.items():
+            p, h = rate_path(s, r, f)
+            rates[s][r] = p
+            print(f'{s} {r:6s} hist_mean={h:.5f} fcpred={np.round(p[:FCQ],4)} reversion={np.round(p[FCQ:FCQ+RQ],4)}')
+    return rates
+
+def simulate(rates, N, seed=12345):
+    rng = np.random.default_rng(seed)
+    out = {}
+    for s in SEGS:
+        m = np.clip(rates[s]['pd'], 1e-9, 1 - 1e-9)
+        lgd = rates[s]['lgd']; prep = rates[s]['prepay']
+        z = rng.standard_normal(N)
+        pools = P[P.segment == s]
+        st = {p.pool_id: np.full(N, p.balance) for p in pools.itertuples()}
+        tot = {p.pool_id: np.zeros(N) for p in pools.itertuples()}
+        sz = np.sqrt(1 - PERS**2)
+        for q in range(MAXT):
+            if q > 0:
+                z = PERS * z + sz * rng.standard_normal(N)
+            pdq = ndtr((norm.ppf(m[q]) + np.sqrt(RHO) * z) / np.sqrt(1 - RHO))
+            for p in pools.itertuples():
+                T = int(p.remaining_quarters)
+                if q >= T: continue
+                bal = st[p.pool_id]
+                d = bal * pdq
+                tot[p.pool_id] += d * lgd[q]
+                pre = (bal - d) * prep[q]
+                rem = bal - d - pre
+                st[p.pool_id] = rem * (T - q - 1) / (T - q)
+        for k in st: out[k] = (tot[k].mean(), np.quantile(tot[k], [0.025, 0.975]))
+    return out
+
+if __name__ == '__main__':
+    rates = build_rates()
+    res = simulate(rates, 200000, seed=1)
+    rows = []
+    for p in P.itertuples():
+        mu, (lo, hi) = res[p.pool_id]
+        rows.append(dict(pool_id=p.pool_id, ecl=mu, ecl_lower=lo, ecl_upper=hi, bal=p.balance,
+                         rate=mu / p.balance, lrate=lo / p.balance, hrate=hi / p.balance))
+    df = pd.DataFrame(rows)
+    print(df.to_string(index=False))
+    print('portfolio allowance', df.ecl.sum())
+EOF
+python3 work/build.py
 ```
 
 ## [39] tool
@@ -1658,7 +1995,30 @@ portfolio allowance 8788224.281169744
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/sens.py <<'EOF'
+import itertools, numpy as np, pandas as pd
+import sys; sys.path.insert(0,'work')
+from build import rate_path, simulate, P, SEGS, MAXT
 
+combos = {'base(log,lin,log)': {'pd':'log','lgd':'lin','prepay':'log'},
+          'probit(lin)': {'pd':'probit','lgd':'lin','prepay':'log'},
+          'quad(pd)': {'pd':'quad','lgd':'lin','prepay':'log'},
+          'lin(pd)': {'pd':'lin','lgd':'lin','prepay':'log'},
+          'logpd_probitlgd': {'pd':'log','lgd':'probit','prepay':'log'},
+          'logpd_quadlgd': {'pd':'log','lgd':'quad','prepay':'log'},
+          'probit_all': {'pd':'probit','lgd':'probit','prepay':'probit'},
+          'quad_all': {'pd':'quad','lgd':'quad','prepay':'quad'},
+          }
+res_all={}
+for name, forms in combos.items():
+    rates={s:{r:rate_path(s,r,f)[0] for r,f in forms.items()} for s in SEGS}
+    res=simulate(rates, 100000, seed=7)
+    res_all[name]=pd.Series({k:v[0]/P.set_index('pool_id').balance[k] for k,v in res.items()})
+df=pd.DataFrame(res_all)
+df['spread']=df.max(axis=1)-df.min(axis=1)
+print((df*100).round(2).to_string())
+EOF
+python3 work/sens.py
 ```
 
 ## [41] tool
@@ -1685,7 +2045,26 @@ UnboundLocalError: cannot access local variable 'pf' where it is not associated 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - <<'EOF'
+import re
+p='work/build.py'; s=open(p).read()
+s=s.replace('''def design(d):
+    return sm.add_constant(d[['unemployment','hpi_growth']].values.astype(float))''',
+'''def design(d, quad=False):
+    if quad:
+        u = d['unemployment'].values.astype(float); h = d['hpi_growth'].values.astype(float)
+        return np.column_stack([np.ones(len(d)), u, h, u**2, h**2, u*h])
+    return sm.add_constant(d[['unemployment','hpi_growth']].values.astype(float))''')
+s=s.replace('''    d = H[H.segment == seg]
+    y = d[rate].values.astype(float); X = design(d); Xf = design(F)
+    if form == 'lin':''','''    d = H[H.segment == seg]
+    q = form.endswith('q'); form = form.rstrip('q')
+    y = d[rate].values.astype(float); X = design(d, q); Xf = design(F, q)
+    if form == 'lin':''')
+s=s.replace("""    elif form == 'probit':""","""    elif form == 'probit':""")
+open(p,'w').write(s)
+EOF
+python3 work/sens.py
 ```
 
 ## [43] tool
@@ -1712,7 +2091,13 @@ UnboundLocalError: cannot access local variable 'pf' where it is not associated 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - <<'EOF'
+p='work/build.py'; s=open(p).read()
+s=s.replace("    q = form.endswith('q'); form = form.rstrip('q')",
+            "    q = form in ('quad','logquad'); form = {'quad':'lin','logquad':'log'}.get(form, form)")
+open(p,'w').write(s)
+EOF
+python3 work/sens.py
 ```
 
 ## [45] tool
@@ -1762,7 +2147,43 @@ C4              20.23        18.82     18.47    16.19            20.52          
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/cv.py <<'EOF'
+import numpy as np, pandas as pd, statsmodels.api as sm
+H=pd.read_csv('data/history.csv')
+def X(d,q=False,log=False):
+    u=d.unemployment.values.astype(float); h=d.hpi_growth.values.astype(float)
+    if q: return np.column_stack([np.ones(len(d)),u,h,u**2,h**2,u*h])
+    return sm.add_constant(np.column_stack([u,h]))
+def pred(form,ytr,Xtr,Xte):
+    if form=='lin':   return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if form=='probit':return sm.GLM(ytr,Xtr,family=sm.families.Binomial(link=sm.families.links.Probit())).fit().predict(Xte)
+    if form=='log':   return sm.GLM(ytr,Xtr,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xte)
+    if form=='quad':  return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if form=='logquad':return sm.GLM(ytr,Xtr,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xte)
+forms=['lin','probit','log','quad','logquad']
+for rate in ['pd','lgd','prepay']:
+  print('====',rate)
+  for form in forms:
+    sq={}; cnt={}
+    for seg in 'ABC':
+        d=H[H.segment==seg]; y=d[rate].values
+        tq = form in ('quad','logquad')
+        Xm=X(d,tq)
+        for blk in range(0,80,10):
+            te=np.arange(blk,min(blk+10,80)); tr=np.setdiff1d(np.arange(80),te)
+            pr=pred(form,y[tr],Xm[tr],Xm[te])
+            for i in te:
+                st = 'stress' if (d.unemployment.values[i]>6.0 or d.hpi_growth.values[i]<0.0) else 'mild'
+                sq.setdefault((seg,st),[]).append((pr[list(te).index(i)]-y[i])**2)
+    for k in sorted(sq):
+        pass
+    # aggregate by stress vs mild across segments
+    agg={}
+    for (seg,st),v in sq.items(): agg.setdefault(st,[]).extend(v)
+    print('  %-9s'%form, {k:round(float(np.sqrt(np.mean(v))),5) for k,v in agg.items()},
+          'overall', round(float(np.sqrt(np.mean(sum(agg.values(),[])))),5))
+EOF
+python3 work/cv.py
 ```
 
 ## [47] tool
@@ -1842,7 +2263,38 @@ C4              20.23        18.82     18.47    16.19            20.52          
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/cv2.py <<'EOF'
+import numpy as np, pandas as pd, statsmodels.api as sm
+H=pd.read_csv('data/history.csv')
+LINKS={'lin':None,'probit':'probit','logit':'logit','cloglog':'cloglog','log':'log','sqrt':'sqrt'}
+def Xm(d,q=False):
+    u=d.unemployment.values.astype(float); h=d.hpi_growth.values.astype(float)
+    if q: return np.column_stack([np.ones(len(d)),u,h,u**2,h**2,u*h])
+    return sm.add_constant(np.column_stack([u,h]))
+def pred(form,ytr,Xtr,Xte):
+    if form=='lin': return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if form=='quad': return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if form=='log': return sm.GLM(ytr,Xtr,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xte)
+    fam=sm.families.Binomial()
+    lk={'probit':sm.families.links.Probit(),'logit':sm.families.links.Logit(),'cloglog':sm.families.links.CLogLog()}[form]
+    return sm.GLM(ytr,Xtr,family=fam,link=lk).fit().predict(Xte)
+forms=['lin','probit','logit','cloglog','log','quad']
+for rate in ['pd','lgd','prepay']:
+    print('====',rate)
+    for form in forms:
+        all_e=[]; stress_e=[]
+        for seg in 'ABC':
+            d=H[H.segment==seg]; y=d[rate].values
+            X=Xm(d,form=='quad')
+            for blk in range(0,80,10):
+                te=np.arange(blk,min(blk+10,80)); tr=np.setdiff1d(np.arange(80),te)
+                pr=pred(form,y[tr],X[tr],X[te])
+                e=(pr-y[te])**2; all_e.extend(e)
+                st=(d.unemployment.values[te]>6.0)|(d.hpi_growth.values[te]<0.0)
+                if st.any(): stress_e.extend(e[st])
+        print('   %-8s all=%.5f stress=%.5f'%(form,np.sqrt(np.mean(all_e)),np.sqrt(np.mean(stress_e))))
+EOF
+python3 work/cv2.py
 ```
 
 ## [49] tool
@@ -2131,7 +2583,31 @@ Here is a truncated version:
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/coef.py <<'EOF'
+import numpy as np, pandas as pd, statsmodels.api as sm
+H=pd.read_csv('data/history.csv')
+def Xm(d):
+    return sm.add_constant(d[['unemployment','hpi_growth']].values.astype(float))
+for rate in ['pd','lgd','prepay']:
+    print('==',rate)
+    for seg in 'ABC':
+        d=H[H.segment==seg]; y=d[rate].values; X=Xm(d)
+        gl=sm.GLM(y,X,family=sm.families.Gaussian(link=sm.families.links.Log())).fit()
+        glit=sm.GLM(y,X,family=sm.families.Binomial(link=sm.families.links.Logit())).fit()
+        ols=sm.OLS(y,X).fit()
+        print('  %s log-link a=%.4f b=%.4f c=%.4f | logit a=%.4f b=%.4f c=%.4f | ols a=%.4f b=%.4f c=%.4f'%(
+            seg,*gl.params,*glit.params,*ols.params))
+    # pooled fixed-effect log link
+    d=H.copy()
+    X=np.column_stack([pd.get_dummies(d.segment).values.astype(float), d.unemployment.values, d.hpi_growth.values])
+    y=d[rate].values
+    gl=sm.GLM(y,X,family=sm.families.Gaussian(link=sm.families.links.Log())).fit()
+    res=y-gl.predict(X)
+    print('  pooled log-link resid std %.5f (per-seg avg %.5f)'%(res.std(ddof=4), np.mean([H[H.segment==s][rate].values.std(ddof=3) for s in 'ABC'])))
+    # split residual variance halves
+    f=gl.predict(X); lo=y<f.mean(); print('   resid std low-fit %.5f high-fit %.5f'%(res[lo].std(),res[~lo].std()))
+EOF
+python3 work/coef.py 2>/dev/null
 ```
 
 ## [51] tool
@@ -2193,7 +2669,23 @@ Here is a truncated version:
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/het.py <<'EOF'
+import numpy as np, pandas as pd, statsmodels.api as sm
+H=pd.read_csv('data/history.csv')
+for rate in ['pd','lgd','prepay']:
+    print('==',rate)
+    for seg in 'ABC':
+        d=H[H.segment==seg]; y=d[rate].values
+        X=sm.add_constant(d[['unemployment','hpi_growth']].values.astype(float))
+        fit=np.asarray(sm.GLM(y,X,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(X))
+        q=np.quantile(fit,[0,.33,.66,1])
+        line=[]
+        for i in range(3):
+            m=(fit>=q[i])&(fit<=q[i+1])
+            line.append('n=%d mean=%.4f sd=%.5f sd/mean=%.3f sdlog=%.4f'%(m.sum(),y[m].mean(),y[m].std(),y[m].std()/y[m].mean(),np.log(y[m]).std()))
+        print(' ',seg,' | '.join(line))
+EOF
+python3 work/het.py
 ```
 
 ## [53] tool
@@ -2243,7 +2735,27 @@ Here is a truncated version:
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/het2.py <<'EOF'
+import numpy as np, pandas as pd, statsmodels.api as sm
+H=pd.read_csv('data/history.csv')
+def Xq(d):
+    u=d.unemployment.values.astype(float); h=d.hpi_growth.values.astype(float)
+    return np.column_stack([np.ones(len(d)),u,h,u**2,h**2,u*h])
+for rate in ['pd','lgd','prepay']:
+    print('==',rate)
+    for seg in 'ABC':
+        d=H[H.segment==seg]; y=d[rate].values
+        X=Xq(d); Xl=sm.add_constant(d[['unemployment','hpi_growth']].values.astype(float))
+        for nm,f in [('log',sm.GLM(y,Xl,family=sm.families.Gaussian(link=sm.families.links.Log())).fit()),
+                     ('logquad',sm.GLM(y,X,family=sm.families.Gaussian(link=sm.families.links.Log())).fit())]:
+            fit=np.asarray(f.predict(X)); r=y-fit
+            q=np.quantile(fit,[0,.33,.66,1])
+            sds=[]
+            for i in range(3):
+                m=(fit>=q[i])&(fit<=q[i+1]); sds.append('%.5f/%.4f'%(r[m].std(),y[m].mean()))
+            print('  %-6s %s  residstd=%.5f'%(seg+' '+nm,' sd/mean: '.join(sds), r.std()))
+EOF
+python3 work/het2.py
 ```
 
 ## [55] tool
@@ -2274,7 +2786,12 @@ ValueError: shapes (80,6) and (3,) not aligned: 6 (dim 1) != 3 (dim 0)
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - <<'EOF'
+p='work/het2.py'; s=open(p).read()
+s=s.replace("fit=np.asarray(f.predict(X)); r=y-fit","fit=np.asarray(f.predict(Xl if nm=='log' else X)); r=y-fit")
+open(p,'w').write(s)
+EOF
+python3 work/het2.py
 ```
 
 ## [57] tool
@@ -2397,7 +2914,94 @@ The model form is well identified. Let me now write the final pipeline with larg
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/final.py <<'EOF'
+"""Lifetime ECL + per-pool 95% prediction intervals for closed-end loan pools."""
+import json, numpy as np, pandas as pd, statsmodels.api as sm
+from scipy.special import ndtr
+from scipy.stats import norm
 
+DATA = 'data/'
+H = pd.read_csv(DATA+'history.csv'); F = pd.read_csv(DATA+'forecast.csv')
+P = pd.read_csv(DATA+'pools.csv');   POL = json.load(open(DATA+'policy.json'))
+FCQ, RQ, RHO, PERS = POL['forecast_quarters'], POL['reversion_quarters'], POL['rho'], POL['persistence']
+SEGS = sorted(H.segment.unique()); MAXT = int(P.remaining_quarters.max())
+# per-rate conditional-mean model: (link, quadratic terms)
+FORMS = {'pd': ('log', False), 'lgd': ('lin', False), 'prepay': ('log', False)}
+
+def design(d, quad):
+    u = d['unemployment'].values.astype(float); h = d['hpi_growth'].values.astype(float)
+    if quad: return np.column_stack([np.ones(len(d)), u, h, u**2, h**2, u*h])
+    return sm.add_constant(np.column_stack([u, h]))
+
+def mean_path(seg, rate):
+    link, quad = FORMS[rate]
+    d = H[H.segment == seg]
+    y = d[rate].values.astype(float); X = design(d, quad); Xf = design(F, quad)
+    if link == 'log':
+        pf = sm.GLM(y, X, family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xf)
+    else:
+        pf = sm.OLS(y, X).fit().predict(Xf)
+    hist = float(y.mean())                       # segment historical mean of the rate
+    pf = np.clip(np.asarray(pf, float)[:FCQ], 1e-9, 1.0)
+    path = list(pf)
+    for k in range(1, RQ+1):                     # linear reversion: weight k/RQ on history
+        w = k / RQ
+        path.append((1-w)*pf[-1] + w*hist)
+    while len(path) < MAXT:                      # then hold historical mean
+        path.append(hist)
+    return np.array(path)
+
+def run(N=1_000_000, seed=20240613, verbose=True):
+    out = {}
+    for s in SEGS:
+        pdm  = np.clip(mean_path(s, 'pd'), 1e-9, 1-1e-9)
+        lgd  = np.clip(mean_path(s, 'lgd'), 0.0, 1.0)
+        prep = np.clip(mean_path(s, 'prepay'), 0.0, 1.0)
+        if verbose:
+            print(f'[{s}] pd mean  {np.round(pdm[:12],4)}')
+            print(f'[{s}] lgd      {np.round(lgd[:12],4)}')
+            print(f'[{s}] prepay   {np.round(prep[:12],4)}')
+        rng = np.random.default_rng(seed + hash(s) % 1000)
+        z = rng.standard_normal(N)
+        sh = np.sqrt(RHO/ (1-RHO))               # sqrt(rho)/sqrt(1-rho)
+        pools = [r for r in P[P.segment == s].itertuples()]
+        bal = {r.pool_id: np.full(N, r.balance) for r in pools}
+        loss = {r.pool_id: np.zeros(N) for r in pools}
+        a = np.sqrt(1 - PERS**2)
+        for q in range(MAXT):
+            if q:
+                z = PERS*z + a*rng.standard_normal(N)
+            pdq = ndtr((norm.ppf(pdm[q]) + sh*z))     # realized aggregate PD
+            for r in pools:
+                T = int(r.remaining_quarters)
+                if q >= T: continue
+                b = bal[r.pool_id]
+                dflt = b*pdq
+                loss[r.pool_id] += dflt*lgd[q]
+                rem = (b - dflt) - (b - dflt)*prep[q]
+                bal[r.pool_id] = rem*(T-q-1)/(T-q)
+        for r in pools:
+            L = loss[r.pool_id]
+            lo, hi = np.quantile(L, [0.025, 0.975])
+            out[r.pool_id] = (float(L.mean()), float(lo), float(hi), float(L.std(ddof=1)/np.sqrt(N)))
+    return out
+
+if __name__ == '__main__':
+    res = run()
+    rows = []
+    for r in P.itertuples():
+        mu, lo, hi, se = res[r.pool_id]
+        rows.append(dict(pool_id=r.pool_id, ecl=mu, ecl_lower=lo, ecl_upper=hi))
+    df = pd.DataFrame(rows).merge(P[['pool_id','balance','remaining_quarters']], on='pool_id')
+    df['rate']=df.ecl/df.balance; df['lrate']=df.ecl_lower/df.balance; df['hrate']=df.ecl_upper/df.balance
+    df['mcse_pct']= [res[k][3]/b*100 for k,b in zip(df.pool_id,df.balance)]
+    print(df.to_string(index=False))
+    print('portfolio allowance $%.0f' % df.ecl.sum())
+    assert (df.ecl_lower<=df.ecl).all() and (df.ecl<=df.ecl_upper).all() and (df.ecl_upper<=df.balance).all()
+    df[['pool_id','ecl','ecl_lower','ecl_upper']].to_csv('predictions.csv', index=False)
+    print(open('predictions.csv').read())
+EOF
+python3 work/final.py
 ```
 
 ## [59] tool
@@ -2479,7 +3083,38 @@ C4,233339.9025343929,205057.8195315082,258442.41768128716
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/cv3.py <<'EOF'
+import numpy as np, pandas as pd, statsmodels.api as sm, warnings
+warnings.filterwarnings('ignore')
+H=pd.read_csv('data/history.csv')
+def Xm(d,q=False):
+    u=d.unemployment.values.astype(float); h=d.hpi_growth.values.astype(float)
+    if q: return np.column_stack([np.ones(len(d)),u,h,u**2,h**2,u*h])
+    return sm.add_constant(np.column_stack([u,h]))
+def pred(form,ytr,Xtr,Xte):
+    if form=='lin': return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if form=='quad': return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if form=='log': return sm.GLM(ytr,Xtr,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xte)
+    if form=='logit': return sm.GLM(ytr,Xtr,family=sm.families.Binomial(link=sm.families.links.Logit())).fit().predict(Xte)
+    if form=='probit': return sm.GLM(ytr,Xtr,family=sm.families.Binomial(link=sm.families.links.Probit())).fit().predict(Xte)
+    if form=='cloglog': return sm.GLM(ytr,Xtr,family=sm.families.Binomial(link=sm.families.links.CLogLog())).fit().predict(Xte)
+forms=['lin','log','logit','probit','cloglog','quad']
+for rate in ['pd','lgd','prepay']:
+    print('====',rate)
+    for form in forms:
+        all_e=[];stress_e=[]
+        for seg in 'ABC':
+            d=H[H.segment==seg]; y=d[rate].values; X=Xm(d,form=='quad')
+            for blk in range(0,80,5):
+                te=np.arange(blk,min(blk+5,80)); tr=np.setdiff1d(np.arange(80),te)
+                try: pr=pred(form,y[tr],X[tr],X[te])
+                except Exception as e: pr=np.full(len(te),np.nan)
+                e=(pr-y[te])**2; all_e.extend(e)
+                st=(d.unemployment.values[te]>6.0)|(d.hpi_growth.values[te]<0.0)
+                if st.any(): stress_e.extend(e[st])
+        print('   %-8s all=%.6f stress=%.6f'%(form,np.sqrt(np.mean(all_e)),np.sqrt(np.mean(stress_e))))
+EOF
+python3 work/cv3.py
 ```
 
 ## [61] tool
@@ -2537,7 +3172,30 @@ C4,233339.9025343929,205057.8195315082,258442.41768128716
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/sens2.py <<'EOF'
+import numpy as np, pandas as pd, warnings; warnings.filterwarnings('ignore')
+import sys; sys.path.insert(0,'work')
+import build
+build.FORMS={'pd':'log','lgd':'lin','prepay':'log'}
+from build import rate_path, simulate, P, SEGS
+import types
+def rates_for(pf_, lg, pp):
+    orig=build.rate_path
+    def rp(seg,rate,form):
+        return orig(seg, rate, {'pd':pf_,'lgd':lg,'prepay':pp}[rate])[0]
+    build.rate_path=rp
+    return {s:{r:rp(s,r,None) for r in ['pd','lgd','prepay']} for s in SEGS}
+tab={}
+for pf in ['log','logit','cloglog','probit']:
+    for lg in ['lin','probit','cloglog']:
+        r=rates_for(pf,lg,'logit')
+        res=simulate(r,80000,seed=5)
+        tab[f'{pf}/{lg}']=pd.Series({k:v[0]/P.set_index('pool_id').balance[k] for k,v in res.items()})
+df=pd.DataFrame(tab)
+print((df*100).round(2).to_string())
+print('\nmean by pd model:'); print((df.mean(axis=1)*100).round(3).to_string())
+EOF
+python3 work/sens2.py
 ```
 
 ## [63] tool
@@ -2570,7 +3228,17 @@ UnboundLocalError: cannot access local variable 'pf' where it is not associated 
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - <<'EOF'
+p='work/build.py'; s=open(p).read()
+s=s.replace("""    elif form == 'probit':
+        fit = sm.GLM(y, X, family=sm.families.Binomial(link=sm.families.links.Probit())).fit(); pf = fit.predict(Xf)""",
+"""    elif form in ('probit', 'logit', 'cloglog'):
+        lk = {'probit': sm.families.links.Probit(), 'logit': sm.families.links.Logit(),
+              'cloglog': sm.families.links.CLogLog()}[form]
+        fit = sm.GLM(y, X, family=sm.families.Binomial(link=lk)).fit(); pf = fit.predict(Xf)""")
+open(p,'w').write(s)
+EOF
+python3 work/sens2.py
 ```
 
 ## [65] tool
@@ -2599,7 +3267,13 @@ IndexError: invalid index to scalar variable.
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - <<'EOF'
+p='work/sens2.py'; s=open(p).read()
+s=s.replace("import types\n","import types\nORIG = build.rate_path\n")
+s=s.replace("    orig=build.rate_path\n","    orig=ORIG\n")
+open(p,'w').write(s)
+EOF
+python3 work/sens2.py
 ```
 
 ## [67] tool
@@ -2670,7 +3344,39 @@ C4    19.996
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/stress.py <<'EOF'
+import numpy as np, pandas as pd, warnings; warnings.filterwarnings('ignore')
+import statsmodels.api as sm
+H=pd.read_csv('data/history.csv')
+def Xm(d,q=False):
+    u=d.unemployment.values.astype(float); h=d.hpi_growth.values.astype(float)
+    if q: return np.column_stack([np.ones(len(d)),u,h,u**2,h**2,u*h])
+    return sm.add_constant(np.column_stack([u,h]))
+def pred(form,ytr,Xtr,Xte):
+    if form=='lin': return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if form=='quad': return sm.OLS(ytr,Xtr).fit().predict(Xte)
+    if form=='log': return sm.GLM(ytr,Xtr,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xte)
+    lk={'probit':sm.families.links.Probit(),'logit':sm.families.links.Logit(),'cloglog':sm.families.links.CLogLog()}[form]
+    return sm.GLM(ytr,Xtr,family=sm.families.Binomial(link=lk)).fit().predict(Xte)
+forms=['lin','log','logit','probit','cloglog','quad']
+splits=[('nonstress->stress',lambda d:(d.unemployment.values<6.0)&(d.hpi_growth.values>-0.005)),
+        ('h>-0.005 -> h<=-0.005',lambda d:d.hpi_growth.values>-0.005),
+        ('first60->last20',lambda d:d.quarter.values<=60),
+        ('h>0.01 -> h<=0.01',lambda d:d.hpi_growth.values>0.01)]
+for rate in ['pd','lgd','prepay']:
+    print('====',rate)
+    for nm,mk in splits:
+        tot={}
+        for seg in 'ABC':
+            d=H[H.segment==seg]; y=d[rate].values; X=Xm(d)
+            mtr=mk(d); mte=~mtr
+            for form in forms:
+                try: pr=pred(form,y[mtr],X[mtr],X[mte])
+                except Exception: pr=np.full(mte.sum(),np.nan)
+                tot.setdefault(form,[]).extend(((pr-y[mte])**2).tolist())
+        print('  %-22s'%nm, {k:round(float(np.sqrt(np.mean(v))),5) for k,v in tot.items()})
+EOF
+python3 work/stress.py
 ```
 
 ## [69] tool
@@ -2743,7 +3449,47 @@ Model form is settled (bounded links / log-link; linear PD is badly misspecified
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/verify.py <<'EOF'
+"""Independent scalar verification of recursion + probit-shock mean preservation."""
+import numpy as np, json
+from scipy.special import ndtr
+from scipy.stats import norm
+RHO,PERS=0.02,0.6
 
+def scalar_pool(B,T,pd,lgd,prep):
+    bal=B; tot=0.0
+    for q in range(T):
+        d=bal*pd[q]; tot+=d*lgd[q]
+        rem=(bal-d)*(1-prep[q])
+        bal=rem*(T-q-1)/(T-q)
+    return tot
+
+def vec_pool(B,T,pd,lgd,prep):
+    bal=np.full(1,B); tot=0.0
+    for q in range(T):
+        d=bal*pd[q]; tot=tot+d*lgd[q]
+        bal=(bal-d)*(1-prep[q])*(T-q-1)/(T-q)
+    return tot[0]
+
+rng=np.random.default_rng(0)
+for trial in range(5):
+    T=rng.integers(2,41); B=rng.uniform(1e6,1e7)
+    pd=rng.uniform(0.001,0.3,T); lgd=rng.uniform(0.1,0.9,T); prep=rng.uniform(0.01,0.15,T)
+    a=scalar_pool(B,T,pd,lgd,prep); b=vec_pool(B,T,pd,lgd,prep)
+    print('T=%2d scalar=%.4f vec=%.4f diff=%.2e'%(T,a,b,a-b))
+
+# probit shock: does E[realized PD] == mean PD?
+m=0.05; z=rng.standard_normal(4_000_000)
+r=ndtr((norm.ppf(m)+np.sqrt(RHO)*z)/np.sqrt(1-RHO))
+print('mean preservation: target %.6f empirical %.6f'%(m,r.mean()))
+for m in [0.005,0.02,0.1,0.25]:
+    r=ndtr((norm.ppf(m)+np.sqrt(RHO)*z)/np.sqrt(1-RHO)); print('  m=%.3f -> %.6f'%(m,r.mean()))
+# AR(1) marginal variance
+z1=z.copy(); e=rng.standard_normal(len(z))
+z2=PERS*z1+np.sqrt(1-PERS**2)*e
+print('AR1 var: %.4f (target 1), corr %.4f (target %.2f)'%(z2.var(),np.corrcoef(z1,z2)[0,1],PERS))
+EOF
+python3 work/verify.py
 ```
 
 ## [71] tool
@@ -2782,7 +3528,106 @@ AR1 var: 0.9990 (target 1), corr 0.6002 (target 0.60)
 **tool call: bash**
 
 ```
+cd /workspace && cat > work/final2.py <<'EOF'
+"""Lifetime ECL (conditional mean) + per-pool central 95% prediction intervals.
 
+Conditional-mean rate models, chosen by blocked/rolling CV and stress-transfer
+tests on the segment history:
+  pd     : convex in (unemployment, hpi_growth) -- log-link, logit, cloglog
+           (linear / quadratic / probit are clearly worse out of sample)
+  lgd    : roughly linear; bounded links statistically tied with identity
+  prepay : convex -- log-link, logit, cloglog (identity link clearly worse)
+We average the fitted conditional-mean paths of the top models (they are
+statistically indistinguishable on the data) to control model-selection risk.
+Rates are then reverted linearly to the segment historical mean over
+reversion_quarters and held there through maturity.  PD is then subjected to the
+aggregate probit/AR(1) shock (rho, persistence from policy.json); the pool
+balance recursion is applied on every simulated path and losses are averaged.
+"""
+import json, warnings, numpy as np, pandas as pd, statsmodels.api as sm
+from scipy.special import ndtr
+from scipy.stats import norm
+warnings.filterwarnings('ignore')
+
+DATA='data/'
+H=pd.read_csv(DATA+'history.csv'); F=pd.read_csv(DATA+'forecast.csv')
+P=pd.read_csv(DATA+'pools.csv');   POL=json.load(open(DATA+'policy.json'))
+FCQ,RQ,RHO,PERS=POL['forecast_quarters'],POL['reversion_quarters'],POL['rho'],POL['persistence']
+SEGS=sorted(H.segment.unique()); MAXT=int(P.remaining_quarters.max())
+MODELS={'pd':['log','logit','cloglog'],'lgd':['lin','logit','cloglog'],'prepay':['log','logit','cloglog']}
+LINKS={'probit':sm.families.links.Probit(),'logit':sm.families.links.Logit(),'cloglog':sm.families.links.CLogLog()}
+
+def design(d):
+    return sm.add_constant(d[['unemployment','hpi_growth']].values.astype(float))
+
+def fit_predict(form,y,X,Xf):
+    if form=='lin':  return sm.OLS(y,X).fit().predict(Xf)
+    if form=='log':  return sm.GLM(y,X,family=sm.families.Gaussian(link=sm.families.links.Log())).fit().predict(Xf)
+    return sm.GLM(y,X,family=sm.families.Binomial(link=LINKS[form])).fit().predict(Xf)
+
+def mean_rates(seg):
+    """Return dict of rate -> full (MAXT,) conditional-mean path for one segment."""
+    d=H[H.segment==seg]; X=design(d); Xf=design(F)
+    hist={r: float(d[r].values.mean()) for r in MODELS}   # historical means from the data
+    fc={}
+    for r,models in MODELS.items():
+        y=d[r].values.astype(float)
+        fc[r]=np.mean([np.clip(np.asarray(fit_predict(m,y,X,Xf),float)[:FCQ],1e-9,1.0) for m in models],axis=0)
+    out={}
+    for r in MODELS:
+        pf=fc[r]; path=list(pf)
+        for k in range(1,RQ+1):                   # linear reversion, weight k/RQ on history
+            w=k/RQ; path.append((1-w)*pf[-1]+w*hist[r])
+        while len(path)<MAXT:                     # then hold at the historical mean
+            path.append(hist[r])
+        out[r]=np.clip(np.array(path),0.0,1.0)
+    return out, hist, fc
+
+def simulate(rates,N,seed=99):
+    res={}
+    for s in SEGS:
+        m=np.clip(rates[s]['pd'],1e-9,1-1e-9); lgd=rates[s]['lgd']; prep=rates[s]['prepay']
+        rng=np.random.default_rng(seed+abs(hash(s))%100000)
+        z=rng.standard_normal(N); k=np.sqrt(RHO/(1-RHO)); a=np.sqrt(1-PERS**2)
+        pools=[r for r in P[P.segment==s].itertuples()]
+        bal={r.pool_id:np.full(N,r.balance) for r in pools}
+        loss={r.pool_id:np.zeros(N) for r in pools}
+        for q in range(MAXT):
+            if q: z=PERS*z+a*rng.standard_normal(N)
+            pdq=ndtr(norm.ppf(m[q])+k*z)                 # realized aggregate PD this quarter
+            for r in pools:
+                T=int(r.remaining_quarters)
+                if q>=T: continue
+                b=bal[r.pool_id]; dflt=b*pdq
+                loss[r.pool_id]+=dflt*lgd[q]             # loss on beginning principal
+                bal[r.pool_id]=(b-dflt)*(1-prep[q])*(T-q-1)/(T-q)
+        for r in pools:
+            L=loss[r.pool_id]; lo,hi=np.quantile(L,[0.025,0.975])
+            res[r.pool_id]=(float(L.mean()),float(lo),float(hi),float(L.std(ddof=1)/np.sqrt(N)))
+    return res
+
+if __name__=='__main__':
+    N=2_000_000
+    rates={}
+    for s in SEGS:
+        r,hist,fc=mean_rates(s); rates[s]=r
+        for k in ['pd','lgd','prepay']:
+            print(f'[{s}] {k:6s} hist={hist[k]:.5f} forecast={np.round(r[k][:FCQ],4)} reversion={np.round(r[k][FCQ:FCQ+RQ],4)} post={r[k][-1]:.5f}')
+    res=simulate(rates,N)
+    rows=[]
+    for r in P.itertuples():
+        mu,lo,hi,se=res[r.pool_id]
+        rows.append(dict(pool_id=r.pool_id,ecl=mu,ecl_lower=lo,ecl_upper=hi,balance=r.balance,
+                         rate=mu/r.balance,lrate=lo/r.balance,hrate=hi/r.balance,mcse_pct=se/r.balance*100))
+    df=pd.DataFrame(rows)
+    print(df.round(4).to_string(index=False))
+    print('portfolio allowance $%.2f'%df.ecl.sum())
+    assert df.pool_id.is_unique and np.isfinite(df[['ecl','ecl_lower','ecl_upper']].values).all()
+    assert (df.ecl_lower>=0).all() and (df.ecl_lower<=df.ecl).all() and (df.ecl<=df.ecl_upper).all() and (df.ecl_upper<=df.balance).all()
+    df[['pool_id','ecl','ecl_lower','ecl_upper']].to_csv('predictions.csv',index=False)
+    print(open('predictions.csv').read())
+EOF
+python3 work/final2.py
 ```
 
 ## [73] tool
@@ -2863,7 +3708,26 @@ C4,234404.09349427914,205416.74325028103,260242.7268200457
 **tool call: bash**
 
 ```
-
+cd /workspace && cat > work/stab.py <<'EOF'
+import numpy as np, pandas as pd, warnings; warnings.filterwarnings('ignore')
+import sys; sys.path.insert(0,'work')
+import final2
+rates={s:final2.mean_rates(s)[0] for s in final2.SEGS}
+acc=[]
+for seed in [1,2,3]:
+    res=final2.simulate(rates,1_000_000,seed)
+    df=pd.DataFrame({k:res[k][:3] for k in res},index=['ecl','lo','hi']).T
+    df['pid']=df.index
+    acc.append(df)
+a,b,c=acc
+m=a[['ecl']].join(b[['ecl']],lsuffix='_1',rsuffix='_2')
+print('ecl diff across seeds ($):'); print((a.ecl-b.ecl).round(1).to_string())
+print('lo  diff across seeds ($):'); print((a.lo-b.lo).round(0).to_string())
+print('hi  diff across seeds ($):'); print((a.hi-b.hi).round(0).to_string())
+print('relative ecl diff max %.5f%%'%(100*np.abs(a.ecl-b.ecl).div(a.ecl).max()))
+print('relative width diff max %.3f%%'%(100*np.abs((a.hi-a.lo)-(b.hi-b.lo)).div(a.hi-a.lo).max()))
+EOF
+python3 work/stab.py
 ```
 
 ## [75] tool
@@ -2940,7 +3804,18 @@ relative width diff max 0.270%
 **tool call: bash**
 
 ```
-
+cd /workspace && python3 - <<'EOF'
+import numpy as np, pandas as pd, warnings; warnings.filterwarnings('ignore')
+import sys; sys.path.insert(0,'work')
+import final2 as F
+for s in F.SEGS:
+    d=F.H[F.H.segment==s]; X=F.design(d)
+    for r in ['pd','lgd','prepay']:
+        y=d[r].values
+        glm_mean=np.mean(F.fit_predict('log',y,X,X)); samp=y.mean()
+        lin_mean=np.mean(F.fit_predict('lin',y,X,X))
+        print(f'{s} {r:6s} sample={samp:.5f} logfit_mean={glm_mean:.5f} linfit_mean={lin_mean:.5f}')
+EOF
 ```
 
 ## [77] tool
@@ -2979,7 +3854,17 @@ C prepay sample=0.09264 logfit_mean=0.09264 linfit_mean=0.09264
 **tool call: bash**
 
 ```
-
+cd /workspace && ls -l predictions.csv && cat predictions.csv && python3 - <<'EOF'
+import pandas as pd, numpy as np
+p=pd.read_csv('predictions.csv'); pools=pd.read_csv('data/pools.csv')
+assert list(p.columns)==['pool_id','ecl','ecl_lower','ecl_upper'], p.columns
+assert len(p)==12 and p.pool_id.is_unique and set(p.pool_id)==set(pools.pool_id)
+m=p.merge(pools,on='pool_id')
+assert np.isfinite(m[['ecl','ecl_lower','ecl_upper']].values).all()
+assert (m.ecl_lower>=0).all() and (m.ecl_lower<=m.ecl).all() and (m.ecl<=m.ecl_upper).all() and (m.ecl_upper<=m.balance).all()
+print('OK  portfolio allowance = $%.0f  (total balance $%.0f, portfolio loss rate %.2f%%)'%(
+    m.ecl.sum(), m.balance.sum(), 100*m.ecl.sum()/m.balance.sum()))
+EOF
 ```
 
 ## [79] tool

@@ -86,7 +86,7 @@ Let me start by examining all the input files to understand the data structure a
 **tool call: bash**
 
 ```
-
+head -20 data/history.csv && echo "---" && head -20 data/forecast.csv && echo "---" && head -20 data/pools.csv && echo "---" && cat data/policy.json
 ```
 
 ## [3] tool
@@ -174,7 +174,7 @@ Let me examine the full data more carefully.
 **tool call: bash**
 
 ```
-
+wc -l data/history.csv && echo "---" && tail -5 data/history.csv && echo "---" && cat data/forecast.csv && echo "---" && cat data/pools.csv && echo "---" && cat data/policy.json
 ```
 
 ## [5] tool
@@ -412,7 +412,22 @@ Let me examine the data more thoroughly and build the simulation.
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+print('History shape:', h.shape)
+print('Segments:', h['segment'].unique())
+print('Quarters per segment:', h.groupby('segment')['quarter'].count().to_dict())
+print()
+print('History stats by segment:')
+for seg in ['A','B','C']:
+    sub = h[h['segment']==seg]
+    print(f'Segment {seg}: PD mean={sub.pd.mean():.6f}, LGD mean={sub.lgd.mean():.6f}, prepay mean={sub.prepay.mean():.6f}')
+    print(f'  PD std={sub.pd.std():.6f}, LGD std={sub.lgd.std():.6f}, prepay std={sub.prepay.std():.6f}')
+print()
+print('Forecast shape:', pd.read_csv('data/forecast.csv').shape)
+print('Pools shape:', pd.read_csv('data/pools.csv').shape)
+"
 ```
 
 ## [7] tool
@@ -2119,7 +2134,19 @@ Now I have a clear picture of all inputs. Let me build the complete simulation s
 **tool call: bash**
 
 ```
-
+python3 -c "
+import pandas as pd
+h = pd.read_csv('data/history.csv')
+print('Unemployment range:', h['unemployment'].min(), '-', h['unemployment'].max())
+print('HPI growth range:', h['hpi_growth'].min(), '-', h['hpi_growth'].max())
+print()
+for seg in ['A','B','C']:
+    sub = h[h['segment']==seg]
+    print(f'Segment {seg}:')
+    print(f'  PD: mean={sub.pd.mean():.6f}, std={sub.pd.std():.6f}, min={sub.pd.min():.6f}, max={sub.pd.max():.6f}')
+    print(f'  LGD: mean={sub.lgd.mean():.6f}, std={sub.lgd.std():.6f}, min={sub.lgd.min():.6f}, max={sub.lgd.max():.6f}')
+    print(f'  Prepay: mean={sub.prepay.mean():.6f}, std={sub.prepay.std():.6f}, min={sub.prepay.min():.6f}, max={sub.prepay.max():.6f}')
+"
 ```
 
 ## [9] tool
@@ -2887,7 +2914,203 @@ Now I have a clear picture of all inputs. Let me build the complete simulation s
 **tool call: bash**
 
 ```
+cat > run_simulation.py << 'PYEOF'
+import pandas as pd
+import numpy as np
+from scipy.stats import norm
+import json
+from sklearn.linear_model import LinearRegression
 
+# ── Load data ──────────────────────────────────────────────────
+history = pd.read_csv('data/history.csv')
+forecast = pd.read_csv('data/forecast.csv')
+pools = pd.read_csv('data/pools.csv')
+with open('data/policy.json') as f:
+    policy = json.load(f)
+
+forecast_quarters = policy['forecast_quarters']
+reversion_quarters = policy['reversion_quarters']
+rho = policy['rho']
+persistence = policy['persistence']
+interval_level = policy['interval_level']
+
+print(f"Policy: forecast_quarters={forecast_quarters}, reversion_quarters={reversion_quarters}")
+print(f"rho={rho}, persistence={persistence}, interval_level={interval_level}")
+
+# ── Historical means per segment ──────────────────────────────
+hist_means = history.groupby('segment')[['pd', 'lgd', 'prepay']].mean()
+print("\nHistorical means:")
+print(hist_means)
+
+# ── Fit regression models per segment ─────────────────────────
+segments = sorted(history['segment'].unique())
+models = {}
+for seg in segments:
+    seg_data = history[history['segment'] == seg]
+    X = seg_data[['unemployment', 'hpi_growth']].values
+    
+    models[seg] = {
+        'pd': LinearRegression().fit(X, seg_data['pd'].values),
+        'lgd': LinearRegression().fit(X, seg_data['lgd'].values),
+        'prepay': LinearRegression().fit(X, seg_data['prepay'].values),
+    }
+    # Print R² for diagnostics
+    for name in ['pd', 'lgd', 'prepay']:
+        r2 = models[seg][name].score(X, seg_data[name].values)
+        print(f"  Segment {seg} {name} R² = {r2:.4f}")
+
+# ── Predict conditional mean rates for forecast quarters ──────
+forecast_X = forecast[['unemployment', 'hpi_growth']].values
+max_T = int(pools['remaining_quarters'].max())
+print(f"\nMax remaining quarters: {max_T}")
+
+# For each segment, predict rates for all quarters up to max_T
+# mean_rates[seg][t] = (pd, lgd, prepay) for quarter t (1-indexed)
+mean_rates = {}
+for seg in segments:
+    seg_models = models[seg]
+    seg_mean = hist_means.loc[seg]
+    
+    # Forecast period rates (quarters 1..forecast_quarters)
+    forecast_pd = np.clip(seg_models['pd'].predict(forecast_X), 0, 1)
+    forecast_lgd = np.clip(seg_models['lgd'].predict(forecast_X), 0, 1)
+    forecast_prepay = np.clip(seg_models['prepay'].predict(forecast_X), 0, 1)
+    
+    last_pd = forecast_pd[-1]
+    last_lgd = forecast_lgd[-1]
+    last_prepay = forecast_prepay[-1]
+    
+    rates = {}
+    for t in range(1, max_T + 1):
+        if t <= forecast_quarters:
+            pd_t = forecast_pd[t-1]
+            lgd_t = forecast_lgd[t-1]
+            prepay_t = forecast_prepay[t-1]
+        elif t <= forecast_quarters + reversion_quarters:
+            k = t - forecast_quarters
+            w = k / reversion_quarters  # weight on history
+            pd_t = (1 - w) * last_pd + w * seg_mean['pd']
+            lgd_t = (1 - w) * last_lgd + w * seg_mean['lgd']
+            prepay_t = (1 - w) * last_prepay + w * seg_mean['prepay']
+        else:
+            pd_t = seg_mean['pd']
+            lgd_t = seg_mean['lgd']
+            prepay_t = seg_mean['prepay']
+        
+        rates[t] = (pd_t, lgd_t, prepay_t)
+    
+    mean_rates[seg] = rates
+
+# Print some diagnostic rates
+print("\nSample mean rates (Segment A, first 12 quarters):")
+for t in range(1, 13):
+    pd_t, lgd_t, prepay_t = mean_rates['A'][t]
+    print(f"  Q{t}: PD={pd_t:.6f}, LGD={lgd_t:.4f}, Prepay={prepay_t:.4f}")
+
+# ── Simulation ─────────────────────────────────────────────────
+N_PATHS = 100_000
+rng = np.random.default_rng(42)
+sqrt_1_minus_rho2 = np.sqrt(1 - persistence**2)
+sqrt_1_minus_rho = np.sqrt(1 - rho)
+sqrt_rho = np.sqrt(rho)
+
+print(f"\nSimulating {N_PATHS} paths per segment...")
+
+# Simulate z paths for each segment (AR(1) process)
+z_paths = {}
+for seg in segments:
+    z = np.empty((N_PATHS, max_T), dtype=np.float64)
+    z[:, 0] = rng.standard_normal(N_PATHS)
+    for t in range(1, max_T):
+        z[:, t] = persistence * z[:, t-1] + sqrt_1_minus_rho2 * rng.standard_normal(N_PATHS)
+    z_paths[seg] = z
+
+# Compute realized PD for each segment, each path, each quarter
+realized_pd = {}
+for seg in segments:
+    pd_arr = np.empty((N_PATHS, max_T), dtype=np.float64)
+    for t in range(max_T):
+        m_t = mean_rates[seg][t+1][0]
+        ppf_m = norm.ppf(np.clip(m_t, 1e-10, 1-1e-10))
+        pd_arr[:, t] = norm.cdf((ppf_m + sqrt_rho * z_paths[seg][:, t]) / sqrt_1_minus_rho)
+    realized_pd[seg] = pd_arr
+
+print("Simulation complete.")
+
+# ── Compute lifetime losses for each pool ─────────────────────
+results = []
+for _, pool in pools.iterrows():
+    pool_id = pool['pool_id']
+    seg = pool['segment']
+    B = float(pool['balance'])
+    T = int(pool['remaining_quarters'])
+    
+    # Get PD path for this pool's term
+    pd_path = realized_pd[seg][:, :T]  # (N_PATHS, T)
+    
+    # Get LGD and prepay for each quarter (deterministic)
+    lgd_arr = np.array([mean_rates[seg][t+1][1] for t in range(T)])
+    prepay_arr = np.array([mean_rates[seg][t+1][2] for t in range(T)])
+    
+    # Beginning principal for each quarter (0-indexed: t=0..T-1)
+    # quarter q (1-based): B * (1 - (q-1)/T)
+    # 0-indexed: B * (1 - t/T)
+    beginning_principal = B * (1.0 - np.arange(T, dtype=np.float64) / T)
+    
+    # Vectorized simulation over all paths
+    surviving = np.ones(N_PATHS, dtype=np.float64)
+    total_loss = np.zeros(N_PATHS, dtype=np.float64)
+    
+    for t in range(T):
+        # Default loss: surviving fraction * PD * beginning_principal * LGD
+        default_loss = surviving * pd_path[:, t] * beginning_principal[t] * lgd_arr[t]
+        total_loss += default_loss
+        # Update surviving fraction: survive default AND survive prepay
+        surviving *= (1.0 - pd_path[:, t]) * (1.0 - prepay_arr[t])
+    
+    # Compute statistics
+    ecl = float(np.mean(total_loss))
+    ecl_lower = float(np.percentile(total_loss, (1 - interval_level) / 2 * 100))
+    ecl_upper = float(np.percentile(total_loss, (1 + interval_level) / 2 * 100))
+    
+    # Ensure bounds
+    ecl = np.clip(ecl, 0.0, B)
+    ecl_lower = np.clip(ecl_lower, 0.0, B)
+    ecl_upper = np.clip(ecl_upper, 0.0, B)
+    
+    # Ensure ordering
+    if ecl_lower > ecl:
+        ecl_lower = 0.0
+    if ecl_upper < ecl:
+        ecl_upper = B
+    if ecl_lower > ecl_upper:
+        ecl_lower = ecl_upper = ecl
+    
+    results.append({
+        'pool_id': pool_id,
+        'ecl': ecl,
+        'ecl_lower': ecl_lower,
+        'ecl_upper': ecl_upper,
+    })
+    print(f"  {pool_id}: ECL={ecl:,.2f}  [{ecl_lower:,.2f}, {ecl_upper:,.2f}]  (balance={B:,.0f}, rate={ecl/B*100:.4f}%)")
+
+# ── Write output ───────────────────────────────────────────────
+results_df = pd.DataFrame(results)
+results_df.to_csv('predictions.csv', index=False)
+print(f"\nWrote predictions.csv with {len(results_df)} rows")
+print(results_df.to_string(index=False))
+
+# Verify constraints
+for _, row in results_df.iterrows():
+    pool_row = pools[pools['pool_id'] == row['pool_id']].iloc[0]
+    bal = pool_row['balance']
+    assert 0 <= row['ecl'] <= bal, f"ECL out of bounds for {row['pool_id']}"
+    assert 0 <= row['ecl_lower'] <= bal, f"ecl_lower out of bounds for {row['pool_id']}"
+    assert 0 <= row['ecl_upper'] <= bal, f"ecl_upper out of bounds for {row['pool_id']}"
+    assert row['ecl_lower'] <= row['ecl'] <= row['ecl_upper'], f"Ordering violated for {row['pool_id']}"
+print("\nAll constraints satisfied.")
+PYEOF
+python3 run_simulation.py
 ```
 
 ## [11] tool
@@ -2994,7 +3217,38 @@ The simulation ran successfully. Let me verify the output file and check for any
 **tool call: bash**
 
 ```
-
+cat predictions.csv && echo "---" && python3 -c "
+import pandas as pd
+df = pd.read_csv('predictions.csv')
+print('Shape:', df.shape)
+print('Columns:', list(df.columns))
+print('Dtypes:', df.dtypes.to_dict())
+print()
+# Check constraints
+pools = pd.read_csv('data/pools.csv')
+for _, row in df.iterrows():
+    pool_row = pools[pools['pool_id'] == row['pool_id']].iloc[0]
+    bal = pool_row['balance']
+    assert 0 <= row['ecl'] <= bal, f'ECL out of bounds for {row[\"pool_id\"]}'
+    assert 0 <= row['ecl_lower'] <= bal, f'ecl_lower out of bounds for {row[\"pool_id\"]}'
+    assert 0 <= row['ecl_upper'] <= bal, f'ecl_upper out of bounds for {row[\"pool_id\"]}'
+    assert row['ecl_lower'] <= row['ecl'] <= row['ecl_upper'], f'Ordering violated for {row[\"pool_id\"]}'
+    assert row['ecl_lower'] >= 0, f'ecl_lower < 0 for {row[\"pool_id\"]}'
+    assert row['ecl_upper'] <= bal, f'ecl_upper > balance for {row[\"pool_id\"]}'
+    assert np.isfinite(row['ecl']), f'Non-finite ecl for {row[\"pool_id\"]}'
+    assert np.isfinite(row['ecl_lower']), f'Non-finite ecl_lower for {row[\"pool_id\"]}'
+    assert np.isfinite(row['ecl_upper']), f'Non-finite ecl_upper for {row[\"pool_id\"]}'
+print('All constraints satisfied!')
+print()
+# Check for duplicates
+assert df['pool_id'].nunique() == len(df), 'Duplicate pool_ids'
+print('No duplicate pool_ids')
+print()
+# Check balance-weighted ECL rate
+total_balance = pools['balance'].sum()
+weighted_ecl = sum(df['ecl'].values[i] * pools[pools['pool_id']==df['pool_id'].iloc[i]]['balance'].values[0] for i in range(len(df))) / total_balance
+print(f'Portfolio weighted ECL rate: {weighted_ecl*100:.4f}%')
+"
 ```
 
 ## [13] tool
@@ -3034,7 +3288,44 @@ Dtypes: {'pool_id': <StringDtype(storage='python', na_value=nan)>, 'ecl': dtype(
 **tool call: bash**
 
 ```
+python3 -c "
+import pandas as pd
+import numpy as np
 
+df = pd.read_csv('predictions.csv')
+pools = pd.read_csv('data/pools.csv')
+
+print('Shape:', df.shape)
+print('Columns:', list(df.columns))
+print()
+
+# Check constraints
+for _, row in df.iterrows():
+    pool_row = pools[pools['pool_id'] == row['pool_id']].iloc[0]
+    bal = pool_row['balance']
+    assert 0 <= row['ecl'] <= bal, f'ECL out of bounds for {row[\"pool_id\"]}'
+    assert 0 <= row['ecl_lower'] <= bal, f'ecl_lower out of bounds for {row[\"pool_id\"]}'
+    assert 0 <= row['ecl_upper'] <= bal, f'ecl_upper out of bounds for {row[\"pool_id\"]}'
+    assert row['ecl_lower'] <= row['ecl'] <= row['ecl_upper'], f'Ordering violated for {row[\"pool_id\"]}'
+    assert np.isfinite(row['ecl']), f'Non-finite ecl for {row[\"pool_id\"]}'
+    assert np.isfinite(row['ecl_lower']), f'Non-finite ecl_lower for {row[\"pool_id\"]}'
+    assert np.isfinite(row['ecl_upper']), f'Non-finite ecl_upper for {row[\"pool_id\"]}'
+
+print('All constraints satisfied!')
+print()
+
+# Check for duplicates
+assert df['pool_id'].nunique() == len(df), 'Duplicate pool_ids'
+print('No duplicate pool_ids')
+print()
+
+# Check balance-weighted ECL rate
+total_balance = pools['balance'].sum()
+weighted_ecl = sum(df['ecl'].values[i] * pools[pools['pool_id']==df['pool_id'].iloc[i]]['balance'].values[0] for i in range(len(df))) / total_balance
+print(f'Portfolio weighted ECL rate: {weighted_ecl*100:.4f}%')
+print(f'Total portfolio balance: {total_balance:,.0f}')
+print(f'Total ECL: {df[\"ecl\"].sum():,.2f}')
+"
 ```
 
 ## [15] tool

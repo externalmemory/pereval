@@ -55,7 +55,7 @@ Predict beta with a 95% interval for every t in data/test.csv and write predicti
 **tool call: bash**
 
 ```
-
+ls -la data/ && head -20 data/train.csv && echo "---" && head -20 data/test.csv && echo "---" && wc -l data/train.csv data/test.csv
 ```
 
 ## [3] tool
@@ -116,7 +116,7 @@ t
 **tool call: bash**
 
 ```
-
+cat data/test.csv && echo "---" && tail -20 data/train.csv
 ```
 
 ## [5] tool
@@ -871,7 +871,72 @@ Baseline saved. Now the Keplerian model: vantage on a circle, two bodies on Kepl
 **tool call: bash**
 
 ```
+mkdir -p work && cat > work/kepler_fit.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import differential_evolution, least_squares
+import time, pickle
 
+tr = pd.read_csv('data/train.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values))
+b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi)
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def body_pos(ae, e, varpi, n, M0, t):
+    M = n*t + M0
+    E = kepler_E(M, e)
+    x = ae*(np.cos(E) - e)
+    y = ae*np.sqrt(1-e*e)*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x - sw*y, sw*x + cw*y
+
+def predict(p, t):
+    w, th0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0 = p
+    Vx, Vy = np.cos(th0 + w*t), np.sin(th0 + w*t)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, t)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, t)
+    al = np.arctan2(Ay - Vy, Ax - Vx)
+    be = np.arctan2(By - Vy, Bx - Vx)
+    return al, be
+
+def resid(p):
+    al, be = predict(p, t)
+    ra = np.unwrap(al) - a_obs
+    rb = np.unwrap(be) - b_obs
+    ra -= ra.mean(); rb -= rb.mean()
+    return np.concatenate([ra, rb])
+
+def cost(p):
+    r = resid(p)
+    return np.sum(r*r)
+
+bounds = [
+    (-0.03, 0.03),      # w
+    (0, 2*np.pi),       # th0
+    (0.2, 30), (0, 0.7), (0, 2*np.pi), (-0.03, 0.03), (0, 2*np.pi),  # A
+    (0.2, 30), (0, 0.7), (0, 2*np.pi), (-0.03, 0.03), (0, 2*np.pi),  # B
+]
+
+t0 = time.time()
+de = differential_evolution(cost, bounds, maxiter=250, popsize=18, tol=1e-10,
+                            seed=1, workers=1, polish=False, updating='immediate')
+print("DE cost:", de.fun, "time:", time.time()-t0)
+sol = least_squares(resid, de.x, method='lm', max_nfev=2000)
+print("LS cost:", sol.cost, "rms deg:", np.rad2deg(np.sqrt(sol.cost/len(t))))
+pickle.dump(sol.x, open('work/kepler_params.pkl','wb'))
+w = sol.x
+print("params:", np.round(w, 6))
+print(f"vantage: period {2*np.pi/abs(w[0]):.1f}d")
+print(f"A: a={w[2]:.3f} e={w[3]:.3f} n period {2*np.pi/abs(w[5]):.1f}d")
+print(f"B: a={w[7]:.3f} e={w[8]:.3f} n period {2*np.pi/abs(w[10]):.1f}d")
+EOF
+timeout 560 python work/kepler_fit.py
 ```
 
 ## [25] tool
@@ -922,7 +987,70 @@ Big improvement: RMS 1.56° (noise ~0.72°). Vantage orbits at 424d; body A at ~
 **tool call: bash**
 
 ```
+cat > work/kepler_fit2.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import least_squares
+import pickle
 
+tr = pd.read_csv('data/train.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values))
+b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi)
+    E = M + e*np.sin(M)
+    for _ in range(12):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def body_pos(ae, e, varpi, n, M0, t):
+    M = n*t + M0
+    E = kepler_E(M, e)
+    x = ae*(np.cos(E) - e)
+    y = ae*np.sqrt(1-e*e)*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x - sw*y, sw*x + cw*y
+
+# Full model: vantage Keplerian (radius aV=1 scale fixed), A and B Keplerian
+def predict(p, t):
+    eV, varpiV, nV, MV0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0 = p
+    Vx, Vy = body_pos(1.0, eV, varpiV, nV, MV0, t)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, t)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, t)
+    al = np.arctan2(Ay - Vy, Ax - Vx)
+    be = np.arctan2(By - Vy, Bx - Vx)
+    return al, be
+
+def resid(p):
+    al, be = predict(p, t)
+    ra = np.unwrap(al) - a_obs
+    rb = np.unwrap(be) - b_obs
+    ra -= ra.mean(); rb -= rb.mean()
+    return np.concatenate([ra, rb])
+
+p0 = np.array([0.0, 0.0, 1.4818e-02, -4.75590677e+03,
+               2.02786060e+01, 2.01583e-01, -4.75703268e+03, 1.4815e-02, 4.633321,
+               2.056277, 3.01894e-01, -4.75729388e+03, 5.169e-03, 1.179047])
+sol = least_squares(resid, p0, method='lm', max_nfev=4000)
+print("LS cost:", sol.cost, "rms deg:", np.rad2deg(np.sqrt(sol.cost/len(t))))
+pickle.dump(sol.x, open('work/kepler_params2.pkl','wb'))
+w = sol.x
+print("params:", np.round(w, 6))
+print(f"V: e={w[0]:.4f} period {2*np.pi/abs(w[2]):.2f}d")
+print(f"A: a={w[4]:.3f} e={w[5]:.4f} period {2*np.pi/abs(w[7]):.2f}d")
+print(f"B: a={w[9]:.3f} e={w[10]:.4f} period {2*np.pi/abs(w[12]):.2f}d")
+
+r = resid(sol.x)
+ra, rb = r[:len(t)], r[len(t):]
+for name, rr in [('alpha', ra), ('beta', rb)]:
+    sp = np.abs(np.fft.rfft(rr))**2
+    fr = np.fft.rfftfreq(len(t), 1.0)
+    order = np.argsort(sp)[::-1][:6]
+    print(name, "rms deg:", round(np.rad2deg(rr.std()),3),
+          "top periods:", [round(1/fr[i],1) for i in order if fr[i] > 0][:6])
+EOF
+timeout 300 python work/kepler_fit2.py
 ```
 
 ## [27] tool
@@ -989,7 +1117,61 @@ beta rms deg: 0.716 top periods: [np.float64(2.3), np.float64(19.7), np.float64(
 **tool call: bash**
 
 ```
+cat > work/validate.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import least_squares
 
+tr = pd.read_csv('data/train.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values))
+b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi)
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def body_pos(ae, e, varpi, n, M0, t):
+    M = n*t + M0
+    E = kepler_E(M, e)
+    x = ae*(np.cos(E) - e); y = ae*np.sqrt(1-e*e)*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x - sw*y, sw*x + cw*y
+
+def predict(p, t):
+    eV, varpiV, nV, MV0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0 = p
+    Vx, Vy = body_pos(1.0, eV, varpiV, nV, MV0, t)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, t)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, t)
+    return np.arctan2(Ay-Vy, Ax-Vx), np.arctan2(By-Vy, Bx-Vx)
+
+def make_resid(t, a_obs, b_obs):
+    def resid(p):
+        al, be = predict(p, t)
+        ra = np.unwrap(al) - a_obs; rb = np.unwrap(be) - b_obs
+        ra -= ra.mean(); rb -= rb.mean()
+        return np.concatenate([ra, rb])
+    return resid
+
+# full-data solution as start
+p_full = np.array([-1.92775e-01, 2.13527467e+03, 1.4815e-02, -5.51515555e+03,
+                   1.02452, 1.93169e-01, -3.38410586e+03, 1.4815e-02, 4.622373,
+                   2.015938, 2.30505e-01, -3.38126203e+03, 5.176e-03, 1.168307])
+
+for cut in [2500, 3000, 3400]:
+    m = t <= cut
+    res_tr = make_resid(t[m], a_obs[m], b_obs[m])
+    sol = least_squares(res_tr, p_full, method='lm', max_nfev=4000)
+    al_te, be_te = predict(sol.x, t[~m])
+    err_b = np.rad2deg(np.abs((np.unwrap(be_te) - b_obs[~m] + np.pi) % (2*np.pi) - np.pi))
+    err_a = np.rad2deg(np.abs((np.unwrap(al_te) - a_obs[~m] + np.pi) % (2*np.pi) - np.pi))
+    print(f"cut={cut}: train rms={np.rad2deg(np.sqrt(sol.cost/m.sum())):.4f}  "
+          f"extrap over {int(t[~m].max()-cut)}d: beta err mean={err_b.mean():.3f} max={err_b.max():.3f}  "
+          f"alpha err mean={err_a.mean():.3f} max={err_a.max():.3f}")
+EOF
+timeout 300 python work/validate.py
 ```
 
 ## [29] tool
@@ -1040,7 +1222,69 @@ Huge extrapolation errors from subset fits — alarming. Either multiple degener
 **tool call: bash**
 
 ```
+cat > work/diag.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import least_squares
 
+tr = pd.read_csv('data/train.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values))
+b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi)
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def body_pos(ae, e, varpi, n, M0, t):
+    E = kepler_E(n*t + M0, e)
+    x = ae*(np.cos(E) - e); y = ae*np.sqrt(1-e*e)*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x - sw*y, sw*x + cw*y
+
+def predict(p, t):
+    eV, varpiV, nV, MV0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0 = p
+    Vx, Vy = body_pos(1.0, eV, varpiV, nV, MV0, t)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, t)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, t)
+    return np.arctan2(Ay-Vy, Ax-Vx), np.arctan2(By-Vy, Bx-Vx)
+
+def make_resid(tt, aa, bb):
+    def resid(p):
+        al, be = predict(p, tt)
+        ra = np.unwrap(al) - aa; rb = np.unwrap(be) - bb
+        ra -= ra.mean(); rb -= rb.mean()
+        return np.concatenate([ra, rb])
+    return resid
+
+p_full = np.array([-1.92775e-01, 2.13527467e+03, 1.4815e-02, -5.51515555e+03,
+                   1.02452, 1.93169e-01, -3.38410586e+03, 1.4815e-02, 4.622373,
+                   2.015938, 2.30505e-01, -3.38126203e+03, 5.176e-03, 1.168307])
+
+# Re-fit full data with tighter settings, check p_full quality
+res_full = make_resid(t, a_obs, b_obs)
+r0 = res_full(p_full)
+print("p_full rms:", np.rad2deg(np.sqrt(np.mean(r0**2))))
+sol_full = least_squares(res_full, p_full, method='lm', max_nfev=6000)
+print("refit full rms:", np.rad2deg(np.sqrt(sol_full.cost/len(t))))
+print("param drift:", np.abs(sol_full.x - p_full))
+
+cut = 3000
+m = t <= cut
+res_sub = make_resid(t[m], a_obs[m], b_obs[m])
+sol_sub = least_squares(res_sub, sol_full.x, method='lm', max_nfev=6000)
+print("sub rms:", np.rad2deg(np.sqrt(sol_sub.cost/m.sum())))
+print("sub param drift from full:", np.abs(sol_sub.x - sol_full.x))
+
+# predictions on the held-out tail from both
+for name, p in [('full', sol_full.x), ('sub', sol_sub.x)]:
+    al, be = predict(p, t[~m])
+    errb = np.rad2deg((np.unwrap(be) - b_obs[~m] + np.pi) % (2*np.pi) - np.pi)
+    print(name, "beta tail err: mean", errb.mean().round(3), "first5", np.round(errb[:5],3), "last5", np.round(errb[-5:],3))
+EOF
+timeout 300 python work/diag.py
 ```
 
 ## [31] tool
@@ -1088,7 +1332,66 @@ sub beta tail err: mean 20.613 first5 [21.34  21.628 20.623 20.599 20.212] last5
 **tool call: bash**
 
 ```
+cat > work/validate2.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import least_squares
 
+tr = pd.read_csv('data/train.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values))
+b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi)
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def body_pos(ae, e, varpi, n, M0, t):
+    E = kepler_E(n*t + M0, e)
+    x = ae*(np.cos(E) - e); y = ae*np.sqrt(1-e*e)*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x - sw*y, sw*x + cw*y
+
+def predict(p, t):
+    eV, varpiV, nV, MV0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0 = p
+    Vx, Vy = body_pos(1.0, eV, varpiV, nV, MV0, t)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, t)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, t)
+    return np.arctan2(Ay-Vy, Ax-Vx), np.arctan2(By-Vy, Bx-Vx)
+
+def make_resid(tt, aa, bb):
+    def resid(p):
+        al, be = predict(p, tt)
+        ra = np.unwrap(al) - aa; rb = np.unwrap(be) - bb
+        ra -= ra.mean(); rb -= rb.mean()
+        return np.concatenate([ra, rb])
+    return resid
+
+def align_const(pred_train, obs_train):
+    d = np.unwrap(pred_train) - obs_train
+    return np.angle(np.mean(np.exp(1j*d)))  # circular mean offset
+
+res_full = make_resid(t, a_obs, b_obs)
+p0 = np.array([-1.92775e-01, 2.13527467e+03, 1.4815e-02, -5.51515555e+03,
+               1.02452, 1.93169e-01, -3.38410586e+03, 1.4815e-02, 4.622373,
+               2.015938, 2.30505e-01, -3.38126203e+03, 5.176e-03, 1.168307])
+sol_full = least_squares(res_full, p0, method='lm', max_nfev=6000)
+print("full rms:", np.rad2deg(np.sqrt(sol_full.cost/len(t))))
+
+for cut in [2500, 3000, 3400]:
+    m = t <= cut
+    sol = least_squares(make_resid(t[m], a_obs[m], b_obs[m]), sol_full.x, method='lm', max_nfev=6000)
+    al_tr, be_tr = predict(sol.x, t[m])
+    ca = align_const(al_tr, a_obs[m]); cb = align_const(be_tr, b_obs[m])
+    al_te, be_te = predict(sol.x, t[~m])
+    ea = np.rad2deg((np.unwrap(al_te) - ca - a_obs[~m] + np.pi)%(2*np.pi)-np.pi)
+    eb = np.rad2deg((np.unwrap(be_te) - cb - b_obs[~m] + np.pi)%(2*np.pi)-np.pi)
+    print(f"cut={cut} extrap {int(t[~m].max()-cut)}d: beta |err| mean={np.abs(eb).mean():.3f} max={np.abs(eb).max():.3f} | "
+          f"alpha |err| mean={np.abs(ea).mean():.3f} max={np.abs(ea).max():.3f} | sub rms={np.rad2deg(np.sqrt(sol.cost/m.sum())):.4f}")
+EOF
+timeout 400 python work/validate2.py
 ```
 
 ## [33] tool
@@ -1204,7 +1507,84 @@ cut=3400 extrap 742d: beta |err| mean=0.571 max=2.332 | alpha |err| mean=0.575 m
 **tool call: bash**
 
 ```
+cat > work/final_fit.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import least_squares
+import pickle, time
 
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values))
+b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+t_te = te.t.values.astype(float)
+
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi)
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def body_pos(ae, e, varpi, n, M0, tt):
+    E = kepler_E(n*tt + M0, e)
+    x = ae*(np.cos(E) - e); y = ae*np.sqrt(1-np.clip(e*e,0,1))*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x - sw*y, sw*x + cw*y
+
+def predict(p, tt):
+    eV, varpiV, nV, MV0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0, cA, cB = p
+    Vx, Vy = body_pos(1.0, eV, varpiV, nV, MV0, tt)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, tt)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, tt)
+    al = np.arctan2(Ay-Vy, Ax-Vx) + cA
+    be = np.arctan2(By-Vy, Bx-Vx) + cB
+    return al, be
+
+def resid(p):
+    al, be = predict(p, t)
+    ra = np.unwrap(al) - a_obs
+    rb = np.unwrap(be) - b_obs
+    return np.concatenate([ra, rb])
+
+p0 = np.array([-1.92775e-01, 2.13527467e+03, 1.4815e-02, -5.51515555e+03,
+               1.02452, 1.93169e-01, -3.38410586e+03, 1.4815e-02, 4.622373,
+               2.015938, 2.30505e-01, -3.38126203e+03, 5.176e-03, 1.168307, 0.0, 0.0])
+sol = least_squares(resid, p0, method='lm', max_nfev=8000)
+N = 2*len(t); p_dim = len(sol.x)
+sigma = np.sqrt(sol.cost/(N - p_dim))
+print("full rms deg:", np.rad2deg(np.sqrt(sol.cost/N)), "sigma deg:", np.rad2deg(sigma))
+
+J = sol.jac
+Cov = sigma**2 * np.linalg.pinv(J.T @ J)
+
+# test-point gradients of beta by finite differences
+al_te, be_te = predict(sol.x, t_te)
+eps = 1e-6
+G = np.zeros((len(t_te), p_dim))
+for j in range(p_dim):
+    dp = np.zeros(p_dim); dp[j] = eps*max(1.0, abs(sol.x[j]))
+    _, be_p = predict(sol.x + dp, t_te)
+    _, be_m = predict(sol.x - dp, t_te)
+    G[:, j] = (be_p - be_m)/(2*dp[j])
+var_mean = np.einsum('ij,jk,ik->i', G, Cov, G)
+sd_mean = np.sqrt(np.maximum(var_mean, 0))
+print("sd_mean (param unc) at test pts (deg):", np.round(np.rad2deg(sd_mean), 3))
+
+pickle.dump({'p': sol.x, 'sigma': sigma, 'sd_mean': sd_mean}, open('work/final.pkl','wb'))
+
+# residual diagnostics
+r = resid(sol.x)
+ra, rb = r[:len(t)], r[len(t):]
+from scipy import stats
+print("alpha resid: std", np.rad2deg(ra.std()).round(4), "kurtosis", stats.kurtosis(ra).round(2))
+print("beta  resid: std", np.rad2deg(rb.std()).round(4), "kurtosis", stats.kurtosis(rb).round(2))
+# lag-1 autocorr
+print("autocorr a/b:", np.corrcoef(ra[:-1], ra[1:])[0,1].round(3), np.corrcoef(rb[:-1], rb[1:])[0,1].round(3))
+print("corr between a and b resid:", np.corrcoef(ra, rb)[0,1].round(3))
+print("pred beta deg:", np.round(np.rad2deg(be_te)%360, 2))
+EOF
+timeout 500 python work/final_fit.py
 ```
 
 ## [35] tool
@@ -1264,7 +1644,72 @@ pred beta deg: [349.04  66.15  74.1  183.15 286.32 337.6  338.7   52.83 140.93 1
 **tool call: bash**
 
 ```
+cat > work/bootstrap.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import least_squares
+import pickle, time
 
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values))
+b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+t_te = te.t.values.astype(float)
+
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi)
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def body_pos(ae, e, varpi, n, M0, tt):
+    E = kepler_E(n*tt + M0, e)
+    x = ae*(np.cos(E) - e); y = ae*np.sqrt(1-np.clip(e*e,0,1))*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x - sw*y, sw*x + cw*y
+
+def predict(p, tt):
+    eV, varpiV, nV, MV0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0, cA, cB = p
+    Vx, Vy = body_pos(1.0, eV, varpiV, nV, MV0, tt)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, tt)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, tt)
+    return np.arctan2(Ay-Vy, Ax-Vx) + cA, np.arctan2(By-Vy, Bx-Vx) + cB
+
+d = pickle.load(open('work/final.pkl','rb'))
+p_hat = d['p']
+
+al_hat, be_hat = predict(p_hat, t)
+ra = np.unwrap(al_hat) - a_obs
+rb = np.unwrap(be_hat) - b_obs
+sig_a = ra.std(ddof=8); sig_b = rb.std(ddof=8)
+print("sigma alpha:", np.rad2deg(sig_a), "sigma beta:", np.rad2deg(sig_b))
+
+rng = np.random.default_rng(42)
+preds = []
+t0 = time.time()
+nB = 60
+for rep in range(nB):
+    a_sim = np.unwrap(al_hat) - rng.choice(ra, size=len(t), replace=True)
+    b_sim = np.unwrap(be_hat) - rng.choice(rb, size=len(t), replace=True)
+    def resid_s(p):
+        al, be = predict(p, t)
+        return np.concatenate([np.unwrap(al) - a_sim, np.unwrap(be) - b_sim])
+    sol = least_squares(resid_s, p_hat, method='lm', max_nfev=3000)
+    _, be_s = predict(sol.x, t_te)
+    # align circularly to p_hat prediction to avoid branch jumps
+    _, be_ref = predict(p_hat, t_te)
+    be_s = be_ref + (be_s - be_ref + np.pi) % (2*np.pi) - np.pi
+    preds.append(be_s)
+preds = np.array(preds)
+_, be_ref = predict(p_hat, t_te)
+sd_boot = preds.std(axis=0, ddof=1)
+print("bootstrap time per rep:", (time.time()-t0)/nB)
+print("sd_boot (deg):", np.round(np.rad2deg(sd_boot), 3))
+print("sd_lin  (deg):", np.round(np.rad2deg(d['sd_mean'])*np.sqrt(2), 3))  # correct for cost factor
+pickle.dump({'preds': preds, 'sd_boot': sd_boot}, open('work/boot.pkl','wb'))
+EOF
+timeout 560 python work/bootstrap.py
 ```
 
 ## [37] tool
@@ -1282,7 +1727,8 @@ Timed out — let me run the bootstrap in the background with fewer, faster refi
 **tool call: bash**
 
 ```
-
+cd /workspace && sed -i 's/nB = 60/nB = 40/; s/max_nfev=3000/max_nfev=600/' work/bootstrap.py && nohup python work/bootstrap.py > work/boot.log 2>&1 &
+echo started
 ```
 
 ## [39] tool
@@ -1314,7 +1760,7 @@ While bootstrap runs, let me examine the fitted parameters in physical terms and
 **tool call: bash**
 
 ```
-
+sleep 60 && cat work/boot.log; echo "---"; ls -la work/
 ```
 
 ## [41] tool
@@ -1417,7 +1863,7 @@ A: 0.00023577791066507108  B: 0.00021945100067648362
 **tool call: bash**
 
 ```
-
+sleep 120 && cat work/boot.log && echo "---" && ls -la work/boot.pkl 2>/dev/null || echo "not done"
 ```
 
 ## [45] tool
@@ -1442,7 +1888,7 @@ not done
 **tool call: bash**
 
 ```
-
+ps aux | grep bootstrap | grep -v grep; sleep 90; cat work/boot.log; ls -la work/boot.pkl 2>/dev/null || echo "not done yet"
 ```
 
 ## [47] tool
@@ -1464,7 +1910,7 @@ not done yet
 **tool call: bash**
 
 ```
-
+sleep 150; cat work/boot.log; ls -la work/boot.pkl 2>/dev/null || echo "not done yet"
 ```
 
 ## [49] tool
@@ -1523,7 +1969,81 @@ Bootstrap confirms the linear uncertainty: parameter/extrapolation uncertainty i
 **tool call: bash**
 
 ```
+cat > work/make_predictions.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import least_squares
+import pickle
 
+# ---------- data ----------
+tr = pd.read_csv('data/train.csv')
+te = pd.read_csv('data/test.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values))
+b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+t_te = te.t.values.astype(float)
+
+# ---------- model: vantage + two bodies on Keplerian ellipses ----------
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi)
+    E = M + e*np.sin(M)
+    for _ in range(15):
+        E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+
+def body_pos(ae, e, varpi, n, M0, tt):
+    E = kepler_E(n*tt + M0, e)
+    x = ae*(np.cos(E) - e); y = ae*np.sqrt(1-np.clip(e*e,0,1))*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x - sw*y, sw*x + cw*y
+
+def predict(p, tt):
+    eV, varpiV, nV, MV0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0, cA, cB = p
+    Vx, Vy = body_pos(1.0, eV, varpiV, nV, MV0, tt)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, tt)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, tt)
+    return np.arctan2(Ay-Vy, Ax-Vx) + cA, np.arctan2(By-Vy, Bx-Vx) + cB
+
+def resid(p):
+    al, be = predict(p, t)
+    return np.concatenate([np.unwrap(al) - a_obs, np.unwrap(be) - b_obs])
+
+p0 = np.array([-1.92775e-01, 2.13527467e+03, 1.4815e-02, -5.51515555e+03,
+               1.02452, 1.93169e-01, -3.38410586e+03, 1.4815e-02, 4.622373,
+               2.015938, 2.30505e-01, -3.38126203e+03, 5.176e-03, 1.168307, 0.0, 0.0])
+sol = least_squares(resid, p0, method='lm', max_nfev=8000)
+p_hat = sol.x
+r = resid(p_hat)
+ra, rb = r[:len(t)], r[len(t):]
+sig_b = rb.std(ddof=16)
+print("fit rms (deg): a=%.4f b=%.4f" % (np.rad2deg(ra.std()), np.rad2deg(rb.std())))
+
+# ---------- point predictions ----------
+_, be_te = predict(p_hat, t_te)
+pred_deg = np.rad2deg(be_te) % 360.0
+
+# ---------- uncertainty: bootstrap sd (param) + obs noise ----------
+boot = pickle.load(open('work/boot.pkl','rb'))
+preds_boot = boot['preds']                      # (nB, n_test) radians
+be_ref = be_te[None, :]
+dtheta = (preds_boot - be_ref + np.pi) % (2*np.pi) - np.pi
+sd_param = dtheta.std(axis=0, ddof=1)
+sd_tot = np.sqrt(sd_param**2 + sig_b**2)
+h = 1.959964 * sd_tot                            # 95% Gaussian
+print("sd_param deg:", np.round(np.rad2deg(sd_param),3))
+print("half-width deg:", np.round(np.rad2deg(h),3))
+
+# ---------- write ----------
+out = pd.DataFrame({
+    't': te.t.values,
+    'y_pred': pred_deg,
+    'y_lower': (pred_deg - np.rad2deg(h)) % 360.0,
+    'y_upper': (pred_deg + np.rad2deg(h)) % 360.0,
+})
+out.to_csv('predictions.csv', index=False)
+print(out.to_string(index=False))
+print("rows:", len(out))
+EOF
+python work/make_predictions.py
 ```
 
 ## [51] tool
@@ -1566,7 +2086,47 @@ Predictions written. Let me verify the file format and run one independent robus
 **tool call: bash**
 
 ```
+head -3 predictions.csv && cat > work/robust.py << 'EOF'
+import numpy as np, pandas as pd
+from scipy.optimize import least_squares
 
+tr = pd.read_csv('data/train.csv'); te = pd.read_csv('data/test.csv')
+t = tr.t.values.astype(float)
+a_obs = np.unwrap(np.deg2rad(tr.alpha.values)); b_obs = np.unwrap(np.deg2rad(tr.beta.values))
+t_te = te.t.values.astype(float)
+
+def kepler_E(M, e):
+    M = np.mod(M, 2*np.pi); E = M + e*np.sin(M)
+    for _ in range(15): E = E - (E - e*np.sin(E) - M)/(1 - e*np.cos(E))
+    return E
+def body_pos(ae, e, varpi, n, M0, tt):
+    E = kepler_E(n*tt + M0, e)
+    x = ae*(np.cos(E)-e); y = ae*np.sqrt(1-np.clip(e*e,0,1))*np.sin(E)
+    cw, sw = np.cos(varpi), np.sin(varpi)
+    return cw*x-sw*y, sw*x+cw*y
+def predict(p, tt):
+    eV, varpiV, nV, MV0, aA, eA, varpiA, nA, MA0, aB, eB, varpiB, nB, MB0, cA, cB = p
+    Vx, Vy = body_pos(1.0, eV, varpiV, nV, MV0, tt)
+    Ax, Ay = body_pos(aA, eA, varpiA, nA, MA0, tt)
+    Bx, By = body_pos(aB, eB, varpiB, nB, MB0, tt)
+    return np.arctan2(Ay-Vy, Ax-Vx)+cA, np.arctan2(By-Vy, Bx-Vx)+cB
+def resid(p):
+    al, be = predict(p, t)
+    return np.concatenate([np.unwrap(al)-a_obs, np.unwrap(be)-b_obs])
+
+import pickle
+p_hat = pickle.load(open('work/final.pkl','rb'))['p']
+_, be_ref = predict(p_hat, t_te)
+
+rng = np.random.default_rng(7)
+for trial in range(4):
+    pstart = p_hat + rng.normal(0, 1, len(p_hat))*np.array([0.05,0.3,2e-5,0.3,0.05,0.05,0.3,2e-5,0.3,0.05,0.05,0.3,2e-5,0.3,0.05,0.05])
+    sol = least_squares(resid, pstart, method='lm', max_nfev=5000)
+    _, be_s = predict(sol.x, t_te)
+    d = np.rad2deg((be_s - be_ref + np.pi)%(2*np.pi)-np.pi)
+    print(f"trial {trial}: rms={np.rad2deg(np.sqrt(2*sol.cost/(2*len(t)))):.4f}  max test-pred diff={np.abs(d).max():.4f} deg")
+EOF
+python work/robust.py
 ```
 
 ## [53] tool
