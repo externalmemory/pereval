@@ -15,6 +15,8 @@ from scipy.linalg import fractional_matrix_power
 from pereval.scorers.migration import (
     CHECK_KEYS,
     ORDER,
+    _downgrade_mass,
+    _row_weights,
     ks_distance,
     model_checks,
     score_predictions,
@@ -1124,8 +1126,19 @@ def test_the_answer_key_and_the_reference_fail_no_check():
     narrowed to live destinations. The shipped reference passing too is the
     second half of it: a competent estimate must be able to clear every bar,
     or the count measures distance from the oracle rather than defect.
+
+    The served seeds are swept as well as the documented ones, because the two
+    conventions disagree and the disagreement has already hidden a bug. An
+    earlier form of `pd_rises_with_severity` compared every checkpoint, which
+    holds on `generate(seed=k)` for k from one to twelve and fails the answer
+    key on the served draw: the severe scenario has a trough, so at quarter four
+    it can be milder than the adverse path while quarter nine is far worse. At
+    base seed 1, instance 4 puts severe at 1.28% against adverse's 1.47% at
+    quarter four and 5.57% against 3.44% at quarter nine. The severity checks
+    now read the terminal checkpoint only.
     """
-    for seed in range(1, 13):
+    served = np.random.SeedSequence(1).generate_state(12, dtype=np.uint32)
+    for seed in [*range(1, 13), *(int(x) for x in served)]:
         b = generate(seed, n_years=20)
         orc = _oracle_matrices(b)
         assert _checks(_matrices_text(orc), _preds_text(orc, b), b)[
@@ -1281,18 +1294,20 @@ def test_the_degenerate_answer_trips_the_ordering_checks():
     share is exactly zero under every scenario at every checkpoint. Weak
     orderings pass it: zero does not rise with severity, but neither does it
     fall. Strictness is what makes "losses are higher in stress" say anything,
-    and the margin shows it costs nothing. Over twelve instances the oracle's
-    smallest gap between adjacent severities is 0.0089 and the reference's is
-    0.0046, against a tie tolerance of 1e-9.
+    and the margin shows it costs nothing. At the terminal checkpoint, which is
+    the only one the severity checks ask about, the oracle's smallest gap
+    between adjacent severities is 0.0026 and the reference's is 0.0016 over
+    192 comparisons, against a relative tie tolerance of 1e-6.
     """
     for seed in (1, 2, 3):
         b = generate(seed, n_years=20)
         p, m, bt = predict(public_files(b), "no_migration")
         v = _checks(m, p, b, btext=bt)
-        for k in ("pd_rises_with_severity", "pd_rises_with_horizon",
-                  "downgrades_rise_with_severity", "multinotch_downgrade_possible"):
+        for k in ("pd_rises_with_severity", "implied_pd_rises_with_severity",
+                  "pd_rises_with_horizon", "downgrades_rise_with_severity",
+                  "multinotch_downgrade_possible"):
             assert v[f"fail_{k}"] == 1.0, k
-        assert v["checks_failed"] == 4.0
+        assert v["checks_failed"] == 5.0
         # and it is still a readable, well formed submission
         for k in ("matrices_readable", "matrix_rows_sum_to_one",
                   "prediction_shares_sum_to_one", "pd_rises_as_rating_falls",
@@ -1353,3 +1368,67 @@ def test_the_published_history_shows_downgrades_rising_in_stress():
     assert min(far_lifts) > min(lifts), (
         "the far band should be the more stress-sensitive one: "
         f"far {min(far_lifts):.2f}x vs all {min(lifts):.2f}x")
+
+
+def test_an_out_of_order_middle_scenario_is_caught():
+    """Severity ordering is asked of every adjacent pair, not just the ends.
+
+    Comparing only the mildest scenario with the worst passes a submission whose
+    adverse projection is no worse than its baseline one, which is the same
+    defect as a severe projection no worse than adverse. The construction here
+    copies the baseline matrices into the adverse block and leaves severe alone,
+    so the ends-only comparison still reads strictly increasing, as the test
+    asserts directly, while the pair that is wrong is wrong.
+    """
+    for seed in (1, 2, 3):
+        b = generate(seed, n_years=20)
+        orc = _oracle_matrices(b)
+        order = list(b["truth"]["scenario_names"])
+        bent = {k: {q: m.copy() for q, m in v.items()} for k, v in orc.items()}
+        bent[order[1]] = {q: m.copy() for q, m in orc[order[0]].items()}
+
+        w = _row_weights(_start_vec(b))
+        total = {n: sum(_downgrade_mass(bent[n][q], w) for q in sorted(bent[n]))
+                 for n in order}
+        assert total[order[-1]] > total[order[0]], (
+            "the ends-only comparison must still pass, or this proves nothing")
+
+        v = _checks(_matrices_text(bent), _preds_text(bent, b), b)
+        assert v["fail_downgrades_rise_with_severity"] == 1.0
+
+
+def test_matrices_out_of_order_in_severity_hide_behind_a_monotone_projection():
+    """The projection and the matrices are two claims, and both are checked.
+
+    `pd_rises_with_severity` reads predictions.csv. A submission can file a
+    perfectly ordered projection computed by some other route while the matrices
+    it documents imply the opposite, and nothing else here would catch that:
+    `matrix_submission_gap` is reported rather than checked, and it is a
+    distance, not an ordering. So the same question is asked of the matrices by
+    propagating the published cohort mix through them.
+
+    The construction damps the severe scenario's default column by a uniform
+    factor and moves the mass into the worst live grade, which keeps every row
+    summing to one, keeps the default column monotone in rating, and RAISES
+    downgrade mass, so the matrix-side defect is isolated from the three checks
+    that would otherwise cover it.
+    """
+    ccc = len(LIVE) - 1
+    for seed in (1, 2, 3):
+        b = generate(seed, n_years=20)
+        orc = _oracle_matrices(b)
+        order = list(b["truth"]["scenario_names"])
+        damped = {k: {q: m.copy() for q, m in v.items()} for k, v in orc.items()}
+        for m in damped[order[-1]].values():
+            moved = m[:len(LIVE), len(LIVE)] * 0.75
+            m[:len(LIVE), len(LIVE)] -= moved
+            m[:len(LIVE), ccc] += moved
+
+        honest = _preds_text(orc, b)
+        v = _checks(_matrices_text(damped), honest, b)
+        assert v["fail_pd_rises_with_severity"] == 0.0, (
+            "the filed projection is the oracle's own and must pass")
+        assert v["fail_implied_pd_rises_with_severity"] == 1.0
+        assert v["fail_downgrades_rise_with_severity"] == 0.0
+        assert v["checks_failed"] == 1.0, (
+            {k: v[f"fail_{k}"] for k in CHECK_KEYS if v[f"fail_{k}"]})

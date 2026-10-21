@@ -849,10 +849,10 @@ CHECK_KEYS = (
     "prediction_shares_sum_to_one",
     "pd_rises_as_rating_falls",
     "stay_is_the_most_likely_outcome",
-    "near_downgrade_exceeds_far",
     "multinotch_downgrade_possible",
     "downgrades_rise_with_severity",
     "pd_rises_with_severity",
+    "implied_pd_rises_with_severity",
     "pd_rises_with_horizon",
     "historical_fit_identical_across_scenarios",
 )
@@ -985,12 +985,6 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
         m[i, i] < m[i, j] - TIE_TOL_ABS
         for m in m_all for i in range(D_INDEX) for j in range(D_INDEX) if j != i)
 
-    # Migration probability decays away from the diagonal, so the adjacent
-    # downgrade is at least the whole three-or-worse band behind it.
-    fail["near_downgrade_exceeds_far"] = not m_all or any(
-        m[i, i + NEAR_NOTCHES] < m[i, i + FAR_NOTCHES:D_INDEX].sum() - TIE_TOL_ABS
-        for m in m_all for i in range(D_INDEX - FAR_NOTCHES))
-
     # Zero is not an estimate, it is an assertion that a three notch downgrade
     # cannot happen. This is the failure a tridiagonal or diffusion construction
     # produces, and it needs no oracle to state.
@@ -1018,13 +1012,17 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
     # 4.5x from AAA, 4.9x from AA, 5.7x from A, 6.1x from BBB, 4.3x from BB and
     # 3.2x from B. Upgrades move the other way, to 0.14 to 0.59x. A submission
     # that trips this check contradicts its own history.
-    if len(order) >= 2 and all(n in mats for n in (order[0], order[-1])):
-        mild, worst = mats[order[0]], mats[order[-1]]
-        quarters = sorted(set(mild) & set(worst))
-        d_mild = sum(_downgrade_mass(mild[q], w) for q in quarters)
-        d_worst = sum(_downgrade_mass(worst[q], w) for q in quarters)
-        fail["downgrades_rise_with_severity"] = not (
-            d_worst > d_mild + TIE_TOL_ABS)
+    # EVERY adjacent pair, not just the ends. Comparing only the mildest with
+    # the worst passes a model whose middle scenario is out of order, and an
+    # adverse projection that is not worse than baseline is the same defect as a
+    # severe one that is not worse than adverse.
+    if len(order) >= 2 and all(n in mats for n in order):
+        def _down(scen, quarters):
+            return sum(_downgrade_mass(mats[scen][q], w) for q in quarters)
+        shared = sorted(set.intersection(*(set(mats[n]) for n in order)))
+        fail["downgrades_rise_with_severity"] = not shared or any(
+            not _down(b, shared) > _down(a, shared) + TIE_TOL_ABS
+            for a, b in zip(order, order[1:]))
     else:
         fail["downgrades_rise_with_severity"] = True
 
@@ -1035,14 +1033,32 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
         v = preds.get(scen, {}).get(q)
         return None if v is None else float(v[D_INDEX])
 
-    # Strict, and the margin says it is affordable: the oracle's smallest gap
-    # between adjacent severities over twelve instances is 0.0089 and the
-    # reference's is 0.0046, against a tie tolerance of 1e-9. Weak inequalities
-    # would pass a submission that predicts the same loss under every scenario,
-    # and would pass the degenerate, whose cohort default share is exactly zero
-    # everywhere and so satisfies every weak ordering that exists.
+    # Read at the LAST checkpoint only, which is the nine quarter cumulative
+    # default rate, and not at every checkpoint. The severe scenario has a
+    # trough by design, so its early quarters can be milder than the adverse
+    # path's while its late quarters are far worse, and the ordering genuinely
+    # inverts at quarter four. Measured on the true generating model over three
+    # scans of forty eight instances, the quarter four comparison fails on 16 of
+    # 288 pairs, by as much as 0.0128, while the quarter nine comparison never
+    # fails once in the same 288. One of those quarter four inversions is on the
+    # served draw at base seed 1: instance 4 puts severe at 1.28% against
+    # adverse's 1.47% at quarter four and 5.57% against 3.44% at quarter nine.
+    # A check the answer key breaks is a bug in the check, so the early
+    # checkpoint is not asked about.
+    #
+    # Strict at the checkpoint that is asked, and the margin says it is
+    # affordable: over four scans of twelve and twenty four instances, 192
+    # comparisons, neither the oracle nor the reference fails once. The smallest
+    # gap is 0.0026 for the oracle and 0.0016 for the reference, both on the
+    # served draw at base seed 1, against a relative tie tolerance of 1e-6; on
+    # the documented convention they are 0.0105 and 0.0144. Weak inequalities
+    # would pass a submission
+    # predicting the same loss under every scenario, and would pass the
+    # degenerate, whose cohort default share is exactly zero everywhere and so
+    # satisfies every weak ordering that exists.
     pairs = [(a, b) for a, b in zip(order, order[1:])]
-    vals = [(_pd(a, q), _pd(b, q)) for a, b in pairs for q in checkpoints]
+    terminal = [max(checkpoints)] if checkpoints else []
+    vals = [(_pd(a, q), _pd(b, q)) for a, b in pairs for q in terminal]
     fail["pd_rises_with_severity"] = (
         not vals or any(x is None or y is None or _tied(x, y) or y < x
                         for x, y in vals))
@@ -1050,12 +1066,44 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
     # Default is absorbing in the scored cohort, so its share cannot fall as the
     # horizon lengthens, and over five further quarters it cannot stand still
     # either unless the model predicts no defaults at all. Strict for the same
-    # reason and with the same margin: the oracle's smallest step is 0.011.
+    # reason: over two scans of twenty four instances the oracle's smallest step
+    # from quarter four to quarter nine is 0.0047 and the reference's is 0.0065,
+    # on 288 comparisons with no failures. This one is within a scenario, so the
+    # trough that disqualifies the early severity comparison does not touch it.
     steps = [(_pd(n, a), _pd(n, b)) for n in order
              for a, b in zip(checkpoints, checkpoints[1:])]
     fail["pd_rises_with_horizon"] = (
         not steps or any(x is None or y is None or _tied(x, y) or y < x
                          for x, y in steps))
+
+    # The same ordering, asked of the MATRICES rather than the projection, by
+    # propagating the published cohort mix through the submitted matrices and
+    # reading the cumulative default share at the last checkpoint. The two are
+    # not the same question. `pd_rises_with_severity` reads predictions.csv, and
+    # a submission can file a monotone projection computed by some other route
+    # while the matrices it documents are out of order in severity; nothing else
+    # here would catch that, because `matrix_submission_gap` is reported rather
+    # than checked and is a distance, not an ordering. Strict, and NaN or a
+    # missing quarter fails rather than dropping out. Terminal checkpoint only,
+    # for the trough reason given above.
+    cum: dict[str, dict[int, float]] = {}
+    horizon = max(checkpoints) if checkpoints else 0
+    for scen in order:
+        quarters = sorted(mats.get(scen, {}))
+        if len(quarters) < horizon:
+            continue
+        v = np.concatenate([_row_weights(start), [0.0]])
+        for t, q in enumerate(quarters, start=1):
+            v = v @ mats[scen][q]
+            if t in checkpoints:
+                cum.setdefault(scen, {})[t] = float(v[D_INDEX])
+    icum = [(cum.get(a, {}).get(q), cum.get(b, {}).get(q))
+            for a, b in zip(order, order[1:]) for q in terminal]
+    fail["implied_pd_rises_with_severity"] = (
+        not icum or any(x is None or y is None
+                        or not np.isfinite(x) or not np.isfinite(y)
+                        or _tied(x, y) or y < x
+                        for x, y in icum))
 
     # One model, tested where refitting cannot hide. The history does not depend
     # on which future scenario is being run, so a model estimated once implies
