@@ -478,9 +478,9 @@ def notch_diagnostics(text: str | None, start: np.ndarray,
     one is not, which is the same one-sided convention the stress diagnostics
     use. That calibration is seed-set dependent and should not be promoted to a
     gate as it stands: these twelve instances are `generate(seed=k)` for k in
-    1..12, and over the first twelve the task actually draws the reference reads
-    0.354 to 5.079 with median 1.043, dipping below 0.5 on one of them. See
-    docs/tasks/migration.md.
+    1..12, and over the twenty four the task draws at base seed 1 the reference
+    reads 0.301 to 5.107 with median 1.039, dipping below 0.5 on four of them.
+    See docs/tasks/migration.md.
 
     The score cannot do this work. Collapsing the far corner entirely moves the
     composite from 0.000-0.003 to 0.011-0.020 over those twelve instances,
@@ -825,9 +825,10 @@ IDENTITY_TOL = 1e-4
 #: It must be defensible without the answer key. A statistic measured against
 #: the oracle cannot be a check, because its threshold would have to be
 #: calibrated against the spread of a competent estimate, and that spread is
-#: wide: the shipped reference's far-corner ratio runs 0.354 to 5.079 across the
-#: instances the task draws, so no cut on it separates a thinned submission from
-#: an honest one. The same failure stated as "the model gives a three notch
+#: wide: the shipped reference's far-corner ratio runs 0.301 to 5.107 across the
+#: twenty four instances the task draws at base seed 1, dipping below 0.5 on
+#: four of them, so no cut on it separates a thinned submission from an honest
+#: one. The same failure stated as "the model gives a three notch
 #: downgrade zero probability" needs neither the oracle nor a threshold.
 #:
 #: It must be computable on every submission. A ratio whose denominator can be
@@ -990,9 +991,10 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
     # produces, and it needs no oracle to state.
     #
     # The published history is not quiet about these cells. Measured on
-    # data/transitions.csv over twelve instances, the three-or-worse band is
-    # 24.4x more frequent in the stressed quarter of years than the benign ones
-    # (range 6.8 to 56.1, on all twelve), against 4.5x for the adjacent notch.
+    # data/transitions.csv over the twelve instances the task serves at base
+    # seed 1, the three-or-worse band is 13.6x more frequent in the stressed
+    # quarter of years than the benign ones (range 3.6 to 53.5, on all twelve),
+    # against 3.3x for the adjacent notch.
     # The far corner is the MOST macro-sensitive region of the matrix, not a
     # structural detail the data is silent about, so a model that sets it to zero
     # is discarding its most responsive evidence.
@@ -1005,13 +1007,14 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
     # because equality IS the frozen body.
     #
     # This asks for nothing the agent cannot see. In data/transitions.csv the
-    # annual downgrade frequency correlates +0.971 to +0.996 with the annual
-    # default rate over the twenty published years, and downgrades are 3.6 to
-    # 7.3 times more frequent in the stressed quarter of years, on every one of
-    # twelve instances and from every starting grade that has room to fall:
-    # 4.5x from AAA, 4.9x from AA, 5.7x from A, 6.1x from BBB, 4.3x from BB and
-    # 3.2x from B. Upgrades move the other way, to 0.14 to 0.59x. A submission
-    # that trips this check contradicts its own history.
+    # annual downgrade frequency correlates +0.918 to +0.988 with the annual
+    # default rate over the twenty published years, and downgrades are 2.6 to
+    # 5.7 times more frequent in the stressed quarter of years, on every one of
+    # the twelve instances served at base seed 1 and from every starting grade
+    # that has room to fall: 3.6x from AAA, 3.7x from AA, 4.1x from A, 4.5x from
+    # BBB, 3.4x from BB and 2.9x from B, as means over the twelve. Upgrades move
+    # the other way, to 0.15 to 0.66x. A submission that trips this check
+    # contradicts its own history.
     # EVERY adjacent pair, not just the ends. Comparing only the mildest with
     # the worst passes a model whose middle scenario is out of order, and an
     # adverse projection that is not worse than baseline is the same defect as a
@@ -1038,20 +1041,19 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
     # trough by design, so its early quarters can be milder than the adverse
     # path's while its late quarters are far worse, and the ordering genuinely
     # inverts at quarter four. Measured on the true generating model over three
-    # scans of forty eight instances, the quarter four comparison fails on 16 of
-    # 288 pairs, by as much as 0.0128, while the quarter nine comparison never
+    # scans of forty eight instances, the quarter four comparison fails on 14 of
+    # 288 pairs, by as much as 0.0100, while the quarter nine comparison never
     # fails once in the same 288. One of those quarter four inversions is on the
-    # served draw at base seed 1: instance 4 puts severe at 1.28% against
-    # adverse's 1.47% at quarter four and 5.57% against 3.44% at quarter nine.
+    # served draw at base seed 1: instance 4 puts severe at 0.92% against
+    # adverse's 1.04% at quarter four and 3.63% against 2.57% at quarter nine.
     # A check the answer key breaks is a bug in the check, so the early
     # checkpoint is not asked about.
     #
     # Strict at the checkpoint that is asked, and the margin says it is
     # affordable: over four scans of twelve and twenty four instances, 192
     # comparisons, neither the oracle nor the reference fails once. The smallest
-    # gap is 0.0026 for the oracle and 0.0016 for the reference, both on the
-    # served draw at base seed 1, against a relative tie tolerance of 1e-6; on
-    # the documented convention they are 0.0105 and 0.0144. Weak inequalities
+    # gap is 0.0104 for the oracle and 0.0113 for the reference, against a
+    # relative tie tolerance of 1e-6. Weak inequalities
     # would pass a submission
     # predicting the same loss under every scenario, and would pass the
     # degenerate, whose cohort default share is exactly zero everywhere and so
@@ -1067,7 +1069,7 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
     # horizon lengthens, and over five further quarters it cannot stand still
     # either unless the model predicts no defaults at all. Strict for the same
     # reason: over two scans of twenty four instances the oracle's smallest step
-    # from quarter four to quarter nine is 0.0047 and the reference's is 0.0065,
+    # from quarter four to quarter nine is 0.0052 and the reference's is 0.0064,
     # on 288 comparisons with no failures. This one is within a scenario, so the
     # trough that disqualifies the early severity comparison does not touch it.
     steps = [(_pd(n, a), _pd(n, b)) for n in order

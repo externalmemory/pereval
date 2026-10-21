@@ -29,6 +29,7 @@ from pereval.tasks.migration.generator import (
     LIVE,
     MACRO_COLUMNS,
     N_OBLIGORS,
+    SEVERITY_CAP,
     _withdrawal_adjusted_annual,
     conditional_matrix,
     expected_distributions,
@@ -1070,6 +1071,17 @@ def test_the_shape_diagnostics_survive_a_rounded_submission():
 # ---------------------------------------------------------------------------
 
 
+def _served_seeds(n: int, base: int = 1) -> list[int]:
+    """The seeds the task actually serves, as `_samples` draws them.
+
+    The documented convention, `generate(seed=k)` for small k, is NOT what an
+    agent is given, and the two have now hidden two separate defects. Sweeps
+    that are about the generator rather than about a worked example use this.
+    """
+    return [int(x) for x in
+            np.random.SeedSequence(base).generate_state(n, dtype=np.uint32)]
+
+
 def _start_vec(bundle) -> np.ndarray:
     return np.array([bundle["truth"]["start_mix"].get(s, 0.0) for s in ORDER],
                     dtype=float)
@@ -1133,8 +1145,8 @@ def test_the_answer_key_and_the_reference_fail_no_check():
     holds on `generate(seed=k)` for k from one to twelve and fails the answer
     key on the served draw: the severe scenario has a trough, so at quarter four
     it can be milder than the adverse path while quarter nine is far worse. At
-    base seed 1, instance 4 puts severe at 1.28% against adverse's 1.47% at
-    quarter four and 5.57% against 3.44% at quarter nine. The severity checks
+    base seed 1, instance 4 puts severe at 0.92% against adverse's 1.04% at
+    quarter four and 3.63% against 2.57% at quarter nine. The severity checks
     now read the terminal checkpoint only.
     """
     served = np.random.SeedSequence(1).generate_state(12, dtype=np.uint32)
@@ -1158,7 +1170,7 @@ def test_each_known_defect_trips_exactly_its_own_check():
     about fifteen thousandths against a reference of 0.285.
     """
     base = quarterly_base()
-    for seed in range(1, 13):
+    for seed in _served_seeds(12):
         b = generate(seed, n_years=20)
         orc = _oracle_matrices(b)
         thin = {k: {q: _thin_far(m, 0.0) for q, m in v.items()}
@@ -1218,7 +1230,7 @@ def test_no_check_can_return_nan():
     returned NaN because identical matrices leave no comparable pairs.
     """
     base = quarterly_base()
-    for seed in (1, 2, 3):
+    for seed in _served_seeds(3):
         b = generate(seed, n_years=20)
         files = public_files(b)
         orc = _oracle_matrices(b)
@@ -1258,7 +1270,7 @@ def test_refitting_per_scenario_shows_up_in_the_historical_fit():
     with no explanation of why the three should agree.
     """
     key = "fail_historical_fit_identical_across_scenarios"
-    for seed in (1, 2, 3):
+    for seed in _served_seeds(3):
         b = generate(seed, n_years=20)
         files = public_files(b)
         p, m, refb = predict(files, "onefactor")
@@ -1296,10 +1308,10 @@ def test_the_degenerate_answer_trips_the_ordering_checks():
     fall. Strictness is what makes "losses are higher in stress" say anything,
     and the margin shows it costs nothing. At the terminal checkpoint, which is
     the only one the severity checks ask about, the oracle's smallest gap
-    between adjacent severities is 0.0026 and the reference's is 0.0016 over
+    between adjacent severities is 0.0104 and the reference's is 0.0113 over
     192 comparisons, against a relative tie tolerance of 1e-6.
     """
-    for seed in (1, 2, 3):
+    for seed in _served_seeds(3):
         b = generate(seed, n_years=20)
         p, m, bt = predict(public_files(b), "no_migration")
         v = _checks(m, p, b, btext=bt)
@@ -1323,14 +1335,15 @@ def test_the_published_history_shows_downgrades_rising_in_stress():
     agent for fitting what it was handed. Read from data/transitions.csv alone,
     with no access to the latent factor.
 
-    Measured over twelve instances: the annual downgrade frequency correlates
-    +0.971 to +0.996 with the annual default rate, and downgrades are 3.6 to 7.3
-    times more frequent in the stressed quarter of years. It holds from every
-    grade with room to fall, 4.5x from AAA through 6.1x from BBB to 3.2x from B,
-    and it is not thin: one instance carries about 3,400 BBB downgrades.
+    Measured over the twelve instances served at base seed 1: the annual
+    downgrade frequency correlates +0.918 to +0.988 with the annual default
+    rate, and downgrades are 2.6 to 5.7 times more frequent in the stressed
+    quarter of years. It holds from every grade with room to fall, 3.6x from AAA
+    through 4.5x from BBB to 2.9x from B, and it is not thin: one instance
+    carries about 3,700 downgrades from a single grade.
 
-    The far corner carries it most. The three-or-worse band is 24.4x more
-    frequent in stressed years against 4.5x for the adjacent notch, which is why
+    The far corner carries it most. The three-or-worse band is 13.6x more
+    frequent in stressed years against 3.3x for the adjacent notch, which is why
     `multinotch_downgrade_possible` is a check about discarded evidence rather
     than a quibble about a structural zero.
 
@@ -1342,7 +1355,7 @@ def test_the_published_history_shows_downgrades_rising_in_stress():
 
     cols = [f"to_{s.replace('/', '_')}" for s in LIVE] + ["to_D"]
     lifts, corrs, far_lifts = [], [], []
-    for seed in range(1, 13):
+    for seed in _served_seeds(12):
         b = generate(seed, n_years=20)
         by: dict[int, np.ndarray] = {}
         for row in _csv.DictReader(_io.StringIO(
@@ -1380,7 +1393,7 @@ def test_an_out_of_order_middle_scenario_is_caught():
     so the ends-only comparison still reads strictly increasing, as the test
     asserts directly, while the pair that is wrong is wrong.
     """
-    for seed in (1, 2, 3):
+    for seed in _served_seeds(3):
         b = generate(seed, n_years=20)
         orc = _oracle_matrices(b)
         order = list(b["truth"]["scenario_names"])
@@ -1407,20 +1420,23 @@ def test_matrices_out_of_order_in_severity_hide_behind_a_monotone_projection():
     distance, not an ordering. So the same question is asked of the matrices by
     propagating the published cohort mix through them.
 
-    The construction damps the severe scenario's default column by a uniform
-    factor and moves the mass into the worst live grade, which keeps every row
-    summing to one, keeps the default column monotone in rating, and RAISES
-    downgrade mass, so the matrix-side defect is isolated from the three checks
-    that would otherwise cover it.
+    The construction moves 95% of the severe scenario's default column into the
+    worst live grade, which keeps every row summing to one, keeps the default
+    column monotone in rating, and RAISES downgrade mass, so the matrix-side
+    defect is isolated from the three checks that would otherwise cover it.
+    Checked across 36 instances on three seed sets: this construction trips
+    exactly one check and it is this one. The fraction has to be large because
+    severe sits well clear of adverse on most draws, and 0.75 inverts the
+    ordering on some instances and not others.
     """
     ccc = len(LIVE) - 1
-    for seed in (1, 2, 3):
+    for seed in _served_seeds(3):
         b = generate(seed, n_years=20)
         orc = _oracle_matrices(b)
         order = list(b["truth"]["scenario_names"])
         damped = {k: {q: m.copy() for q, m in v.items()} for k, v in orc.items()}
         for m in damped[order[-1]].values():
-            moved = m[:len(LIVE), len(LIVE)] * 0.75
+            moved = m[:len(LIVE), len(LIVE)] * 0.95
             m[:len(LIVE), len(LIVE)] -= moved
             m[:len(LIVE), ccc] += moved
 
@@ -1432,3 +1448,59 @@ def test_matrices_out_of_order_in_severity_hide_behind_a_monotone_projection():
         assert v["fail_downgrades_rise_with_severity"] == 0.0
         assert v["checks_failed"] == 1.0, (
             {k: v[f"fail_{k}"] for k in CHECK_KEYS if v[f"fail_{k}"]})
+
+
+def test_no_scenario_is_more_than_ten_times_the_portfolio_s_own_history():
+    """A 1%-a-year book does not lose a tenth of itself in a realistic scenario.
+
+    Before the cap, one draw put 98.9% of the cohort in default by quarter nine
+    under severe, 71.2% under adverse and 12.9% under its own BASELINE, against
+    an observed history of 1.12% a year. That is not a stress test, and it is
+    close to free marks besides: when the truth is nearly a point mass on
+    default, predicting total ruin scores well and the twelve components stop
+    discriminating.
+
+    The anchor is the observed annual default rate scaled to the horizon, not
+    the drawn baseline scenario. The instance above is only 7.7x ITS baseline
+    and would have passed a ratio rule, because the baseline is a draw too and
+    was itself elevated.
+
+    The ordering assertion is the other half: one damping factor is applied to
+    all three scenarios, so damping must not be able to collapse them onto each
+    other, which the severity checks would read, correctly, as a defect.
+    """
+    for seed in [*range(1, 25), *_served_seeds(24), *_served_seeds(24, base=7)]:
+        b = generate(seed, n_years=20)
+        t = b["truth"]
+        anchor = SEVERITY_CAP * float(np.mean(
+            t["observed_annual_default_rate"])) * t["horizon_quarters"] / 4.0
+        pds = {n: t["scenarios"][n]["rating_distribution"][
+            str(max(t["checkpoints"]))]["D"] for n in t["scenario_names"]}
+        for name, pd in pds.items():
+            assert pd <= anchor * (1 + 1e-6), (
+                f"seed {seed}: {name} at {pd:.4f} exceeds {anchor:.4f}")
+        ordered = [pds[n] for n in t["scenario_names"]]
+        assert ordered == sorted(ordered) and len(set(ordered)) == len(ordered), (
+            f"seed {seed}: damping collapsed the severity ordering, {pds}")
+        assert 0.0 < b["dgp"]["severity_damping"] <= 1.0
+
+
+def test_an_instance_the_cap_does_not_bind_on_is_left_exactly_alone():
+    """The damping is a remedy, not a tax: it must be inert where it is not needed.
+
+    A factor of exactly 1.0 means the hump weights are multiplied by one, so the
+    published macro rows and the factor path are bit-identical to what the
+    generator produced before the cap existed.
+    """
+    untouched = 0
+    for seed in _served_seeds(24):
+        b = generate(seed, n_years=20)
+        t = b["truth"]
+        anchor = SEVERITY_CAP * float(np.mean(
+            t["observed_annual_default_rate"])) * t["horizon_quarters"] / 4.0
+        worst = max(t["scenarios"][n]["rating_distribution"][
+            str(max(t["checkpoints"]))]["D"] for n in t["scenario_names"])
+        if worst < anchor * 0.999:
+            assert b["dgp"]["severity_damping"] == 1.0, seed
+            untouched += 1
+    assert untouched >= 12, f"only {untouched} of 24 instances were left alone"

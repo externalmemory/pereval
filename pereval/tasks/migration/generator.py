@@ -178,6 +178,13 @@ STRESS_QUARTERS = {"baseline": (2, 3), "adverse": (3, 5), "severe": (4, 6)}
 RECOVERY_FRACTION = {"baseline": (0.0, 0.3), "adverse": (0.2, 0.45),
                      "severe": (0.35, 0.6)}
 
+#: How much worse than the portfolio's own history any scenario is allowed to
+#: be, as a multiple of the observed annual default rate scaled to the horizon.
+#: A book that defaults at 1% a year does not lose a tenth of itself in a
+#: realistic supervisory scenario, however the scenario is drawn. See the
+#: damping in `generate` for what binds and how often.
+SEVERITY_CAP = 10.0
+
 #: Series that trend, so their stressed path is reshaped through the growth rate
 #: rather than the level. sp500 and djia are derived from nasdaq and share its
 #: kind.
@@ -453,8 +460,14 @@ def annual_counts_rows(annual):
     return rows
 
 
+#: How many times `generate` may redraw an instance the severity cap cannot
+#: salvage. About one draw in sixty needs one, so the bound is generous.
+_MAX_REDRAWS = 20
+
+
 def generate(seed: int = 1, n_years: int = 40,
-             scenarios: tuple[str, ...] = SCENARIOS) -> dict:
+             scenarios: tuple[str, ...] = SCENARIOS,
+             _attempt: int = 0) -> dict:
     """One instance: ONE history, and one projection target per scenario.
 
     A bank fits one model to one history and then runs that model under every
@@ -508,35 +521,111 @@ def generate(seed: int = 1, n_years: int = 40,
 
     # Give each horizon a realistic shape: deteriorate for a few quarters, turn,
     # then recover partly. The inherited overlay is monotone across all nine.
-    peaks, recoveries, z_scen = {}, {}, {}
-    scenario_rows, z_hist = [], None
-    for name in scenarios:
-        peak = int(rng_law.integers(*STRESS_QUARTERS[name], endpoint=True))
-        recovery = float(rng_law.uniform(*RECOVERY_FRACTION[name]))
-        peaks[name], recoveries[name] = peak, recovery
-        levels = reshape_scenario(macros[name]["levels"], calib, stress,
-                                  hump_shape(horizon, peak, recovery))
-        scenario_rows.extend(
-            {"scenario": name, "quarter": n_intime + 1 + k,
-             **{c: round(float(levels[c][stress.start + k]), 4)
-                for c in MACRO_COLUMNS}}
-            for k in range(horizon)
-        )
-        z = systematic_factor(dgp, levels, calib)
-        z_scen[name] = z[stress]
-        # The factor over the history window is standardised on that window and
-        # built from driver columns the overlay does not touch before the stress
-        # slice, so every scenario agrees about it. Checked, not assumed.
-        if z_hist is None:
-            z_hist = z[calib]
-        elif not np.allclose(z_hist, z[calib]):
-            raise AssertionError("scenario changed the historical factor path")
+    peaks = {n: int(rng_law.integers(*STRESS_QUARTERS[n], endpoint=True))
+             for n in scenarios}
+    recoveries = {n: float(rng_law.uniform(*RECOVERY_FRACTION[n]))
+                  for n in scenarios}
     dgp["peak_quarter"], dgp["recovery_fraction"] = peaks, recoveries
+
+    def build(damping: float):
+        """Scenario macro rows and factor paths, with the stress block scaled.
+
+        `damping` multiplies the hump weights, and the weights are what the
+        overlay scales the stress-window deviation by, so damping pulls every
+        series proportionally back toward its last historical value. The shape
+        and the turn quarter are untouched, and the published macro rows stay
+        consistent with the factor path the truth uses, which they would not if
+        the factor were scaled directly.
+        """
+        rows, zs, hist = [], {}, None
+        for name in scenarios:
+            levels = reshape_scenario(
+                macros[name]["levels"], calib, stress,
+                hump_shape(horizon, peaks[name], recoveries[name]) * damping)
+            rows.extend(
+                {"scenario": name, "quarter": n_intime + 1 + k,
+                 **{c: round(float(levels[c][stress.start + k]), 4)
+                    for c in MACRO_COLUMNS}}
+                for k in range(horizon)
+            )
+            z = systematic_factor(dgp, levels, calib)
+            zs[name] = z[stress]
+            # The factor over the history window is standardised on that window
+            # and built from driver columns the overlay does not touch before the
+            # stress slice, so every scenario agrees about it. Checked, not
+            # assumed.
+            if hist is None:
+                hist = z[calib]
+            elif not np.allclose(hist, z[calib]):
+                raise AssertionError("scenario changed the historical factor path")
+        return rows, zs, hist
+
+    scenario_rows, z_scen, z_hist = build(1.0)
 
     annual, _ = simulate_history(base, dgp, z_hist, n_years, rng_port)
     mix = holdout_mix(dgp["mix_tilt"])
     counts = {r: int(v) for r, v in
               zip(LIVE, np.round(mix * N_OBLIGORS).astype(int))}
+
+    # A drawn scenario can be severe past the point of meaning. Left alone, the
+    # severe path reaches 31.7x the portfolio's own historical loss rate over
+    # the horizon on the worst of 120 instances, and one draw on the documented
+    # convention puts 98.9% of the book in default by quarter nine with its
+    # BASELINE at 12.9%. That is not a stress test, it is the portfolio ceasing
+    # to exist, and it is close to free marks: when the truth is nearly a point
+    # mass on default, predicting total ruin scores well and the twelve
+    # components stop discriminating.
+    #
+    # The bound is stated against the history rather than against the drawn
+    # baseline scenario, because the baseline is itself a draw and can be
+    # elevated: on the instance above, severe is only 7.7x ITS baseline and
+    # would have passed a ratio rule. Anchoring on the observed annual default
+    # rate, scaled to the nine quarter horizon, is also the anchor a reviewer
+    # would use, and it is public data the agent can compute for itself.
+    #
+    # The cap binds on about one instance in eight, and only at the top: the
+    # median severe path sits at 3.9x the historical horizon rate and the 90th
+    # percentile at 11.0x. Baseline never reaches the cap, 8.0x at its worst
+    # over 120 instances, so the damping is a statement about stress calibration
+    # and not about the instance's underlying risk.
+    observed_annual = [float(c[:, D].sum() / c.sum()) for c in annual]
+    anchor = SEVERITY_CAP * float(np.mean(observed_annual)) * horizon / 4.0
+
+    def worst(zs) -> float:
+        return max(expected_distributions(base, dgp, zs[n], mix)[CHECKPOINTS[-1]]["D"]
+                   for n in scenarios)
+
+    damping = 1.0
+    if worst(z_scen) > anchor:
+        # An instance whose HISTORY ends in a crisis cannot be fixed by damping the
+        # overlay, because damping to zero holds the last historical quarter flat
+        # across the horizon rather than returning to normal, and that quarter is
+        # already the crisis. One such draw in sixty puts the final observed year at
+        # 17.5% default with the historical factor at +5.5 sigma, and every scenario
+        # lands on 98% regardless of the overlay. Flattening it further would also
+        # collapse the three scenarios onto each other, which the severity checks
+        # read, correctly, as a defect. So the instance is rejected and redrawn from
+        # a derived seed instead, deterministically.
+        if worst(build(0.0)[1]) > anchor:
+            if _attempt >= _MAX_REDRAWS:
+                raise RuntimeError(f"no admissible instance near seed {seed}")
+            nxt = int(np.random.SeedSequence(
+                [seed, 991, _attempt]).generate_state(1)[0])
+            return generate(nxt, n_years, scenarios, _attempt=_attempt + 1)
+        # One factor for every scenario, so the severity ordering between them
+        # is preserved by construction rather than checked afterwards. Bisection
+        # on a quantity that is monotone in the damping, to a tolerance well
+        # inside the rounding the published macro rows carry.
+        lo, hi = 0.0, 1.0
+        for _ in range(30):
+            mid = 0.5 * (lo + hi)
+            if worst(build(mid)[1]) > anchor:
+                hi = mid
+            else:
+                lo = mid
+        damping = lo
+        scenario_rows, z_scen, z_hist = build(damping)
+    dgp["severity_damping"] = damping
 
     per_scenario = {}
     for name in scenarios:
