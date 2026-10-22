@@ -19,9 +19,11 @@ from pereval.scorers.migration import (
     HISTORY_SCENARIO,
     ORDER,
     _downgrade_mass,
+    _raw_matrix_blocks,
     _row_weights,
     ks_distance,
     model_checks,
+    parse_matrices,
     score_predictions,
 )
 from pereval.tasks.migration.baselines import predict
@@ -905,6 +907,41 @@ def _matrices_text(by_scen: dict[str, dict[int, np.ndarray]]) -> str:
                 out.append(",".join([scen, str(q), grade]
                                     + [repr(float(x)) for x in by_scen[scen][q][i]]))
     return "\n".join(out) + "\n"
+
+
+def test_an_absorbing_default_row_does_not_void_the_matrix_file():
+    """Eight rows a matrix parses as well as seven, and an unknown label still does not.
+
+    ling-3.0-flash wrote the D row for completeness, `D,...,to_D=1.0`, and both
+    parsers threw the entire file away on it, which cost that submission ten of
+    the sixteen checks on a matrix file that was otherwise clean. Writing the
+    absorbing row is the more complete answer and the prompt never excludes it.
+    """
+    base = quarterly_base()
+    mats = {"baseline": {q: conditional_matrix(base, 0.3, 0.1) for q in (1, 2)}}
+    seven = _matrices_text(mats)
+    absorbing = ",".join(["baseline", "1", "D"]
+                         + [repr(1.0 if s == "D" else 0.0) for s in ORDER])
+    eight = seven.rstrip("\n") + "\n" + absorbing + "\n"
+
+    for parse in (_raw_matrix_blocks, parse_matrices):
+        got, want = parse(eight), parse(seven)
+        assert set(got) == set(want) == {"baseline"}
+        assert sorted(got["baseline"]) == sorted(want["baseline"]) == [1, 2]
+        for q in (1, 2):
+            assert np.allclose(got["baseline"][q], want["baseline"][q])
+        # D is imposed, not read: the submitted row cannot move it
+        assert got["baseline"][1][-1, -1] == 1.0
+
+    resurrection = ",".join(["baseline", "1", "D"]
+                            + [repr(1.0 if s == "AAA" else 0.0) for s in ORDER])
+    kept = _raw_matrix_blocks(seven.rstrip("\n") + "\n" + resurrection + "\n")
+    assert np.allclose(kept["baseline"][1], _raw_matrix_blocks(seven)["baseline"][1])
+
+    unknown = ",".join(["baseline", "1", "AAA+"]
+                       + [repr(1.0 / len(ORDER)) for _ in ORDER])
+    for parse in (_raw_matrix_blocks, parse_matrices):
+        assert parse(seven.rstrip("\n") + "\n" + unknown + "\n") == {}
 
 
 def _oracle_matrices(bundle: dict) -> dict[str, dict[int, np.ndarray]]:

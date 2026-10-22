@@ -284,6 +284,8 @@ def parse_matrices(text: str | None) -> dict[str, dict[int, np.ndarray]]:
             vals = np.array([float(row[c]) for c in MATRIX_COLS], dtype=float)
         except (KeyError, TypeError, ValueError):
             return {}
+        if frm == ORDER[D_INDEX]:
+            continue
         if frm not in LIVE_STATES or not np.isfinite(vals).all():
             return {}
         raw.setdefault((scen, q), {})[frm] = vals
@@ -886,6 +888,16 @@ def _raw_matrix_blocks(text: str | None) -> dict[str, dict[int, np.ndarray]]:
     no file at all". A NaN is a hard failure and has to be counted as one, so
     this keeps the values exactly as submitted and leaves judging them to the
     checks. Returns {} only when the CSV cannot be read as the requested shape.
+
+    A `from_rating` of D is SKIPPED rather than rejected. Both parsers used to
+    throw the whole file away on it, and that cost a real submission ten of the
+    sixteen checks: ling-3.0-flash wrote the absorbing row for completeness,
+    eight rows a matrix instead of seven, and had its entire matrix file read as
+    unsubmitted. Writing that row is the more complete answer, not a defect, and
+    the prompt never says to leave it out. The row carries no information worth
+    keeping either way, because the prompt states default is absorbing and
+    terminal, so the D row is imposed as the identity below rather than taken
+    from the submission. Unknown labels are still a hard rejection.
     """
     if not text:
         return {}
@@ -898,6 +910,8 @@ def _raw_matrix_blocks(text: str | None) -> dict[str, dict[int, np.ndarray]]:
             vals = np.array([float(row[c]) for c in MATRIX_COLS], dtype=float)
         except (KeyError, TypeError, ValueError):
             return {}
+        if frm == ORDER[D_INDEX]:
+            continue
         if frm not in LIVE_STATES:
             return {}
         raw.setdefault((scen, q), {})[frm] = vals
@@ -1327,10 +1341,13 @@ def migration_scorer():
             # computed from them. Every diagnostic added after a run was scored
             # has so far required re-running the model, because the submission
             # existed only in the sandbox and the sandbox is gone: the binary
-            # checks could not be applied to the runs already in logs/. About
-            # 145 KB a sample, nearly all of it the history block, buys the
-            # ability to answer the next question of this shape off the archive
-            # instead of off the budget.
+            # checks could not be applied to the runs already in logs/. Thirty
+            # to fifty KB a sample, mostly the history block, buys the ability
+            # to answer the next question of this shape off the archive instead
+            # of off the budget. It has already paid for itself once: the
+            # absorbing-row bug recorded in `_raw_matrix_blocks` was diagnosed,
+            # fixed and the corrected checks recomputed entirely from the
+            # archived submission, with no second API call.
             return Score(value=v, explanation=explain(v), metadata=files)
 
         return score
