@@ -4,7 +4,10 @@
 Usage: save_transcript.py <log.eval> [more.eval ...]
 
 Standing convention in this repo: every model run leaves a readable transcript
-on disk, not just a score. Reasoning content is included when the provider
+on disk, not just a score. A task that knows how to draw its submission also
+leaves a PNG beside the transcript, under the same stem, written by
+`plot_backtest.render_png`. Drawing is best effort: a figure that cannot be
+built prints to stderr and never costs the transcript it belongs to. Reasoning content is included when the provider
 surfaces it (OpenRouter does; Zen's openai-api provider does not).
 
 Transcripts are never overwritten. Model, task, instance, seed and epoch do not
@@ -22,8 +25,11 @@ import sys
 
 from inspect_ai.log import read_eval_log
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(HERE, ".."))
 RUNS = os.path.join(ROOT, "runs")
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
 
 def _text(content):
@@ -109,33 +115,55 @@ def _suffixed(path: str, suffix: str) -> str:
     return f"{base}-{suffix}{ext}"
 
 
+def sample_stem(log, sample) -> str:
+    """The basename everything archived from one sample shares.
+
+    The transcript and the figure have to agree on it, so it lives here, where
+    the collision rules that shape it already live.
+    """
+    sid = str(sample.id)
+    name = sid if sid.startswith(log.eval.task) else f"{log.eval.task}-{sid}"
+    # Some tasks (quantile) reuse one sample id across seed runs, so the seed
+    # must be in the filename or the runs overwrite each other.
+    seed = (sample.metadata or {}).get("seed")
+    if seed is not None and f"seed-{seed}" not in name:
+        name = f"{name}-seed-{seed}"
+    # With -T repeats=N the same instance is drawn N times in one log, so the
+    # model, task, instance and seed no longer name a SAMPLE. Without the epoch
+    # the repeats collide with each other and get handed the collision suffixes
+    # meant for separate runs, which reads as three runs on three dates when it
+    # is one run drawn three times, and the Nth repeat past the third has no
+    # name left at all. Single-draw logs keep their bare names.
+    if (log.eval.config.epochs or 1) > 1:
+        name = f"{name}-epoch{sample.epoch}"
+    return f"{log.eval.model.replace('/', '-')}-{name}"
+
+
+def _write_figure(log, sample, md_path) -> None:
+    """The companion figure, for a task that has one. Best effort, always."""
+    png = os.path.splitext(md_path)[0] + ".png"
+    try:
+        from plot_backtest import render_png
+        if render_png(log, sample, png):
+            print(png)
+    except Exception as exc:                       # noqa: BLE001 - never fatal
+        print(f"figure skipped for {os.path.basename(png)}: {exc}",
+              file=sys.stderr)
+
+
 def main(paths):
     os.makedirs(RUNS, exist_ok=True)
     for p in paths:
         log = read_eval_log(p)
-        slug = log.eval.model.replace("/", "-")
         for s in (log.samples or []):
-            sid = str(s.id)
-            name = sid if sid.startswith(log.eval.task) else f"{log.eval.task}-{sid}"
-            # Some tasks (quantile) reuse one sample id across seed runs, so the
-            # seed must be in the filename or the runs overwrite each other.
-            seed = (s.metadata or {}).get("seed")
-            if seed is not None and f"seed-{seed}" not in name:
-                name = f"{name}-seed-{seed}"
-            # With -T repeats=N the same instance is drawn N times in one log, so the
-            # model, task, instance and seed no longer name a SAMPLE. Without the epoch
-            # the repeats collide with each other and get handed the collision suffixes
-            # meant for separate runs, which reads as three runs on three dates when it
-            # is one run drawn three times, and the Nth repeat past the third has no
-            # name left at all. Single-draw logs keep their bare names.
-            if (log.eval.config.epochs or 1) > 1:
-                name = f"{name}-epoch{s.epoch}"
-            out = _free_path(os.path.join(RUNS, f"{slug}-{name}.md"), render(log, s), p)
+            stem = os.path.join(RUNS, f"{sample_stem(log, s)}.md")
+            out = _free_path(stem, render(log, s), p)
             if out is None:
                 continue
             with open(out, "w") as f:
                 f.write(render(log, s))
             print(out)
+            _write_figure(log, s, out)
 
 
 if __name__ == "__main__":
