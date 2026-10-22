@@ -77,11 +77,6 @@ SCENARIO_KEYS = ("baseline", "adverse", "severe")
 #: still score far worse than the degenerate, as elsewhere in the suite.
 COMPONENT_CAP = 10.0
 
-#: Least peak height, as a fraction of the observed peak's height above the
-#: observed median, at which `fit_peak_lag` is worth reporting. Measured in
-#: `fit_diagnostics`: the one instance below it read a lag of sixteen years.
-PROMINENCE_FLOOR = 0.25
-
 #: Floor on a degenerate value before dividing, for instances where the
 #: uninformative answer happens to be nearly right on one component.
 DEGENERATE_FLOOR = 1e-4
@@ -328,7 +323,7 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
     """
     mats = parse_matrices(text)
     if not mats:
-        return {"matrix_provided": 0.0}
+        return {}
     per_scenario = {scen: sorted(mats[scen]) for scen in sorted(mats)}
     live = [mats[scen][q][:D_INDEX] for scen in per_scenario
             for q in per_scenario[scen]]
@@ -351,31 +346,25 @@ def matrix_diagnostics(text: str | None, start: np.ndarray,
         checks += len(pd) - 1
         violations += int((np.diff(pd) < -1e-12).sum())
 
-    # Three tiers, because the defects are not of one kind.
+    # Counts and magnitudes only. The verdicts that used to live here, one
+    # boolean per tier plus a conjunction over all of them, have been removed as
+    # duplicates of the binary checks, which ask the same questions of the RAW
+    # blocks rather than of this repaired parse and are therefore the stricter
+    # reading: see `matrix_rows_sum_to_one`, `matrix_cells_are_probabilities`
+    # and `matrices_readable`. The conjunction was worse than redundant. It
+    # included "no exact zero anywhere", which almost every submission trips,
+    # so it read 0.0 on eight of the nine submissions of the first live run,
+    # two of which failed no check at all.
     #
-    # HARD. Rows must sum to one. A matrix whose rows do not is not a collection
-    # of probability distributions, so it cannot be the model that produced the
-    # projection, and the failure is consequential rather than cosmetic:
-    # scaling every row to 1.2 drives the submission gap from 0.0000 to 2.5163,
-    # because mass non-conservation compounds over the horizon. This is a
-    # completeness failure, not an accuracy one.
-    #
-    # MIDDLE. Negative cells also mean the object is not a distribution, but
-    # clipping them to zero is a defensible remedy that the literature uses, and
-    # a single small negative is numerically near-harmless: the same gap moves
-    # only to 0.0001. So it is flagged, not failed.
-    #
-    # SOFT. Exact zeros and a non-monotone default ordering leave a valid
-    # distribution that is imprudent or odd. Tie-breaker territory.
-    rows_valid = row_err <= 1e-6
-    nonneg = negatives == 0
-    admissible = rows_valid and nonneg and zeros == 0 and violations == 0
+    # The tiers themselves still matter and are still pinned by the tests. Rows
+    # not summing to one is the consequential defect: scaling every row to 1.2
+    # drives the submission gap from 0.0000 to 2.5163, because mass
+    # non-conservation compounds over the horizon. A single small negative
+    # leaves mass conserved and moves the same gap to 0.0001, so clipping it is
+    # a defensible remedy. Exact zeros and a non-monotone default ordering leave
+    # a valid distribution that is imprudent or odd.
     quarters_per = {len(v) for v in per_scenario.values()}
     out = {
-        "matrix_provided": 1.0,
-        "matrix_rows_valid": float(rows_valid),
-        "matrix_nonnegative": float(nonneg),
-        "matrix_admissible": float(admissible),
         "matrix_scenarios": float(len(per_scenario)),
         "matrix_quarters": float(min(quarters_per)),
         "matrix_row_sum_error": row_err,
@@ -711,14 +700,31 @@ def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
     diagnosis: both low is a weak model, high here and low forward is a model
     that cannot leave its own sample.
 
-    `fit_peak_prominence` is the statistic to read rather than `fit_peak_lag`.
-    Over the same sweep it runs 0.09, 0.12, 0.19, 0.32, 0.51, 1.17, a span of
-    thirteen against the stress ratio's four, and at zero sensitivity it reads
-    0.09 instead of leaving the reviewer to infer flatness. The lag is kept
-    because mistiming a peak is a real finding, but it is suppressed below a
-    prominence of 0.25: of twenty-four instances the one with prominence 0.17
-    reported a lag of sixteen years, and the other twenty-three, all above 0.39,
-    reported exactly zero. A series with no peak has no peak to time.
+    `fit_peak_prominence` is the height of the fitted peak above the fitted
+    median over the height of the observed peak above the observed median, so a
+    level bias cancels and only the peak's size relative to a typical year
+    counts. Over the same sweep it runs 0.09, 0.12, 0.19, 0.32, 0.51, 1.17, a
+    span of thirteen against the stress ratio's four, and at zero sensitivity it
+    reads 0.09 rather than leaving the reviewer to infer flatness.
+
+    `fit_peak_lag` has been REMOVED, and the reason is worth keeping. It was the
+    signed year distance between the two argmaxes, gated on a prominence of
+    0.25 so that a flat series was not timed. The gate was not the problem. An
+    argmax is, because shrinkage compresses the worst few fitted years toward
+    each other and the argmax of a competent estimate on twenty years of
+    history is then near-arbitrary among them. The shipped reference read a
+    nonzero lag on eight of twenty four served instances, up to eleven years.
+    On the worst of those its fitted values at the two years being compared
+    differ by 0.04 percentage points, two percent of the fitted peak, and the
+    lag reported that coin flip as an eleven year mistiming; across the eight
+    the fitted gap runs 1.7% to 41.3% of the fitted peak, half of it under 20%.
+    The observed side is no better: six of twenty four instances have an
+    observed peak within 25% of its runner-up and two within 10%, and on one of
+    those the two worst years are seventeen years apart, so the sign of the
+    statistic turns on a tie. What the lag was reporting is shrinkage, which
+    `fit_peak_ratio` already reports directly: on the same eight instances it
+    runs 0.24 to 0.60. A diagnostic has to be one a competent estimate can
+    clear, which is the rule that removed `fit_stress_mean_ratio` as well.
     """
     obs = np.asarray(list(observed), dtype=float)
     fit = parse_backtest(text)
@@ -735,10 +741,8 @@ def fit_diagnostics(text: str | None, observed) -> dict[str, float]:
         out["fit_all_years_ratio"] = float(pred.mean() / obs.mean())
     spread = obs.max() - float(np.median(obs))
     if spread > 0.0:
-        prom = (pred.max() - float(np.median(pred))) / spread
-        out["fit_peak_prominence"] = float(prom)
-        if prom >= PROMINENCE_FLOOR:     # below this there is no peak to time
-            out["fit_peak_lag"] = float(int(np.argmax(pred)) - int(np.argmax(obs)))
+        out["fit_peak_prominence"] = float(
+            (pred.max() - float(np.median(pred))) / spread)
     return out
 
 
@@ -1226,8 +1230,7 @@ REPORTED_KEYS = (
     "default_rate_bias", "hosmer_lemeshow",
     "completion", "runs", "regret_worst", "regret_spread",
     # diagnostics only: deliberately excluded from `score`
-    "matrix_provided", "matrix_rows_valid", "matrix_nonnegative",
-    "matrix_admissible", "matrix_scenarios", "matrix_row_sum_error",
+    "matrix_scenarios", "matrix_row_sum_error",
     "matrix_rows_off_one", "matrix_negative_cells", "matrix_most_negative",
     "matrix_zero_cells", "matrix_smallest_positive",
     "matrix_default_monotonicity_violations",
@@ -1244,7 +1247,7 @@ REPORTED_KEYS = (
     *(f"stress_mean_ratio_{n}" for n in SCENARIO_KEYS),
     "stress_peak_ratio", "stress_peak_lag",
     "fit_provided", "fit_years", "fit_peak_ratio",
-    "fit_all_years_ratio", "fit_peak_prominence", "fit_peak_lag",
+    "fit_all_years_ratio", "fit_peak_prominence",
     # binary checks: one per defensible property, one when it FAILS, and the
     # count of failures. See CHECK_KEYS for what may be a check here.
     "checks_failed", "checks_total",

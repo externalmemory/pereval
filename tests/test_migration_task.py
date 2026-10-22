@@ -417,7 +417,6 @@ def test_matrix_diagnostics_are_clean_for_the_reference():
     start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
     cps = list(CHECKPOINTS)
     d = matrix_diagnostics(mats, start, parse_predictions(preds), cps)
-    assert d["matrix_provided"] == 1.0
     assert d["matrix_rows_off_one"] == 0.0
     assert d["matrix_negative_cells"] == 0.0
     assert d["matrix_zero_cells"] == 0.0
@@ -476,7 +475,8 @@ def test_missing_matrices_are_recorded_without_affecting_score():
     b = generate(1, n_years=20)
     start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
     d = matrix_diagnostics(None, start, {}, [4, 9])
-    assert d == {"matrix_provided": 0.0}
+    # nothing to measure, and `fail_matrices_readable` carries the finding
+    assert d == {}
 
 
 def test_admissibility_is_immaterial_to_accuracy_so_it_breaks_ties_only():
@@ -523,8 +523,9 @@ def test_admissibility_is_immaterial_to_accuracy_so_it_breaks_ties_only():
 
     good = matrix_diagnostics(good_mats, start, parse_predictions(good_preds), cps)
     bad = matrix_diagnostics(bad_mats, start, parse_predictions(bad_preds), cps)
-    assert good["matrix_admissible"] == 1.0
-    assert bad["matrix_admissible"] == 0.0
+    for k in ("matrix_rows_off_one", "matrix_negative_cells",
+              "matrix_zero_cells", "matrix_default_monotonicity_violations"):
+        assert good[k] == 0.0, k
     assert bad["matrix_zero_cells"] > 0
 
     s_good = score_predictions(t, good_preds)["score"]
@@ -559,9 +560,9 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
     head, *body = mats.splitlines()
 
     good = matrix_diagnostics(mats, start, parse_predictions(preds), cps)
-    assert good["matrix_rows_valid"] == 1.0
-    assert good["matrix_nonnegative"] == 1.0
-    assert good["matrix_admissible"] == 1.0
+    assert good["matrix_row_sum_error"] <= 1e-6
+    assert good["matrix_rows_off_one"] == 0.0
+    assert good["matrix_negative_cells"] == 0.0
 
     def scaled(line, k):
         parts = line.split(",")
@@ -569,7 +570,7 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
 
     off = matrix_diagnostics(head + "\n" + "\n".join(scaled(x, 1.2) for x in body),
                              start, parse_predictions(preds), cps)
-    assert off["matrix_rows_valid"] == 0.0
+    assert off["matrix_rows_off_one"] > 0.0
     assert off["matrix_row_sum_error"] == pytest.approx(0.2, abs=0.01)
     assert off["matrix_submission_gap"] > 1.0      # mass loss compounds
 
@@ -580,9 +581,9 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
     neg = matrix_diagnostics(
         head + "\n" + "\n".join(body[:i] + [",".join(parts)] + body[i + 1:]),
         start, parse_predictions(preds), cps)
-    assert neg["matrix_rows_valid"] == 1.0         # mass still conserved
-    assert neg["matrix_nonnegative"] == 0.0
-    assert neg["matrix_admissible"] == 0.0
+    assert neg["matrix_rows_off_one"] == 0.0        # mass still conserved
+    assert neg["matrix_negative_cells"] >= 1.0
+    assert neg["matrix_most_negative"] < 0.0
     assert neg["matrix_submission_gap"] < 0.01     # and numerically near-harmless
 
 
@@ -665,7 +666,7 @@ def test_degenerate_floors_every_one_sided_statistic():
     assert s["stress_mean_ratio"] == 0.0
     assert s["stress_peak_ratio"] == 0.0
     assert d["fit_peak_ratio"] == 0.0
-    assert "fit_peak_lag" not in d          # a flat series has no peak
+    assert "fit_peak_lag" not in d         # removed; see the prominence test
 
 
 def test_true_loss_path_reconciles_with_the_scored_checkpoint():
@@ -704,29 +705,47 @@ def test_top_of_scale_is_estimated_and_leaves_the_grades_ordered():
     assert col[1] > col[0]
 
 
-def test_peak_prominence_beats_the_lag_and_suppresses_it_when_flat():
-    """A flat fitted series has no peak, so its argmax is noise.
+def test_peak_prominence_is_what_survives_the_removed_lag():
+    """Prominence reads the height of the fitted peak, and the lag is gone.
 
-    Measured over twenty-four instances at the shipped fit, the one instance
-    with prominence 0.17 reported a sixteen year lag while the other
-    twenty-three, all above 0.39, reported exactly zero. So the lag is withheld
-    below the prominence floor rather than published as a finding.
+    `fit_peak_lag` was the signed year distance between the two argmaxes, gated
+    on a prominence floor so that a flat series was not timed. The gate was not
+    the problem. Shrinkage compresses the worst few fitted years toward each
+    other, so the argmax among them turns on differences of a couple of percent
+    of the fitted peak: the shipped reference read a nonzero lag on eight of
+    twenty four served instances, up to eleven years, and on the worst of those
+    the two years being compared differ by 0.04 percentage points. What the lag
+    was reporting is shrinkage, and `fit_peak_ratio` reports that directly, 0.24
+    to 0.60 on the same eight. Prominence is the continuous statistic that
+    survives, and this test pins its calibration at both ends and in the middle.
     """
-    from pereval.scorers.migration import PROMINENCE_FLOOR, fit_diagnostics
+    from pereval.scorers.migration import (
+        REPORTED_KEYS, fit_diagnostics,
+    )
     from pereval.tasks.migration.baselines import _backtest_csv
 
     obs = [0.004, 0.005, 0.004, 0.030, 0.012, 0.005, 0.004, 0.006]
-    flat = _backtest_csv(range(2000, 2008), [0.007] * 8, ["baseline"])
-    d = fit_diagnostics(flat, obs)
-    assert d["fit_peak_prominence"] == pytest.approx(0.0)
-    assert "fit_peak_lag" not in d
+    years = range(2000, 2008)
 
-    # a series that tracks the observed peak is prominent and correctly timed
-    sharp = _backtest_csv(range(2000, 2008), obs, ["baseline"])
-    d = fit_diagnostics(sharp, obs)
-    assert d["fit_peak_prominence"] == pytest.approx(1.0)
-    assert d["fit_peak_prominence"] >= PROMINENCE_FLOOR
-    assert d["fit_peak_lag"] == 0.0
+    def prom(series):
+        return fit_diagnostics(_backtest_csv(years, series, ["baseline"]),
+                               obs)["fit_peak_prominence"]
+
+    assert prom([0.007] * 8) == pytest.approx(0.0)        # no peak at all
+    assert prom(obs) == pytest.approx(1.0)                # the observed peak
+    med = float(np.median(obs))                           # half the peak kept
+    assert prom([med + 0.5 * (x - med) for x in obs]) == pytest.approx(0.5)
+
+    # a level bias alone does not move it, which is why it is a ratio of
+    # heights above each series' own median rather than of levels
+    assert prom([x + 0.01 for x in obs]) == pytest.approx(1.0)
+
+    sharp = _backtest_csv(years, obs, ["baseline"])
+    assert "fit_peak_lag" not in fit_diagnostics(sharp, obs)
+    assert "fit_peak_lag" not in REPORTED_KEYS
+    for k in ("matrix_provided", "matrix_rows_valid", "matrix_nonnegative",
+              "matrix_admissible"):
+        assert k not in REPORTED_KEYS, k
 
 
 def test_every_reported_key_survives_aggregation():
