@@ -175,9 +175,9 @@ So it binds on about one instance in eight and only at the top of the distributi
 
 **The cap made the check margins wider, not narrower.** The tightest severity gap over 192 comparisons went from 0.0026 to 0.0104 for the oracle and from 0.0016 to 0.0113 for the reference, because the instance that set the old minimum was one of the ones the cap damps. Every figure in this document measured from `data/transitions.csv` moved slightly, since about one instance in sixty is now a different draw, and the figures quoted here are the post-cap ones.
 
-## Fifteen Checks a Reviewer Would Actually Make
+## Sixteen Checks a Reviewer Would Actually Make
 
-The numeric diagnostics below answer "how far from the oracle", and nothing about a continuous distance tells a reviewer whether to send the model back. No reviewer reads "severe stress response 0.41x" and reaches a verdict. So the primary diagnostic layer is fifteen binary checks, each reported as `fail_<name>` equal to one when it fails, plus `checks_failed` and `checks_total`. Averaged over samples, each key reads as the share of submissions carrying that finding, and the count is the number of findings a reviewer would write up.
+The numeric diagnostics below answer "how far from the oracle", and nothing about a continuous distance tells a reviewer whether to send the model back. No reviewer reads "severe stress response 0.41x" and reaches a verdict. So the primary diagnostic layer is sixteen binary checks, each reported as `fail_<name>` equal to one when it fails, plus `checks_failed` and `checks_total`. Averaged over samples, each key reads as the share of submissions carrying that finding, and the count is the number of findings a reviewer would write up.
 
 Three rules govern what is allowed in.
 
@@ -187,11 +187,13 @@ Three rules govern what is allowed in.
 
 **An absent or unreadable artefact fails every check that reads it.** A model nobody can inspect has demonstrated none of these properties, and excusing it would let a missing file outrank a bad answer. The count stays monotone in how much is wrong.
 
-### The Fifteen
+### The Sixteen
 
 **Integrity, seven.** `matrices_readable` and `predictions_readable` (both files parse, and all three scenarios are present); `matrix_cells_finite` and `prediction_shares_finite`; `matrix_cells_are_probabilities` (every cell in [0, 1]); `matrix_rows_sum_to_one` and `prediction_shares_sum_to_one`, to 1e-4. Nothing is repaired before these run, which is the point: the parser used by the score coerces and fills, so a NaN there becomes a number, while these read the raw blocks and count it.
 
 **Shape, three.** `pd_rises_as_rating_falls`: a lower-rated obligor's default probability is not below a higher-rated one's. `stay_is_the_most_likely_outcome`: over one quarter a grade is likelier to persist than to land in any one other live grade. `multinotch_downgrade_possible`: the three-or-worse band is not identically zero, because zero is not an estimate, it is an assertion that the move cannot happen.
+
+`stay_is_the_most_likely_outcome` reads the three scenario blocks and not the fitted history, and that exclusion is measured rather than defensive. One of the 960 true historical quarters across twelve instances sits at a factor of +5.92 standard deviations, where the oracle's own AAA row puts 0.2955 on staying against 0.4532 on a one-notch fall, three violating cells. The answer key tripping a check is a bug in the check, and the decisive argument is that the shipped reference never trips it, because its ridge-shrunk factor never reaches that far: checking the history would convict exactly those submissions whose historical fit is *more* faithful than the reference's. The property is a statement about a quarterly migration matrix in a plausible macro state, and a six-sigma quarter is not one.
 
 **Macro response, four.** `downgrades_rise_with_severity`: portfolio-weighted downgrade mass, summed over the nine quarters, rises strictly with severity. `pd_rises_with_severity`: the projected nine-quarter cumulative default share rises strictly with severity. `implied_pd_rises_with_severity`: the same question asked of the matrices, by propagating the published cohort mix through them. `pd_rises_with_horizon`: in the absorbing cohort the default share rises strictly from quarter four to quarter nine.
 
@@ -199,21 +201,39 @@ The three severity checks compare *every adjacent pair*, severe against adverse 
 
 The projection and the matrices are two separate claims, which is why the severity ordering is asked of both. A submission can file a perfectly ordered projection computed by some other route while the matrices it documents imply the opposite, and nothing else here catches that: `matrix_submission_gap` is reported rather than checked, and it is a distance rather than an ordering.
 
-**One model, one.** `historical_fit_identical_across_scenarios`, described under One History, Three Scenarios.
+**Historical fit, two.** `historical_fit_identical_across_scenarios`, described under One History, Three Scenarios. `fitted_downgrades_rise_in_bad_years`: the migration body the model implies for its own historical quarters moves with the cycle it was fitted to, described below.
+
+### The Fitted Body Has to Move With the Cycle
+
+`fitted_downgrades_rise_in_bad_years` is the one check that reads the fitted history rather than the projection. Take the portfolio-weighted one-notch-or-worse downgrade mass of each fitted historical quarter, average it within each published year, rank the twenty years by the observed annual default rate in `data/transitions.csv`, and require the mean over the five worst years to exceed the mean over the five best. Nothing in it touches the answer key: the ranking variable is published data, and the quantity ranked is the submission's own output.
+
+It exists because every other statement about the history is made through the default column. A model can reproduce twenty years of observed default rates to five parts in ten thousand while carrying a migration body that never moves, and that is not a hypothetical: this task has seen that failure twice. The question the check asks is the one a reviewer asks of any such model, which is whether the thing it claims to have estimated responds to the cycle it was estimated on.
+
+Three details in the construction earn their place, each settled by measurement rather than by argument.
+
+**It cannot be a correlation.** A time-homogeneous body has zero variance across quarters, so a correlation against the observed series is NaN exactly on the submission most in need of a verdict. That is the same failure mode that disqualified `matrix_one_model_discordance`, which returned NaN on a submission whose three scenarios were identical, and restating the question as an ordering between two group means removes it: both means always exist.
+
+**The split is by rank, not by quantile value.** `obs >= quantile(.75)` and `obs <= quantile(.25)` can select overlapping sets on a history with ties, and an overlap drives a correct model's gap toward zero and fails it. Five highest against five lowest is disjoint by construction, whatever the history looks like.
+
+**It is top quartile against bottom quartile, not top against the rest.** Both forms work, and the narrower one is better on every axis measured. On the shipped reference's own submission the smallest margin over twenty-four served instances is 1.09e-02 for quartile-against-quartile and 7.47e-03 for quartile-against-rest; a sign-flipped body, which is the most adversarial near-miss, reads -1.91e-02 rather than -1.09e-02. The intuition that the wider comparison must be more noise-robust because it averages more years is wrong here: the middle two quartiles are the years whose ranking is least determined by the signal and most by sampling noise, and including them in the comparison group dilutes the contrast more than it stabilises the mean. Resampling each year's default count binomially and re-deriving the split, eight instances by two thousand draws each, the reference's gap never fell below 9.3e-03 in 16,000 tries against 5.6e-03 for the wider form.
+
+**Every year is weighted by one fixed starting mix.** Weighting each year by the portfolio that year actually began with turns the statistic into a statement about composition drift as well as about the matrices, and that is enough to let a constant body cross the split on drift alone: measured, it passes on 4 of 24 instances. Against one fixed mix a constant body reads exactly zero, to 3.5e-18, and fails on all 24.
+
+**The margins, over twenty-four served instances, against an absolute tie tolerance of 1e-9.** The oracle clears by 1.41e-02 and a direct fit to the observed default rates by 1.91e-02. The shipped reference clears by 1.09e-02, and it is the demanding case, because its factor is built from macro data and so never sees the sampling noise in the default counts that helped choose the split. A model retaining only five percent of the reference's macro response still clears by 4.6e-04. The check is therefore not a test of whether the response is well calibrated, which is what the numeric diagnostics are for; it is a test of whether there is one at all.
 
 ### It Separates, and Nothing Is Marginal
 
 Twelve instances, the ones the task serves at base seed 1, one line per known submission shape, count of instances on which each check fails. The documented `generate(seed=k)` convention produces the identical table:
 
-| Submission | `checks_failed` of 180 | Which checks |
+| Submission | `checks_failed` of 192 | Which checks |
 | --- | ---: | --- |
 | oracle (true model) | 0 | none |
 | one-factor reference | 0 | none |
 | oracle with the far band thinned to zero | 12 | `multinotch_downgrade_possible` 12 |
-| oracle with the migration body frozen | 12 | `downgrades_rise_with_severity` 12 |
+| oracle with the migration body frozen | 24 | `downgrades_rise_with_severity`, `fitted_downgrades_rise_in_bad_years`, 12 each |
 | oracle refitted per scenario | 12 | `historical_fit_identical_across_scenarios` 12 |
-| degenerate (no migration) | 60 | `multinotch_downgrade_possible`, `downgrades_rise_with_severity`, `pd_rises_with_severity`, `implied_pd_rises_with_severity`, `pd_rises_with_horizon`, 12 each |
-| nothing submitted | 180 | all fifteen, 12 each |
+| degenerate (no migration) | 72 | `multinotch_downgrade_possible`, `downgrades_rise_with_severity`, `pd_rises_with_severity`, `implied_pd_rises_with_severity`, `pd_rises_with_horizon`, `fitted_downgrades_rise_in_bad_years`, 12 each |
+| nothing submitted | 192 | all sixteen, 12 each |
 
 Every cell is 0 or 12. No check is near its boundary on any instance, which is what makes the binary form honest rather than a threshold in disguise: a defect either is or is not present, on all twelve draws.
 
@@ -320,7 +340,9 @@ The far ratio needs the oracle, so it is not a statistic an agent could compute 
 
 ## One History, Three Scenarios
 
-An instance carries one set of annual counts, one macro history, one holdout cohort and three nine-quarter paths over the same future quarters, named `baseline`, `adverse` and `severe` in a `scenario` column of `data/scenario.csv`. The prompt asks for one model estimated on the history and three projections through it. `predictions.csv` and `matrices.csv` carry the same column, at forty-eight and one hundred and eighty-nine rows.
+An instance carries one set of annual counts, one macro history, one holdout cohort and three nine-quarter paths over the same future quarters, named `baseline`, `adverse` and `severe` in a `scenario` column of `data/scenario.csv`. The prompt asks for one model estimated on the history and three projections through it. `predictions.csv` and `matrices.csv` carry the same column, at forty-eight and seven hundred and forty-nine rows.
+
+`matrices.csv` also carries the fitted history. Under the reserved scenario name `history` the model writes the quarterly matrix it implies for each of the eighty historical quarters, once rather than once per scenario, since there is one history. That block exists because the alternative is to take the historical fit on trust: `backtest.csv` reports the default column alone, which is one column of a seven by eight matrix, and the two defects this task has actually caught in its own reference both lived in the body rather than the column. The block is a diagnostic rather than part of the answer, so the parser used by `score` drops it before anything oracle-relative is computed, and the score is bit-identical with and without it.
 
 This is a correction. An earlier version drew one scenario per instance and rotated the three across instances, which was wrong in two ways.
 
@@ -348,11 +370,13 @@ Read as zero against non-zero rather than as a magnitude. The reference reads ex
 
 **The blind spot is the likeliest case, and it is not fixable this way.** A model re-estimated per scenario that stays inside the same one-factor family, so that only the macro coefficients and hence the factor path differ, reads exactly 0.00%. Scaling the severe path's factor by 0.6 leaves every grade's ordering intact, because the family is comonotone whatever the factor does. So the statistic detected a change of form, not a change of fit, and a submission reading zero had not been shown to use one model. It was also NaN on a submission whose three scenarios were identical, because identical matrices leave no comparable pairs, which is precisely the submission most in need of a verdict. The historical-fit equality has neither weakness: a refit inside the one-factor family still has to produce a different historical fit, because it is a different fit.
 
-### A Severe Draw Can Still Wipe Out the Book
+### A Severe Draw Could Wipe Out the Book, and Now Cannot
+
+**This is the open question that the severity cap closed.** The two paragraphs below record it as it stood; what was done about it is under A Scenario Is Capped at Ten Times the Portfolio's Own History.
 
 The severity bands are disjoint, so baseline, adverse and severe come out ordered on every instance measured, and the factor is pushed further out of sample at each step. The tail is the problem. Over twenty-four seeds the severe cohort default share at quarter 9 has a median of 0.123 and a maximum of 0.989: seed 21 draws both weights near one and an asset correlation of 0.173, and its severe factor reaches 7.9 standard deviations, which no supervisory scenario resembles. One instance in twenty-four is affected at that extreme and one more exceeds 0.70.
 
-Rotation hid the frequency rather than reducing it: a severe path was drawn on one instance in three, so a bad draw cost one instance in roughly seventy. Now every instance carries one, so a bad draw damages one column of three. The scoring still behaves, since the degenerate is normalised per scenario and reads 1.000 either way, but an instance whose severe truth is total wipeout is not measuring the annual-to-quarterly problem the task exists for. This is a generator calibration issue that predates the redesign and is not fixed here, because bounding the drawn severity changes the task's difficulty and that is a separate decision from the shape of the instance.
+Rotation hid the frequency rather than reducing it: a severe path was drawn on one instance in three, so a bad draw cost one instance in roughly seventy. Now every instance carries one, so a bad draw damages one column of three. The scoring still behaves, since the degenerate is normalised per scenario and reads 1.000 either way, but an instance whose severe truth is total wipeout is not measuring the annual-to-quarterly problem the task exists for. This was a generator calibration issue that predated the redesign and was deliberately left open here, because bounding the drawn severity changes the task's difficulty and that was a separate decision from the shape of the instance. It has since been taken: no scenario may exceed ten times the portfolio's own historical loss rate over the horizon.
 
 ## The Scenario Has a Trough, Which Cost Something
 
@@ -577,7 +601,7 @@ That is the case for the count existing. Not that it correlates with quality, bu
 
 `multinotch_downgrade_possible` fired once, on the submission that also carried the most inversions. The other thirteen checks never fired on any of the nine, and the reference tripped nothing on any of its three, which is the separation the tests predict, now reproduced through the Inspect path on live instances rather than in process.
 
-Four of nine samples were capped, three on the wall clock and one on messages, and all four still produced a scored submission. Two quarter-labelling conventions appeared, six submissions numbering the horizon 81 to 89 from the end of history and three numbering it 1 to 9; both parse, because the scorer orders the submitted quarters rather than assuming a numbering, but the prompt does not say which is wanted and should.
+Four of nine samples were capped, three on the wall clock and one on messages, and all four still produced a scored submission. **Two quarter-labelling conventions appeared, and the prompt was at fault.** Six submissions numbered the horizon 81 to 89 and three numbered it 1 to 9, which is exactly what the published files invited: `data/macro_history.csv` ran 1 to 80 and `data/scenario.csv` ran 81 to 89, so "the nine quarters of each scenario" had two defensible readings. Both parsed, because the scorer orders the submitted quarters rather than assuming a numbering, and all nine submissions happened to key `predictions.csv` by 4 and 9, where the prompt is explicit. Had any of them carried its matrices convention across and written 84 and 89 there, it would have scored as though it submitted nothing. Every file now numbers quarters relative to the projection: the last historical quarter is 0, earlier history runs negative, the horizon is 1 through 9, and the prompt says so.
 
 Run cost: thirteen and three quarter hours wall clock for the nine samples at two concurrent sandboxes, against about a minute for both reference anchors.
 

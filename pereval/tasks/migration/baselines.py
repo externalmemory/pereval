@@ -33,7 +33,7 @@ from scipy.linalg import fractional_matrix_power
 from scipy.special import expit, logit
 from scipy.optimize import brentq, minimize_scalar
 
-from pereval.scorers.migration import ORDER
+from pereval.scorers.migration import HISTORY_SCENARIO, ORDER
 from pereval.tasks.migration.generator import (
     CELL_FLOOR,
     D,
@@ -289,6 +289,15 @@ def _backtest_csv(years, fitted, scenarios) -> str:
     return buf.getvalue()
 
 
+def _history_quarters(n_years: int) -> list[int]:
+    """Quarter labels for the fitted history: the last one is 0, earlier negative.
+
+    The same numbering the published files use, so a submission can key its
+    history block against `data/macro_history.csv` row for row.
+    """
+    return list(range(-4 * n_years + 1, 1))
+
+
 def _fitted_annual_rates(mats, base, zfit):
     """The model's own annual default rate for each historical year.
 
@@ -336,6 +345,11 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         hist_years = sorted(_annual_matrices(files["data/transitions.csv"]))
         backtest = _backtest_csv(hist_years, [0.0] * len(hist_years),
                                  list(groups))
+        # nothing happens in the history either, which is what makes this the
+        # floor: a body that never moves fails `fitted_downgrades_rise_in_bad_years`
+        quarterlies[HISTORY_SCENARIO] = {
+            q: np.eye(len(ORDER))
+            for q in _history_quarters(len(hist_years))}
     else:
         mats = _annual_matrices(files["data/transitions.csv"])
         base = pooled_quarterly_base(mats)
@@ -345,8 +359,18 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         X = _macro_features(history, next(iter(groups.values())), len(years))[0]
         lam = _lambda_for_df(X, 1.0 + X.shape[0] / DF_DIVISOR)
         beta = _ridge(X, zhat, lam)
-        backtest = _backtest_csv(years, _fitted_annual_rates(mats, base, X @ beta),
+        zfit = X @ beta
+        backtest = _backtest_csv(years, _fitted_annual_rates(mats, base, zfit),
                                   list(groups))
+        # One fitted matrix per historical quarter, held at that year's estimated
+        # factor. The history carries one annual observation per year, so a
+        # within-year factor path is not identified from it; four equal quarters
+        # is the honest reading of a year's estimate, and it is the same
+        # assumption `_fitted_annual_rates` already makes for the backtest.
+        hq = _history_quarters(len(years))
+        quarterlies[HISTORY_SCENARIO] = {
+            hq[4 * y + j]: conditional_matrix(base, float(z), RHO_ASSUMED)
+            for y, z in enumerate(zfit) for j in range(4)}
         for scen, rows in groups.items():
             _, Xs = _macro_features(history, rows, len(years))
             z = Xs @ beta

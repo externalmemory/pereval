@@ -105,6 +105,13 @@ TIE_TOL_ABS = 1e-9
 NEAR_NOTCHES = 1
 FAR_NOTCHES = 3
 
+#: The scenario label the fitted HISTORICAL matrices are submitted under. There
+#: is one history, so it is written once rather than once per scenario. The
+#: oracle-relative diagnostics are built against the nine scenario quarters and
+#: would be corrupted by eighty more, so `parse_matrices` drops this block and
+#: only the checks, which need no oracle, read it.
+HISTORY_SCENARIO = "history"
+
 
 def _tied(a: float, b: float) -> bool:
     """Equal to the precision a rounded CSV can carry. Used by every statistic
@@ -263,6 +270,11 @@ def parse_matrices(text: str | None) -> dict[str, dict[int, np.ndarray]]:
     rows that miss one, exact zeros and non-monotone default are exactly what the
     diagnostics measure, so rejecting them here would destroy the measurement.
     Only structurally unreadable input returns {}.
+
+    The `history` block is dropped here. Every diagnostic downstream of this
+    parser is measured against the oracle over the nine scenario quarters, and
+    eighty historical quarters with no oracle behind them would be pooled into
+    the same sums. `_raw_matrix_blocks` keeps it for the checks.
     """
     if not text:
         return {}
@@ -270,6 +282,8 @@ def parse_matrices(text: str | None) -> dict[str, dict[int, np.ndarray]]:
     for row in csv.DictReader(io.StringIO(text)):
         try:
             scen = str(row["scenario"]).strip()
+            if scen == HISTORY_SCENARIO:
+                continue
             q = int(float(row["quarter"]))
             frm = str(row["from_rating"]).strip()
             vals = np.array([float(row[c]) for c in MATRIX_COLS], dtype=float)
@@ -855,6 +869,7 @@ CHECK_KEYS = (
     "pd_rises_with_severity",
     "implied_pd_rises_with_severity",
     "pd_rises_with_horizon",
+    "fitted_downgrades_rise_in_bad_years",
     "historical_fit_identical_across_scenarios",
 )
 
@@ -947,7 +962,8 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
 
     # Artefact integrity. Each of these is a hard failure: the submission is not
     # a set of probabilities, so nothing downstream of it can be believed.
-    fail["matrices_readable"] = not mats or len(mats) < len(order)
+    fail["matrices_readable"] = (not mats or len(mats) < len(order)
+                                 or HISTORY_SCENARIO not in mats)
     fail["matrix_cells_finite"] = (not m_all
                                    or not all(np.isfinite(m).all() for m in m_all))
     fail["matrix_cells_are_probabilities"] = (
@@ -974,17 +990,29 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
         for m in m_all for i in range(D_INDEX - 1))
 
     # Over one quarter a grade is likelier to persist than to migrate to any one
-    # other grade. Default is excluded, and not for convenience: the oracle
-    # itself breaks dominance there, because a CCC/C obligor in a severe quarter
-    # really is likelier to default than to stay CCC/C. Measured on the true
-    # generating model, the only violations of the unrestricted rule are CCC/C
+    # other grade. Two restrictions, both forced by the answer key breaking the
+    # unrestricted rule, and both measured rather than assumed.
+    #
+    # Default is excluded as a destination: the oracle breaks dominance there,
+    # because a CCC/C obligor in a severe quarter really is likelier to default
+    # than to stay CCC/C. The only violations of the unrestricted rule are CCC/C
     # into default, nine of them on one instance, reaching stay 0.283 against
-    # default 0.717. A rule the answer key breaks is not a defensible rule, so
-    # the destination set stops at the live grades and the default column is
-    # left to `pd_rises_as_rating_falls`.
-    fail["stay_is_the_most_likely_outcome"] = not m_all or any(
+    # default 0.717.
+    #
+    # The HISTORY block is excluded as a source: the scenarios are bounded by
+    # SEVERITY_CAP, the published history is not. Over 960 historical quarters
+    # of the true model there is exactly one quarter that breaks dominance, at a
+    # factor of +5.92, where AAA is likelier to be cut to AA than to stay AAA.
+    # That is the law behaving correctly at an extreme, not a defect. Worse, the
+    # shipped reference never reaches it, because its fitted factor is shrunk,
+    # so checking the history here would convict a model whose historical fit is
+    # MORE faithful than the anchor's. The check is about the matrices a model
+    # projects, which is what a reviewer reviews.
+    scen_m = [m for k, v in mats.items() if k != HISTORY_SCENARIO
+              for m in v.values()]
+    fail["stay_is_the_most_likely_outcome"] = not scen_m or any(
         m[i, i] < m[i, j] - TIE_TOL_ABS
-        for m in m_all for i in range(D_INDEX) for j in range(D_INDEX) if j != i)
+        for m in scen_m for i in range(D_INDEX) for j in range(D_INDEX) if j != i)
 
     # Zero is not an estimate, it is an assertion that a three notch downgrade
     # cannot happen. This is the failure a tridiagonal or diffusion construction
@@ -1106,6 +1134,57 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
                         or not np.isfinite(x) or not np.isfinite(y)
                         or _tied(x, y) or y < x
                         for x, y in icum))
+
+    # The fitted migration BODY has to move with the observed cycle. Everything
+    # else about the history is checked through the default column alone, which
+    # is one column of a seven by eight matrix: a model can reproduce twenty
+    # years of default rates to five parts in ten thousand and still carry a
+    # frozen body, and that is a failure this task has already seen twice. The
+    # comparison is the five worst observed years against the five best, by the
+    # observed annual default rate in data/transitions.csv, so it needs no
+    # oracle.
+    #
+    # Three details earn their place, each measured rather than argued.
+    #
+    # A CORRELATION cannot be used. A time-homogeneous body has zero variance,
+    # so the correlation is NaN on precisely the submission most in need of a
+    # verdict, which is the defect that disqualified two statistics already.
+    #
+    # The years are split by RANK, not by quantile value. `obs >= quantile(.75)`
+    # and `obs <= quantile(.25)` can overlap on a tied history, and an overlap
+    # drives a correct model's gap to zero and fails it. Five highest against
+    # five lowest is disjoint by construction.
+    #
+    # Every year is weighted by ONE fixed mix, so the statistic is a statement
+    # about the matrices and not about portfolio drift. Weighting each year by
+    # its own starting portfolio lets a constant body cross the split on
+    # composition alone, measured passing on 4 of 24 instances. On a fixed mix a
+    # constant body reads exactly zero and fails on all 24.
+    #
+    # Margins over 24 served instances, against a tie tolerance of 1e-9: the
+    # oracle 1.41e-02, a fit to the observed default rates 1.91e-02, the shipped
+    # reference, whose factor comes from macro and so never sees the sampling
+    # noise that helped choose the split, 1.09e-02. A model keeping only five
+    # percent of the reference's macro response still clears by 4.6e-04. A
+    # constant body reads 0 and a sign-flipped one -1.91e-02. Resampling each
+    # year's default count binomially and re-deriving the split, 8 instances by
+    # 2000 draws, the reference's gap never fell below 9.3e-03 in 16,000 tries.
+    hist = mats.get(HISTORY_SCENARIO, {})
+    obs_annual = [float(x) for x in
+                  (truth.get("observed_annual_default_rate") or ())]
+    hq = sorted(hist)
+    k = len(obs_annual) // 4
+    if k < 1 or len(hq) != 4 * len(obs_annual):
+        fail["fitted_downgrades_rise_in_bad_years"] = True
+    else:
+        per_year = np.array([
+            float(np.mean([_downgrade_mass(hist[q], w) for q in hq[4 * y:4 * y + 4]]))
+            for y in range(len(obs_annual))])
+        ranked = np.argsort(np.asarray(obs_annual), kind="stable")
+        worst, best = ranked[-k:], ranked[:k]
+        fail["fitted_downgrades_rise_in_bad_years"] = (
+            not np.isfinite(per_year).all()
+            or not per_year[worst].mean() > per_year[best].mean() + TIE_TOL_ABS)
 
     # One model, tested where refitting cannot hide. The history does not depend
     # on which future scenario is being run, so a model estimated once implies

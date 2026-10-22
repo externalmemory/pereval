@@ -516,7 +516,19 @@ def generate(seed: int = 1, n_years: int = 40,
     # large, and its correlation with them swings from 0.03 to 0.78 across
     # instances, so it is noise on one instance and a shortcut on the next. The
     # prompt promises nine series. Ship nine.
-    history_rows = [{k: v for k, v in row.items() if k != "default_rate"}
+    #
+    # Quarters are numbered relative to the projection, not from the start of
+    # the file: the last historical quarter is 0, earlier history runs negative
+    # and the horizon runs 1 to 9. The inherited numbering ran 1 to 80 for the
+    # history and 81 to 89 for the scenarios, which left the agent two defensible
+    # conventions for its own `matrices.csv` and no way to tell which was wanted.
+    # On the first measured run six of nine submissions numbered the horizon 81
+    # to 89 and three numbered it 1 to 9. Both parsed, because the scorer orders
+    # the submitted quarters rather than assuming a numbering, but predictions
+    # are keyed by checkpoint and a submission that had written 84 and 89 there
+    # would have scored as though it submitted nothing.
+    history_rows = [{**{k: v for k, v in row.items() if k != "default_rate"},
+                     "quarter": int(row["quarter"]) - n_intime}
                     for row in first["train_rows"]]
 
     # Give each horizon a realistic shape: deteriorate for a few quarters, turn,
@@ -543,7 +555,7 @@ def generate(seed: int = 1, n_years: int = 40,
                 macros[name]["levels"], calib, stress,
                 hump_shape(horizon, peaks[name], recoveries[name]) * damping)
             rows.extend(
-                {"scenario": name, "quarter": n_intime + 1 + k,
+                {"scenario": name, "quarter": k + 1,
                  **{c: round(float(levels[c][stress.start + k]), 4)
                     for c in MACRO_COLUMNS}}
                 for k in range(horizon)

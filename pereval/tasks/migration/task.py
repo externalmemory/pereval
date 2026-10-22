@@ -50,6 +50,11 @@ three supplied economic scenarios. In the `data/` directory:
   rating mix is NOT the same as the historical portfolio's.
 - `data/policy.json`: the checkpoint quarters and the scenario names.
 
+Quarters are numbered relative to the projection throughout, in every file you
+read and every file you write. The last quarter of history is 0, earlier
+historical quarters run negative, and the nine scenario quarters are 1 through
+9. So the checkpoints are quarters 4 and 9 of the horizon.
+
 Estimate ONE model on the history and use that single model to produce all three
 projections. The scenarios differ only in the macro path you feed it, which is
 what a supervisory submission is: one estimated model, three paths through it. Do
@@ -97,14 +102,21 @@ better. Getting the shape right while understating defaults, or the reverse,
 caps your score at about 0.5.
 
 Also write `matrices.csv` in the working directory, recording the quarterly
-transition matrices your model used for the nine quarters of each scenario, with
-columns exactly:
+transition matrices your model used for the nine quarters of each scenario,
+numbered 1 through 9 as above, with columns exactly:
 
     scenario,quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
 
-one row per scenario, quarter and starting rating, so one hundred and
-eighty-nine rows, using the same column naming as data/transitions.csv. Write at
-least six decimal places: the cells far from the diagonal are small, and three
+one row per scenario, quarter and starting rating, using the same column naming
+as data/transitions.csv.
+
+In the same file, also record the quarterly matrices your fitted model implies
+for each HISTORICAL quarter, under the scenario name `history`, at quarters -79
+through 0. There is one history, so write it once rather than once per scenario.
+That is eighty quarters of history and nine of each of the three scenarios, so
+seven hundred and forty-nine rows in all.
+
+Write at least six decimal places: the cells far from the diagonal are small, and three
 decimals is not enough to record them. This records the model alongside its
 output, as documentation of how the projection was produced.
 

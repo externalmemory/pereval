@@ -6,6 +6,8 @@ change cannot quietly remove the property the choice was made for.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 
 import numpy as np
@@ -14,6 +16,7 @@ from scipy.linalg import fractional_matrix_power
 
 from pereval.scorers.migration import (
     CHECK_KEYS,
+    HISTORY_SCENARIO,
     ORDER,
     _downgrade_mass,
     _row_weights,
@@ -437,12 +440,17 @@ def test_matrix_diagnostics_detect_each_pathology():
     preds, mats, _ = predict(public_files(b), "onefactor")
     rows = mats.splitlines()
     header, body = rows[0], rows[1:]
-    # break the first live row: negative mass, rows off one, and a default
-    # probability that improves as credit quality worsens
+    # break the first live scenario row: negative mass, rows off one, and a
+    # default probability that improves as credit quality worsens. It has to be
+    # a scenario row, because the history block is a fitted diagnostic that the
+    # parser drops before any oracle-relative measurement.
+    i = next(k for k, r in enumerate(body) if r.startswith("baseline,1,AAA,"))
     broken = header + "\n" + "\n".join(
-        ["baseline,1,AAA," + ",".join(
+        body[:i]
+        + ["baseline,1,AAA," + ",".join(
             ["0.5", "0.6", "-0.2", "0.0", "0.0", "0.0", "0.0", "0.9"]),
-         "baseline,1,AA," + ",".join(["0.0"] * 7 + ["0.1"])] + body[2:])
+           "baseline,1,AA," + ",".join(["0.0"] * 7 + ["0.1"])]
+        + body[i + 2:])
     start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER], float)
     cps = list(CHECKPOINTS)
     d = matrix_diagnostics(broken, start, {}, cps)
@@ -565,11 +573,13 @@ def test_row_sums_are_a_hard_failure_but_negatives_are_only_flagged():
     assert off["matrix_row_sum_error"] == pytest.approx(0.2, abs=0.01)
     assert off["matrix_submission_gap"] > 1.0      # mass loss compounds
 
-    parts = body[0].split(",")
+    i = next(k for k, r in enumerate(body) if r.startswith("baseline,"))
+    parts = body[i].split(",")
     parts[3] = repr(float(parts[3]) + 0.05)
     parts[10] = repr(float(parts[10]) - 0.05)
-    neg = matrix_diagnostics(head + "\n" + "\n".join([",".join(parts)] + body[1:]),
-                             start, parse_predictions(preds), cps)
+    neg = matrix_diagnostics(
+        head + "\n" + "\n".join(body[:i] + [",".join(parts)] + body[i + 1:]),
+        start, parse_predictions(preds), cps)
     assert neg["matrix_rows_valid"] == 1.0         # mass still conserved
     assert neg["matrix_nonnegative"] == 0.0
     assert neg["matrix_admissible"] == 0.0
@@ -879,12 +889,25 @@ def _matrices_text(by_scen: dict[str, dict[int, np.ndarray]]) -> str:
 
 
 def _oracle_matrices(bundle: dict) -> dict[str, dict[int, np.ndarray]]:
-    """The exact conditional law, scenario by scenario, from truth."""
+    """The exact conditional law, scenario by scenario, plus the true history.
+
+    The history block carries the TRUE quarterly factors rather than four equal
+    quarters per year, because the answer key knows them. A submission cannot:
+    one annual observation per year does not identify a within-year path, which
+    is why the reference holds each year's estimate flat across its quarters.
+    `fitted_downgrades_rise_in_bad_years` compares annual means, so both forms
+    answer it.
+    """
     t = bundle["truth"]
     base = quarterly_base()
-    return {n: {q + 1: conditional_matrix(base, float(z), t["rho"])
-                for q, z in enumerate(t["scenarios"][n]["z_scenario"])}
-            for n in t["scenario_names"]}
+    out = {n: {q + 1: conditional_matrix(base, float(z), t["rho"])
+               for q, z in enumerate(t["scenarios"][n]["z_scenario"])}
+           for n in t["scenario_names"]}
+    zh = t["z_history"]
+    out[HISTORY_SCENARIO] = {
+        q: conditional_matrix(base, float(z), t["rho"])
+        for q, z in zip(range(-len(zh) + 1, 1), zh)}
+    return out
 
 
 def _thin_far(m: np.ndarray, keep: float) -> np.ndarray:
@@ -1088,13 +1111,17 @@ def _start_vec(bundle) -> np.ndarray:
 
 
 def _preds_text(mats, bundle) -> str:
-    """predictions.csv propagated from the given matrices, cohort convention."""
+    """predictions.csv propagated from the given matrices, cohort convention.
+
+    The `history` block is skipped: there is no cohort before quarter 0 to
+    project, which is why `predictions.csv` stops at the scenarios.
+    """
     t = bundle["truth"]
     mix = np.array([t["start_mix"].get(s, 0.0) for s in LIVE], dtype=float)
     cps = sorted(int(q) for q in t["scenarios"][t["scenario_names"][0]]
                  ["rating_distribution"])
     rows = ["scenario,quarter,state,share"]
-    for scen in sorted(mats):
+    for scen in sorted(k for k in mats if k != HISTORY_SCENARIO):
         v = np.concatenate([mix, [0.0]])
         for k in range(max(cps)):
             v = v @ mats[scen][k + 1]
@@ -1132,8 +1159,12 @@ def test_the_answer_key_and_the_reference_fail_no_check():
 
     A check that the true generating model trips is not a statement about the
     submission, it is a bug in the check. Finding one is not hypothetical: the
-    unrestricted form of `stay_is_the_most_likely_outcome` failed the oracle on
-    three of these twelve instances, because a CCC/C obligor in a severe quarter
+    unrestricted form of `stay_is_the_most_likely_outcome` failed the oracle
+    twice, once by including default among the destinations and once by reading
+    the history block, where one true quarter in 960 sits at a factor of +5.92
+    and makes AAA likelier to be cut to AA than to stay AAA. The first form
+    failed on three of these twelve instances, because a CCC/C obligor in a
+    severe quarter
     is genuinely likelier to default than to stay CCC/C, and the rule had to be
     narrowed to live destinations. The shipped reference passing too is the
     second half of it: a competent estimate must be able to clear every bar,
@@ -1184,7 +1215,11 @@ def test_each_known_defect_trips_exactly_its_own_check():
 
         f = _checks(_matrices_text(froz), _preds_text(froz, b), b)
         assert f["fail_downgrades_rise_with_severity"] == 1.0
-        assert f["checks_failed"] == 1.0
+        # a frozen body is frozen over the history too, which is the whole point
+        # of asking for the history block: the same defect is now visible
+        # without the oracle, on data the agent was given
+        assert f["fail_fitted_downgrades_rise_in_bad_years"] == 1.0
+        assert f["checks_failed"] == 2.0
 
 
 def test_a_nan_where_a_probability_belongs_is_a_counted_failure():
@@ -1317,9 +1352,10 @@ def test_the_degenerate_answer_trips_the_ordering_checks():
         v = _checks(m, p, b, btext=bt)
         for k in ("pd_rises_with_severity", "implied_pd_rises_with_severity",
                   "pd_rises_with_horizon", "downgrades_rise_with_severity",
-                  "multinotch_downgrade_possible"):
+                  "multinotch_downgrade_possible",
+                  "fitted_downgrades_rise_in_bad_years"):
             assert v[f"fail_{k}"] == 1.0, k
-        assert v["checks_failed"] == 5.0
+        assert v["checks_failed"] == 6.0
         # and it is still a readable, well formed submission
         for k in ("matrices_readable", "matrix_rows_sum_to_one",
                   "prediction_shares_sum_to_one", "pd_rises_as_rating_falls",
@@ -1504,3 +1540,101 @@ def test_an_instance_the_cap_does_not_bind_on_is_left_exactly_alone():
             assert b["dgp"]["severity_damping"] == 1.0, seed
             untouched += 1
     assert untouched >= 12, f"only {untouched} of 24 instances were left alone"
+
+
+def test_every_published_file_numbers_quarters_from_the_projection():
+    """One numbering, stated in the prompt, used by every file in both directions.
+
+    The inherited numbering ran 1 to 80 for the history and 81 to 89 for the
+    scenarios, which left two defensible readings of "the nine quarters of each
+    scenario" and no way to tell which was wanted. On the first measured run six
+    of nine submissions numbered their matrices 81 to 89 and three numbered them
+    1 to 9. Both parsed, because the scorer orders the submitted quarters rather
+    than assuming a numbering, but `predictions.csv` is keyed by checkpoint, so
+    a submission that had carried the same reasoning across to it and written 84
+    and 89 would have scored as though it submitted nothing.
+
+    The last historical quarter is 0, earlier history is negative, the horizon
+    is 1 through 9, and the checkpoints are quarters of the horizon.
+    """
+    for seed in _served_seeds(3):
+        b = generate(seed, n_years=20)
+        files = public_files(b)
+        hist = [int(r["quarter"]) for r in
+                csv.DictReader(io.StringIO(files["data/macro_history.csv"]))]
+        assert hist == list(range(-79, 1)), hist[:3] + hist[-3:]
+
+        scen = {}
+        for r in csv.DictReader(io.StringIO(files["data/scenario.csv"])):
+            scen.setdefault(r["scenario"], []).append(int(r["quarter"]))
+        assert set(scen) == set(b["truth"]["scenario_names"])
+        for name, qs in scen.items():
+            assert qs == list(range(1, 10)), (name, qs)
+
+        policy = json.loads(files["data/policy.json"])
+        assert policy["checkpoints"] == [4, 9]
+        assert max(policy["checkpoints"]) == policy["horizon_quarters"]
+
+        # and the reference solver writes the same numbering back out: the
+        # matrices carry the eighty fitted historical quarters as well as the
+        # nine of the horizon, and the predictions carry the checkpoints only
+        p, m, _ = predict(files, "onefactor")
+        mq = sorted({int(r["quarter"]) for r in csv.DictReader(io.StringIO(m))})
+        assert mq == list(range(-79, 10)), mq[:3] + mq[-3:]
+        pq = sorted({int(r["quarter"]) for r in csv.DictReader(io.StringIO(p))})
+        assert pq == list(CHECKPOINTS), pq
+
+
+def test_the_fitted_body_must_move_with_the_observed_cycle():
+    """A frozen migration body is caught on the history, without the oracle.
+
+    Everything else about the history is checked through the default column
+    alone, which is one column of a seven by eight matrix. A model can reproduce
+    twenty years of default rates to five parts in ten thousand and still carry
+    a body that never moves, and this task has seen that failure twice. The
+    comparison is the five worst observed years against the five best, ranked by
+    the observed annual default rate the agent was given.
+
+    Three design points, each measured rather than argued, and each the reason a
+    simpler form was rejected:
+
+    A correlation cannot be used. A time-homogeneous body has zero variance, so
+    the correlation is NaN on exactly the submission most in need of a verdict.
+
+    The split is by RANK, not by quantile value, because `>= quantile(.75)` and
+    `<= quantile(.25)` can overlap on a tied history and an overlap would fail a
+    correct model.
+
+    Every year carries ONE fixed mix. Weighted by each year's own starting
+    portfolio, a constant body crosses the split on composition alone and passed
+    on 4 of 24 instances; on a fixed mix it reads exactly zero.
+    """
+    for seed in _served_seeds(4):
+        b = generate(seed, n_years=20)
+        orc = _oracle_matrices(b)
+        preds = _preds_text(orc, b)
+        key = "fail_fitted_downgrades_rise_in_bad_years"
+        assert _checks(_matrices_text(orc), preds, b)[key] == 0.0
+
+        # a body held at one matrix for every historical quarter
+        flat = {k: dict(v) for k, v in orc.items()}
+        one_matrix = orc[HISTORY_SCENARIO][max(orc[HISTORY_SCENARIO])]
+        flat[HISTORY_SCENARIO] = {q: one_matrix.copy()
+                                  for q in orc[HISTORY_SCENARIO]}
+        assert _checks(_matrices_text(flat), preds, b)[key] == 1.0
+
+        # a body that moves the wrong way: reverse the history in time, which
+        # keeps every matrix admissible and only breaks the pairing with the
+        # observed years
+        qs = sorted(orc[HISTORY_SCENARIO])
+        rev = {k: dict(v) for k, v in orc.items()}
+        rev[HISTORY_SCENARIO] = {q: orc[HISTORY_SCENARIO][r]
+                                 for q, r in zip(qs, reversed(qs))}
+        v = _checks(_matrices_text(rev), preds, b)
+        assert v[key] in (0.0, 1.0)
+
+        # and a missing history block is a failure, not an excused measurement
+        bare = {k: v for k, v in orc.items() if k != HISTORY_SCENARIO}
+        w = _checks(_matrices_text(bare), preds, b)
+        assert w[key] == 1.0
+        assert w["fail_matrices_readable"] == 1.0
