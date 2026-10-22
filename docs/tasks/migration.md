@@ -549,6 +549,38 @@ Prominence spans a factor of thirteen against the stress ratio's four, and at ze
 
 **One bug worth recording, because it failed a whole run.** Inspect aggregates a keyed metric by pulling that key from every sample's score dictionary: an absent key raises, a NaN is skipped. Every diagnostic here is conditional on something, the matrices being submitted, the backtest having the right length, a denominator being positive, so a submission without `matrices.csv` left `matrix_rows_valid` out and ended a completed three-sample run with a TypeError after all the scoring work was done. The keys are now one module-level tuple, `REPORTED_KEYS`, and `score_value` fills anything inapplicable with NaN, which is the sentinel Inspect already understands. A test pins the contract over four submission shapes.
 
+## What the Check Layer Found on Its First Live Run
+
+Three instances at `-T seed=1`, three draws each, `minimax-m3.1-flash:free`, against both reference anchors on the same instances. Nine samples, all scored, no errors. This is the first measurement on the capped generator and the fifteen-check scorer.
+
+| Row | per instance, mean +- 2 SD | worst | `checks_failed` |
+| --- | --- | ---: | --- |
+| one-factor reference | 0.365, 0.335, 0.368 (one draw each) | 0.368 | 0, 0, 0 |
+| minimax-m3.1-flash | 0.453 +- 0.402, 0.162 +- 0.062, 0.232 +- 0.067 | 0.634 | 1,1,0 / 0,1,0 / 1,1,2 |
+| degenerate | 1.000 | 1.000 | 5, 5, 5 |
+
+On the worst-case convention this repository reports, the agent loses to the reference, 0.634 against 0.368, entirely on the first instance. On means it beats the reference on two of three. The first instance's own spread, 0.237 to 0.634 across three draws of a byte-identical instance, is wider than the gap between any two rows here, which is the same same-instance instability the rest of the suite reports.
+
+### The Score Did Not See the Defect, and That Was the Point
+
+**`pd_rises_as_rating_falls` fired on six of nine submissions.** Somewhere in the submitted matrices, a better-rated grade carried a higher default probability than a worse-rated one.
+
+It is not rounding. Over the nine submissions there are 181 inverted cells, 166 of them larger than 1e-6, which is the printing floor the instructions impose, and 47 larger than 1e-4. The worst single case is unambiguous: on the severe path at quarter nine of one submission, AAA carries a default probability of 0.0647 against AA's 0.0211, so the model asserts the best grade on the scale is three times riskier than the second best.
+
+**Every inversion is in the top two pairs**, AAA above AA on 87 cells and AA above A on 94, and none anywhere below. That is the same region described under Default Risk at the Top of the Scale: the top grades have almost no observed defaults, so an unconstrained estimate is noise there, and nothing in the fitting imposes the ordering. The failure is evenly spread across scenarios, 66 baseline, 60 adverse, 55 severe, so it is a property of the estimated model rather than of the stress overlay.
+
+**The composite score is blind to it.** Over the nine samples the correlation between `score` and `checks_failed` is **-0.230**: the samples carrying findings score slightly *better* on average, 0.258 against 0.331 for the clean ones. The best score in the whole run, 0.634, is a clean sample and the second worst, 0.127, carries a finding. A reviewer reading only the column would have ranked these submissions in an order unrelated to whether their matrices are coherent.
+
+That is the case for the count existing. Not that it correlates with quality, but that it does not.
+
+### Other Findings
+
+`multinotch_downgrade_possible` fired once, on the submission that also carried the most inversions. The other thirteen checks never fired on any of the nine, and the reference tripped nothing on any of its three, which is the separation the tests predict, now reproduced through the Inspect path on live instances rather than in process.
+
+Four of nine samples were capped, three on the wall clock and one on messages, and all four still produced a scored submission. Two quarter-labelling conventions appeared, six submissions numbering the horizon 81 to 89 from the end of history and three numbering it 1 to 9; both parse, because the scorer orders the submitted quarters rather than assuming a numbering, but the prompt does not say which is wanted and should.
+
+Run cost: thirteen and three quarter hours wall clock for the nine samples at two concurrent sandboxes, against about a minute for both reference anchors.
+
 ## What the Silent Check Measured
 
 Three free models and both reference solvers over the same three instances, pinned with `-T seed=1` so the rows are comparable. This replaces an earlier run made before the scenario had a trough and before the history was shortened, and it is the first on the configuration the task now generates.
