@@ -910,22 +910,23 @@ def _matrices_text(by_scen: dict[str, dict[int, np.ndarray]]) -> str:
 def _oracle_matrices(bundle: dict) -> dict[str, dict[int, np.ndarray]]:
     """The exact conditional law, scenario by scenario, plus the true history.
 
-    The history block carries the TRUE quarterly factors rather than four equal
-    quarters per year, because the answer key knows them. A submission cannot:
-    one annual observation per year does not identify a within-year path, which
-    is why the reference holds each year's estimate flat across its quarters.
-    `fitted_downgrades_rise_in_bad_years` compares annual means, so both forms
-    answer it.
+    The history block carries one matrix per YEAR, at the mean of that year's
+    four TRUE quarterly factors, labelled by the year's last quarter. The answer
+    key knows the within-year path and a submission cannot: one annual
+    observation per year does not identify it, which is why the reference holds
+    each year's estimate flat. The mean factor is the annual-resolution summary
+    of the true path, which is the resolution the block is asked for.
     """
     t = bundle["truth"]
     base = quarterly_base()
     out = {n: {q + 1: conditional_matrix(base, float(z), t["rho"])
                for q, z in enumerate(t["scenarios"][n]["z_scenario"])}
            for n in t["scenario_names"]}
-    zh = t["z_history"]
+    zh = np.asarray(t["z_history"], dtype=float)
+    years = zh.reshape(-1, 4).mean(axis=1)
     out[HISTORY_SCENARIO] = {
         q: conditional_matrix(base, float(z), t["rho"])
-        for q, z in zip(range(-len(zh) + 1, 1), zh)}
+        for q, z in zip(range(-4 * len(years) + 4, 1, 4), years)}
     return out
 
 
@@ -1595,11 +1596,14 @@ def test_every_published_file_numbers_quarters_from_the_projection():
         assert max(policy["checkpoints"]) == policy["horizon_quarters"]
 
         # and the reference solver writes the same numbering back out: the
-        # matrices carry the eighty fitted historical quarters as well as the
-        # nine of the horizon, and the predictions carry the checkpoints only
+        # matrices carry the twenty fitted historical years as well as the nine
+        # quarters of the horizon, and the predictions carry the checkpoints only
         p, m, _ = predict(files, "onefactor")
         mq = sorted({int(r["quarter"]) for r in csv.DictReader(io.StringIO(m))})
-        assert mq == list(range(-79, 10)), mq[:3] + mq[-3:]
+        # twenty historical years at their last quarters, then the nine of the
+        # horizon: one row per year, because that is the resolution the history
+        # has and four times as many cost 141 KB and two agents' context windows
+        assert mq == list(range(-76, 1, 4)) + list(range(1, 10)), mq[:3] + mq[-3:]
         pq = sorted({int(r["quarter"]) for r in csv.DictReader(io.StringIO(p))})
         assert pq == list(CHECKPOINTS), pq
 

@@ -110,11 +110,12 @@ numbered 1 through 9 as above, with columns exactly:
 one row per scenario, quarter and starting rating, using the same column naming
 as data/transitions.csv.
 
-In the same file, also record the quarterly matrices your fitted model implies
-for each HISTORICAL quarter, under the scenario name `history`, at quarters -79
-through 0. There is one history, so write it once rather than once per scenario.
-That is eighty quarters of history and nine of each of the three scenarios, so
-seven hundred and forty-nine rows in all.
+In the same file, also record the quarterly transition matrix your fitted model
+implies for each HISTORICAL YEAR, under the scenario name `history`. Label each
+one with the last quarter of its year, so quarters -76, -72, -68 and so on
+through 0, twenty in all. There is one history, so write it once rather than
+once per scenario. That is twenty years of history and nine quarters of each of
+the three scenarios, so three hundred and twenty-nine rows.
 
 Write at least six decimal places: the cells far from the diagonal are small, and three
 decimals is not enough to record them. This records the model alongside its

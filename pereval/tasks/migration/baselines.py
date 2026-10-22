@@ -290,12 +290,17 @@ def _backtest_csv(years, fitted, scenarios) -> str:
 
 
 def _history_quarters(n_years: int) -> list[int]:
-    """Quarter labels for the fitted history: the last one is 0, earlier negative.
+    """One label per historical YEAR, at the last quarter of that year.
 
     The same numbering the published files use, so a submission can key its
-    history block against `data/macro_history.csv` row for row.
+    history block against `data/macro_history.csv`, and one row per year rather
+    than per quarter because that is the resolution the history actually has.
+    Asking for eighty quarterly matrices cost four times the rows to support a
+    comparison made once a year, and it was not free: it took `matrices.csv` to
+    141 KB, and on the first live run two of three agents blew their context
+    window emitting it, one of them on a single 99,057 character message.
     """
-    return list(range(-4 * n_years + 1, 1))
+    return list(range(-4 * n_years + 4, 1, 4))
 
 
 def _fitted_annual_rates(mats, base, zfit):
@@ -362,15 +367,15 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         zfit = X @ beta
         backtest = _backtest_csv(years, _fitted_annual_rates(mats, base, zfit),
                                   list(groups))
-        # One fitted matrix per historical quarter, held at that year's estimated
-        # factor. The history carries one annual observation per year, so a
-        # within-year factor path is not identified from it; four equal quarters
-        # is the honest reading of a year's estimate, and it is the same
+        # One fitted QUARTERLY matrix per historical year, at that year's
+        # estimated factor. The history carries one annual observation per year,
+        # so a within-year factor path is not identified from it and every
+        # quarter of a year would carry the same matrix anyway. It is the same
         # assumption `_fitted_annual_rates` already makes for the backtest.
         hq = _history_quarters(len(years))
         quarterlies[HISTORY_SCENARIO] = {
-            hq[4 * y + j]: conditional_matrix(base, float(z), RHO_ASSUMED)
-            for y, z in enumerate(zfit) for j in range(4)}
+            hq[y]: conditional_matrix(base, float(z), RHO_ASSUMED)
+            for y, z in enumerate(zfit)}
         for scen, rows in groups.items():
             _, Xs = _macro_features(history, rows, len(years))
             z = Xs @ beta

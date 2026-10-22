@@ -268,7 +268,7 @@ def parse_matrices(text: str | None) -> dict[str, dict[int, np.ndarray]]:
 
     The `history` block is dropped here. Every diagnostic downstream of this
     parser is measured against the oracle over the nine scenario quarters, and
-    eighty historical quarters with no oracle behind them would be pooled into
+    twenty historical years with no oracle behind them would be pooled into
     the same sums. `_raw_matrix_blocks` keeps it for the checks.
     """
     if not text:
@@ -949,7 +949,7 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
 
     Reported as `fail_<name>` equal to one when the check fails, so that
     Inspect's mean over samples reads as the share of submissions carrying that
-    finding, and `checks_failed` is how many of the fifteen this submission
+    finding, and `checks_failed` is how many of the sixteen this submission
     tripped.
     """
     names = list(truth.get("scenario_names") or truth.get("scenarios") or ())
@@ -1165,25 +1165,32 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
     # composition alone, measured passing on 4 of 24 instances. On a fixed mix a
     # constant body reads exactly zero and fails on all 24.
     #
-    # Margins over 24 served instances, against a tie tolerance of 1e-9: the
-    # oracle 1.41e-02, a fit to the observed default rates 1.91e-02, the shipped
-    # reference, whose factor comes from macro and so never sees the sampling
-    # noise that helped choose the split, 1.09e-02. A model keeping only five
-    # percent of the reference's macro response still clears by 4.6e-04. A
-    # constant body reads 0 and a sign-flipped one -1.91e-02. Resampling each
-    # year's default count binomially and re-deriving the split, 8 instances by
-    # 2000 draws, the reference's gap never fell below 9.3e-03 in 16,000 tries.
+    # Margins over 24 served instances, against a tie tolerance of 1e-9, all
+    # measured on the shipped one-matrix-per-year form: the oracle clears by
+    # 1.55e-02 at worst, a direct per-year fit to the counts by 2.00e-02, and
+    # the shipped reference, whose factor comes from macro and so never sees the
+    # sampling noise that helped choose the split, by 1.12e-02. A model keeping
+    # only five percent of the reference's macro response, scaled about its own
+    # mean, still clears by 4.67e-04. A constant body reads exactly 0 and fails
+    # on all 24; a sign-flipped one reads -1.94e-02 and fails on all 24.
+    # Resampling each year's default count binomially and re-deriving the split,
+    # 8 instances by 2000 draws, the reference's gap never fell below 9.48e-03
+    # in 16,000 tries.
+    #
+    # The history block carries ONE matrix per year, not per quarter. It carried
+    # per quarter first, and this check averaged each year's four before
+    # comparing, so the three extra rows per year never reached the comparison.
+    # They were not free: they took matrices.csv to 141 KB and on the first live
+    # run two of three agents exhausted their context window emitting it.
     hist = mats.get(HISTORY_SCENARIO, {})
     obs_annual = [float(x) for x in
                   (truth.get("observed_annual_default_rate") or ())]
     hq = sorted(hist)
     k = len(obs_annual) // 4
-    if k < 1 or len(hq) != 4 * len(obs_annual):
+    if k < 1 or len(hq) != len(obs_annual):
         fail["fitted_downgrades_rise_in_bad_years"] = True
     else:
-        per_year = np.array([
-            float(np.mean([_downgrade_mass(hist[q], w) for q in hq[4 * y:4 * y + 4]]))
-            for y in range(len(obs_annual))])
+        per_year = np.array([_downgrade_mass(hist[q], w) for q in hq])
         ranked = np.argsort(np.asarray(obs_annual), kind="stable")
         worst, best = ranked[-k:], ranked[:k]
         fail["fitted_downgrades_rise_in_bad_years"] = (
