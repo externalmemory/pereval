@@ -1321,8 +1321,9 @@ def migration_scorer():
             # has so far required re-running the model, because the submission
             # existed only in the sandbox and the sandbox is gone: the binary
             # checks could not be applied to the runs already in logs/. About
-            # 25 KB a sample buys the ability to answer the next question of this
-            # shape off the archive instead of off the budget.
+            # 145 KB a sample, nearly all of it the history block, buys the
+            # ability to answer the next question of this shape off the archive
+            # instead of off the budget.
             return Score(value=v, explanation=explain(v), metadata=files)
 
         return score
