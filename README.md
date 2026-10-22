@@ -52,19 +52,21 @@ CCAR and quantile are the original realistic domain tasks. CECL adds a synthetic
 >
 > **Within a column, only order-of-magnitude gaps mean anything.** Re-running the same model on byte-identical instances moved cells by 7.4x, and the reproducibility study found swings up to 30x, so any two cells within a factor of a few are the same cell.
 
+Row labels name the model, not the endpoint that served it. A `:free` variant is the same weights under a different serving tier, and where the two have been compared directly they agree: Kimi K3 scored 0.023 free against 0.024 paid on one matched instance. Most of the free endpoints these rows were originally measured on have since been retired, so a cell is reproducible on the paid path and not on the one that produced it ([detail](docs/limitations.md#serving-provenance-is-not-controlled)).
+
 Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR over eight instances. Lower is better everywhere, and a cell is reported only if none of its runs failed for reasons outside the agent's control. The last column is the **mean rank** (a Borda count within each column), deliberately the only aggregate, since the cells are not comparable across columns. Per-task detail is in the docs linked above, and the caveats behind every number are in [docs/limitations.md](docs/limitations.md).
 
 | Model | CCAR | CECL⁵ | Ballistic | Two-body | Three-body¹ | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | 0.031 | 0 | *none* | 0.005 | 0.039 | 0.31 | *none* | *floor* |
-| minimax-m3.1-flash:free⁶ | 0.080 | **6.5e-06** | **4.3** | **0.069** | 164 | 361 | 0.070 | **1.71** |
+| minimax-m3.1-flash⁶ | 0.080 | **6.5e-06** | **4.3** | **0.069** | 164 | 361 | 0.070 | **1.71** |
 | Kimi K3³ | 0.12 | 1.5e-05 | 14 | 0.094 | **3.3** | **50** | 0.077 | 2.71 |
 | deepseek-v4-flash-0731⁴ | 0.30 | 1.4e-05 | 14 | 0.30 | 269 | 522 | 0.067 | 3.71 |
 | GLM-5.1 | 0.055 | 5.9e-05 | 12 | 0.092 | 436 | 899 | 0.25 | 4.79 |
-| mimo-v2.5-free | 0.57 | 2.9e-05 | 12 | 0.19 | 2426 | 292 | 0.15 | 5.79 |
-| nemotron-3-ultra:free | 0.27 | 1.6e-05 | 16 | 2429 | 817 | 1356 | 0.099 | 6.57 |
-| ling-3.0-flash:free | 0.193 | 8.7e-03 | 43 | 1556 | 3309 | 591 | 0.076² | 6.71 |
-| nemotron-3-super:free | 0.45 | 5.6e-04 | 60 | 106 | 370 | 918 | 0.12 | 7.29 |
+| mimo-v2.5 | 0.57 | 2.9e-05 | 12 | 0.19 | 2426 | 292 | 0.15 | 5.79 |
+| nemotron-3-ultra | 0.27 | 1.6e-05 | 16 | 2429 | 817 | 1356 | 0.099 | 6.57 |
+| ling-3.0-flash | 0.193 | 8.7e-03 | 43 | 1556 | 3309 | 591 | 0.076² | 6.71 |
+| nemotron-3-super | 0.45 | 5.6e-04 | 60 | 106 | 370 | 918 | 0.12 | 7.29 |
 | *Naive baseline* | 0.85 | *0.071* | 22 | 17 | 332 | 20037 | 0.14 | *7.86* |
 | Claude Haiku 4.5 | 0.37 | 9.9e-03 | 83 | 105 | 1850 | 1348 | 0.10 | 7.86 |
 | *Degenerate answer* | *0.57* | *0.019* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
@@ -87,7 +89,7 @@ CCAR's response law is now drawn per instance rather than fixed and published. T
 
 ⁵ CECL is reported as `ecl_regret`, balance-weighted squared error in pool lifetime loss rates, which is its headline metric; the simulated prediction intervals are diagnostics rather than a ranking axis, because the shock law is disclosed to the agent ([detail](docs/tasks/cecl.md)). **The column is two groups and a gap, not a gradient.** Six models land between 6.5e-06 and 5.9e-05 with interval coverage 0.93 to 0.96, then nothing until nemotron-3-super at 5.6e-04, ling at 8.7e-03 and Claude Haiku at 9.9e-03, whose coverage falls to 0.84, 0.67 and 0.48. Claude Haiku is also the one model worse than the degenerate answer here. Within the leading six the spread is a factor of nine on three instances, which this suite cannot resolve, so read the column as whether a model built the simulation and calibrated to it. Two rows come from a different serving path than their other cells: mimo-v2.5 and ling-3.0-flash no longer have free endpoints, and nemotron-3-ultra's free endpoint returned HTTP 503 on five consecutive attempts while the paid one completed in three minutes.
 
-⁶ minimax-m3.1-flash:free was measured with three draws per instance rather than one, so a maximum over its raw samples is taken over fifteen or twenty four draws rather than three and is not the same statistic as the archived cells. Each of its cells is therefore reported on the matched convention: the mean, over every way of drawing one sample per instance, of the maximum across the same instances the other rows use (three for the orbital, ballistic and CECL columns, eight for CCAR, and for quantile three paired single-instance runs on the archived seeds). Its as-measured maxima over all draws are higher, and are CCAR 0.091, CECL 1.2e-05, ballistic 11, two-body 0.102, three-body 361, flyby 1891 and quantile 0.076. No sample errored in any column. Its quantile row is weaker evidence than the rest: seven of its nine samples hit the four-hour wall clock, including the one that sets the as-measured maximum, while no archived quantile run was clock-bound, so 0.070 is an upper bound on its regret rather than a measurement of it. Its flyby run time-capped three of fifteen samples, as archived flyby rows also did, and the sample that sets the as-measured 1891 ran to completion uncapped.
+⁶ minimax-m3.1-flash was measured with three draws per instance rather than one, so a maximum over its raw samples is taken over fifteen or twenty four draws rather than three and is not the same statistic as the archived cells. Each of its cells is therefore reported on the matched convention: the mean, over every way of drawing one sample per instance, of the maximum across the same instances the other rows use (three for the orbital, ballistic and CECL columns, eight for CCAR, and for quantile three paired single-instance runs on the archived seeds). Its as-measured maxima over all draws are higher, and are CCAR 0.091, CECL 1.2e-05, ballistic 11, two-body 0.102, three-body 361, flyby 1891 and quantile 0.076. No sample errored in any column. Its quantile row is weaker evidence than the rest: seven of its nine samples hit the four-hour wall clock, including the one that sets the as-measured maximum, while no archived quantile run was clock-bound, so 0.070 is an upper bound on its regret rather than a measurement of it. Its flyby run time-capped three of fifteen samples, as archived flyby rows also did, and the sample that sets the as-measured 1891 ran to completion uncapped.
 
 ## Layout
 
