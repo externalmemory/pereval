@@ -139,6 +139,26 @@ The orbital results make the stranded budget worth recording rather than embarra
 
 Two rules follow for any future paid run. Estimate from a run under the **same** limits, not from the archives, and treat any estimate carried across a limit change as unusable. And check the remaining balance against the estimate before each task rather than only before the batch, since the failure mode is not overspending gradually but a mid-run 402 that discards work already paid for.
 
+## A Time-Limited Run Still Produces a Score
+
+minimax-m3.1-flash was run on the migration task at three instances, seed 1, under `--time-limit 21600`. Two of the three instances were **cut off by that limit before the agent submitted**, and both still carry a score.
+
+| Instance | Score | Checks failed | Messages | Terminated by |
+| --- | --- | --- | --- | --- |
+| 0 | 0.6291 | 1 | 470 | 6h time limit |
+| 1 | 0.1078 | 0 | 479 | 6h time limit |
+| 2 | 0.2284 | 1 | 234 | submitted normally |
+
+The scorer reads the submission out of the sandbox, so a run that is killed mid-work is scored on whatever files it had already written. All three instances look complete by every artifact flag the scorer reports: `completion` 1.0, `matrix_quarters` 9, `fit_years` 20. Nothing in the score, and nothing in the reported metrics, distinguishes a finished run from a truncated one. The truncation is visible only in `sample.limit` on the eval log.
+
+That makes instance 1 the awkward case rather than the clearly broken one. At 0.1078 with all sixteen checks passing it is the second best single result the task has produced, behind Kimi K3's 0.0885, and it is a cheap model reaching the same place by the same route: a multinomial logit whose four quarterly matrices multiply to the year's annual matrix, fit by multinomial likelihood on the annual counts. It is a real result on a run that was not allowed to finish, and whether the model would have improved it, left it alone or broken it in the next twenty messages is unknowable.
+
+It was also close to a second wall. 479 messages against the default `message_limit` of 500, so the run had 21 messages of headroom on a limit that would have truncated it in a different way, and instance 0 had 30. Any future re-run has to move both limits, which is the rule the section above already states and this is the second instance of it.
+
+The cost of the attempt is not small. The eval spent **122.6M total tokens**, of which 121.0M were cache reads, plus 455k reasoning tokens, 950k fresh input and 721k output, and took the full six hours. Every other model in the same batch finished three instances well inside it: ling-3.0-flash in 10m, deepseek-v4-flash-0731 in 52m, mimo-v2.5 in 1h44m. Kimi K3 took 78m for a single instance and submitted. So the limit is generous for the rest of the cast and binding for exactly one model.
+
+Two things follow. The migration column cannot report minimax from this run without saying it is measured on two truncated instances out of three, which is a weaker claim than any other cell in that column. And the suite is not consistent about this: the flyby runs recorded above were **discarded** as budget-limited when they hit the wall clock, while these were scored, because that task's wall-clock failure left nothing to read and this one's did not. Whether a time-limited run is reportable currently depends on whether the task happens to leave a readable artifact behind, which is not a decision anyone made.
+
 ## What Completing One Row Did to the Aggregate
 
 Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. Completing K3 took it to p = 0.037, and adding a complete deepseek-v4-flash-0731 row took it to p = 0.004 on the spread and p = 0.007 on the range, measured over the six columns the table then had. Adding the CECL column took the spread to p = 0.001 and the range to p = 0.016, and completing a minimax-m3.1-flash:free row takes them to **p < 0.0001 on the spread and p = 0.002 on the range** over ten ranked rows and seven columns.
