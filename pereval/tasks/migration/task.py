@@ -7,6 +7,7 @@ sample metadata and never into the prompt.
 Run (requires Docker and a model):
     inspect eval pereval/tasks/migration/task.py --model <provider/model>
     inspect eval pereval/tasks/migration/task.py -T baseline=onefactor --model mockllm/model
+    inspect eval pereval/tasks/migration/task.py -T baseline=single_driver --model mockllm/model
     inspect eval pereval/tasks/migration/task.py -T baseline=no_migration --model mockllm/model
     inspect eval pereval/tasks/migration/task.py -T n_instances=9 -T seed=1
 """
@@ -181,8 +182,10 @@ def migration(
     the agent estimates one model and projects it three times. That is what a
     supervisory submission is, and it is also what makes severity separable from
     the instance's drawn response law.
-    baseline: "" runs the agent; "onefactor" is the competent reference and
-    "no_migration" submits the starting mix, which is the degenerate answer.
+    baseline: "" runs the agent; "onefactor" is the competent reference,
+    "single_driver" the naive one, the same factor estimates regressed on the
+    unemployment level alone, and "no_migration" submits the starting mix,
+    which is the degenerate answer.
     n_years: twenty by default, which is the history a bank plausibly has for a
     portfolio under its current rating scale. Working out that twenty annual
     observations will not support an unshrunk macro regression is part of the
@@ -191,8 +194,9 @@ def migration(
     """
     if n_instances < 1 or repeats < 1:
         raise ValueError("n_instances and repeats must be positive")
-    if baseline not in ("", "onefactor", "no_migration"):
-        raise ValueError("baseline must be empty, 'onefactor' or 'no_migration'")
+    if baseline not in ("", "onefactor", "single_driver", "no_migration"):
+        raise ValueError("baseline must be empty, 'onefactor', 'single_driver' "
+                         "or 'no_migration'")
     solver = (
         reference_solver(baseline)
         if baseline

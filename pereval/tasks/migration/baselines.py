@@ -18,6 +18,45 @@ observations against seven parameters, which is the data sparsity a real
 portfolio has. It is not bounded: a stress model has to answer scenarios more
 severe than its own history. See `project_factor`.
 
+`single_driver` is the naive one: the same factor estimates regressed on the
+unemployment LEVEL alone, unpenalised, and projected over the scenario. It is
+the credit stress model everyone writes first. Its error is omitted variables,
+one driver where the generator uses two, which attenuates the macro response
+without breaking it. So it responds to severity, in the right direction, and
+by the wrong amount.
+
+Over twelve instances it runs 0.487 mean, 0.478 median, 0.843 max against the
+reference's 0.286, 0.266 and 0.621, which is the bracket a naive row has to
+hold: worse than the competent solver on nine of twelve, never once worse than
+the degenerate answer, and never failing a check on any of them.
+
+Those last two properties are what the rejected candidates could not hold
+together, and each failed differently.
+
+Through-the-cycle, pooling the counts into one unconditional matrix and
+applying it in every scenario, answers all three scenarios identically. It
+fails four checks that are a strict SUBSET of the six the degenerate answer
+fails, which makes it the degenerate answer with the migration arithmetic
+filled in rather than a different wrong method. A naive row whose defects nest
+inside the row below it adds no axis to the comparison.
+
+Regressing the default RATE on all six macro levels, the CCAR naive
+transplanted literally, looked best of all on the three instances the column
+is reported on, 0.442, 0.571 and 0.350, and is a trap. Over twelve it runs
+1.263 mean and 4.435 max and is worse than the degenerate on five of them,
+because unpenalised least squares on six collinear levels is heavy-tailed and
+three instances cannot see a tail. It is the same pathology `project_factor`
+documents, arriving through the rate instead of the factor.
+
+Stress by analogy to a historical year, the median year's factor for baseline
+and the worst year's for severe, runs 1.201 mean and 3.264 max with five of
+twelve worse than the degenerate. Removing the ridge from `onefactor` runs
+0.409 mean and 1.105 max, and is better on two of the three reported
+instances than any model in the column, which is not a floor. Scaling the pooled matrix's default column by
+a naive rate forecast is stable, 0.698 mean and 0.857 max, but moves no mass
+between live grades, so its matrices are still severity-invariant in shape and
+it fails two checks from the degenerate's own set.
+
 `no_migration` submits the starting cohort unchanged. It is the degenerate
 answer the scorer computes anyway, provided here so a run can produce it.
 """
@@ -195,6 +234,18 @@ def project_factor(X, Xs, zhat):
     on the loadings, a standard review checklist item, leave the failure rate
     unchanged: the blow-up draws have correctly signed loadings that are simply
     too large.
+
+    The penalty is a trade and not a free improvement, which is easy to lose
+    sight of here. `docs/tasks/migration.md` measures it over twenty-four
+    draws: unshrunk holds the better median, 0.194 against 0.256, and the worse
+    mean, 0.453 against 0.287, because the loss is a tail of blow-ups rather
+    than a uniform loss of information. On the three instances the migration
+    column is reported on the gap is stark, unshrunk reaching 0.0537, 0.5301
+    and 0.0772 against this solver's 0.3647, 0.3354 and 0.3677. Shrinkage is
+    still the right default because the suite reports a maximum over instances,
+    where 0.3677 beats 0.5301, but the cost on the draws that do not blow up is
+    real. `single_driver` ships the unpenalised regression in its stable
+    one-driver form, so the column prices the trade rather than asserting it.
     """
     lam = _lambda_for_df(X, 1.0 + X.shape[0] / DF_DIVISOR)
     return Xs @ _ridge(X, zhat, lam)
@@ -330,9 +381,14 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
     the one-model instruction by construction rather than by discipline, which is
     what lets it pass `historical_fit_identical_across_scenarios`: the fitted
     historical series it writes under each scenario is literally the same series.
+
+    `single_driver` has the same shape for the same reason, which is why a
+    naive solver still passes that check. Being naive is about the estimator,
+    not about estimating three times.
     """
-    if method not in ("onefactor", "no_migration"):
-        raise ValueError("method must be 'onefactor' or 'no_migration'")
+    if method not in ("onefactor", "single_driver", "no_migration"):
+        raise ValueError(
+            "method must be 'onefactor', 'single_driver' or 'no_migration'")
     portfolio = _rows(files["data/portfolio.csv"])
     counts = np.array([float(r["obligors"]) for r in portfolio])
     mix = counts / counts.sum()
@@ -355,6 +411,36 @@ def predict(files: dict[str, str], method: str = "onefactor") -> str:
         quarterlies[HISTORY_SCENARIO] = {
             q: np.eye(len(ORDER))
             for q in _history_quarters(len(hist_years))}
+    elif method == "single_driver":
+        mats = _annual_matrices(files["data/transitions.csv"])
+        base = pooled_quarterly_base(mats)
+        years = sorted(mats)
+        zhat = np.array([factor_mle(mats[y], base) for y in years])
+        history = _rows(files["data/macro_history.csv"])
+        # The intercept and FEATURES[0], which is the unemployment level, and
+        # no penalty. Two parameters on twenty observations do not need one,
+        # which is why this variant is stable where the six-driver unpenalised
+        # regression is not. What it gets wrong is the five drivers it dropped.
+        X = _macro_features(history, next(iter(groups.values())),
+                            len(years))[0][:, :2]
+        beta = _ridge(X, zhat, 0.0)
+        zfit = X @ beta
+        hq = _history_quarters(len(years))
+        quarterlies[HISTORY_SCENARIO] = {
+            hq[i]: conditional_matrix(base, float(z), RHO_ASSUMED)
+            for i, z in enumerate(zfit)}
+        backtest = _backtest_csv(years, _fitted_annual_rates(mats, base, zfit),
+                                 list(groups))
+        for scen, rows in groups.items():
+            z = _macro_features(history, rows, len(years))[1][:, :2] @ beta
+            v = np.concatenate([mix, [0.0]])
+            quarterlies[scen], dists[scen] = {}, {}
+            for t in range(max(checkpoints)):
+                m = conditional_matrix(base, float(z[t]), RHO_ASSUMED)
+                quarterlies[scen][t + 1] = m
+                v = v @ m
+                if t + 1 in checkpoints:
+                    dists[scen][t + 1] = v.copy()
     else:
         mats = _annual_matrices(files["data/transitions.csv"])
         base = pooled_quarterly_base(mats)

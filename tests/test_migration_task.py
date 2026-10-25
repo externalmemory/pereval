@@ -26,7 +26,7 @@ from pereval.scorers.migration import (
     parse_matrices,
     score_predictions,
 )
-from pereval.tasks.migration.baselines import predict
+from pereval.tasks.migration.baselines import predict, scenario_groups
 from pereval.tasks.migration.generator import (
     BASE_MIX,
     CHECKPOINTS,
@@ -343,6 +343,102 @@ def test_no_migration_baseline_reproduces_the_anchor_exactly():
     r = score_predictions(b["truth"], predict(public_files(b), "no_migration")[0])
     assert r["score"] == pytest.approx(1.0, rel=1e-6)
     assert r["completion"] == 1.0
+
+
+def test_naive_baseline_answers_the_three_scenarios_differently():
+    """The property that disqualified the first candidate for this row.
+
+    Pooling the annual counts into one unconditional matrix and applying it in
+    every scenario was the obvious naive method and is the wrong reference: it
+    returns the SAME answer to baseline, adverse and severe, so it fails four
+    checks that are a strict subset of the six the degenerate answer fails. A
+    naive row whose defects nest inside the degenerate row adds no axis to the
+    table. `single_driver` is wrong about the SIZE of the macro response, not
+    about whether there is one, and this is what pins that.
+    """
+    for seed in (1, 2, 3):
+        b = generate(seed, n_years=20)
+        r = score_predictions(b["truth"],
+                              predict(public_files(b), "single_driver")[0])
+        assert len({round(r[f"score_{s}"], 6) for s in SCEN}) == 3
+
+
+def test_naive_baseline_brackets_without_a_tail():
+    """A naive reference has to hold two properties at once over many draws.
+
+    Worse than the competent solver, and never worse than the degenerate
+    answer. Measured over twelve instances: 0.487 mean, 0.478 median, 0.843
+    max against the reference's 0.286, 0.266 and 0.621, with nothing above
+    1.0 and no check failed anywhere.
+
+    Twelve rather than three, because the candidate this replaced read 0.442,
+    0.571 and 0.350 on the three instances the column is reported on and then
+    went to 4.435 with five of twelve worse than the degenerate once the sample
+    was widened. Unpenalised least squares on six collinear macro levels is
+    heavy-tailed and three draws cannot see a tail, so the bar here is on the
+    maximum over twelve. The bars are looser than the measurement so ordinary
+    generator drift does not fail them.
+    """
+    ref, naive = [], []
+    for seed in range(1, 13):
+        b = generate(seed, n_years=20)
+        f = public_files(b)
+        start = np.array([b["truth"]["start_mix"].get(s, 0.0) for s in ORDER])
+        p, m, bt = predict(f, "single_driver")
+        naive.append(score_predictions(b["truth"], p)["score"])
+        ref.append(score_predictions(b["truth"], predict(f, "onefactor")[0])["score"])
+        assert model_checks(m, p, bt, start, b["truth"])["checks_failed"] == 0
+    assert max(naive) < 1.0                 # never worse than the degenerate
+    assert np.mean(naive) > 1.4 * np.mean(ref)
+    assert np.mean(naive) < 0.8             # and not a second degenerate either
+
+
+def test_naive_baseline_attenuates_the_macro_response_it_does_have():
+    """Its error is omitted variables, so the response is weak and not absent.
+
+    One driver where the generator uses two. The projected factor still has to
+    rise with severity on every instance, or the row would be measuring
+    insensitivity rather than misspecification, and it has to rise by less than
+    the reference's, which is the misspecification itself. Measured over twelve
+    instances, the unemployment level alone explains 0.35 of the variance of
+    the annual factor, and the severe-scenario peak comes out at 0.54 of the
+    reference's.
+
+    Regression dilution, and it lands in the direction that matters. The naive
+    solver projects a severely adverse peak factor BELOW the worst year in its
+    own estimation sample on ten of twelve instances, against the reference's
+    eight. A stress model that cannot reach past its own history is the
+    under-reserving failure `backtest_diagnostics` is one-sided about, and this
+    one reaches it while passing all sixteen checks, so the score and the
+    backtest ratios are the only things that can see it.
+    """
+    from pereval.tasks.migration.baselines import (
+        _annual_matrices, _macro_features, _ridge, _rows, factor_mle,
+        pooled_quarterly_base, project_factor,
+    )
+
+    ratios, r2s = [], []
+    for seed in range(1, 7):
+        f = public_files(generate(seed, n_years=20))
+        mats = _annual_matrices(f["data/transitions.csv"])
+        base = pooled_quarterly_base(mats)
+        years = sorted(mats)
+        zhat = np.array([factor_mle(mats[y], base) for y in years])
+        history = _rows(f["data/macro_history.csv"])
+        groups = scenario_groups(_rows(f["data/scenario.csv"]))
+        X = _macro_features(history, next(iter(groups.values())), len(years))[0]
+        beta = _ridge(X[:, :2], zhat, 0.0)
+        peaks = {}
+        for scen, rows in groups.items():
+            Xs = _macro_features(history, rows, len(years))[1]
+            peaks[scen] = float((Xs[:, :2] @ beta).max())
+            if scen == "severe":
+                ratios.append(peaks[scen] / float(project_factor(X, Xs, zhat).max()))
+        assert peaks["severe"] > peaks["adverse"] > peaks["baseline"]
+        resid = zhat - X[:, :2] @ beta
+        r2s.append(1.0 - resid @ resid / ((zhat - zhat.mean()) ** 2).sum())
+    assert np.mean(ratios) < 0.85          # attenuated against the reference
+    assert np.mean(r2s) < 0.6              # one driver, a third of the variance
 
 
 def test_annual_matrix_from_a_moving_factor_resists_a_stochastic_root():

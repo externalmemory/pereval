@@ -8,7 +8,7 @@ The intended difficulty is annual-to-quarterly conversion. A quarterly matrix ob
 
 The trap is real and it is not tuned. Because the systematic factor moves every quarter, the annual matrix for a year is a product of four different quarterly matrices rather than the fourth power of one, so no quarterly matrix reproduces it. Measured on the exact arithmetic the principal fourth root reaches about -3e-08; with the finite 10,000-obligor portfolio it reaches -7e-03, five orders of magnitude worse, which is what an agent actually meets. Both free models in the smoke test found the negative entries, called them numerical issues, and clipped them.
 
-Bracket: oracle 0.000, one-factor reference 0.285, degenerate 1.000, measured over twelve instances at the shipped settings, each instance carrying all three scenarios. The reference's per-scenario composites are 0.228 baseline, 0.284 adverse, 0.343 severe, monotone in severity.
+Bracket: oracle 0.000, one-factor reference 0.285, single-driver naive 0.487, degenerate 1.000, measured over twelve instances at the shipped settings, each instance carrying all three scenarios. The reference's per-scenario composites are 0.228 baseline, 0.284 adverse, 0.343 severe, monotone in severity.
 
 ## Provenance
 
@@ -695,3 +695,24 @@ These were the questions this page listed while nothing was built. They are kept
 5. **What the scenario path looks like.** Not on the original list, and it should have been. The inherited overlay deteriorated monotonically across all nine quarters, which no published supervisory scenario does. It now has a trough.
 
 6. **Whether the model's response to macros is strong enough.** Also not on the original list. The score is an accuracy measure and cannot see the difference between a model that is right on average and one that is too insensitive to stress, which is the direction that under-reserves. That is what `backtest.csv` and the one-sided ratios are for, and the shipped reference fails them.
+
+7. **What the naive baseline is.** Not on the original list either, and it only became a question when the README table needed a *Naive baseline* cell for this column. The row is ranked in the Borda count, so it cannot be left unmeasured without averaging that row over seven columns while every other ranked row uses eight.
+
+   *Resolved after rejecting four candidates, and the rejections are the content.* The first was through-the-cycle: pool the counts into one unconditional matrix and apply it in every scenario. It scores 0.673 over twelve instances and is the wrong reference, because answering all three scenarios identically makes it fail four checks that are a strict **subset** of the six the degenerate answer fails. A naive row whose defects nest inside the row below it adds no axis to the table, so a naive baseline here has to get the macro response wrong rather than omit it.
+
+   The second was the CCAR naive transplanted literally, ordinary least squares of the annual default rate on all six macro levels. On the three instances the column is reported on it looked ideal, 0.442, 0.571 and 0.350 with all sixteen checks passing, and it is a trap: over twelve instances it runs 1.263 mean, 4.435 max, and is worse than the degenerate answer on five of them. Unpenalised least squares on six collinear levels is heavy-tailed, three draws cannot see a tail, and the figure a three-instance column would have reported is the benign end of a distribution that reaches past the worst model in the table. Stress by analogy to a historical year fails the same way at 1.201 mean and 3.264 max, and removing the ridge from the reference reaches 0.409 mean but beats every model in the column on some instances, which is not a floor.
+
+   *What ships* is `single_driver`: the same factor estimates regressed on the unemployment **level** alone, unpenalised, projected over the scenario. Two parameters on twenty observations needs no penalty, which is why it is stable where the six-driver version is not, and its error is the omitted variables instead.
+
+   | Twelve instances | Mean | Median | Max | Worse than degenerate | Checks failed |
+   | --- | ---: | ---: | ---: | ---: | ---: |
+   | one-factor reference | 0.286 | 0.266 | 0.621 | 0 of 12 | 0 |
+   | **single-driver, shipped** | **0.487** | 0.478 | **0.843** | **0 of 12** | **0** |
+   | scale the default column | 0.698 | 0.699 | 0.857 | 0 of 12 | 2 to 3 |
+   | through-the-cycle, rejected | 0.673 | 0.648 | 1.001 | 1 of 12 | 4 |
+   | unshrunk six-driver, rejected | 0.409 | 0.349 | 1.105 | 1 of 12 | 0 to 1 |
+   | rate on six levels, rejected | 1.263 | 0.516 | 4.435 | 5 of 12 | 0 |
+   | worst-year analogy, rejected | 1.201 | 0.821 | 3.264 | 5 of 12 | 0 |
+   | degenerate answer | 1.000 | 1.000 | 1.000 | 12 of 12 | 6 |
+
+   The defect it carries is the one worth carrying. Unemployment alone explains 0.35 of the variance of the annual factor, so the fitted slope is diluted and the severe-scenario peak factor comes out at 0.54 of the reference's. The naive solver projects a severely adverse peak **below the worst year in its own estimation sample on ten of twelve instances**, against the reference's eight, which is the under-reserving direction `backtest_diagnostics` is one-sided about. It does that while passing all sixteen checks, so nothing in the check layer catches it and only the score and the backtest ratios can.
