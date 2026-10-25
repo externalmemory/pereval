@@ -163,22 +163,28 @@ The suite is not consistent about this, though: the flyby runs recorded above we
 
 ## What Completing One Row Did to the Aggregate
 
-Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. Completing K3 took it to p = 0.037, and adding a complete deepseek-v4-flash-0731 row took it to p = 0.004 on the spread and p = 0.007 on the range, measured over the six columns the table then had. Adding the CECL column took the spread to p = 0.001 and the range to p = 0.016, and completing a minimax-m3.1-flash:free row takes them to **p < 0.0001 on the spread and p = 0.002 on the range** over ten ranked rows and seven columns.
+Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. Completing K3 took it to p = 0.037, and adding a complete deepseek-v4-flash-0731 row took it to p = 0.004 on the spread and p = 0.007 on the range, measured over the six columns the table then had. Adding the CECL column took the spread to p = 0.001 and the range to p = 0.016, and completing a minimax-m3.1-flash:free row took them to p < 0.0001 on the spread and p = 0.002 on the range over ten ranked rows and seven columns. Adding the migration column as the eighth takes them to **p < 0.00001 on the spread and p = 0.001 on the range**.
 
 That is not the aggregate becoming trustworthy. Dropping rows one at a time shows where the signal lives:
 
-| Rows tested | p (spread) |
-| --- | --- |
-| all ten | < 0.0001 |
-| without minimax-m3.1-flash | 0.0015 |
-| without deepseek-0731 | 0.0001 |
-| without Kimi K3 | 0.0003 |
-| without minimax and K3 | 0.052 |
-| without all three of the top rows | 0.558 |
+| Rows tested | p (spread), seven columns | p (spread), eight columns |
+| --- | ---: | ---: |
+| all ten | < 0.0001 | < 0.00001 |
+| without minimax-m3.1-flash | 0.0015 | 0.00011 |
+| without deepseek-0731 | 0.0001 | 0.00002 |
+| without Kimi K3 | 0.0003 | 0.00006 |
+| without minimax and K3 | 0.052 | 0.011 |
+| without all three of the top rows | 0.558 | 0.266 |
 
-Dropping any single row leaves a detectable signal, which is a change from the six-column table where K3 carried it almost alone. Dropping the top two takes the spread to the edge of significance, and dropping the top three returns the remaining seven rows to the noise they started as. So the column detects that the top two or three models are genuinely different, not that anything below them is ranked. Read as a ranking of the seven rows beneath them, it is still noise.
+Dropping any single row leaves a detectable signal, which is a change from the six-column table where K3 carried it almost alone. **The eighth column moved the boundary by one row.** Dropping the top two used to take the spread to the edge of significance at 0.052 and now leaves it at 0.011, so deepseek-v4-flash-0731 carries detectable signal of its own rather than only the two rows above it; dropping the top three still returns the remaining seven rows to noise, though at 0.266 rather than 0.558. So the column detects that the top three models are genuinely different, not that anything below them is ranked. Read as a ranking of the seven rows beneath them, it is still noise.
+
+Migration is also the column that most compresses the top. minimax-m3.1-flash goes from 1.71 to 2.13 and Kimi K3 from 2.71 to 2.50, cutting the gap between first and second from 1.00 to 0.38, because migration is the one column where the frontier model wins outright and minimax lands mid-field at rank 5 of 10. The aggregate's leader did not change, and the margin that made it look settled did.
 
 Ranks are recomputed from the cells for each subset rather than deleted from a fixed rank matrix, since dropping a row re-ranks the rows beneath it. Ties are given the average of the ranks they span, which is the rule the published mean-rank column was computed with.
+
+**One of the table's displayed ties is not a real one, and the mean ranks use the underlying cells.** The ballistic column shows Kimi K3 and deepseek-v4-flash-0731 both at 14, but the cells behind them are 13.991 and 14.135, so Kimi takes rank 4 and deepseek rank 5 rather than 4.5 each. GLM-5.1 and mimo-v2.5 both show 12 and are ranked as a genuine tie at 2.5. A reader recomputing the column from the displayed figures alone will therefore get 2.79 and 3.64 for those two rows against the published 2.71 and 3.71 on seven columns, or 2.56 and 3.69 against 2.50 and 3.75 on eight. The published numbers are the ones computed from the cells.
+
+Mean ranks over eight columns are multiples of one eighth, so four of the ten land exactly on a two-decimal rounding boundary: 17/8, 53/8, 61/8 and 65/8. They are rounded half up, giving 2.13, 6.63, 7.63 and 8.13. Worth stating because the other common convention, round half to even, would print three of those four differently.
 
 The positive finding is that the suite has resolving power at the top of the range, which was not previously demonstrable. Every model measured before this clustered within a factor of a few on the orbital tasks and none beat the degenerate answer on flyby. K3 is 3.3 on three-body against a next-best of 164, and 50 on flyby against 292, beating the degenerate answer on all three of its flyby runs. Those are gaps this suite can resolve, and until now nothing had produced one.
 
@@ -187,6 +193,8 @@ That the same model is unremarkable on CCAR and quantile is not a limitation and
 ## Serving Provenance Is Not Controlled
 
 A model id is not a guarantee of which weights answered. Kimi K3's row was measured across two serving paths: CCAR, ballistic, two-body and three-body on OpenRouter's paid endpoint, and flyby and quantile on tokenrouter's free `kimi-k3-free`, after the paid budget ran out. The two were compared on one matched instance, two-body instance-0, scoring 0.023 free against 0.024 paid, which is consistent with the same model but is a single comparison rather than a proof.
+
+**Pinning the serving path was considered and rejected.** OpenRouter accepts a `provider.order` preference that would hold every instance of a row to one upstream, and it was raised twice while the migration column was being filled. It is not being adopted. It would fix one uncontrolled variable out of several and would not touch the others on this list: quantisation under the same name, a silently changed sampling default, a provider's own build drift, or the retirement of the endpoint a row was measured on. A pin would also narrow the set of servable endpoints at a time when free tiers are being withdrawn mid-column, which is the constraint that actually threatens the table. The honest position is that serving provenance is recorded per row and not controlled, rather than controlled on one axis and silently uncontrolled on four.
 
 Nothing in the harness detects a provider silently substituting a quantized or distilled variant, changing a default sampling parameter, or routing to a different build under the same name. Cells assembled from more than one endpoint are therefore weaker evidence than cells from one, and the split is recorded per row rather than averaged away. This is a general property of evaluating through aggregators, not a defect of any particular one.
 
@@ -291,7 +299,7 @@ The quantile task is the exception and needs its own argument, because its data 
 
 ## Sample Size
 
-Every score table reports at least three runs per model as mean ± 2 SD, after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p < 0.0001 on the spread of mean ranks), but only because the top two or three rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What Completing One Row Did to the Aggregate](#what-completing-one-row-did-to-the-aggregate) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
+Every score table reports at least three runs per model as mean ± 2 SD, after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p < 0.00001 on the spread of mean ranks over eight columns), but only because the top three rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What Completing One Row Did to the Aggregate](#what-completing-one-row-did-to-the-aggregate) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
 
 ## Run-to-Run Reproducibility
 

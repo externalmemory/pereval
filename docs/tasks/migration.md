@@ -1,6 +1,10 @@
 # Rating Migration
 
-**Status: built, not measured.** The generator, the scorer, two reference solvers and the Inspect task exist. The one-history, three-scenario shape described below has not yet been run against a model; the free-model smoke tests and the MiniMax run that exist were taken under the earlier rotated shape and their scores are not comparable to anything this version produces. The task does not appear in the README's score table and will not until there is a cell for every ranked row.
+**Status: measured and published.** The generator, the scorer, three reference solvers and the Inspect task exist, and the one-history, three-scenario shape described below has been run against all nine models in the README's score table, three instances each at `-T seed=1`, with a cell for every ranked row. It is the eighth column of that table.
+
+Worst-case regret per model, lower better: Kimi K3 **0.301**, GLM-5.1 0.523, mimo-v2.5 0.556, deepseek-v4-flash-0731 0.625, minimax-m3.1-flash 0.629, nemotron-3-ultra 1.214, nemotron-3-super 1.400, ling-3.0-flash 1.612, Claude Haiku 4.5 **4.068**, against the competent reference's 0.368 and the degenerate answer's 1.000. Only Kimi K3 is inside the reference and four models are outside the degenerate, the most of any column in the suite. Two cells are weaker evidence than the rest: minimax's 0.629 is set by one of two instances the six-hour clock truncated, and is an upper bound rather than a measurement, and Claude Haiku's instances 1 and 2 are the first runs in this repo to have working prompt caching.
+
+The free-model smoke tests and the earlier MiniMax run were taken under the earlier rotated shape and their scores are not comparable to anything this version produces.
 
 The task gives an agent twenty years of annual rating transition counts for a 10,000-obligor portfolio, quarterly macroeconomic history, three nine-quarter supervisory scenarios over the same future quarters, and a holdout cohort whose rating mix differs from the historical one. It must estimate one model, project where that cohort stands at quarters 4 and 9 under each scenario, record the quarterly transition matrices it used, and report the annual default rate its model projects for each historical year.
 
