@@ -57,6 +57,8 @@ Row labels name the model, not the endpoint that served it. A `:free` variant is
 
 Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR over eight instances. Lower is better everywhere, and a cell is reported only if none of its runs failed for reasons outside the agent's control. The last column is the **mean rank** (a Borda count within each column), deliberately the only aggregate, since the cells are not comparable across columns. Per-task detail is in the docs linked above, and the caveats behind every number are in [docs/limitations.md](docs/limitations.md).
 
+Every row was served by a hosted provider. A separate attempt to run the suite on one 48 GB desktop machine is written up in [docs/local-models.md](docs/local-models.md) and deliberately kept out of this table: it completes three of the seven tasks, and what stops the other four is the context ceiling of the hardware rather than anything about the model.
+
 | Model | CCAR | CECL⁵ | Migration⁷ | Ballistic | Two-body | Three-body¹ | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | 0.031 | 0 | *0* | *none* | 0.005 | 0.039 | 0.31 | *none* | *floor* |
