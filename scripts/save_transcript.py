@@ -10,17 +10,24 @@ leaves a PNG beside the transcript, under the same stem, written by
 built prints to stderr and never costs the transcript it belongs to. Reasoning content is included when the provider
 surfaces it (OpenRouter does; Zen's openai-api provider does not).
 
-Transcripts are never overwritten. Model, task, instance, seed and epoch do not
-identify a RUN, only a cell, so re-running any cell used to silently destroy the
-archived record of the previous attempt. That is exactly backwards for a repository whose tables are
-audited from these files: it deletes evidence at the moment a result is being revised.
-On collision the new transcript takes a `-<YYYY-MM-DD>` suffix, and a further `-<logid>`
-if that also exists, so archived runs keep their bare names and later generations sit
-beside them. Re-saving the same log twice is a no-op.
+A re-run overwrites the transcript of the cell it re-runs. Model, task, instance, seed
+and epoch name a cell rather than a run, so a re-run collides by construction, and the
+rule here used to resolve that by suffixing the newcomer with `-<YYYY-MM-DD>`. That kept
+both files and left the superseded one under the bare name the README points auditors
+at, which is the wrong way round: a cell is re-run because the first attempt failed, so
+the file holding the failure outranked the file holding the result. It happened on three
+cells of one local-model run before anyone noticed.
+
+Overwriting costs no evidence, because a transcript is derived and the `.eval` log is the
+record. Logs carry their own timestamp and id, are never overwritten, and are committed,
+so a superseded transcript can be rebuilt by running this script against the older log.
+Keeping the old log is therefore the way to keep the old transcript. Re-saving the same
+log twice is still a no-op, byte for byte, and a run that draws no figure now clears a
+stale PNG left by the run it replaces, which would otherwise sit under a current
+transcript's name showing the previous attempt's submission.
 """
 import json
 import os
-import re
 import sys
 
 from inspect_ai.log import read_eval_log
@@ -93,26 +100,16 @@ def render(log, sample) -> str:
     return "\n".join(head + body) + "\n"
 
 
-def _free_path(path: str, content: str, log_path: str) -> str | None:
-    """A path that will not clobber a different run. None if this run is already saved."""
-    stem = os.path.basename(log_path)
-    date = (re.match(r"(\d{4}-\d{2}-\d{2})", stem) or [None, "rerun"])[1]
-    logid = os.path.splitext(stem)[0].rsplit("_", 1)[-1][:8]
-    for candidate in (path, _suffixed(path, date), _suffixed(path, f"{date}-{logid}")):
-        if not os.path.exists(candidate):
-            return candidate
+def _target_path(path: str, content: str) -> str | None:
+    """Where this sample's transcript goes. None if it is already there, byte for byte."""
+    if os.path.exists(path):
         # newline="" disables universal-newline translation. Transcripts carry \r\n
         # from sandbox tool output, and a default text read turns that back into \n,
-        # so the round trip never compares equal and every re-save forks a new file.
-        with open(candidate, newline="") as f:
+        # so the round trip never compares equal and every re-save rewrites the file.
+        with open(path, newline="") as f:
             if f.read() == content:
-                return None  # already saved, byte for byte
-    raise RuntimeError(f"cannot find a free transcript name for {path}")
-
-
-def _suffixed(path: str, suffix: str) -> str:
-    base, ext = os.path.splitext(path)
-    return f"{base}-{suffix}{ext}"
+                return None  # already saved, nothing to do and no figure to redraw
+    return path
 
 
 def sample_stem(log, sample) -> str:
@@ -140,15 +137,27 @@ def sample_stem(log, sample) -> str:
 
 
 def _write_figure(log, sample, md_path) -> None:
-    """The companion figure, for a task that has one. Best effort, always."""
+    """The companion figure, for a task that has one. Best effort, always.
+
+    A figure that cannot be drawn has to take the previous run's figure with it.
+    Transcripts are overwritten in place, so a cell that drew a plot on its first
+    attempt and none on its second would otherwise keep the first attempt's plot
+    beside the second attempt's transcript, under the same stem and with nothing
+    on either file to say they came from different runs.
+    """
     png = os.path.splitext(md_path)[0] + ".png"
+    drawn = False
     try:
         from plot_backtest import render_png
-        if render_png(log, sample, png):
+        drawn = bool(render_png(log, sample, png))
+        if drawn:
             print(png)
     except Exception as exc:                       # noqa: BLE001 - never fatal
         print(f"figure skipped for {os.path.basename(png)}: {exc}",
               file=sys.stderr)
+    if not drawn and os.path.exists(png):
+        os.remove(png)
+        print(f"removed stale figure {png}")
 
 
 def main(paths):
@@ -157,7 +166,7 @@ def main(paths):
         log = read_eval_log(p)
         for s in (log.samples or []):
             stem = os.path.join(RUNS, f"{sample_stem(log, s)}.md")
-            out = _free_path(stem, render(log, s), p)
+            out = _target_path(stem, render(log, s))
             if out is None:
                 continue
             with open(out, "w") as f:

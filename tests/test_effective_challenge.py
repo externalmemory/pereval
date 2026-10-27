@@ -34,6 +34,15 @@ problems, which is the only useful kind.
    seven hour run was void as a cell because of it. The guard below is a cross-task
    invariant rather than a test of that one task, since the defect was a task building
    its own Task and forgetting a shared argument, and any future task can repeat it.
+
+7. The transcript archive preferred the failed attempt. A cell is re-run because the
+   first attempt failed, but `save_transcript.py` refused to overwrite and suffixed the
+   NEWCOMER with `-<YYYY-MM-DD>`, so the bare filename the README points auditors at
+   held the superseded run and the dated one held the result. Three cells of one local
+   model run landed that way, including a migration instance whose bare file scored
+   2.9455 from a crashed attempt against 0.3391 from the run being reported. Transcripts
+   are derived and `.eval` logs are the record, so overwriting costs nothing an older
+   log cannot rebuild.
 """
 
 from __future__ import annotations
@@ -577,3 +586,61 @@ def test_the_reducer_cannot_report_a_spread_it_did_not_measure():
 
     assert epochs(1) is None
     assert epochs(3).epochs == 3
+
+
+# --- 7. the transcript archive preferred the failed attempt -----------------
+
+
+def _saver():
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "scripts"))
+    import save_transcript
+
+    return save_transcript
+
+
+def test_a_rerun_transcript_replaces_the_attempt_it_supersedes(tmp_path):
+    """The bare name has to hold the current run, not the one that failed first.
+
+    The old rule kept both files and gave the newcomer the dated suffix, which put
+    the superseded attempt under the name every published table is audited from.
+    """
+    st = _saver()
+    path = str(tmp_path / "model-task-instance-0-seed-1.md")
+
+    # first attempt lands on the bare name
+    assert st._target_path(path, "crashed run") == path
+    open(path, "w").write("crashed run")
+
+    # the re-run takes the same name, not a dated sibling
+    assert st._target_path(path, "the reported run") == path
+    open(path, "w").write("the reported run")
+    assert open(path).read() == "the reported run"
+    assert [f.name for f in tmp_path.iterdir()] == ["model-task-instance-0-seed-1.md"]
+
+    # re-saving the same log is still a no-op, so mtimes and figures survive
+    assert st._target_path(path, "the reported run") is None
+
+
+def test_a_rerun_that_draws_nothing_takes_the_old_figure_with_it(tmp_path):
+    """A stale PNG under a current transcript's stem is a mislabelled result.
+
+    Overwriting the transcript in place makes this possible for the first time:
+    the figure is keyed on the transcript's stem, so a cell that plotted on its
+    first attempt and not on its second would keep the first attempt's plot.
+    """
+    st = _saver()
+    md = tmp_path / "model-task-instance-0-seed-1.md"
+    png = tmp_path / "model-task-instance-0-seed-1.png"
+    md.write_text("the reported run")
+    png.write_bytes(b"\x89PNG stale figure from the crashed attempt")
+
+    # render_png raises on these stand-ins, which is the best-effort path a real
+    # undrawable sample takes, and the one that used to leave the PNG behind
+    st._write_figure(object(), object(), str(md))
+
+    assert not png.exists(), "a figure from a superseded run outlived its transcript"
+    assert md.exists(), "a failed draw must never cost the transcript it belongs to"
