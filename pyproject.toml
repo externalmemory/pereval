@@ -9,6 +9,7 @@ requires-python = ">=3.10"
 dependencies = [
     "inspect-ai>=0.3",
     "openai>=1.0",
+    "anthropic>=1.17,<2",  # inspect-ai 0.3.245 builds MessageParam, a Union alias in 2.x
     "numpy>=1.26",
     "scipy>=1.11",
     "py-ballisticcalc>=2.2",
