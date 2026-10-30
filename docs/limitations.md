@@ -184,11 +184,78 @@ Ranks are recomputed from the cells for each subset rather than deleted from a f
 
 **One of the table's displayed ties is not a real one, and the mean ranks use the underlying cells.** The ballistic column shows Kimi K3 and deepseek-v4-flash-0731 both at 14, but the cells behind them are 13.991 and 14.135, so Kimi takes rank 4 and deepseek rank 5 rather than 4.5 each. GLM-5.1 and mimo-v2.5 both show 12 and are ranked as a genuine tie at 2.5. A reader recomputing the column from the displayed figures alone will therefore get 2.79 and 3.64 for those two rows against the published 2.71 and 3.71 on seven columns, or 2.56 and 3.69 against 2.50 and 3.75 on eight. The published numbers are the ones computed from the cells.
 
-Mean ranks over eight columns are multiples of one eighth, so four of the ten land exactly on a two-decimal rounding boundary: 17/8, 53/8, 61/8 and 65/8. They are rounded half up, giving 2.13, 6.63, 7.63 and 8.13. Worth stating because the other common convention, round half to even, would print three of those four differently.
+Mean ranks over eight columns are multiples of one eighth, or of one sixteenth where a column tie splits a rank, so eight of the eleven land exactly on a two-decimal rounding boundary: 23/8, 27/8, 37/8, 61/8, 63/8, 67/8, 69/8 and 73/8. They are rounded half up. Round half to even, the other common convention, would print four of those eight differently, giving 4.62, 7.62, 8.62 and 9.12 in place of 4.63, 7.63, 8.63 and 9.13.
 
 The positive finding is that the suite has resolving power at the top of the range, which was not previously demonstrable. Every model measured before this clustered within a factor of a few on the orbital tasks and none beat the degenerate answer on flyby. K3 is 3.3 on three-body against a next-best of 164, and 50 on flyby against 292, beating the degenerate answer on all three of its flyby runs. Those are gaps this suite can resolve, and until now nothing had produced one.
 
 That the same model is unremarkable on CCAR and quantile is not a limitation and not news. CCAR was built tractable on purpose, "included deliberately as a contrast to three-body", and the per-task doc has recorded since the first cast that "CCAR is tractable even for cheap models". A frontier model failing to separate on a task designed to be solvable by cheap ones is the difficulty gradient working as intended. The genuine caveat about the aggregate leaning on the physics tasks is a property of the task mix, and is covered under [The Overall Rank Depends on the Task Mix](#the-overall-rank-depends-on-the-task-mix).
+
+## What the Eleventh Row Did to the Aggregate
+
+Adding Claude Opus 5.5 as the eleventh ranked row moves the range of mean ranks from p = 0.001 to **p = 0.00005**. The spread cannot move, because it was already below what a million permutations can resolve at ten rows and still is, so the range is the only place an eleventh row can register, and there it moved by a factor of twenty.
+
+The boundary between signal and noise moved by one row, which is what the eighth column had done:
+
+| Rows tested | p (spread) | p (range) |
+| --- | ---: | ---: |
+| all eleven | < 0.00001 | 0.00005 |
+| without Claude Opus 5.5 | < 0.00001 | 0.00098 |
+| without minimax-m3.1-flash | < 0.00001 | 0.00007 |
+| without Kimi K3 | < 0.00001 | 0.00014 |
+| without Opus and minimax | 0.00009 | 0.0015 |
+| without the top three | 0.012 | 0.025 |
+| without the top four | 0.267 | 0.219 |
+
+One million permutations for each subset, with ranks recomputed from the cells rather than deleted from a fixed rank matrix, since dropping a row re-ranks those beneath it. **No single row now carries the result**, which is a change: dropping any one of the top three leaves the range detectable, and it takes three deletions to reach the edge and four to return to noise. The seven rows beneath the top four are as unordered as they were, at p = 0.27, so the only thing the eleventh row bought is one more row above the line.
+
+It also reopened the margin at the top that migration had closed. Adding the migration column cut the gap between first and second from 1.00 to 0.38; Opus puts it at 1.13, 1.75 against minimax-m3.1-flash's 2.88. That number is not a measure of how much better the model is, and cannot be: a rank is a placement, so beating the field by 73x on three-body and by 1.2x on CECL each contribute exactly one rank point. The gap says how often Opus placed first, not by how far, and it would read the same if every margin were a hundredth of what it is.
+
+### The Row's Own Variance Is Larger Than the Gaps It Wins By
+
+Three passes over the same instances, 87 samples, every one completing with no limit hit. The per-instance draws:
+
+| Column | Instance | Pass 1 | Pass 2 | Pass 3 | spread |
+| --- | --- | ---: | ---: | ---: | ---: |
+| CCAR | 0 | 0.00867 | 0.00911 | 0.00672 | 1.4x |
+|  | 1 | 0.00729 | 0.0127 | 0.0307 | 4.2x |
+|  | 2 | 0.07 | 0.0581 | 0.0741 | 1.3x |
+|  | 3 | 0.0154 | 0.0154 | 0.0117 | 1.3x |
+|  | 4 | 0.0101 | 0.0114 | 0.00853 | 1.3x |
+|  | 5 | 0.0152 | 0.032 | 0.0343 | 2.3x |
+|  | 6 | 0.0115 | 0.0228 | 0.0224 | 2.0x |
+|  | 7 | 0.0948 | 0.0586 | 0.0586 | 1.6x |
+| CECL | 0 | 6.53e-07 | 8.05e-07 | 8.05e-07 | 1.2x |
+|  | 1 | 4.47e-06 | 1.91e-06 | 1.87e-06 | 2.4x |
+|  | 2 | 2.29e-07 | 2.29e-07 | 2.64e-07 | 1.2x |
+| Migration | 0 | 0.0362 | 0.084 | 0.0365 | 2.3x |
+|  | 1 | 0.0748 | 0.204 | 0.0611 | 3.3x |
+|  | 2 | 0.0315 | 0.0779 | 0.0238 | 3.3x |
+| Ballistic | 0 | 4.81 | 6.74 | 3.28 | 2.1x |
+|  | 1 | 0.958 | 0.85 | 0.595 | 1.6x |
+|  | 2 | 2.29 | 2.29 | 2.28 | 1.0x |
+| Two-body | 0 | 0.00635 | 0.0862 | 0.0125 | 13.6x |
+|  | 1 | 0.00822 | 0.00778 | 0.003 | 2.7x |
+|  | 2 | 0.0891 | 0.0626 | 0.00447 | 19.9x |
+| Three-body | 0 | 0.0388 | 0.0155 | 0.0388 | 2.5x |
+|  | 1 | 0.0116 | 0.0143 | 0.0143 | 1.2x |
+|  | 2 | 0.0345 | 0.0432 | 0.0345 | 1.3x |
+| Flyby | 0 | 0.0163 | 0.0164 | 0.129 | 7.9x |
+|  | 1 | 0.375 | 69.7 | 0.161 | 434.2x |
+|  | 2 | 0.515 | 0.669 | 0.443 | 1.5x |
+| Quantile | seed 1 | 0.0732 | 0.0788 | 0.0984 | 1.3x |
+|  | seed 2 | 0.056 | 0.0576 | 0.0563 | 1.0x |
+|  | seed 3 | 0.0561 | 0.0608 | 0.073 | 1.3x |
+
+Read down the spread column rather than across the passes. The suite's assumption that a cell is a stable property of a model holds on CCAR, CECL, three-body and parts of ballistic, where repeat draws move by a factor of one to four, and fails on the flyby, where instance 1 moves by 434x between draws of 0.375, 69.75 and 0.161. Ballistic instance 2 is the opposite extreme: two of its three draws agree to five significant figures.
+
+**The flyby cell is the one number in the Opus row that should not be read as a measurement.** The distribution is two-valued, not spread: eight of nine draws land under 0.67 and the ninth is 69.75. The published cell of 24 is the mean of the maximum under the matched convention, which is the right statistic for comparability and a poor description of what happened, and the two-standard-deviation band of ±66 implies a negative lower bound on a non-negative quantity. The failing draw was not truncated and did not run short of effort: it used 29 tool calls against the 13 and 10 of the two good draws, reached a mean absolute error of 4.53 against 0.34 and 0.24, and put intervals of mean width 6.1 around the wrong answer, for coverage of 0.205. That is convergence on a wrong orbit in an angles-only determination, confidently reported, and it is the failure mode this suite was built to catch.
+
+Two defects in the row are reproducible rather than sampled, so no number of further draws will remove them:
+
+- **Migration instance 2 fails `fail_pd_rises_as_rating_falls` in three draws of three.** Those three are the only failures among the row's 144 migration checks. The regrets on that instance are 0.031, 0.078 and 0.024, among the best in the column, so a model can lead the column and still submit a term structure whose default probability does not rise monotonically as the rating falls. A composite regret that averages four distributional distances does not see this; only the check does.
+- **Ballistic instance 0 under-covers in three draws of three**, at 0.877, 0.849 and 0.875 against a nominal 0.95. It is simultaneously that column's worst cell, its widest mean interval and its worst point error in every draw, so the intervals are not too narrow, they are centred in the wrong place. Instance 2 joined it in the third pass at 0.826 while scoring 2.278, a cell indistinguishable from its other two draws, so coverage and regret are not tracking each other here.
+
+Coverage is reported on 78 of the 87 samples, since migration has no interval metric. Sixty-six are at or above 0.931, six are below 0.90, and the six are the four listed above plus the flyby draw at 0.205 and one quantile draw at 0.890.
 
 ## Serving Provenance Is Not Controlled
 
@@ -299,7 +366,7 @@ The quantile task is the exception and needs its own argument, because its data 
 
 ## Sample Size
 
-Every score table reports at least three runs per model as mean ± 2 SD, after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p < 0.00001 on the spread of mean ranks over eight columns), but only because the top three rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What Completing One Row Did to the Aggregate](#what-completing-one-row-did-to-the-aggregate) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
+Every score table reports at least three runs per model as mean ± 2 SD, after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The bands are still wide relative to the mean gaps (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p < 0.00001 on the spread of mean ranks over eight columns), but only because the top four rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What the Eleventh Row Did to the Aggregate](#what-the-eleventh-row-did-to-the-aggregate) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
 
 ## Run-to-Run Reproducibility
 

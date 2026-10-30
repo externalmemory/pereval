@@ -1,7 +1,7 @@
 # anthropic/claude-opus-5-5 — migration (id=instance-2-seed-1320224556)
 
-- score 0.0315 (1.0 = no migration); 1/16 checks failed: pd_rises_as_rating_falls; by scenario 0.064/0.018/0.013; completion 100%
-- messages 34 | limit None | seed None
+- score 0.0238 (1.0 = no migration); 1/16 checks failed: pd_rises_as_rating_falls; by scenario 0.040/0.016/0.015; completion 100%
+- messages 44 | limit None | seed None
 
 ---
 
@@ -128,12 +128,12 @@ Project the cohort in data/portfolio.csv over each of the three scenarios and wr
 
 **[reasoning]**
 
-> CAQS9AQKEAgTGAI4AUIIdGhpbmtpbmcSDN16utxaJiKVWkgc1RoMif5tPxtiBOeCu5qMIjCmbcK/9KyOrRkNXM75wnq4FJAQVAqOYslA9PEHNq/2/s3XTovsq2Bh70eMkJnFuxkqkQSHyGEsthkjQVGFFWELOViWznf+F4A2bMzrhibUSS/nCbS5xodxmEqgmMlVvhMa8nL5XilC652CdrTtG4H5I0rZwqDt0uERwOIU0s7tvKy2XkFscIrKSYvuPd6LXjSudwQrEM/KZfdBlg7jJjAafJ0i7CecHuWPxBZlk7d8AZssahILb8S23CHfVHCEF/lClZnaukvP1jFcMQ0O27rF1yt3qjf0v96EnTz1D9XTWmLqbDFPqhIiI25bxFClIxEcfntoeU8lRxmyOwpDeNLz6Fm1b/i7sFY89lG0MdhFrL42onVodX2lMoljX7Rj1pf7/mfAz7PNVSxWql3sMwOmX+q2I3VxxekYa9yiyOze4mNj5WUyZ2Aec5Ep/oD2yErKU4LAN+rg51supQdHh3N0wGMEjpJUaxo4yRJoAZiIO10KcOeioeFkLp2QdJ92zKxq7KplZjyzQ0IwtHtnGnkt79axHWYwJ+M8RPPzYMx2O/aGQi2vJeFUpsTDj5HytKUo2cXu88KoMhB8MuRTAJY660hIpM/GtyXfnfs8hPR5HFgVZMbsJh+UECZxflFUhsSGUfG5mU7PKAQ7xpgTj7fXbiuf+4cGYopwEZceQwmB5pVdt/wVc7ffeJ2akSYos5cE3gxqMTYu9xYzB122NEY2yFnbgYKbr0Strx2xazQCrl7LoqGaXMJi732vze0lH5dN1KLRGAE=
+> CAQS9AQKEAgTGAI4AUIIdGhpbmtpbmcSDJEZwSj7/9eLre5DbRoMAK99/mmswNgwIbvJIjBh9fylxIZAN2RhTexKx9qX/Vkoi9JDCWKWLdUdnNMLmtlCckQKe1kCvTcz74hkroYqkQSF7Uy/bs0uu2I8lT/LXIBGBCXYwW/zFMe8NH9JS9CQJv5jiM7Q69/57Z6TKIVt03hv+4elWwI6mI2dHJ8sw741minH4rE8uY21rAZFMggxf55KomnT5z8q2pVYPdIJ5ZL4sVOgOgT+mlnCvhSaWdXrOCn+0iO5nqQ9W8KKOnXRQHffdo2MZ/zLHb/qS+5PYqrkG1M9esQHkh7QWkaUP4Vx+Wvwh3C5bgvVPYdFNIwKMDJbHZAi1wa8Hchj5r/edzupJINSKlOL7TABOiApDUe/eUdtq/DSvE3tbIMcKvi/iCpJDOI4IyzAdoAEkeEGXEp3yWsf+Pees73ADMMnNQAE7mrmTBXR0MTa8P7EXQzUC5TI2qzEir+BwkQjTGNzMI1dPGI0bjy5chQYfG//avBuE+9EsRhLBvFKNX9dpgzhGPnyCXpBGXpevvyEVFn541/6St+0ZJWHFwMH9Yv79suaqSsLu5ehKJuqk3ynfYKFi2Odr8emOIFXTjQKa8svwHnJiZ4HOKizN5lO1FanjVuwUBlSqmGP23XoEZgZAp1akyozuaGKD3/YX/6lrHAeofNNkrvsB02yPd6aWpLa8YMbqleVVeKkMB8ukH1CIwi8d73Q9FU4RpcOcQXfX4disAl4dusWcovYtxwUR5fbm3Yu53esO4X//1HMBzE3CIYWgNuLRMGlCllgAPSRSuXUl1huGAE=
 
 **tool call: bash**
 
 ```
-cd data; head -5 transitions.csv; wc -l *; cat policy.json; cat portfolio.csv; head -3 macro_history.csv; tail -3 macro_history.csv; head -4 scenario.csv
+cd data; head -5 transitions.csv; wc -l *; cat policy.json; cat portfolio.csv; head -3 macro_history.csv; tail -3 macro_history.csv; cat scenario.csv
 ```
 
 ## [3] tool
@@ -167,31 +167,125 @@ scenario,quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 baseline,1,262.1239,4.2782,316.877,1.2132,2455.1396,2081.4345,10431.038,18.9236,291.5359
 baseline,2,264.0314,4.7483,318.5771,1.6369,2506.9399,2191.1213,10706.4288,19.4275,295.4863
 baseline,3,265.5104,5.2701,320.123,2.0607,2553.374,2320.6601,10873.5934,19.9449,298.2765
+baseline,4,267.1564,5.0774,321.735,1.9093,2603.0162,2452.5231,11085.1269,19.7585,301.5302
+baseline,5,268.9726,4.8918,323.4141,1.758,2656.0195,2586.2536,11343.5079,19.5739,305.2617
+baseline,6,270.9623,4.713,325.1611,1.6066,2712.549,2721.3572,11651.8052,19.391,309.4881
+baseline,7,273.1291,4.5407,326.9772,1.4552,2772.7829,2857.3038,12013.7385,19.2098,314.2284
+baseline,8,275.4769,4.3747,328.8633,1.3038,2836.9134,2993.5309,12433.7538,19.0303,319.5044
+baseline,9,278.0103,4.2147,330.8206,1.1525,2905.1478,3129.4463,12917.1135,18.8525,325.3406
+adverse,1,261.7289,4.2994,315.7952,1.1766,2443.6341,2066.872,10352.1423,19.8989,291.577
+adverse,2,262.8393,4.7955,315.3253,1.5637,2471.86,2145.4525,10465.3257,21.4816,295.611
+adverse,3,263.1183,5.3489,313.6212,1.9509,2482.4147,2224.9307,10389.3725,23.1902,298.5284
+adverse,4,262.563,5.9661,310.7029,2.338,2475.0704,2305.1881,10128.379,25.0347,300.2952
+adverse,5,261.1787,6.6546,306.6043,2.7251,2449.9857,2386.0993,9696.2683,27.0259,300.8906
+adverse,6,260.4509,6.107,303.4963,2.4207,2438.9709,2471.6746,9416.0917,25.4473,302.418
+adverse,7,260.374,5.6044,301.3498,2.1163,2441.8374,2562.2098,9275.5166,23.961,304.8916
+adverse,8,260.9476,5.1432,300.1445,1.8118,2458.6343,2658.0229,9268.4456,22.5614,308.3343
+adverse,9,262.1758,4.7199,299.8694,1.5074,2489.6495,2759.4554,9394.5738,21.2437,312.7786
+severe,1,261.3386,4.4393,315.0107,1.2678,2434.0799,2060.3736,10268.5102,20.7463,291.2802
+severe,2,261.6652,5.1127,312.9812,1.7461,2442.9794,2125.2799,10213.7298,23.3502,294.7094
+severe,3,260.7728,5.8882,308.9757,2.2245,2424.7456,2183.2876,9895.8374,26.2809,296.7102
+severe,4,258.6737,6.7814,303.0702,2.7028,2379.9836,2233.7289,9339.2499,29.5795,297.2531
+severe,5,255.3971,7.81,295.3761,3.1812,2310.1658,2276.0126,8585.4429,33.2921,296.33
+severe,6,253.0023,7.0619,289.1974,2.8401,2260.2794,2325.8656,8041.6942,30.6006,296.4518
+severe,7,251.465,6.3854,284.4465,2.4991,2229.107,2383.7479,7674.7909,28.1267,297.6195
+severe,8,250.7698,5.7738,281.0566,2.158,2215.8966,2450.2014,7463.1074,25.8528,299.8457
+severe,9,250.9099,5.2207,278.9806,1.817,2220.3318,2525.8584,7394.4687,23.7627,303.1539
 
 
 ## [4] assistant
+
+**[reasoning]**
+
+> CAQS4gYKEAgTGAI4AUIIdGhpbmtpbmcSDBC9lhUmArnLrrK8VBoMhgwPu1+9J0Od/zwCIjBGGyMGIzQwyX/STb1/EJpr9JFFX7i7NNmuyLwuTMCnUIjBSJ9EQavRBWPaiXtojikq/wXMXS7kj534JRc5O0hfOhkp0EFY0Mz95bjh5STVc1GubPR9gqAT81kOfu9DSYArZY7RzQbKRRvE+89rGsBTKCAy0K2uO9n2jgacZUbvTVDm5Pzd2/nfINRI/Gi/MGvgH/I1Z8CtpVglIlFJ3ZqbOHix0jEQaBswzOvjBT6n33R+Yz1tBqW1vtfAOZJhj4m8QB85IvgSTQp/vrCbjntV6iwJUhvX8GsEZ/2jiBHDoacMjYmwewEmKQs2752urwwMW4faq2WQOrvCOQ7o0EgFXpfPqmh4bS1vdBM9kXMJ6Nti+/pe9QjzzD4Bfp+5EThp833ATOZy0lGn+Drh7OWcqOA1N+D93dJRFPV33Z0HBedKbVOidEmikXIKNNQIha59fa/UDsVGm5G2nIZ0m8TUYEZRJfgYabsZnRxjm4flC3f/Xua4Szb/wL1ybb2RzAn2MArQuaxkQVgGyF2R496wGn6uIs+RQRL3yePIrphyxg8tR0O7KBmitn54Isr6PEzN04XqzSquTJpYSaOBZqb83kbLdrqkUgJAztSM/YKmMu4NX0HPVwZ3YJZ/9DRWsF4BvzXy3zOQOBmChdqp02eFLQBxDsM9w461okh1IHnITab/YWw892y7MT9TIkZudmo+eRgbffL811JEbuYspRVwUeJk838X/6NLbNvicK8Ajs6GJXjfpBU3II1ysj63jAaZd9jK9HgaEaUYquILboVcLcbPKw6exagPJHsQ+iZ9bGHVux9GkkyhjJh+8yUln+FEqBzLXsFTvEvTeKjp6/ZXB7G6zYyT2wO3qRilr0oPkHp2fgyoGEO+8zWynWw9nm67VFPXc/H2UxeY5LoZKcI42NRakDou6hCvfpsNsU7rt1hhjI77oxT8zf5MSHQ6uvwjVWWmQVJ7+nNgEqEeg3YFV/bSo6n4rhycy6B7or/QgLrr107w/dMfTlFE/RDaZdJSsJNIkf4G8o0aryr+MgMh9PyLyWVC9zkCWHqjFBARThg1QA93Lj4NXxf6GkQ5W6FCcxgB
 
 **tool call: python**
 
 ```
 
-import pandas as pd
-pd.set_option('display.width',250); pd.set_option('display.max_columns',30); pd.set_option('display.max_rows',200)
-m=pd.read_csv('data/macro_history.csv'); print(m.to_string())
-s=pd.read_csv('data/scenario.csv'); print(s.to_string())
-t=pd.read_csv('data/transitions.csv')
-c=[x for x in t.columns if x.startswith('to_')]
-t['n']=t[c].sum(1); t['dr']=t.to_D/t.n
-print(t.pivot(index='year',columns='from_rating',values='dr').round(4))
-print(t.groupby('year').apply(lambda d: d.to_D.sum()/d.n.sum()))
+import pandas as pd, numpy as np
+t=pd.read_csv('data/transitions.csv'); m=pd.read_csv('data/macro_history.csv')
+pd.set_option('display.width',250); pd.set_option('display.max_rows',200)
+t['n']=t.iloc[:,2:].sum(1)
+g=t.groupby('year')[['to_D','n']].sum(); g['dr']=g.to_D/g.n
+print(g)
 print(t.pivot(index='year',columns='from_rating',values='n'))
+t['pd']=t.to_D/t.n
+print(t.pivot(index='year',columns='from_rating',values='pd').round(4))
+print(m.to_string())
 
 ```
 
 ## [5] tool
 
-<stdin>:8: Pandas4Warning: Starting with pandas version 4.0 all arguments of sum will be keyword-only.
+<stdin>:5: Pandas4Warning: Starting with pandas version 4.0 all arguments of sum will be keyword-only.
 
+      to_D      n      dr
+year                     
+1      135  10000  0.0135
+2       83  10000  0.0083
+3       84  10000  0.0084
+4       68  10000  0.0068
+5       20  10000  0.0020
+6       11  10000  0.0011
+7       42  10000  0.0042
+8       19  10000  0.0019
+9       79  10000  0.0079
+10     315  10000  0.0315
+11     335  10000  0.0335
+12      42  10000  0.0042
+13      10  10000  0.0010
+14      68  10000  0.0068
+15     402  10000  0.0402
+16     300  10000  0.0300
+17      31  10000  0.0031
+18      39  10000  0.0039
+19      49  10000  0.0049
+20     136  10000  0.0136
+from_rating     A   AA  AAA     B    BB   BBB  CCC/C
+year                                                
+1            1999  381  104   882  2508  3981    145
+2            1895  348   95  1053  2492  3928    189
+3            1941  358   88  1126  2422  3912    153
+4            1972  360   88  1183  2353  3884    160
+5            1995  363   85  1206  2331  3854    166
+6            2222  441   90  1146  2201  3783    117
+7            2376  511   93  1067  2079  3796     78
+8            2371  512   92  1088  2033  3813     91
+9            2429  545   92  1073  1964  3816     81
+10           2362  531   86  1127  1916  3847    131
+11           2205  433   66  1275  1968  3817    236
+12           2080  383   47  1356  2062  3780    292
+13           2277  462   60  1287  1992  3751    171
+14           2500  553   74  1167  1883  3713    110
+15           2516  541   70  1202  1871  3650    150
+16           2282  449   52  1351  1933  3647    286
+17           2165  406   45  1465  1946  3680    293
+18           2351  468   45  1412  1905  3623    196
+19           2448  514   48  1371  1858  3621    140
+20           2500  531   49  1335  1832  3593    160
+from_rating       A      AA     AAA       B      BB     BBB   CCC/C
+year                                                               
+1            0.0010  0.0000  0.0000  0.0420  0.0096  0.0010  0.4690
+2            0.0000  0.0000  0.0000  0.0161  0.0020  0.0008  0.3069
+3            0.0000  0.0000  0.0000  0.0231  0.0033  0.0015  0.2876
+4            0.0000  0.0000  0.0000  0.0144  0.0025  0.0005  0.2688
+5            0.0000  0.0000  0.0000  0.0041  0.0000  0.0000  0.0904
+6            0.0000  0.0000  0.0000  0.0035  0.0000  0.0000  0.0598
+7            0.0000  0.0000  0.0000  0.0150  0.0024  0.0003  0.2564
+8            0.0000  0.0000  0.0000  0.0092  0.0010  0.0000  0.0769
+9            0.0004  0.0000  0.0109  0.0317  0.0020  0.0013  0.4198
+10           0.0008  0.0019  0.0000  0.1402  0.0240  0.0057  0.6565
+11           0.0005  0.0000  0.0000  0.1075  0.0198  0.0047  0.5932
+12           0.0000  0.0000  0.0000  0.0052  0.0010  0.0000  0.1130
+13           0.0000  0.0000  0.0000  0.0008  0.0000  0.0000  0.0526
+14           0.0004  0.0000  0.0000  0.0274  0.0021  0.0005  0.2636
+15           0.0032  0.0018  0.0000  0.1489  0.0481  0.0079  0.6333
+16           0.0009  0.0000  0.0000  0.0836  0.0186  0.0036  0.4755
+17           0.0000  0.0000  0.0000  0.0061  0.0005  0.0000  0.0717
+18           0.0000  0.0000  0.0000  0.0099  0.0000  0.0006  0.1173
+19           0.0000  0.0000  0.0000  0.0153  0.0027  0.0000  0.1643
+20           0.0004  0.0019  0.0000  0.0375  0.0087  0.0019  0.3812
     quarter       gdp  unemployment       hpi  bbb_spread      sp500       djia      nasdaq      vix       cpi
 0       -79  119.6078        9.3006       NaN         NaN        NaN        NaN    482.5013      NaN  125.0936
 1       -78  120.1930        9.2327       NaN         NaN        NaN        NaN    472.2537      NaN  124.6449
@@ -273,519 +367,666 @@ print(t.pivot(index='year',columns='from_rating',values='n'))
 77       -2  250.3570        5.1204  305.4600      1.4021  2068.8293  1787.5499   7758.3718  18.2188  273.6635
 78       -1  257.0932        4.2763  308.3740      0.8228  2342.3005  1912.3888   9785.5672  16.0651  280.1371
 79        0  259.7973        3.8546  315.0253      0.7894  2398.3428  1989.3011  10055.9192  18.4328  286.4728
-    scenario  quarter       gdp  unemployment       hpi  bbb_spread      sp500       djia      nasdaq      vix       cpi
-0   baseline        1  262.1239        4.2782  316.8770      1.2132  2455.1396  2081.4345  10431.0380  18.9236  291.5359
-1   baseline        2  264.0314        4.7483  318.5771      1.6369  2506.9399  2191.1213  10706.4288  19.4275  295.4863
-2   baseline        3  265.5104        5.2701  320.1230      2.0607  2553.3740  2320.6601  10873.5934  19.9449  298.2765
-3   baseline        4  267.1564        5.0774  321.7350      1.9093  2603.0162  2452.5231  11085.1269  19.7585  301.5302
-4   baseline        5  268.9726        4.8918  323.4141      1.7580  2656.0195  2586.2536  11343.5079  19.5739  305.2617
-5   baseline        6  270.9623        4.7130  325.1611      1.6066  2712.5490  2721.3572  11651.8052  19.3910  309.4881
-6   baseline        7  273.1291        4.5407  326.9772      1.4552  2772.7829  2857.3038  12013.7385  19.2098  314.2284
-7   baseline        8  275.4769        4.3747  328.8633      1.3038  2836.9134  2993.5309  12433.7538  19.0303  319.5044
-8   baseline        9  278.0103        4.2147  330.8206      1.1525  2905.1478  3129.4463  12917.1135  18.8525  325.3406
-9    adverse        1  261.7289        4.2994  315.7952      1.1766  2443.6341  2066.8720  10352.1423  19.8989  291.5770
-10   adverse        2  262.8393        4.7955  315.3253      1.5637  2471.8600  2145.4525  10465.3257  21.4816  295.6110
-11   adverse        3  263.1183        5.3489  313.6212      1.9509  2482.4147  2224.9307  10389.3725  23.1902  298.5284
-12   adverse        4  262.5630        5.9661  310.7029      2.3380  2475.0704  2305.1881  10128.3790  25.0347  300.2952
-13   adverse        5  261.1787        6.6546  306.6043      2.7251  2449.9857  2386.0993   9696.2683  27.0259  300.8906
-14   adverse        6  260.4509        6.1070  303.4963      2.4207  2438.9709  2471.6746   9416.0917  25.4473  302.4180
-15   adverse        7  260.3740        5.6044  301.3498      2.1163  2441.8374  2562.2098   9275.5166  23.9610  304.8916
-16   adverse        8  260.9476        5.1432  300.1445      1.8118  2458.6343  2658.0229   9268.4456  22.5614  308.3343
-17   adverse        9  262.1758        4.7199  299.8694      1.5074  2489.6495  2759.4554   9394.5738  21.2437  312.7786
-18    severe        1  261.3386        4.4393  315.0107      1.2678  2434.0799  2060.3736  10268.5102  20.7463  291.2802
-19    severe        2  261.6652        5.1127  312.9812      1.7461  2442.9794  2125.2799  10213.7298  23.3502  294.7094
-20    severe        3  260.7728        5.8882  308.9757      2.2245  2424.7456  2183.2876   9895.8374  26.2809  296.7102
-21    severe        4  258.6737        6.7814  303.0702      2.7028  2379.9836  2233.7289   9339.2499  29.5795  297.2531
-22    severe        5  255.3971        7.8100  295.3761      3.1812  2310.1658  2276.0126   8585.4429  33.2921  296.3300
-23    severe        6  253.0023        7.0619  289.1974      2.8401  2260.2794  2325.8656   8041.6942  30.6006  296.4518
-24    severe        7  251.4650        6.3854  284.4465      2.4991  2229.1070  2383.7479   7674.7909  28.1267  297.6195
-25    severe        8  250.7698        5.7738  281.0566      2.1580  2215.8966  2450.2014   7463.1074  25.8528  299.8457
-26    severe        9  250.9099        5.2207  278.9806      1.8170  2220.3318  2525.8584   7394.4687  23.7627  303.1539
-from_rating       A      AA     AAA       B      BB     BBB   CCC/C
-year                                                               
-1            0.0010  0.0000  0.0000  0.0420  0.0096  0.0010  0.4690
-2            0.0000  0.0000  0.0000  0.0161  0.0020  0.0008  0.3069
-3            0.0000  0.0000  0.0000  0.0231  0.0033  0.0015  0.2876
-4            0.0000  0.0000  0.0000  0.0144  0.0025  0.0005  0.2688
-5            0.0000  0.0000  0.0000  0.0041  0.0000  0.0000  0.0904
-6            0.0000  0.0000  0.0000  0.0035  0.0000  0.0000  0.0598
-7            0.0000  0.0000  0.0000  0.0150  0.0024  0.0003  0.2564
-8            0.0000  0.0000  0.0000  0.0092  0.0010  0.0000  0.0769
-9            0.0004  0.0000  0.0109  0.0317  0.0020  0.0013  0.4198
-10           0.0008  0.0019  0.0000  0.1402  0.0240  0.0057  0.6565
-11           0.0005  0.0000  0.0000  0.1075  0.0198  0.0047  0.5932
-12           0.0000  0.0000  0.0000  0.0052  0.0010  0.0000  0.1130
-13           0.0000  0.0000  0.0000  0.0008  0.0000  0.0000  0.0526
-14           0.0004  0.0000  0.0000  0.0274  0.0021  0.0005  0.2636
-15           0.0032  0.0018  0.0000  0.1489  0.0481  0.0079  0.6333
-16           0.0009  0.0000  0.0000  0.0836  0.0186  0.0036  0.4755
-17           0.0000  0.0000  0.0000  0.0061  0.0005  0.0000  0.0717
-18           0.0000  0.0000  0.0000  0.0099  0.0000  0.0006  0.1173
-19           0.0000  0.0000  0.0000  0.0153  0.0027  0.0000  0.1643
-20           0.0004  0.0019  0.0000  0.0375  0.0087  0.0019  0.3812
-year
-1     0.0135
-2     0.0083
-3     0.0084
-4     0.0068
-5     0.0020
-6     0.0011
-7     0.0042
-8     0.0019
-9     0.0079
-10    0.0315
-11    0.0335
-12    0.0042
-13    0.0010
-14    0.0068
-15    0.0402
-16    0.0300
-17    0.0031
-18    0.0039
-19    0.0049
-20    0.0136
-dtype: float64
-from_rating     A   AA  AAA     B    BB   BBB  CCC/C
-year                                                
-1            1999  381  104   882  2508  3981    145
-2            1895  348   95  1053  2492  3928    189
-3            1941  358   88  1126  2422  3912    153
-4            1972  360   88  1183  2353  3884    160
-5            1995  363   85  1206  2331  3854    166
-6            2222  441   90  1146  2201  3783    117
-7            2376  511   93  1067  2079  3796     78
-8            2371  512   92  1088  2033  3813     91
-9            2429  545   92  1073  1964  3816     81
-10           2362  531   86  1127  1916  3847    131
-11           2205  433   66  1275  1968  3817    236
-12           2080  383   47  1356  2062  3780    292
-13           2277  462   60  1287  1992  3751    171
-14           2500  553   74  1167  1883  3713    110
-15           2516  541   70  1202  1871  3650    150
-16           2282  449   52  1351  1933  3647    286
-17           2165  406   45  1465  1946  3680    293
-18           2351  468   45  1412  1905  3623    196
-19           2448  514   48  1371  1858  3621    140
-20           2500  531   49  1335  1832  3593    160
 
 
 ## [6] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: python**
 
 ```
 
-import pandas as pd,numpy as np
+import pandas as pd, numpy as np
 from scipy.stats import norm
 from scipy.optimize import minimize_scalar
-t=pd.read_csv('data/transitions.csv');R=['AAA','AA','A','BBB','BB','B','CCC/C'];c=[x for x in t.columns if x.startswith('to_')]
-N=np.stack([t[t.year==y].set_index('from_rating').loc[R,c].values for y in range(1,21)]).astype(float)
+t=pd.read_csv('data/transitions.csv'); m=pd.read_csv('data/macro_history.csv').set_index('quarter')
+R=['AAA','AA','A','BBB','BB','B','CCC/C']; C=[c for c in t.columns if c.startswith('to_')]
+N=np.stack([t[t.year==y].set_index('from_rating').loc[R,C].values for y in range(1,21)]).astype(float)
 P=N.sum(0)/N.sum(0).sum(1,keepdims=True)
-# thresholds: cum from D upwards
-cum=np.cumsum(P[:,::-1],axis=1)[:,:-1]  # P(D), P(D or CCC),...
-th=norm.ppf(np.clip(cum,1e-9,1-1e-9))
+# thresholds: cumulative from D upward
+order=list(range(7,-1,-1)) # D, CCC,...AAA
+cum=np.cumsum(P[:,::-1],axis=1)[:,:-1]; cum=np.clip(cum,1e-6,1-1e-6); th=norm.ppf(cum)
+rho=0.1
+def probs(z):
+    c=norm.cdf((th - np.sqrt(rho)*z)/np.sqrt(1-rho)); c=np.concatenate([np.zeros((7,1)),c,np.ones((7,1))],1)
+    return np.diff(c,axis=1)[:,::-1]
 Z=[]
 for y in range(20):
-  def nll(z):
-    cp=norm.cdf(th+z); pr=np.diff(np.concatenate([np.zeros((7,1)),cp,np.ones((7,1))],1),axis=1)[:,::-1]
-    return -(N[y]*np.log(np.clip(pr,1e-12,1))).sum()
-  Z.append(minimize_scalar(nll,bounds=(-3,3),method='bounded').x)
-Z=np.array(Z);print(Z.round(2))
-m=pd.read_csv('data/macro_history.csv').set_index('quarter')
-f=pd.DataFrame(index=m.index)
-f['u']=m.unemployment; f['du4']=m.unemployment.diff(4); f['du1']=m.unemployment.diff()
-f['g4']=np.log(m.gdp).diff(4); f['g1']=np.log(m.gdp).diff()
-f['sp']=m.bbb_spread; f['dsp']=m.bbb_spread.diff(4); f['vix']=m.vix; f['hpi4']=np.log(m.hpi).diff(4)
-f['nq4']=np.log(m.nasdaq).diff(4);f['cpi4']=np.log(m.cpi).diff(4)
-yrs=np.arange(1,21)
+    f=lambda z:-(N[y]*np.log(probs(z)+1e-12)).sum()
+    Z.append(minimize_scalar(f,bounds=(-5,5),method='bounded').x)
+Z=np.array(Z); print(Z.round(2))
+# features
+X=pd.DataFrame(index=m.index)
+X['gdpg']=np.log(m.gdp).diff()*400
+X['du']=m.unemployment.diff()
+X['u']=m.unemployment
+X['spr']=m.bbb_spread; X['dspr']=m.bbb_spread.diff()
+X['hpig']=np.log(m.hpi).diff()*400
+X['nasg']=np.log(m.nasdaq).diff()*400
+X['spg']=np.log(m.sp500).diff()*400
+X['vix']=m.vix
+X['infl']=np.log(m.cpi).diff()*400
+X['du4']=m.unemployment.diff(4); X['gdp4']=np.log(m.gdp).diff(4)*100
 for lag in [0,1,2,4]:
-  A=np.array([f.loc[4*y-83-lag:4*y-80-lag].mean().values for y in yrs])
-  df=pd.DataFrame(A,columns=f.columns);df['Z']=Z
-  print(lag,df.corr()['Z'].round(2).to_dict())
+    res={}
+    for c in X.columns:
+        v=[X[c].shift(lag).loc[4*(y-20)-3:4*(y-20)].mean() for y in range(1,21)]
+        v=np.array(v); ok=~np.isnan(v)
+        res[c]=np.corrcoef(v[ok],Z[ok])[0,1].round(2) if ok.sum()>5 else None
+    print(lag,res)
 
 ```
 
 ## [7] tool
 
-[ 0.33 -0.05 -0.   -0.03 -0.5  -0.48 -0.07 -0.26  0.11  0.63  0.55 -0.53
- -0.6   0.03  0.73  0.44 -0.44 -0.33 -0.15  0.13]
-0 {'u': 0.51, 'du4': 0.47, 'du1': 0.15, 'g4': -0.84, 'g1': -0.64, 'sp': 0.63, 'dsp': 0.65, 'vix': 0.92, 'hpi4': -0.03, 'nq4': -0.54, 'cpi4': -0.31, 'Z': 1.0}
-1 {'u': 0.46, 'du4': 0.52, 'du1': 0.33, 'g4': -0.8, 'g1': -0.68, 'sp': 0.51, 'dsp': 0.72, 'vix': 0.91, 'hpi4': 0.04, 'nq4': -0.61, 'cpi4': -0.21, 'Z': 1.0}
-2 {'u': 0.35, 'du4': 0.56, 'du1': 0.52, 'g4': -0.63, 'g1': -0.8, 'sp': 0.36, 'dsp': 0.72, 'vix': 0.84, 'hpi4': 0.11, 'nq4': -0.65, 'cpi4': -0.07, 'Z': 1.0}
-4 {'u': 0.05, 'du4': 0.33, 'du1': 0.47, 'g4': -0.26, 'g1': -0.47, 'sp': 0.01, 'dsp': 0.56, 'vix': 0.38, 'hpi4': 0.25, 'nq4': -0.55, 'cpi4': 0.18, 'Z': 1.0}
+[-1.17  0.12 -0.04  0.07  1.66  1.59  0.19  0.84 -0.45 -2.12 -1.87  1.75
+  1.99 -0.14 -2.43 -1.5   1.48  1.08  0.48 -0.5 ]
+0 {'gdpg': np.float64(0.64), 'du': np.float64(-0.15), 'u': np.float64(-0.52), 'spr': np.float64(-0.63), 'dspr': np.float64(-0.51), 'hpig': np.float64(0.08), 'nasg': np.float64(0.39), 'spg': np.float64(0.41), 'vix': np.float64(-0.92), 'infl': np.float64(0.43), 'du4': np.float64(-0.47), 'gdp4': np.float64(0.85)}
+1 {'gdpg': np.float64(0.68), 'du': np.float64(-0.34), 'u': np.float64(-0.47), 'spr': np.float64(-0.51), 'dspr': np.float64(-0.56), 'hpig': np.float64(0.08), 'nasg': np.float64(0.47), 'spg': np.float64(0.42), 'vix': np.float64(-0.91), 'infl': np.float64(0.41), 'du4': np.float64(-0.52), 'gdp4': np.float64(0.8)}
+2 {'gdpg': np.float64(0.8), 'du': np.float64(-0.52), 'u': np.float64(-0.35), 'spr': np.float64(-0.36), 'dspr': np.float64(-0.67), 'hpig': np.float64(0.02), 'nasg': np.float64(0.58), 'spg': np.float64(0.69), 'vix': np.float64(-0.84), 'infl': np.float64(0.3), 'du4': np.float64(-0.56), 'gdp4': np.float64(0.63)}
+4 {'gdpg': np.float64(0.47), 'du': np.float64(-0.47), 'u': np.float64(-0.04), 'spr': np.float64(-0.01), 'dspr': np.float64(-0.65), 'hpig': np.float64(-0.14), 'nasg': np.float64(0.61), 'spg': np.float64(0.78), 'vix': np.float64(-0.38), 'infl': np.float64(0.01), 'du4': np.float64(-0.33), 'gdp4': np.float64(0.26)}
 
 
 ## [8] assistant
 
 **[reasoning]**
 
-> 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
+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
 
-**tool call: bash**
+**tool call: python**
 
 ```
-mkdir -p /w; cat > /w/model.py <<'EOF'
-import pandas as pd,numpy as np
-from scipy.stats import norm
-from scipy.optimize import minimize
-from scipy.linalg import fractional_matrix_power
-t=pd.read_csv('data/transitions.csv');R=['AAA','AA','A','BBB','BB','B','CCC/C'];c=[x for x in t.columns if x.startswith('to_')]
-N=np.stack([t[t.year==y].set_index('from_rating').loc[R,c].values for y in range(1,21)]).astype(float)
+
+import pandas as pd, numpy as np, itertools, statsmodels.api as sm
+Z=np.array([-1.17,0.12,-0.04,0.07,1.66,1.59,0.19,0.84,-0.45,-2.12,-1.87,1.75,1.99,-0.14,-2.43,-1.5,1.48,1.08,0.48,-0.5])
 m=pd.read_csv('data/macro_history.csv').set_index('quarter')
-s=pd.read_csv('data/scenario.csv')
-def feats(mm):
-  f=pd.DataFrame(index=mm.index)
-  f['g1']=np.log(mm.gdp).diff()*400; f['du1']=mm.unemployment.diff(); f['u']=mm.unemployment
-  f['du4']=mm.unemployment.diff(4)
-  f['g4']=np.log(mm.gdp).diff(4)*100
-  f['vix']=mm.vix; f['sp']=mm.bbb_spread; f['dsp']=mm.bbb_spread.diff(4); f['dsp1']=mm.bbb_spread.diff()
-  f['nq']=np.log(mm.nasdaq).diff()*400; f['nq4']=np.log(mm.nasdaq).diff(4)*100
-  f['hpi']=np.log(mm.hpi).diff()*400; f['cpi']=np.log(mm.cpi).diff()*400
-  return f
-def full(sc):
-  mm=pd.concat([m,s[s.scenario==sc].set_index('quarter').drop(columns='scenario')]) if sc else m
-  return feats(mm)
-FH=full(None)
-EOF
-echo ok
+X=pd.DataFrame(index=m.index)
+X['gdpg']=np.log(m.gdp).diff()*400; X['gdp4']=np.log(m.gdp).diff(4)*100
+X['u']=m.unemployment; X['du']=m.unemployment.diff(); X['du4']=m.unemployment.diff(4)
+X['spr']=m.bbb_spread; X['dspr']=m.bbb_spread.diff(); X['vix']=m.vix
+X['hpi4']=np.log(m.hpi).diff(4)*100; X['infl4']=np.log(m.cpi).diff(4)*100
+X['nas4']=np.log(m.nasdaq).diff(4)*100
+A=pd.DataFrame({c:[X[c].loc[4*(y-20)-3:4*(y-20)].mean() for y in range(1,21)] for c in X.columns})
+print(A.round(2).assign(Z=Z))
+for k in [1,2,3]:
+  out=[]
+  for combo in itertools.combinations(['gdpg','gdp4','u','du','du4','spr','dspr','infl4','nas4'],k):
+    r=sm.OLS(Z,sm.add_constant(A[list(combo)])).fit(); out.append((r.rsquared,combo,r.params.round(2).tolist()))
+  for o in sorted(out,reverse=True)[:5]: print(o)
+
 ```
 
 ## [9] tool
 
-ok
+Traceback (most recent call last):
+  File "<stdin>", line 16, in <module>
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 921, in __init__
+    super().__init__(endog, exog, missing=missing,
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 746, in __init__
+    super().__init__(endog, exog, missing=missing,
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 200, in __init__
+    super().__init__(endog, exog, **kwargs)
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 270, in __init__
+    super().__init__(endog, exog, **kwargs)
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 95, in __init__
+    self.data = self._handle_data(endog, exog, missing, hasconst,
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 135, in _handle_data
+    data = handle_data(endog, exog, missing, hasconst, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 694, in handle_data
+    return klass(endog, exog=exog, missing=missing, hasconst=hasconst, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 90, in __init__
+    self._handle_constant(hasconst)
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 139, in _handle_constant
+    raise MissingDataError("exog contains inf or nans")
+statsmodels.tools.sm_exceptions.MissingDataError: exog contains inf or nans
+
+     gdpg  gdp4      u    du   du4  ...    vix   hpi4  infl4   nas4     Z
+0    3.40   NaN   8.82 -0.51   NaN  ...    NaN    NaN    NaN    NaN -1.17
+1    2.40  3.74   6.63 -0.20 -2.18  ...    NaN    NaN   0.12  -2.16  0.12
+2    6.83  4.53   5.78 -0.60 -0.85  ...    NaN    NaN   7.10  -0.18 -0.04
+3    2.98  4.29   4.69 -0.01 -1.09  ...  15.66   0.99   2.40  -0.30  0.07
+4    6.62  5.69   3.73 -0.27 -0.96  ...  11.29   0.07   0.16  21.29  1.66
+5    3.89  5.12   3.54  0.07 -0.18  ...  10.18 -11.21  -3.53  35.64  1.59
+6    3.83  3.04   4.29  0.22  0.75  ...  15.17  -0.53  -0.27  23.41  0.19
+7    4.02  4.78   4.78  0.20  0.49  ...  14.37   7.06   3.05   9.39  0.84
+8   -0.19  1.27   7.55  0.92  2.78  ...  16.15   0.85  -0.95  -4.02 -0.45
+9    0.86  0.69   8.16  0.20  0.60  ...  23.74   5.11  -0.83   6.11 -2.12
+10  -0.43 -0.98  10.52 -0.37  2.36  ...  19.17   3.55   0.55  13.63 -1.87
+11  10.25  7.61   5.38 -0.88 -5.14  ...  14.99   8.52   5.69  57.05  1.75
+12   6.96  6.87   4.42 -0.24 -0.96  ...  11.41  19.78  15.67  41.38  1.99
+13   2.87  3.85   4.02 -0.07 -0.40  ...  17.95  21.16  16.24   6.34 -0.14
+14   1.18  3.01   3.80  0.01 -0.22  ...  28.61   5.14   0.83 -12.60 -2.43
+15   4.45  2.23   4.28  0.15  0.49  ...  21.74   8.42   1.77  33.72 -1.50
+16   3.35  5.45   4.41  0.30  0.12  ...  12.07   9.61   8.48  22.26  1.48
+17   6.69  4.22   4.44 -0.43  0.03  ...  11.84   3.55   5.40  14.79  1.08
+18   2.05  4.70   4.31  0.32 -0.12  ...  16.49   2.83   9.71   2.79  0.48
+19   6.42  3.91   4.53 -0.30  0.22  ...  19.86   0.97   8.17  19.91 -0.50
+
+[20 rows x 12 columns]
 
 
 ## [10] assistant
 
 **[reasoning]**
 
-> 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
+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
 
-**tool call: bash**
+**tool call: python**
 
 ```
-cat >> /w/model.py <<'EOF'
-def impute(F, cols, base=('u','du1','g1')):
-  F=F.copy()
-  F['g1']=F['g1'].bfill(); F['du1']=F['du1'].bfill()
-  F['du4']=F['du4'].fillna(F['du1']*4*0.5)
-  F['g4']=F['g4'].fillna(F['g1'])
-  F['nq']=F['nq'].bfill(); F['nq4']=F['nq4'].fillna(F['nq'])
-  for col in cols:
-    if F[col].isna().any():
-      ok=F[col].notna()
-      X=np.c_[np.ones(len(F)),F[list(base)].values]
-      b=np.linalg.lstsq(X[ok],F.loc[ok,col].values,rcond=None)[0]
-      F.loc[~ok,col]=X[~ok]@b
-  return F
-def hist_quarters(): return np.arange(-79,1)
-def unpack(th,K):
-  a=th[:7]; inc=np.exp(th[7:49]).reshape(7,6)
-  C=np.concatenate([a[:,None],a[:,None]+np.cumsum(inc,1)],1) # thresholds for D, <=CCC, ... ascending
-  b=th[49:49+K]; load=np.exp(np.r_[0,th[49+K:]]) if len(th)>49+K else None
-  return C,b,load
-def qmat(C,z,load=None):
-  L=np.ones(7) if load is None else load
-  cp=norm.cdf(C+(L[:,None]*z)) # cumulative from D upwards
-  pr=np.diff(np.concatenate([np.zeros((7,1)),cp,np.ones((7,1))],1),axis=1)[:,::-1] # AAA..D
-  M=np.zeros((8,8)); M[:7]=pr; M[7,7]=1; return M
-def annual(C,zs,load=None):
-  A=np.eye(8)
-  for z in zs: A=A@qmat(C,z,load)
-  return A
-def nll(th,X,K,rowload=False,ridge=0.0):
-  C,b,load=unpack(th,K)
-  z=X@b
-  ll=0
-  for y in range(20):
-    A=annual(C,z[4*y:4*y+4],load)[:7]
-    ll+=(N[y]*np.log(np.clip(A,1e-15,1))).sum()
-  return -ll+ridge*(b@b)
-def init():
-  P=N.sum(0)/N.sum(0).sum(1,keepdims=True)
-  M=np.eye(8);M[:7]=P
-  Q=np.real(fractional_matrix_power(M,0.25));Q=np.clip(Q,1e-6,None);Q/=Q.sum(1,keepdims=True)
-  cum=np.cumsum(Q[:7,::-1],1)[:,:-1]
-  C=norm.ppf(cum); a=C[:,0]; inc=np.log(np.maximum(np.diff(C,axis=1),1e-3))
-  return np.r_[a,inc.ravel()]
-def fit(cols,center,rowload=False,ridge=0.0):
-  F=impute(FH,cols)
-  X=(F.loc[hist_quarters(),cols].values-center)
-  K=len(cols)
-  th0=np.r_[init(),np.zeros(K)]
-  if rowload: th0=np.r_[th0,np.zeros(6)]
-  r=minimize(nll,th0,args=(X,K,rowload,ridge),method='L-BFGS-B',options={'maxiter':5000,'maxfun':200000})
-  return r
-EOF
-cat > /w/try.py <<'EOF'
-import sys;sys.path.insert(0,'/w')
-from model import *
-import itertools
-F=impute(FH,['vix','sp','dsp','hpi','dsp1'])
-cands=[['g1'],['g4'],['vix'],['du1'],['du4'],['g4','vix'],['g4','du4'],['g4','vix','du4'],['g1','vix','du1'],['g4','dsp'],['g4','vix','dsp'],['g4','vix','nq4'],['g4','u']]
-for cols in cands:
-  center=F.loc[hist_quarters(),cols].mean().values
-  r=fit(cols,center)
-  C,b,_=unpack(r.x,len(cols))
-  print(cols, round(r.fun,1), 'AIC',round(2*r.fun+2*len(r.x),1), b.round(3),flush=True)
-EOF
-cd / && cd $OLDPWD; cp -r data /w/ 2>/dev/null; cd /w && time python try.py
+
+import pandas as pd, numpy as np, itertools, statsmodels.api as sm
+Z=np.array([-1.17,0.12,-0.04,0.07,1.66,1.59,0.19,0.84,-0.45,-2.12,-1.87,1.75,1.99,-0.14,-2.43,-1.5,1.48,1.08,0.48,-0.5])
+m=pd.read_csv('data/macro_history.csv').set_index('quarter')
+X=pd.DataFrame(index=m.index)
+X['gdpg']=np.log(m.gdp).diff()*400; X['gdp4']=np.log(m.gdp).diff(4)*100
+X['u']=m.unemployment; X['du']=m.unemployment.diff(); X['du4']=m.unemployment.diff(4)
+X['spr']=m.bbb_spread; X['dspr']=m.bbb_spread.diff(); X['vix']=m.vix
+X['infl4']=np.log(m.cpi).diff(4)*100; X['nas4']=np.log(m.nasdaq).diff(4)*100
+X['gdpg_l1']=X.gdpg.shift(1); X['gdpg_l2']=X.gdpg.shift(2); X['du_l1']=X.du.shift(1);X['du_l2']=X.du.shift(2)
+X['u_l4']=X.u.shift(4)
+A=pd.DataFrame({c:[X[c].loc[4*(y-20)-3:4*(y-20)].mean() for y in range(1,21)] for c in X.columns})
+idx=np.arange(1,20)
+cols=['gdpg','gdp4','u','du','du4','infl4','nas4','gdpg_l1','gdpg_l2','du_l1','du_l2','u_l4']
+for k in [1,2,3]:
+  out=[]
+  for combo in itertools.combinations(cols,k):
+    r=sm.OLS(Z[idx],sm.add_constant(A.loc[idx,list(combo)])).fit(); out.append((round(r.rsquared,3),combo,r.params.round(2).tolist()))
+  for o in sorted(out,reverse=True)[:6]: print(o)
+idx=np.arange(9,20)
+for k in [1,2,3]:
+  out=[]
+  for combo in itertools.combinations(cols+['spr','dspr','vix'],k):
+    r=sm.OLS(Z[idx],sm.add_constant(A.loc[idx,list(combo)])).fit(); out.append((round(r.rsquared,3),combo,r.params.round(2).tolist()))
+  for o in sorted(out,reverse=True)[:6]: print(o)
+
 ```
 
 ## [11] tool
 
-['g1'] 78899.2 AIC 157898.5 [-0.075]
+(np.float64(0.716), ('gdp4',), [-2.04, 0.55])
+(np.float64(0.625), ('gdpg_l2',), [-1.54, 0.43])
+(np.float64(0.463), ('gdpg_l1',), [-1.2, 0.33])
+(np.float64(0.413), ('gdpg',), [-1.12, 0.31])
+(np.float64(0.298), ('nas4',), [-0.52, 0.04])
+(np.float64(0.287), ('du_l2',), [0.04, -1.31])
+(np.float64(0.773), ('gdp4', 'du4'), [-2.66, 0.73, 0.3])
+(np.float64(0.772), ('gdp4', 'du_l1'), [-2.5, 0.68, 0.66])
+(np.float64(0.763), ('nas4', 'gdpg_l2'), [-1.8, 0.03, 0.38])
+(np.float64(0.75), ('gdp4', 'du_l2'), [-2.57, 0.7, 0.71])
+(np.float64(0.741), ('gdp4', 'gdpg_l1'), [-2.16, 0.76, -0.17])
+(np.float64(0.739), ('gdp4', 'u'), [-3.25, 0.65, 0.16])
+(np.float64(0.838), ('gdp4', 'u', 'u_l4'), [-5.11, 0.98, 0.71, -0.42])
+(np.float64(0.838), ('gdp4', 'u', 'du4'), [-5.11, 0.98, 0.29, 0.42])
+(np.float64(0.838), ('gdp4', 'du4', 'u_l4'), [-5.11, 0.98, 0.71, 0.29])
+(np.float64(0.823), ('gdp4', 'u', 'du_l1'), [-4.5, 0.87, 0.25, 0.83])
+(np.float64(0.813), ('gdp4', 'nas4', 'du_l1'), [-2.56, 0.63, 0.02, 0.78])
+(np.float64(0.805), ('nas4', 'gdpg_l2', 'du_l2'), [-2.32, 0.03, 0.51, 0.8])
+(np.float64(0.845), ('vix',), [4.84, -0.28])
+(np.float64(0.758), ('gdp4',), [-2.3, 0.57])
+(np.float64(0.642), ('gdpg_l2',), [-1.63, 0.41])
+(np.float64(0.52), ('gdpg',), [-1.65, 0.37])
+(np.float64(0.491), ('gdpg_l1',), [-1.61, 0.37])
+(np.float64(0.47), ('infl4',), [-1.41, 0.19])
+(np.float64(0.998), ('gdp4', 'vix'), [1.98, 0.32, -0.19])
+(np.float64(0.976), ('du_l2', 'vix'), [4.24, -0.92, -0.25])
+(np.float64(0.969), ('gdpg_l1', 'vix'), [3.17, 0.2, -0.23])
+(np.float64(0.962), ('gdpg_l2', 'vix'), [2.81, 0.21, -0.21])
+(np.float64(0.959), ('du4', 'vix'), [4.22, -0.32, -0.25])
+(np.float64(0.931), ('du_l1', 'vix'), [4.53, -0.71, -0.27])
+(np.float64(0.999), ('gdp4', 'u_l4', 'vix'), [1.81, 0.32, 0.03, -0.19])
+(np.float64(0.999), ('gdp4', 'u', 'vix'), [1.52, 0.35, 0.04, -0.18])
+(np.float64(0.999), ('gdp4', 'spr', 'vix'), [1.71, 0.34, 0.12, -0.19])
+(np.float64(0.999), ('gdp4', 'du_l2', 'vix'), [2.32, 0.27, -0.18, -0.19])
+(np.float64(0.999), ('gdp4', 'du4', 'vix'), [2.19, 0.29, -0.05, -0.19])
+(np.float64(0.998), ('gdpg', 'gdp4', 'vix'), [1.99, -0.01, 0.33, -0.19])
 
 
 ## [12] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cd /w && python - <<'EOF'
-import re
-s=open('model.py').read()
-s=s.replace('''def nll(th,X,K,rowload=False,ridge=0.0):
-  C,b,load=unpack(th,K)
-  z=X@b
-  ll=0
-  for y in range(20):
-    A=annual(C,z[4*y:4*y+4],load)[:7]
-    ll+=(N[y]*np.log(np.clip(A,1e-15,1))).sum()
-  return -ll+ridge*(b@b)''','''def qmats(C,z,load=None):
-  L=np.ones(7) if load is None else load
-  cp=norm.cdf(C[None]+L[None,:,None]*z[:,None,None])
-  T=len(z)
-  pr=np.diff(np.concatenate([np.zeros((T,7,1)),cp,np.ones((T,7,1))],2),axis=2)[:,:,::-1]
-  M=np.zeros((T,8,8)); M[:,:7]=pr; M[:,7,7]=1; return M
-def annuals(C,z,load=None):
-  Q=qmats(C,z,load).reshape(-1,4,8,8)
-  return Q[:,0]@Q[:,1]@Q[:,2]@Q[:,3]
-def nll(th,X,K,rowload=False,ridge=0.0):
-  C,b,load=unpack(th,K)
-  A=annuals(C,X@b,load)[:,:7]
-  return -(N*np.log(np.clip(A,1e-15,1))).sum()+ridge*(b@b)''')
-open('model.py','w').write(s)
+mkdir -p /w; cat > /w/model.py <<'EOF'
+import pandas as pd, numpy as np
+from scipy.stats import norm
+from scipy.optimize import minimize
+from scipy.linalg import logm, expm
+t=pd.read_csv('data/transitions.csv'); m=pd.read_csv('data/macro_history.csv').set_index('quarter')
+sc=pd.read_csv('data/scenario.csv')
+R=['AAA','AA','A','BBB','BB','B','CCC/C']; C=[c for c in t.columns if c.startswith('to_')]
+YEARS=sorted(t.year.unique())
+N=np.stack([t[t.year==y].set_index('from_rating').loc[R,C].values for y in YEARS]).astype(float)
+def feats(mac):
+    X=pd.DataFrame(index=mac.index)
+    X['gdp4']=np.log(mac.gdp).diff(4)*100
+    X['gdpg']=np.log(mac.gdp).diff()*400
+    X['vix']=mac.vix
+    X['u']=mac.unemployment; X['du4']=mac.unemployment.diff(4); X['du']=mac.unemployment.diff()
+    X['spr']=mac.bbb_spread
+    return X
+Xh=feats(m)
+def yq(y): return list(range(4*(y-20)-3,4*(y-20)+1))
+# initial quarterly base matrix
+P=N.sum(0)/N.sum(0).sum(1,keepdims=True)
+Pf=np.vstack([P,np.eye(8)[7]])
+L=logm(Pf).real; L[L<0]*=0; np.fill_diagonal(L,0); np.fill_diagonal(L,-L.sum(1))
+Q=expm(L/4)[:7]; Q=np.clip(Q,1e-7,None); Q/=Q.sum(1,keepdims=True)
+th0=norm.ppf(np.clip(np.cumsum(Q[:,::-1],1)[:,:-1],1e-9,1-1e-9))
+def qmat(th,z,s):
+    c=norm.cdf(th - (s[:,None]*z)); c=np.concatenate([np.zeros((7,1)),c,np.ones((7,1))],1)
+    p=np.diff(c,1)[:,::-1]; p=np.clip(p,1e-12,None)
+    M=np.zeros((8,8)); M[:7]=p; M[7,7]=1; return M
+def unpack(x,k,gs):
+    d=x[:49].reshape(7,7); th=np.cumsum(np.concatenate([d[:,:1],np.exp(d[:,1:])],1),1)
+    b=x[49:49+k]; s=np.ones(7)
+    if gs: s=np.exp(np.concatenate([[0],x[49+k:49+k+6]]))
+    return th,b,s
+def pack0(k,gs):
+    d=np.concatenate([th0[:,:1],np.log(np.diff(th0,1))],1).ravel()
+    return np.concatenate([d,np.zeros(k),np.zeros(6 if gs else 0)])
+def annual(th,b,s,Xq,y):
+    M=np.eye(8)
+    for q in yq(y): M=M@qmat(th,Xq.loc[q].values@b,s)
+    return M[:7]
+def nll(x,cols,fy,gs):
+    th,b,s=unpack(x,len(cols),gs); Xq=Xh[cols]; tot=0
+    for y in fy:
+        A=annual(th,b,s,Xq,y); tot-= (N[y-1]*np.log(np.clip(A,1e-12,None))).sum()
+    return tot
+def fit(cols,fy,gs=False,x0=None):
+    x0=pack0(len(cols),gs) if x0 is None else x0
+    r=minimize(nll,x0,args=(cols,fy,gs),method='L-BFGS-B',options={'maxiter':5000,'maxfun':200000})
+    return r
 EOF
-sed -i 's/^cands=.*/cands=[["g4"],["vix"],["g4","vix"],["g4","du4"],["g4","vix","du4"]]/' try.py
-time timeout 250 python try.py
+cd /w && cp -r /root/data . 2>/dev/null; ls; pwd; ls /
 ```
 
 ## [13] tool
 
-
-real	2m17.753s
-user	3m29.501s
-sys	0m0.231s
-
-['g4'] 76730.5 AIC 153561.0 [-0.145]
-['vix'] 75587.0 AIC 151274.0 [0.068]
-['g4', 'vix'] 74055.5 AIC 148213.1 [-0.096  0.055]
-['g4', 'du4'] 76002.4 AIC 152106.9 [-0.211 -0.102]
-['g4', 'vix', 'du4'] 74046.3 AIC 148196.5 [-0.107  0.053 -0.015]
+model.py
+/w
+bin
+boot
+dev
+etc
+home
+lib
+lib64
+media
+mnt
+opt
+proc
+root
+run
+sbin
+srv
+sys
+tmp
+usr
+var
+w
+workspace
 
 
 ## [14] assistant
 
-**[reasoning]**
-
-> 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
-
 **tool call: bash**
 
 ```
-cd /w && cat > try2.py <<'EOF'
-import sys;sys.path.insert(0,'/w')
-from model import *
-F=impute(FH,['vix','sp','dsp','hpi','dsp1'])
-cols=sys.argv[1].split(',')
-rl=len(sys.argv)>2
-center=F.loc[hist_quarters(),cols].mean().values
-r=fit(cols,center,rowload=rl)
-C,b,load=unpack(r.x,len(cols))
-print(cols,rl, round(r.fun,1), 'AIC',round(2*r.fun+2*len(r.x),1), b.round(3), None if load is None else load.round(2),flush=True)
-np.save('fit_'+sys.argv[1].replace(',','_')+('_rl' if rl else '')+'.npy',r.x)
-EOF
-for c in g1,vix g1,vix,du1 g4,vix,sp g4,vix,dsp g4,vix,nq4 g4,vix,hpi g4,vix,u g4,vix,cpi; do nohup python try2.py $c > log_$c.txt 2>&1 & done; nohup python try2.py g4,vix rl > log_rl.txt 2>&1 &
-sleep 5; nproc
+ls /workspace /workspace/data; mv /w/model.py /workspace/; cd /workspace; pwd
 ```
 
 ## [15] tool
 
-4
+/workspace:
+data
+
+/workspace/data:
+macro_history.csv
+policy.json
+portfolio.csv
+scenario.csv
+transitions.csv
+/workspace
 
 
 ## [16] assistant
 
+**[reasoning]**
+
+> CAQSjAkKEAgTGAI4AUIIdGhpbmtpbmcSDHF5wqD3WZByl0FerRoMsofJkXnkb/YBMVX4IjAmdZbc5hYXB1ByKSIqrQclglKmnMAQV7u4WncGCHKiU8zNWn+eORUSNXD5QqgkEKsqqQh9KRtjbI6AkcRwjjvR/03E+e4t2KHoKlIGRcFwGYIGn+eFSd+MnNWYpNzSk1NvF2w5mc7PDkoDX4jI0zhRc8ar2259gQk6KeMaHuQ4o7eZSeMho7d4CJ5vcrgahJRwmuKkbg9HWJCy1l6jEEwvsHB4/Aag4AEM5P4VkQWZ2OWgoEWv92NI50s1WE6KDRH0cZGHTiT8FPgeU4TZmlAOqeHNfQeiHOHNCTmQBUSZZswO/rDsDmGjvqHja7OztyO5Tf8L2fMUwB041X7RUZkmxIQ5hy/z8AJVqPEovjzsqdK99c2OLjdkX3xxtZf/DFjEYhSl72/8wxm6gVPD8IvcBjOEvxe3BUa4MIjPgnPdnPUvTD2ytZ6B70jCMe8Ej66iKdnjo48oxqdkjn+oINH6nHLowD9wCM9/TTIh9wohwRpF3DdTcXctdgwJkQldu8ihJMXIvSnYHPv71Ks7ZH6xjCpAJNwPYDMKNzp0e5KzYEhMwmPD4hh4Y5Qe+u6TLElwRX8PNfaAHMJTJy57BXrNsc4wY+Xt5BBcQMlVgyrK1e8j7Ob0Q39JS7at+73XoHlMSjyj66oc4bKd/hYVPzi3roJ8MEggsxYNw6001+LSIZ1Aa7vPRp1CaWHnOH3IMT0nItGk9vGsKkcwzvhS+almvUHWzw55msY/oYqeBftIxo8TIen6POPcv3E2vM10vcmVCXy37EqDuvAhddRQ8Ycp/+q591M3ukZEh3o8wInQSzRhHnlLQKIv0hcZdlCkZLFzZnCPq6iCAVC1q1GzWeX+vS5TZCoOgkv1QnJOw9tQIn8wSZly3QI+yLprxe86KXqdyvCkVS7MJvWaRwYLQ4sQfzgW9t8dHnIyBg1QHd1aDuUMdhMXDc7iKtrzLoE8t77tdeNUwJwzxBaLG1lO2soMl7+9b15N2xaRKAYmKz74pNXRuqNqbnKp/9ITktkY44473MMaBAUnGKbWCc7p6DG1KiZisg4CT2I3UYeoobJoEoQJ6EY6NtPl1GqVN4mNv2Y+cF7eRgtDt/0zJkbBvGqB/y/aCeqIhw+z2mByQ5BQl95pzPrLNejiXeN2xnZT53RhcijlUpaDR0D9u99IHWxcoOporoSA/8dgycEjfH5gfwWfiiYM2FyRbgrnEsDALm4XKCW/oS4MHHXbzNcG9nRmhgDMwqUn7ld9tDkl5dPHgaKf9sntacp7ulO/QuO/y4ppjJ9n+Z4x6O4mpBpo+EzQ2u7+KfeaoFkj7ZJGRkB7AOL894dvZ0Str4T7jg3zmkeKZ0u+C6Mxv6mjBg91FJyLygteEtEZ/AuehwyBTpjyMsfFWizRLyz/wSTV/cpUUTUbzs2UGGjffbW8Sa6OPTOs4AKu+zv2cuLKCJAMKsIuUuJD8BqMLMQ3XJLPIJJ9C7PTab5WdJow927TNx4YAQ==
+
 **tool call: bash**
 
 ```
-sleep 280; cd /w; cat log_*
+cd /workspace; cat > cmp.py <<'EOF'
+exec(open('model.py').read())
+import time
+for c in Xh.columns: Xh[c]=Xh[c]-Xh[c].loc[-60:0].mean()
+fy=range(5,21)
+for cols in [['gdp4'],['vix'],['gdp4','vix'],['gdpg','vix'],['gdp4','vix','du4'],['gdp4','vix','spr'],['gdp4','vix','u']]:
+    t0=time.time(); r=fit(cols,fy); print(cols, round(r.fun,2), r.x[49:].round(4), round(time.time()-t0))
+EOF
+python cmp.py
 ```
 
 ## [17] tool
 
 ## [18] assistant
 
+**[reasoning]**
+
+> CAQSqwkKEAgTGAI4AUIIdGhpbmtpbmcSDAmMpCcwprc3TsrIQxoMKeCIl6zVMLIM+qP+IjCk21bsDpd+QO45LnfbAum0WelUyjIiXVnrqiOG//q3Cl2b7qt60kB9JQhe7uBo9bYqyAiCyUW+winS/XYVoMabztazaFuioVzF+/VF6yiyYgDcCT1o7BlQ3FMJ09MwmX8Lh7gmof/7XzZW6pwBlJ94xQUsNajR8JEfGiIbV1AHKbzIWP7VrrYJkXge/5TRpiNLY5o+aWPrquxI5ALPg8vc9CL1B++2DzSPX5M7rUTJRqHsccKqcy3wAccaKAGaTSHvk54/rfXMzQP/vV2TMQpLNONXCRy5a5LDojkkltV1KxnE5x0xPFNiwH4BHwGyoFeA5XbfUvST8OlVLJUdhexUcxgA0qekYb7eXOSpMspSvDQCBoBU7n3bEtdBjrvwLvm1CE7CEkRO1d4g7ToTl5Q8jnH5x0cpbHTz7rqAcleLZ4IXp1ctgLqFzpJccLPh+phnm1eR4Lpia/8THvO5QTNIE3f6+A1KbyJb/j0aE7+x0KEv3/WAbQvhgCb0f53hpdEzelmz+VSe3EG3IqLpMlfspmHmWO04BW+2kEeP8UfWrI4VFKY2gWocbdcCBNH5ohVb03SaTMheI6HeTss68STHI1ttqWMk11WYrAM1bfTCJPTXHSwn7zzMdg4qCGDrR2UGTNqjutHWYeXFPYJWHZqWYptSYSU6qhJ+DrtnzyI9Q1C6Hark8FTHmKk9b3z19rC2s4wAX+CZP9NWu8e50J8YzwOWHFwVOZMMd2PS6DOfGFcy44qt6mr/ZQvtdaAhCP+Y42FwSLzRbCBp1RGbrZOzy8XTMSbgyUbyveagfUXJtf67NmSo/nAaefpkHExcyuSx2YVVSCMaymwikkWhx0cQg9k0qN7VAzhbOn1+6SmLz+HGu154NYNvVEpOmCTSaBTuio4UuZiqvsuiWPVGQ1S8tMexWZnR1AVs55rHYDBO2hHdgpRta/onAnLvx/9x178rB/yTOll+2BMe9vV5/YFLlSny13HI3+Rsyy2DSxjRaca0Kfwt7z+7GXXqDGmlbImvVXrudAF+UEWFIs0Our7/MGgSpwEVoe0/YgL0vhsBv0iINWB2uAh/eNkcPqxiuYwcp4i4KBosF2y97pKWttxyrKvHr2RDn38DJhpG2suDZtpNejdH8yPP6sAPd5oQwxd1tpLlxuSvTDCsCDdWsP8zkhIe1s78YXBI+YkSF6M0goC2J8A8T7IqHp9TV8IaL9uhuu3P9Awt8DPGsb1SUfnRdMzcoYmMIxd6z3mDhBM8DEfP9kAIDHgjG85DBLEl3y0k5dq2WrijXEqu0rv0LSQOxzLPTHHOIJ56vZNznKyydcvOjddV7liTH0rTnc+0naMRxSHRGUeNOKtD/bcJxjBE5T93zxUm18fbGIaBAQ/SrKLKKDj1Ei2/hCpU1aPHLAi7mobiU72/JiLqdLrd+CrhP0V6T9AxDIeIXMkkwVGQsG0muun5/OHa9zMGV+fEcu3kSlyuWLICoKd1pSB2S13K3GaREJmrhggQ7kEJy7nxTUz8HLvCxyE07XooGAE=
+
 **tool call: bash**
 
 ```
-sleep 200; cd /w; cat log_*
+cd /workspace; cat >> model.py <<'EOF'
+from scipy.special import ndtr
+def qmats(th,Z,s):
+    # Z: (T,) -> (T,8,8)
+    c=ndtr(th[None]-s[None,:,None]*Z[:,None,None]); T=len(Z)
+    c=np.concatenate([np.zeros((T,7,1)),c,np.ones((T,7,1))],2)
+    p=np.clip(np.diff(c,axis=2)[:,:,::-1],1e-12,None)
+    M=np.zeros((T,8,8)); M[:,:7]=p; M[:,7,7]=1; return M
+def nll(x,cols,fy,gs):
+    th,b,s=unpack(x,len(cols),gs); fy=list(fy)
+    qs=np.array([yq(y) for y in fy]).ravel()
+    Z=Xh.loc[qs,cols].values@b
+    M=qmats(th,Z,s).reshape(len(fy),4,8,8)
+    A=M[:,0]@M[:,1]@M[:,2]@M[:,3]
+    return -(N[np.array(fy)-1]*np.log(np.clip(A[:,:7],1e-12,None))).sum()
+EOF
+cat > t.py <<'EOF'
+exec(open('model.py').read())
+import time
+for c in Xh.columns: Xh[c]=Xh[c]-Xh[c].loc[-60:0].mean()
+x=pack0(2,False); t0=time.time()
+for i in range(100): nll(x,['gdp4','vix'],range(5,21),False)
+print((time.time()-t0)/100)
+EOF
+python t.py
 ```
 
 ## [19] tool
 
-['g1', 'vix', 'du1'] False 74860.8 AIC 149825.7 [-0.057  0.058 -0.098] None
-['g1', 'vix'] False 74891.0 AIC 149884.1 [-0.044  0.061] None
-['g4', 'vix', 'cpi'] False 74053.0 AIC 148210.0 [-0.094  0.054 -0.001] None
-['g4', 'vix', 'dsp'] False 74053.4 AIC 148210.9 [-0.094  0.054  0.016] None
-['g4', 'vix', 'hpi'] False 74056.1 AIC 148216.2 [-0.095  0.055 -0.   ] None
-['g4', 'vix', 'nq4'] False 74016.3 AIC 148136.5 [-0.092  0.053 -0.002] None
-['g4', 'vix', 'sp'] False 74004.4 AIC 148112.8 [-0.087  0.053  0.066] None
-['g4', 'vix', 'u'] False 74032.5 AIC 148169.1 [-0.085  0.056  0.013] None
-['g4', 'vix'] True 74052.1 AIC 148218.2 [-0.1    0.058] [1.   0.95 0.91 0.95 0.97 0.95 1.01]
+0.0012943482398986817
 
 
 ## [20] assistant
 
-**[reasoning]**
-
-> CAQS+AkKEAgTGAI4AUIIdGhpbmtpbmcSDKAa9jokb66geM+JqxoMfhHlOSatvX4UpEPCIjDc23wYMRIEaPMF8NWHki4byoCFHXj/PjsE+I9HI6qReNF4N/Ezbzz27a6Les6iajMqlQlCeXHQ5MqXogefqJJb9hvU9Jo/AL8fZFfV5xSn3JSUoNVii0ic9+eHt/a04VAzeT9GVhAnRBypwgif2buZmhBURfm4qt/EK9y21R/03G3s8tIUk3mN1vZg7gGmxqvVMTGt+A18OT3/FMBeXryd4mpIsw+FGzsM7denSmnHIEKNSG2wFp96xL3O1S5gsLRgbcI7qxcDYR0jOaxjL+cDlB+DJBSxbSOQIc1JtwCQ/2uvBeRCIFqWhDfCYaB7jXsjGkIDS3ceHOWpNpDyY0FMCm0H59yzmL81AG/Yxz4Z3WB/HZbpAMesdJbhSL9Ubd0VyHMjmWA+fsMUo55NOo6+gQW1ePwk//GDH/nQWitsxzVxwTD+K0uKS3tL+3n83t4F5sHGXxqPBOBzKFlGh4GEqMB9L4uSvoelwxWw/HIqOKaq1L3RVO8eRIfpLkDQpkZ/zGjCbMyNG4Hk2OfBE2mOo+ACBosbGrt/DRiLX8eJbEpeG/UAvfMS2dnBQO0PiXszCPWAAhiKdcYw9MIanI8ssiLrrWVjXVzkRK2T+Hk9V3C6pI0lnfBorB6IeZ0jAGTbKuSa6w4YVmKpqsdQek3TOle7O/8NdjRiJfI4Rt7BsZ2Teu7p5MByA3g9ifhN4e8gPCCJ9zT2seQbgqdwYtK/EH/XxTTjIiqWsbjNYQmSsRsYY6BEx1S3IwIIb2qFTkkDA3DEnuZp1oxUckQ+mK47o3SK5inXns+9+ARFHfhwrxisR8BaSMBfG+NRANBtmNNqa81AzEvubuUD8MjCNM932ZILlGH6UN+KAILsJTm/V3U8Xa92HQnYrHmx5f90Rf6yPXPtAOSbSMlrfdnsJGrjFlqsfVlhI7yXY8s4ZIPvI3nTr8WBYdV783UyIOp0r8SseKGytcG1Gbz8mczFlCf6XScNKpzYh5uHGSByA6WGDrxmkMb2LfeFcpMRHF2K/Zo2CQsY+31LYK7BktzD+7LzUbkYLJ32Se0WQvkUTnOVkHYhnVfaHgl5UyypBXrH77I9LltCm3my4DXgvzMNQw4e3OueN4MYSbZGhZBfjUIzLvK+wWGm8taR+J4XkjsUzQ1VFzqXhzEL9bx4sFcBZ+VhLeKRNPjuKrVzMFcFQRcC6ShfvTE4B67fm4nQgHX7V6XFQBQA9NTGzJBRMe2jLTYyLWZ5mKSiX3A68qikvenFWwAbiUkayWE3JcqLgCM0mZ7SJKI6fOdj+lmz8sa2bzKGMXTaJiASKRAsLxefvcrvuVZ3/4K2iMXhxdpFpt/bGwaVaVoA6DKNsje7DVEctrPQh9e2+IoSPygxyyiZq5knePI7TLXIu3f9j2FFqU3JayFTHpKX15hyVb4rpDYP9D8o62w9u7jUUTzteS5WF/hpptQ74B7zoUT5qozQgxpfAB+7r+bKwqZBUSoWKfXkLVpEK9jAnv9bwo4tBPCJ04VqAmbtI5cHzkveTO9sUrCbA7HVlnU2fwTZir4mnXMbxI3f0EuFeLqza4leT9XTGEiV8s/eTYbV3kwhbNAEcBX5/8hsvVTiTvThUoyDHsqvAOhvg5bixuQjLuQYAQ==
-
 **tool call: bash**
 
 ```
-cd /w && cat > chk.py <<'EOF'
-import sys;sys.path.insert(0,'/w')
-from model import *
-F=impute(FH,['vix','sp','dsp','hpi','dsp1'])
-cols=sys.argv[1].split(','); x=np.load('fit_'+sys.argv[1].replace(',','_')+'.npy')
-center=F.loc[hist_quarters(),cols].mean().values
-C,b,load=unpack(x,len(cols))
-X=F.loc[hist_quarters(),cols].values-center
-A=annuals(C,X@b)
-n=N.sum(2)
-fit=(n*A[:,:7,7]).sum(1)/n.sum(1); act=N[:,:,7].sum(1)/n.sum(1)
-print(np.c_[np.arange(1,21),act,fit].round(4))
-z=X@b; print(z.reshape(20,4).round(2))
-EOF
-python chk.py g4,vix,sp
+cd /workspace; timeout 280 python cmp.py
 ```
 
 ## [21] tool
-
-[[1.00e+00 1.35e-02 1.05e-02]
- [2.00e+00 8.30e-03 9.10e-03]
- [3.00e+00 8.40e-03 5.60e-03]
- [4.00e+00 6.80e-03 6.30e-03]
- [5.00e+00 2.00e-03 2.20e-03]
- [6.00e+00 1.10e-03 1.20e-03]
- [7.00e+00 4.20e-03 3.90e-03]
- [8.00e+00 1.90e-03 2.60e-03]
- [9.00e+00 7.90e-03 8.50e-03]
- [1.00e+01 3.15e-02 3.29e-02]
- [1.10e+01 3.35e-02 3.69e-02]
- [1.20e+01 4.20e-03 5.00e-03]
- [1.30e+01 1.00e-03 1.50e-03]
- [1.40e+01 6.80e-03 7.40e-03]
- [1.50e+01 4.02e-02 3.86e-02]
- [1.60e+01 3.00e-02 2.97e-02]
- [1.70e+01 3.10e-03 3.90e-03]
- [1.80e+01 3.90e-03 3.90e-03]
- [1.90e+01 4.90e-03 5.80e-03]
- [2.00e+01 1.36e-02 1.26e-02]]
-[[ 0.35  0.34  0.11  0.11]
- [ 0.04  0.08 -0.02  0.3 ]
- [ 0.05  0.   -0.04 -0.27]
- [-0.25 -0.06  0.27 -0.13]
- [-0.2  -0.49 -0.67 -0.54]
- [-0.62 -0.62 -0.54 -0.33]
- [ 0.01  0.07 -0.16 -0.12]
- [-0.25 -0.43 -0.26  0.04]
- [ 0.12 -0.06  0.38  0.42]
- [ 0.72  0.51  0.84  0.77]
- [ 0.66  0.8   0.77  0.28]
- [ 0.05 -0.34 -0.55 -0.79]
- [-0.63 -0.64 -0.4  -0.63]
- [-0.49 -0.07  0.22  0.49]
- [ 0.75  0.99  0.41  0.76]
- [ 0.78  0.71  0.11  0.  ]
- [-0.57 -0.71 -0.16 -0.17]
- [-0.12 -0.28 -0.39 -0.37]
- [-0.25 -0.5  -0.06  0.36]
- [ 0.64  0.25 -0.17 -0.19]]
-
 
 ## [22] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cd /w && cat > out.py <<'EOF'
-import sys;sys.path.insert(0,'/w')
-from model import *
-cols=['g4','vix','sp']; x=np.load('fit_g4_vix_sp.npy')
-F=impute(FH,['vix','sp','dsp','hpi','dsp1'])
-center=F.loc[hist_quarters(),cols].mean().values
-C,b,load=unpack(x,len(cols))
-SC=['baseline','adverse','severe']; S=['AAA','AA','A','BBB','BB','B','CCC/C','D']
-port=pd.read_csv('data/portfolio.csv').set_index('rating').loc[R,'obligors'].values.astype(float)
-v0=np.r_[port/port.sum(),0]
-pred=[];mat=[];bt=[]
-Xh=F.loc[hist_quarters(),cols].values-center
-Qh=qmats(C,Xh@b)
-for y in range(20):
-  A=Qh[4*y]@Qh[4*y+1]@Qh[4*y+2]@Qh[4*y+3]
-  Qy=np.real(fractional_matrix_power(A,0.25)); Qy=np.clip(Qy,0,None); Qy/=Qy.sum(1,keepdims=True)
-  for i,r in enumerate(R): mat.append(['history',4*y-76,r,*Qy[i]])
-  n=N[y].sum(1); dr=(n*A[:7,7]).sum()/n.sum()
-  for sc in SC: bt.append([sc,y+1,dr])
-for sc in SC:
-  Fs=impute(full(sc),['vix','sp','dsp','hpi','dsp1'])
-  Xs=Fs.loc[1:9,cols].values-center
-  z=Xs@b; print(sc,z.round(2))
-  Q=qmats(C,z); v=v0.copy()
-  for q in range(9):
-    for i,r in enumerate(R): mat.append([sc,q+1,r,*Q[q,i]])
-    v=v@Q[q]
-    if q+1 in (4,9):
-      for k,st in enumerate(S): pred.append([sc,q+1,st,v[k]])
-cc=['to_AAA','to_AA','to_A','to_BBB','to_BB','to_B','to_CCC_C','to_D']
-pd.DataFrame(pred,columns=['scenario','quarter','state','share']).to_csv('/w/predictions.csv',index=False,float_format='%.8f')
-pd.DataFrame(mat,columns=['scenario','quarter','from_rating']+cc).to_csv('/w/matrices.csv',index=False,float_format='%.10f')
-pd.DataFrame(bt,columns=['scenario','year','default_rate']).to_csv('/w/backtest.csv',index=False,float_format='%.8f')
-p=pd.read_csv('/w/predictions.csv');print(len(p));print(p.pivot_table(index=['scenario','quarter'],columns='state',values='share')[S].round(4))
-print(p.groupby(['scenario','quarter']).share.sum())
-EOF
-python out.py && wc -l matrices.csv backtest.csv && cp predictions.csv matrices.csv backtest.csv $OLDPWD/ && ls $OLDPWD
+cd /workspace; nohup python -u cmp.py > cmp.log 2>&1 & sleep 120; cat cmp.log
 ```
 
 ## [23] tool
 
-baseline [-0.08  0.02  0.25  0.27  0.27  0.25  0.21  0.17  0.13]
-adverse [-0.01  0.16  0.5   0.73  0.97  0.93  0.84  0.71  0.53]
-severe [0.05 0.31 0.76 1.13 1.52 1.44 1.31 1.13 0.88]
-48
-state                AAA      AA       A  ...       B   CCC/C       D
+['gdp4'] 63759.34 [0.142] 43
+['vix'] 62620.22 [-0.0679] 52
+
+
+## [24] assistant
+
+**[reasoning]**
+
+> CAQSyQcKEAgTGAI4AUIIdGhpbmtpbmcSDM0ddEdgGMCNx0fn0xoMirISA8SI0daMlgLnIjD2cLi2p7URQDwNoyWrXKFeRKLXRDR3fWHmJqdqX1//dYvX1NR1SIGOg9N+Hml86uUq5gYnSo96cvfB8IeQFVrv9dsuwEEdKt4jgfOaKFr76JTUecHrk/rS7rBtlvAdFoh+NLwqzM+1pH6Be41roxfroGZ0KDQ1++pi6tf6fkQVT1U8DZmSi/4Omx17i95KF456mzzL+NQUaWDzdF4jQvwrs+jB/kIttCSdxh62UTbD9VO/M/EGsnfIh1pU1Jidp3cj7gu99Fhhg8F2qMHojWaJUIovEaQqBuxJkC3Waw/jQ59C9qEmRi5GK+ypodC6deDD2PuC8213YOqafNy2/FdykRPLG8lE63wrPFAQRaY7+xDcjcPFLGtD507Oa3EOAqEsNSPbEu+FtwlNyxFmpeehlJQPsxDnHncmFhHHAKGzgk7A2vf4SvOaDW1+yH7V6UsVgGztUVGN50h+MAbizT5opE6aJSwehMeNHwygPzJRJiMmK4463pbAwFUHl4xIzTbQzTJ5dhDV+HLYUVCZ7+JV69cdIjMXYIELuiO94Zfq0WOO7WSVhc1TPMewHPEIWAmNEIiPKuELSOPhU9fBYU8Nhl85ME9OmMOs4Ssg9xVQonypR5ucRwyIt0gYCNzGjVXBFmIYhvIhkkrcpY8Y0zNvh9RXPoBUACXvnD4yaVdbiQVD0R/ZTqfLJEyer1qwjPhyY2rtLt5sW4SL5CdJ7Esn+xRbZ9DXAcs2hHKXwtD0h7OV0IoUwiyiqY1Le3L5hKOQzx8VOHwbKEZ6yKtQXs9NXx0xIr99ccpb5aelFYI8245+0Qo0hu0xz68ygL8xjk6BOfVpQG2LRV3aX7tM5tiCPC2uEE7Q5EpCucABlmG7E4OB5dQL6IzVOcCGGZP/OoHsbKwHP+SkrQX/kLBNg3W72hDlyGayvCC6xW7/FFAUSpvvMtPsg+Geg8iPY8MId5lppSlvTsSaVj2QHrEIfrj/5OfHh+LSJw0NQlwGQxv7Cqjwp6o1SNL8lQMhlrBn02jsbFgiS5crp/acLM2zOtwB06CgsPunEaJIxukPraF6qLZ8ge5x4S89Sqwxxbde3U5JLgcP/XPHAUcEpiqZWybVhta+ueIZt8SUKTqt1FoMTob7p4MlJd5RN0ilbhfsygXKJCHbf0zY0OcXasPPe+wYsH/6c1HddRTi2iDQ/PbpgzgUutSgU976DMTtiUTeUBtFhtlrJuYF9McYAQ==
+
+**tool call: bash**
+
+```
+sleep 240; cat /workspace/cmp.log
+```
+
+## [25] tool
+
+## [26] assistant
+
+**tool call: bash**
+
+```
+cat /workspace/cmp.log
+```
+
+## [27] tool
+
+['gdp4'] 63759.34 [0.142] 43
+['vix'] 62620.22 [-0.0679] 52
+['gdp4', 'vix'] 61100.41 [ 0.0982 -0.0566] 89
+['gdpg', 'vix'] 61772.07 [ 0.0517 -0.0611] 56
+['gdp4', 'vix', 'du4'] 61100.65 [ 0.0975 -0.0567 -0.0009] 67
+
+
+## [28] assistant
+
+**[reasoning]**
+
+> CAQSqQgKEAgTGAI4AUIIdGhpbmtpbmcSDHR98SDwTh4jbK65RBoMfvDllNzVKiM/sbNdIjC/wsBPwE2fQB7TuWWS2QaRGGHjcULEu0oFtecItrT5qrB0DwrtFwqZ4jdGzZGNjy0qxgfQtp+tBsVd8BF7SnsdDdESJjlgXsXwFpVqX0n/yptyugYoF33AxW9Hdo/xAzpQ9mthwvhZjDoQoxc/DWfvWZNV7BA1fysYBDlRglyZ33+JM9j7zZxdwb2GY2lJA3OURoSnwGsZv2LtQaoKLdHJYwK0hqHap4U9G2Ie7ifRBuZB9hvZsJFw+9DLobRRRZCZFjQF4w1sGehXkU3ge7U7mNcFaycz/xWwvbvotQTEb9vjtNPuB8EXiMF0ysFJ2hGwI+9AzrNbW1AhQW6+Hdf+ly6XG96+LW2vj6v6qc2MrDxSnnNjIoA+v2RKXBwQOCj7IY4xFQ8N9ncZ4Tf8y2c12X5GzK6QOexMmwsS/0P8jV/eVvO/c8MJM0W/9L9B4mBhu17nLFBuAlusQq4nj1rpyluEGkqv74RK3XjyONgO7xUIy0Dd7IClH/4oQgr7GELfcmHIR28xpQhI6OoBSsoPeGhv5h1GNK8j26WHorwcVjoCn0xeXRa2TKWCJH/FYUeKNNqIDBR35wqcj2sqfDzOrBu3l/h6lXnPgbMyPAllmmQR/OoiHy8rOBQ6wyaNM/8VrL6yT4WoE1jkvcGjJdXy1Hynmc8C8jzxwiOQXyx7kNN0YH0a4X5z2Rsf3o6AF2cw8hxkgni28b4eluZ8JuDEKZQXA7ohktwd/hPiedHHmqH+9bjzwQx5USuBJYdhPZhx8Bdt4S+fDyqq3FrJs/k4YmOfzsFbBJ1WiM3sGRDCyniNf3UQfe0rVgjCKPWAsEdzDilfVvAC4cqMBmwS/iR6zz4zC5Uw48Ztoj2KM5IizPr2zxxQj2PPaRD8O43QRiL7pOjdyNMYKxf3gtt1oQCZ9gGL9LN1FdlIzPJ3kvjBYrFxesmGs1zg7d7gTqAJH3+n/9hnPNpC+evnXr4XE39TLslomrrkqnV/+PaDe+Qb/XFQCEU3uJAbQvXUirkoG9p4JtyMdwhrAV/dYFThDnQCg+Ol6AxiBunXAJHwDWJ2GoD04cM2uv4Du/jSO6lK/x4GBbKMRFD4PvsQG/kK3C5+ewcHJeZFSAL5W/eHVFvLkKPr29jtGQ7wXBcOBkHt1NoMPPORd6S9cT9HKUC/aAclCeI0aek+GgB6oATEMHalWK96YLHMcs2I9E/pjuSf+GksSBHV+pJxwp47XOUGGUi0/6TaL7KUqjroRjmbryHI601QYdPz2xmnNoIpJq4pjOf7f4p63ajQ8ENEtILRSs0gDg2Jmpj7uT6h4qyKM4hwmBSQS+Vm4ofRz2eLlUwA1XQYyR+kSVnyC/MYAQ==
+
+**tool call: bash**
+
+```
+sleep 100; cat /workspace/cmp.log
+```
+
+## [29] tool
+
+['gdp4'] 63759.34 [0.142] 43
+['vix'] 62620.22 [-0.0679] 52
+['gdp4', 'vix'] 61100.41 [ 0.0982 -0.0566] 89
+['gdpg', 'vix'] 61772.07 [ 0.0517 -0.0611] 56
+['gdp4', 'vix', 'du4'] 61100.65 [ 0.0975 -0.0567 -0.0009] 67
+['gdp4', 'vix', 'spr'] 61099.87 [ 0.0993 -0.0569  0.0082] 72
+['gdp4', 'vix', 'u'] 61099.9 [ 0.0999 -0.0564  0.0023] 72
+
+
+## [30] assistant
+
+**[reasoning]**
+
+> CAQS2AcKEAgTGAI4AUIIdGhpbmtpbmcSDMY7HFSeYPe5QrFy8RoM7Sk4VwHztmIiRVUgIjC7FuYp+G96WVmGJHPslbMaEVjjxbpznetpW0Y2glmbYc0Gn8fqBex/jDro9JfKmisq9QYACWMJMBgSAn/v1RZhHEC8G40VZYXV3sq9I5L+Q5Z3ThCuhEgPadI3kyDTiYivUtCTprDLMKN+ryhsAmHBiPo1Q7E7IPvAro5qVktO6VVFHjxEuc9MIAO/gIFHA7vmFmwD6MrSEkJZ8s29FA9fGqciblKH4m/m244VGOyWZWzepQLu7nDodSp6NDn6oLGxi5jbayS3PF8T5F1qjj5GVioOazZ6atP/buf5P8qxs+NKPePMN78U9Wu3OfY+WAmuxqNoJZ38V1eWDcOGaCRLy9MrzPiBfnWi/VLCJqMn5gVgkMHDuP9V6t3wBS1XPdpyDahU8pEqdjYstc/AFIanJd3wcJi+R/6pr2GyB+cHl98QUu2jqQA8rjpfUY05p2QYO1Mh7FsJ5w43v12jLm2LF5JilyokW/x3sydL9ZRYLskJvkAKu3qQ7shTQCLbt4sZj0g7OZiB80VdAe9vxJEJitzl/bkfG5KhNPTrEee4rcZ8O+GkBIqXUG8aRby7VoeEEtN0udtD7BvGBiwmtwlWrLAvMe7hvnABoDTFEMdTP1x0z6eerDXjyzeW8FwNaZ2J7VPpsF035Y12TmHKN5n4WACymPk3n2SFyh1q9V7IeBqcP+4VNmHHWXuEFheRxkm+kOPcChjKe2/lGkTFinoLFSIYAZMKnEC/+X+EGeAqR+UJ4ZGeaqzm/j8F9pLYMWlp+c8QG3agzHEcYdwd26zoOJkPoRMNvFDCiR1VPe1/c2F8aFxh9oeHZiHyrxQS8Nu20vt/A/ep4ygbIGnfWTmInoSQyIvk5E85jJPxvACrIefPy5Pri8VvFY7vdiDqDzG4AR/0w+qbb0nuzYv8zoe2SNUcIK79RJPFYtrV0aoBjiRAy2CK468td/agOgUO3AQeZtvCnqKMKDTVJGnYp9W/jdWvkQtZLSGvfaUkmBGzSpizrv71zIj04QTX7YMH1vGQYGoNXOl2chc/nUaTLQzFCfF2oaVdQjB8+fYKYMb6V8FikWXqF0Sz5QAndyqr3ZuesbfI9Qw+AgGdghKXjDow0D/oB6qbBkbVES62FR7QaLHHKFgVNrFVKvTIXoAyjNiLLKsXolO0PblJW2E4vY8dA+TBFWO+PGFS655Zck/FgT2eNj73XTxOvPwHf2HI48Nsosd4P/pKK/VaixCiKXslThKgRh5tCLQYAQ==
+
+**tool call: bash**
+
+```
+cd /workspace; cat > cmp2.py <<'EOF'
+exec(open('model.py').read())
+Xh['gdp4_l1']=Xh.gdp4.shift(1); Xh['vix_l1']=Xh.vix.shift(1); Xh['gdp4_f']=np.log(m.gdp).diff(4).shift(-0)*100
+Xh['gdp2']=np.log(m.gdp).diff(2)*200; Xh['gdp8']=np.log(m.gdp).diff(8)*50
+for c in Xh.columns: Xh[c]=Xh[c]-Xh[c].loc[-60:0].mean()
+fy=range(6,21)
+for cols,gs in [(['gdp4','vix'],False),(['gdp4','vix'],True),(['gdp4_l1','vix'],False),(['gdp4','vix_l1'],False),(['gdp2','vix'],False),(['gdp8','vix'],False)]:
+    r=fit(cols,fy,gs); print(cols,gs, round(r.fun,2), r.x[49:].round(4))
+EOF
+nohup python -u cmp2.py > cmp2.log 2>&1 & sleep 280; cat cmp2.log
+```
+
+## [31] tool
+
+## [32] assistant
+
+**tool call: bash**
+
+```
+sleep 200; cat /workspace/cmp2.log
+```
+
+## [33] tool
+
+['gdp4', 'vix'] False 57739.44 [ 0.0982 -0.0566]
+['gdp4', 'vix'] True 57735.95 [ 0.0923 -0.0534  0.057   0.0087  0.067   0.0688  0.0644  0.1227]
+['gdp4_l1', 'vix'] False 58050.68 [ 0.0915 -0.055 ]
+['gdp4', 'vix_l1'] False 58045.55 [ 0.0907 -0.0516]
+
+
+## [34] assistant
+
+**[reasoning]**
+
+> CAQS6gYKEAgTGAI4AUIIdGhpbmtpbmcSDKtBvrUkVGpHbq+1JxoMOzYXIx7LnDecWIAWIjBt7wA/zMeBGrmC0rCOPgh10N08DskxLcNT92sOBF4TAUVdY/CP6KjIuBOwXEE1opUqhwZbpyQi/WLeCdsMxNzPrNlzmjPsOn5+oachLCIuboQpVWVYNUhJVVek16fnovZfWw/3FlBzD3x+IaphYa6iPOvPNYvGdXUSOaxx1hJQcL4agWsOYZ7BisKK/eZ9y4MvE7PIysa5p7JtKoqfC6i52wFR+V2UefYY7FuQKO+oc9nZA9kDw+bc3luFYCBD2DlX/XZLsxNj4kEc9Pu7o2hJ5GI1P8qPS+im2Vpd62zD78ONjWzIKZvwh7UFN/WpBebp279f1OBmFe/Z4kcHwewAjO74OZhSlShbvCLuXV70qVwBSgmfMzzpSiT3ji4V8QEeAXSI2TW8Z7kAI3X6v5CRNQ8jUOJc2TRVG/g2BUgFu6iQF0PHVWs3P7Si9lBwp0w0VFFDmMV3D8cvMk32HDDxlVR44mBu337dgyol9GKt8d+lFa0gNF2H0M8vtAm+jVHE0U4qcqJPJciC+p7uLZD5UwFEpiwmubhJjBOQQJGVq6okqZiVM7tejme11OTJG6eRHJqR+e9VwvmPeBxIPZCWreI0+GzJZcikME2ukY/19eP+iLJtm9uNzPjNGoL9gIQu3vFztDEvhVqOaCkJbhvLy1McTLJE57W1YipJJ+wrKOBOyO4aziroP7DXQlVdUOJe/I9KIosfsgZU7nOmk3DFjn3gNvzkP1O9ZXhOkKEOynWmq5Ria89Wyy5aO/KY+LZZEvLBmD02LwJQvIcQT1rnWK2VhcmVTeQzonnzb3Dn6J0U7Tq84poz/BaPqsiibX45VfUE3MehZ4CUk8sERlKnIrTRlOT49TZRICT1J3FRw8JGkf9noe5jNYI7lqQJwP0tvXr/Sgko9uOiV+fnYzP8eGAAI1lxpebLyitniWlU9Yr0iIP+PJupo2pqWisEr4SQHTnbwyyqbbj+wDRd3k9lLGEi77LexTkc8MkcEdH8PHAL1VH2SlRCC+eO/4A7ToVTXol3o8AdS94S8EhtrF+6pXPQ2vy61qyXPqt8PerqYp7ROPWUgju+bDIm72CnTL+qo+TrFUIL5y+vGAE=
+
+**tool call: bash**
+
+```
+sleep 120; cat /workspace/cmp2.log
+```
+
+## [35] tool
+
+['gdp4', 'vix'] False 57739.44 [ 0.0982 -0.0566]
+['gdp4', 'vix'] True 57735.95 [ 0.0923 -0.0534  0.057   0.0087  0.067   0.0688  0.0644  0.1227]
+['gdp4_l1', 'vix'] False 58050.68 [ 0.0915 -0.055 ]
+['gdp4', 'vix_l1'] False 58045.55 [ 0.0907 -0.0516]
+
+
+## [36] assistant
+
+**[reasoning]**
+
+> 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
+
+**tool call: bash**
+
+```
+cd /workspace; cat > final.py <<'EOF'
+exec(open('model.py').read())
+import statsmodels.api as sm
+cols=['gdp4','vix']
+pf=pd.read_csv('data/portfolio.csv').set_index('rating').loc[R,'obligors'].values.astype(float)
+# full macro: history + each scenario
+def build(mac):
+    X=pd.DataFrame(index=mac.index)
+    g=np.log(mac.gdp)
+    X['gdp4']=g.diff(4)*100
+    # early impute: annualised growth from first obs
+    q0=mac.index.min()
+    for q in mac.index[:4]:
+        qq=max(q,q0+1); X.loc[q,'gdp4']=(g.loc[qq]-g.loc[q0])*100*4/(qq-q0)
+    X['vix']=mac.vix
+    return X
+Xfull_h=build(m)
+# impute vix where missing via regression on gdp4, unemployment level & change
+D=pd.DataFrame({'gdp4':Xfull_h.gdp4,'u':m.unemployment,'du4':m.unemployment.diff(4).bfill(),'vix':m.vix})
+ok=D.vix.notna()
+reg=sm.OLS(D.vix[ok],sm.add_constant(D.loc[ok,['gdp4','u','du4']])).fit(); print(reg.params, reg.rsquared)
+miss=~ok; Xfull_h.loc[miss,'vix']=reg.predict(sm.add_constant(D.loc[miss,['gdp4','u','du4']]))
+mu=Xfull_h.loc[-60:0].mean()
+Xh=(Xfull_h-mu)
+r=fit(cols,range(5,21)); print(r.fun,r.x[49:]); np.save('x.npy',r.x)
+th,b,s=unpack(r.x,2,False)
+rows=[]; bt=[]
+for y in YEARS:
+    qs=yq(y); Z=Xh.loc[qs,cols].values@b; M=qmats(th,Z,s); A=M[0]@M[1]@M[2]@M[3]
+    n=N[y-1].sum(1); dr=(n@A[:7,7])/n.sum()
+    bt.append((y,dr,N[y-1][:,7].sum()/n.sum()))
+    Mrep=qmats(th,np.array([Z.mean()]),s)[0]
+    for i,rt in enumerate(R): rows.append(['history',qs[-1],rt]+list(Mrep[i]))
+print(pd.DataFrame(bt,columns=['y','fit','obs']).round(4))
+preds=[]
+for scn in ['baseline','adverse','severe']:
+    f=sc[sc.scenario==scn].set_index('quarter')[m.columns]
+    mac=pd.concat([m,f]); X=build(mac)-mu
+    Z=X.loc[1:9,cols].values@b; print(scn,Z.round(2))
+    M=qmats(th,Z,s); v=np.append(pf/pf.sum(),0)
+    for q in range(1,10):
+        for i,rt in enumerate(R): rows.append([scn,q,rt]+list(M[q-1][i]))
+        v=v@M[q-1]
+        if q in (4,9):
+            for st,sh in zip(R+['D'],v): preds.append([scn,q,st,sh])
+pd.DataFrame(preds,columns=['scenario','quarter','state','share']).to_csv('predictions.csv',index=False,float_format='%.8f')
+pd.DataFrame(rows,columns=['scenario','quarter','from_rating']+C).to_csv('matrices.csv',index=False,float_format='%.10f')
+pd.DataFrame([[s_,y,d] for s_ in ['baseline','adverse','severe'] for y,d,_ in bt],columns=['scenario','year','default_rate']).to_csv('backtest.csv',index=False,float_format='%.8f')
+EOF
+nohup python -u final.py > final.log 2>&1 & sleep 90; cat final.log
+```
+
+## [37] tool
+
+const    24.954058
+gdp4     -1.815430
+u        -0.294528
+du4      -1.181036
+dtype: float64 0.31171049450886035
+61100.40661143295 [ 0.09818053 -0.05660405]
+     y     fit     obs
+0    1  0.0114  0.0135
+1    2  0.0090  0.0083
+2    3  0.0051  0.0084
+3    4  0.0052  0.0068
+4    5  0.0019  0.0020
+5    6  0.0012  0.0011
+6    7  0.0041  0.0042
+7    8  0.0024  0.0019
+8    9  0.0081  0.0079
+9   10  0.0303  0.0315
+10  11  0.0335  0.0335
+11  12  0.0041  0.0042
+12  13  0.0012  0.0010
+13  14  0.0077  0.0068
+14  15  0.0383  0.0402
+15  16  0.0312  0.0300
+16  17  0.0034  0.0031
+17  18  0.0033  0.0039
+18  19  0.0058  0.0049
+19  20  0.0129  0.0136
+baseline [ 0.08  0.01 -0.23 -0.26 -0.27 -0.26 -0.23 -0.19 -0.16]
+adverse [ 0.01 -0.16 -0.5  -0.73 -0.97 -0.95 -0.88 -0.75 -0.58]
+severe [-0.06 -0.3  -0.77 -1.13 -1.53 -1.48 -1.37 -1.19 -0.94]
+
+
+## [38] assistant
+
+**[reasoning]**
+
+> CAQSmgYKEAgTGAI4AUIIdGhpbmtpbmcSDGoN1n1wMIzpZ9JMBBoMh/xxqWQ7puAfthOZIjAVk/PWPKryyR1qgv+vwxc0Bf6xOt7328Jaz6g43EWIOVJfAo0PtQBWlsdgrngSJhMqtwUVA/7sqf12Ubv3F3qJ0KCFhwMmEioUwzHBERwF64xIF0DygDIZ649QDGF+f4PfSElLaoGPBbKECuW7XQ245DipEM3BryvjFEOCTj6f1RuvgpRXR6276M0Ute9pEaofeau5sa9bW2ClaEIQe442+Intu/hFU7OjGWaB3Bz4YEKCh8dZ3s503nVQdotVaZ6DqTcmJJOrcQUliVssUI9dMu9rP1ebj1WA6SulkYHSKAjcUR+WWP7km6FRmuOXrm5y2W04FwNovEeZKwh1mL3SwVB96d8gGomBYP+QyLHiqCIkS4VRpuvqi2C846DZUkWwXlrOPet1FhZe2QFI0O47b0KRZ0WgITuBBhRLyDHkaQTI4KAJDGRjI+7Z+F+zqd2WAt8qPYD0JtUwtHh5wlG4whptKkiSdEbdw5k3nC2Fmq8uf60vWdJ9US8PhqMfpL4wzoy/XVJg+zfU+mSqWBE6Yz0zFrsiAkEXz0I+WHzg0tOAUpn1tZAOjuys3pPsiAUyO8RvK4gxSUVTfmhQ3OnicajJPkt/QboZyke5yUIQt7KMYQs7eV6i69j/fhFTJrQracwqDsitW/NCNHmyGhk+qvncTJBT5XtbQX/TX2RVPGxOPmL0YjA50h8napYfxs7TF/0qSX6omrAKpgcwOyh2+jHXD8DwniI3/LH7bj+TJblgrT0gv8lF/9lB+8dCFVnJMIIj5IUX/WdjE3xchjXA0IPDvD2C6HOcJclbq1pE6e4hMtz6M6SPFv3lzrt0BjL2Z9hLHnjxxV9kQAnVknLgUATduPBie/A+IUrM0YyowC9n9lato+0kFyY871axV+j51vocBqV/8p7Zw76iyXTgGzfgP9d8K94MsAqhBoN56wkWlhNeoGJboJYjK+PrCObEspJp90HmGC2t207+ghogKIx7GUGQfy3fIRgB
+
+**tool call: bash**
+
+```
+cd /workspace; wc -l predictions.csv matrices.csv backtest.csv; python -c "
+import pandas as pd; p=pd.read_csv('predictions.csv'); print(p.pivot_table(index=['scenario','quarter'],columns='state',values='share').round(4)); print(p.groupby(['scenario','quarter']).share.sum())"; head -3 matrices.csv
+```
+
+## [39] tool
+
+   49 predictions.csv
+  330 matrices.csv
+   61 backtest.csv
+  440 total
+state                  A      AA     AAA  ...     BBB   CCC/C       D
 scenario quarter                          ...                        
-adverse  4        0.0039  0.0214  0.1393  ...  0.1503  0.0304  0.0245
-         9        0.0023  0.0156  0.1123  ...  0.1742  0.0415  0.1053
-baseline 4        0.0042  0.0228  0.1462  ...  0.1431  0.0258  0.0133
-         9        0.0037  0.0218  0.1427  ...  0.1529  0.0254  0.0326
-severe   4        0.0034  0.0194  0.1295  ...  0.1600  0.0376  0.0443
-         9        0.0011  0.0090  0.0738  ...  0.1774  0.0550  0.2540
+adverse  4        0.1397  0.0214  0.0038  ...  0.3562  0.0300  0.0237
+         9        0.1124  0.0156  0.0022  ...  0.3153  0.0412  0.1049
+baseline 4        0.1466  0.0229  0.0042  ...  0.3640  0.0256  0.0123
+         9        0.1428  0.0218  0.0037  ...  0.3568  0.0254  0.0314
+severe   4        0.1300  0.0195  0.0033  ...  0.3424  0.0369  0.0434
+         9        0.0729  0.0088  0.0010  ...  0.2392  0.0547  0.2589
 
 [6 rows x 8 columns]
 scenario  quarter
@@ -796,191 +1037,86 @@ baseline  4          1.0
 severe    4          1.0
           9          1.0
 Name: share, dtype: float64
-  330 matrices.csv
-   61 backtest.csv
-  391 total
-backtest.csv
-data
-matrices.csv
-predictions.csv
+scenario,quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
+history,-76,AAA,0.9651177808,0.0341198717,0.0004261704,0.0000167855,0.0001582278,0.0000031454,0.0000004817,0.0001575367
+history,-76,AA,0.0002441588,0.9754920582,0.0233180011,0.0006846871,0.0000778802,0.0001170155,0.0000181032,0.0000480958
 
 
-## [24] assistant
+## [40] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cd /w && sed -e "s/cols=\['g4','vix','sp'\]; x=np.load('fit_g4_vix_sp.npy')/cols=['g4','vix']; x=np.load('fit_g4_vix.npy')/" -e "s#/w/predictions.csv#/w/p2.csv#g; s#/w/matrices.csv#/w/m2.csv#; s#/w/backtest.csv#/w/b2.csv#" out.py > out2.py; ls fit_*; python out2.py 2>&1 | head -20; python -c "
-import sys;sys.path.insert(0,'/w')
-from model import *
-for sc in ['severe']: print(full(sc).loc[-45:9,['g4','vix','sp']].round(2).T.to_string())"
+cd /workspace; cat > chk.py <<'EOF'
+exec(open('final.py').read().split("r=fit")[0])
+x=np.load('x.npy'); th,b,s=unpack(x,2,False)
+Z=Xh.loc[-63:0,cols].values@b; print(np.sort(Z)[:8].round(2), Z.max().round(2))
+EOF
+python chk.py 2>&1 | tail -1
 ```
 
-## [25] tool
+## [41] tool
 
-fit_g1_vix.npy
-fit_g1_vix_du1.npy
-fit_g4_vix_cpi.npy
-fit_g4_vix_dsp.npy
-fit_g4_vix_hpi.npy
-fit_g4_vix_nq4.npy
-fit_g4_vix_rl.npy
-fit_g4_vix_sp.npy
-fit_g4_vix_u.npy
-Traceback (most recent call last):
-  File "/w/out2.py", line 3, in <module>
-    cols=['g4','vix']; x=np.load('fit_g4_vix.npy')
-                         ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/numpy/lib/_npyio_impl.py", line 454, in load
-    fid = stack.enter_context(open(os.fspath(file), "rb"))
-                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: [Errno 2] No such file or directory: 'fit_g4_vix.npy'
-quarter    -45    -44    -43    -42    -41    -40    -39    -38    -37    -36    -35    -34    -33    -32    -31    -30    -29    -28    -27    -26    -25    -24    -23    -22    -21    -20    -19    -18    -17    -16    -15    -14    -13    -12    -11    -10    -9     -8     -7     -6     -5     -4     -3     -2     -1     0      1      2      3      4      5      6      7      8      9  
-g4       -0.43  -0.19   0.49   0.47   0.95   0.86   0.36  -1.89  -1.94  -0.43   2.89   6.82  10.50  10.25   7.04   7.01   6.49   6.96   6.77   3.48   2.28   2.87   3.20   4.17   3.49   1.18   0.59   0.07   3.81   4.45   6.97   7.92   3.54   3.35   1.34   3.74   5.12   6.69   6.62   5.62   4.51   2.05   2.75   1.71   4.77   6.42   5.44   4.42   1.42  -0.43  -2.30  -3.37  -3.63  -3.10  -1.77
-vix      16.55  17.54  23.48  20.01  26.61  24.87  22.05  20.61  20.12  13.92  15.18  15.01  17.16  12.62  10.16  10.34  13.99  11.13  12.93  15.49  18.49  24.88  29.51  35.33  23.38  26.22  25.96  24.18  19.07  17.78  11.78  10.77  13.35  12.36  10.04  11.06  11.71  14.53  16.61  10.94  17.48  20.94  26.71  18.22  16.07  18.43  20.75  23.35  26.28  29.58  33.29  30.60  28.13  25.85  23.76
-sp        1.92   2.08   2.73   2.22   2.65   2.75   2.71   3.06   2.88   2.45   2.31   1.80   1.75   1.39   1.59   1.26   1.21   0.72   1.15   1.04   1.43   1.20   1.90   2.12   2.08   2.01   1.78   1.46   1.28   1.64   1.08   1.11   1.52   1.85   1.96   1.74   1.50   1.61   1.63   1.00   1.05   1.37   1.80   1.40   0.82   0.79   1.27   1.75   2.22   2.70   3.18   2.84   2.50   2.16   1.82
+[-1.01 -0.83 -0.83 -0.79 -0.78 -0.77 -0.77 -0.75] 0.87
 
 
-## [26] assistant
+## [42] assistant
 
 **[reasoning]**
 
-> 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
-
-**tool call: bash**
-
-```
-cd $OLDPWD; wc -l predictions.csv matrices.csv backtest.csv; head -3 matrices.csv; grep -c history matrices.csv
-```
-
-## [27] tool
-
-wc: predictions.csv: No such file or directory
-wc: matrices.csv: No such file or directory
-wc: backtest.csv: No such file or directory
-head: cannot open 'matrices.csv' for reading: No such file or directory
-grep: matrices.csv: No such file or directory
-
-0 total
-
-
-## [28] assistant
-
-**tool call: bash**
-
-```
-pwd; ls; ls ~; find / -name portfolio.csv -not -path '*/proc/*' 2>/dev/null
-```
-
-## [29] tool
-
-/workspace
-backtest.csv
-data
-matrices.csv
-predictions.csv
-/w/data/portfolio.csv
-/workspace/data/portfolio.csv
-
-
-## [30] assistant
-
-**tool call: bash**
-
-```
-cd /workspace; wc -l predictions.csv matrices.csv backtest.csv; grep -c history matrices.csv; cat predictions.csv | head -20
-```
-
-## [31] tool
-
-   49 predictions.csv
-  330 matrices.csv
-   61 backtest.csv
-  440 total
-140
-scenario,quarter,state,share
-baseline,4,AAA,0.00423301
-baseline,4,AA,0.02283534
-baseline,4,A,0.14619039
-baseline,4,BBB,0.36303622
-baseline,4,BB,0.28147490
-baseline,4,B,0.14308120
-baseline,4,CCC/C,0.02582113
-baseline,4,D,0.01332780
-baseline,9,AAA,0.00371418
-baseline,9,AA,0.02175688
-baseline,9,A,0.14268152
-baseline,9,BBB,0.35527572
-baseline,9,BB,0.26565136
-baseline,9,B,0.15290391
-baseline,9,CCC/C,0.02539359
-baseline,9,D,0.03262285
-adverse,4,AAA,0.00386305
-adverse,4,AA,0.02135736
-adverse,4,A,0.13934819
-
-
-## [32] assistant
-
-**[reasoning]**
-
-> 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
+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
 
 **tool call: submit**
 
 ```
-I wrote predictions.csv (48 rows), matrices.csv (329 rows) and backtest.csv (60 rows) to /workspace. I fitted one model on the history and ran all three scenarios through it, with no per-scenario changes.
+predictions.csv (48 rows), matrices.csv (329 rows) and backtest.csv (60 rows) are written in /workspace. All three projections come from one fitted model.
 
-**Model.** Each quarter has a transition matrix built from a probit (ordered-threshold) curve for each starting rating. A single credit-cycle index shifts every rating's thresholds by the same amount. That index is a linear function of three series: year-on-year GDP growth, the VIX and the BBB spread. Each year's annual matrix is the product of its four quarterly matrices. All parameters were fitted together by maximum likelihood on the annual counts, so changes in the economy within a year feed into the fit.
+**Model.** Each quarter's transition matrix comes from a single-factor ordered-probit model. Every starting grade has its own fixed thresholds, and they all shift together with a macro index made of year-on-year GDP growth and the VIX. Higher GDP growth means fewer downgrades and defaults; a higher VIX means more. Each year's annual matrix is the product of its four quarterly matrices, and the model was fitted by maximum likelihood to the annual counts for years 5 to 20, the years where both drivers exist for every quarter.
 
-- **Choosing the series:** among the combinations I tried, GDP growth plus VIX fitted far better than anything else, and the spread added a small further improvement.
-- **Fit to history:** the model's annual default rates track the actual ones closely, for example 3.15% actual against 3.29% fitted in year 10, and 4.02% against 3.86% in year 15.
-- **Missing early data:** the VIX and the spread don't exist for the first few years. I filled those quarters with a regression on unemployment and GDP, so the model's fit for those years rests partly on guessed values.
+I compared alternatives on fit. Adding unemployment level or change, or the BBB spread, made essentially no difference. Lagged drivers fitted worse, and letting each grade have its own sensitivity barely helped, so I dropped them.
 
-**Cumulative default share of the original cohort:**
+**Fit to history.** Fitted annual default rates track the observed ones closely, for example 3.03% vs 3.15%, 3.35% vs 3.35%, 3.83% vs 4.02% and 1.29% vs 1.36%. Years 1 to 4 fit less well (for example 0.51% vs 0.84% in year 3). Those years were outside the fit, and the VIX had to be filled in from a regression on GDP growth and unemployment (R² 0.31). In year 1 the GDP growth figure was also extrapolated, because there isn't a full year of earlier data.
 
-| Scenario | Quarter 4 | Quarter 9 |
+**Projection.** I started from your cohort, which has more BB, B and CCC/C than the historical portfolio, and ran it through the nine quarterly matrices of each scenario, with default absorbing.
+
+| Scenario | Default by Q4 | Default by Q9 |
 |---|---|---|
-| Baseline | 1.3% | 3.3% |
-| Adverse | 2.5% | 10.5% |
-| Severe | 4.4% | 25.4% |
+| Baseline | 1.2% | 3.1% |
+| Adverse | 2.4% | 10.5% |
+| Severe | 4.3% | 25.9% |
 
-In both stress scenarios the cohort also shifts down the rating scale: the share in B and CCC/C rises and the share in A and above falls.
+All shares sum to 1 at each checkpoint.
 
-**Severe-scenario caution.** The severe path goes beyond anything in the history: GDP falls to about −3.6% year on year against a historical low of about −1.9%, and the spread reaches about 3.2 against a high of 3.06. Its quarter-9 result is therefore an extrapolation of the fitted relationship. Its credit-cycle index peaks at about 1.5, against about 1.0 historically. Combined with this cohort's heavier weighting in BB, B and CCC/C than the historical portfolio, that is what produces the 25% default share. I did not check how sensitive this figure is to a different choice of series.
+**Caveat on the severe result.** The severe path drives the macro index to about -1.5, well beyond the worst historical quarter (about -1.0). The 25.9% therefore depends on the model's straight-line extrapolation and is the least certain number here.
 
-**What's in the other two files:**
-- **matrices.csv:** the 27 scenario quarterly matrices come straight from the model. The 20 historical ones are the fourth root of each year's fitted annual matrix, lightly cleaned (negatives clipped to zero, rows rescaled to sum to one). So they are an average quarter for that year, not the model's actual quarter-by-quarter matrices.
-- **backtest.csv:** the backtest covers history only, so its default rates are identical under all three scenario labels.
+**One interpretation choice.** For the 20 historical matrices in matrices.csv, each year's matrix is the quarterly matrix at that year's average macro index. The instructions could also mean the matrix at the year's last quarter. The backtest file uses the actual quarter-by-quarter product and is the same under all three scenario names, since they share one history.
 ```
 
-## [33] tool
+## [43] tool
 
-I wrote predictions.csv (48 rows), matrices.csv (329 rows) and backtest.csv (60 rows) to /workspace. I fitted one model on the history and ran all three scenarios through it, with no per-scenario changes.
+predictions.csv (48 rows), matrices.csv (329 rows) and backtest.csv (60 rows) are written in /workspace. All three projections come from one fitted model.
 
-**Model.** Each quarter has a transition matrix built from a probit (ordered-threshold) curve for each starting rating. A single credit-cycle index shifts every rating's thresholds by the same amount. That index is a linear function of three series: year-on-year GDP growth, the VIX and the BBB spread. Each year's annual matrix is the product of its four quarterly matrices. All parameters were fitted together by maximum likelihood on the annual counts, so changes in the economy within a year feed into the fit.
+**Model.** Each quarter's transition matrix comes from a single-factor ordered-probit model. Every starting grade has its own fixed thresholds, and they all shift together with a macro index made of year-on-year GDP growth and the VIX. Higher GDP growth means fewer downgrades and defaults; a higher VIX means more. Each year's annual matrix is the product of its four quarterly matrices, and the model was fitted by maximum likelihood to the annual counts for years 5 to 20, the years where both drivers exist for every quarter.
 
-- **Choosing the series:** among the combinations I tried, GDP growth plus VIX fitted far better than anything else, and the spread added a small further improvement.
-- **Fit to history:** the model's annual default rates track the actual ones closely, for example 3.15% actual against 3.29% fitted in year 10, and 4.02% against 3.86% in year 15.
-- **Missing early data:** the VIX and the spread don't exist for the first few years. I filled those quarters with a regression on unemployment and GDP, so the model's fit for those years rests partly on guessed values.
+I compared alternatives on fit. Adding unemployment level or change, or the BBB spread, made essentially no difference. Lagged drivers fitted worse, and letting each grade have its own sensitivity barely helped, so I dropped them.
 
-**Cumulative default share of the original cohort:**
+**Fit to history.** Fitted annual default rates track the observed ones closely, for example 3.03% vs 3.15%, 3.35% vs 3.35%, 3.83% vs 4.02% and 1.29% vs 1.36%. Years 1 to 4 fit less well (for example 0.51% vs 0.84% in year 3). Those years were outside the fit, and the VIX had to be filled in from a regression on GDP growth and unemployment (R² 0.31). In year 1 the GDP growth figure was also extrapolated, because there isn't a full year of earlier data.
 
-| Scenario | Quarter 4 | Quarter 9 |
+**Projection.** I started from your cohort, which has more BB, B and CCC/C than the historical portfolio, and ran it through the nine quarterly matrices of each scenario, with default absorbing.
+
+| Scenario | Default by Q4 | Default by Q9 |
 |---|---|---|
-| Baseline | 1.3% | 3.3% |
-| Adverse | 2.5% | 10.5% |
-| Severe | 4.4% | 25.4% |
+| Baseline | 1.2% | 3.1% |
+| Adverse | 2.4% | 10.5% |
+| Severe | 4.3% | 25.9% |
 
-In both stress scenarios the cohort also shifts down the rating scale: the share in B and CCC/C rises and the share in A and above falls.
+All shares sum to 1 at each checkpoint.
 
-**Severe-scenario caution.** The severe path goes beyond anything in the history: GDP falls to about −3.6% year on year against a historical low of about −1.9%, and the spread reaches about 3.2 against a high of 3.06. Its quarter-9 result is therefore an extrapolation of the fitted relationship. Its credit-cycle index peaks at about 1.5, against about 1.0 historically. Combined with this cohort's heavier weighting in BB, B and CCC/C than the historical portfolio, that is what produces the 25% default share. I did not check how sensitive this figure is to a different choice of series.
+**Caveat on the severe result.** The severe path drives the macro index to about -1.5, well beyond the worst historical quarter (about -1.0). The 25.9% therefore depends on the model's straight-line extrapolation and is the least certain number here.
 
-**What's in the other two files:**
-- **matrices.csv:** the 27 scenario quarterly matrices come straight from the model. The 20 historical ones are the fourth root of each year's fitted annual matrix, lightly cleaned (negatives clipped to zero, rows rescaled to sum to one). So they are an average quarter for that year, not the model's actual quarter-by-quarter matrices.
-- **backtest.csv:** the backtest covers history only, so its default rates are identical under all three scenario labels.
+**One interpretation choice.** For the 20 historical matrices in matrices.csv, each year's matrix is the quarterly matrix at that year's average macro index. The instructions could also mean the matrix at the year's last quarter. The backtest file uses the actual quarter-by-quarter product and is the same under all three scenario names, since they share one history.
 

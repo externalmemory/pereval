@@ -1,7 +1,7 @@
 # anthropic/claude-opus-5-5 — migration (id=instance-1-seed-1731038949)
 
-- score 0.0748 (1.0 = no migration); 0/16 checks failed; by scenario 0.072/0.088/0.064; completion 100%
-- messages 42 | limit None | seed None
+- score 0.0611 (1.0 = no migration); 0/16 checks failed; by scenario 0.060/0.070/0.053; completion 100%
+- messages 50 | limit None | seed None
 
 ---
 
@@ -128,12 +128,12 @@ Project the cohort in data/portfolio.csv over each of the three scenarios and wr
 
 **[reasoning]**
 
-> CAQS9AQKEAgTGAI4AUIIdGhpbmtpbmcSDIL0c3DR9txakuA9sRoMPAq2kcO8LWi+9I0FIjCjpgB+7MMbVkc0XL0KB4VdJstucZ2hq0bOWAiPTpDjDtvHhiHZvlTL7KD9dJIm98wqkQQKa+/cAVdNvTqRpu2T6KkV9dEGK+Np3e0hbrZbDMDk752HtYs6VMV85ZTh47QLBrTTRrGCmtxp/cIUXUsGx7oQhsUuYVPzye62Z0mmV9h6nPYeenvAEZNRNMRpCnvOb49tZzlyY9PxISucjM/LlBsMygmwcjk0o3lk2JPxPju6gdLnDRyc4m5eT5XlrWfvUCdiyxmTSV1U4gLS9oBl+PzbxxAWszE7opCqxQQTVJYDl/bo9IwgKuYqtXIgTIpN7YiEGsiPl2n3YclGTv17hb2sq8M4jXiEiNve8N5PmhOrm5JN02ZOEd9pxOL6eRg0xIgKlLJZdKqj25lKeWaXCi7ehqvG5nQT0pluuExaFBlSA/s2G69qYKbFdQTWHB9l1Mqt6yu8w5jLK9t5wCNu4MGujY6C3nMnhefn9KEz5uYS78KjtsD/zBQjcMfZsXy58yOadmI3hs8XbUZgNLLf6UFstLq/IuAGnRUq5DJKbd/wUvBUv244FNA0b9XpulCMEzJ/vU9JSpkaMy4pSSGilbmOZXMoc54U5zD+XBhcHU480abwxCGZnuHNl/deHxLxWKfK8y+tMU9W7xpKouqZnL7abRxWdzDhUwGjoH8gBKKVCIssgo1EgY+BaxejAYExGmtMDPDYDnJQv1AxRj4IZlLF12dSMEeXg4lq9Fi7wfu113gukTmujBZ80qbWFaBSUucYGAE=
+> CAQS9AQKEAgTGAI4AUIIdGhpbmtpbmcSDNcRuOkUpZ8PnHI5MBoMMXueK/mq6tE0nU/SIjA7tryZQ4Q9q7JisLWpJKSHJhbmV0TXJJoLQxwFVHRqqNV3qaI/qBVrFsYBzeE8xo0qkQTmnPxU/SzlFNL0LjI5RJmnx7MKDfOcProXaZEXZPpx9rft5XqAodPk7UGVrSrHNnH642b7mkv56fxqeBRp4RoBSeu1a205ApNHXm20kbPNF++hFjL6x4CyJoyXT3+lRGoqP90SUcJiLgw+alzDkM9xxxAogrGtRK7SxyE9w4KSIEdj9j3IFAGB5uv162rmM67QpSpF4OTmq7JDwuwJKzFj7J3gQQ256K059IADRFxFYGungEaUPLLgPOWgUARtVcAT6rr+Cxb6ON8T2qCj2BwlqkH5cMO6PShbAtljzrSBt2/NtUBUdEq11L4pFxyQ0mkpqtlh4NbRMB0JF6U7Ar1SjrH27Tgh5yL1CbW6fg6u9MvndXKcfgKkk4xopq6AyVUD/d4WMfvN//uREX8PdC6EYjbW1PI8E8ibBbq3VczsWN0RhvwSc4daqcnkM7b+msG+YSOZTkeLwz35PVl50nlqfKTzWF+i11UVckUg3FUjxQv/sp3txFowv9ThabKTu5OAv+P0h4SLoBwqOBE48yBbkQkM8hVqxQSL/+176lXxKfYdCya5BC1gprllE9TxNgiybBC6fjYVG+qJfYfGfF0wXIysResSKDQ/Z4XpBec0OMA1WGg24OSgJWzXF16tukRBAbTVJWtoKOl5WWlGp9nm7ZLFOEsSDPVHVVVE0xeaQqql5n/xlfrcuKbaXybszJYQGAE=
 
 **tool call: bash**
 
 ```
-cd data; head -5 transitions.csv; wc -l *; cat policy.json; cat portfolio.csv; head -3 macro_history.csv; tail -3 macro_history.csv; cat scenario.csv
+cd data; head -5 transitions.csv; wc -l *; cat policy.json; cat portfolio.csv; head -3 macro_history.csv; tail -3 macro_history.csv; head -4 scenario.csv
 ```
 
 ## [3] tool
@@ -167,59 +167,31 @@ scenario,quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 baseline,1,158.3711,7.5511,279.0055,2.5114,2254.6397,2195.1571,107.16,20.8142,190.8954
 baseline,2,159.176,5.7133,280.7638,2.4196,2367.0348,2188.5722,108.3608,19.8226,192.0582
 baseline,3,159.9499,6.0646,282.0841,2.4392,2476.3781,2187.9935,109.0146,20.0307,192.9994
-baseline,4,160.6923,6.4374,282.9603,2.4589,2581.7493,2193.4162,109.1113,20.241,193.7154
-baseline,5,161.4028,6.8332,283.3881,2.4785,2682.2298,2204.885,108.6494,20.4534,194.2038
-baseline,6,162.0809,7.2533,283.3655,2.4982,2776.9158,2222.4947,107.636,20.6681,194.4628
-baseline,7,162.7261,7.6992,282.8927,2.5178,2864.9315,2246.3912,106.0865,20.8851,194.4915
-baseline,8,163.3382,8.1725,281.9718,2.5375,2945.4427,2276.7741,104.0245,21.1043,194.2899
-baseline,9,163.9166,8.6749,280.6073,2.5571,3017.6699,2313.8988,101.4807,21.3258,193.8585
-adverse,1,157.8261,9.4858,276.4555,2.7397,2222.0523,2203.6179,104.0156,23.1984,189.8945
-adverse,2,157.5382,9.0162,273.1356,2.876,2265.8756,2213.9759,99.0993,24.624,189.0533
-adverse,3,156.8703,8.5698,269.3844,3.0124,2314.609,2204.5409,93.8686,26.1373,188.2691
-adverse,4,155.8272,8.1455,265.2209,3.1488,2368.5307,2175.5651,88.3991,27.7435,187.5413
-adverse,5,154.4165,7.7422,260.6658,3.2852,2427.9525,2127.819,82.7663,29.4484,186.8692
-adverse,6,153.3066,8.0534,256.5366,3.1794,2485.4882,2095.6429,77.8424,28.1165,186.1586
-adverse,7,152.4911,8.3771,252.8154,3.0735,2540.9349,2078.3557,73.5422,26.8448,185.4099
-adverse,8,151.9654,8.7138,249.4864,2.9677,2594.094,2075.5944,69.7934,25.6306,184.6236
-adverse,9,151.7265,9.0641,246.5353,2.8618,2644.7718,2087.3011,66.5348,24.4713,183.8003
-severe,1,157.6272,9.9144,275.7697,2.8187,2215.1801,2201.9391,103.1783,24.063,189.67
-severe,2,156.9433,9.8493,271.108,3.0341,2244.9172,2208.9197,96.7254,26.4936,188.3835
-severe,3,155.6877,9.7846,265.3997,3.2495,2271.9887,2194.483,89.4252,29.1698,186.9373
-severe,4,153.8743,9.7203,258.7146,3.4649,2296.2891,2159.0475,81.5357,32.1162,185.3354
-severe,5,151.5228,9.6565,251.133,3.6804,2317.7229,2103.6323,73.3167,35.3603,183.5819
-severe,6,148.6585,9.593,242.7443,3.8958,2336.2054,2029.8089,65.0169,38.9321,181.6814
-severe,7,146.3485,9.6519,235.5602,3.6956,2357.7869,1976.3505,58.4057,35.602,179.951
-severe,8,144.5684,9.7112,229.4893,3.4954,2382.5503,1941.7634,53.1482,32.5567,178.3862
-severe,9,143.2997,9.7709,224.4555,3.2953,2410.5915,1925.095,48.9923,29.7719,176.983
 
 
 ## [4] assistant
-
-**[reasoning]**
-
-> CAQSugYKEAgTGAI4AUIIdGhpbmtpbmcSDKd4zmOQLXOvi3hcwxoMAnbH5cj/kliyOD/xIjCw8iZVsWPDbvF9c341S7vhYzDNd9arxKIQSl3C9i2yBSW2eiSci69cI931/hNobM8q1wXJxybNzdb6ZnGo5QqgB038SttbHebAIVOxViPogUnWMJFQWNf++YV0LsJYqSKnFC1sgMps6fk1X5FthNAgzc/82h4pP3vknVEnUi8bnkR2nz4fXAU9qDtWVsM+KjwAJX6PI3urDRPnuo6IpU5Nl3j0ZwMNacw+1HAW9w80VZa64wSKD2O1mO9oR/SnV2mnyoWcQVPn+Rz2ptR8z+lEfTMcPcUAis7xJwzVN4obMFRkk848Jhibtp0Vp2F0bSCwpDwoRnEnqRdMb5quN/b8XctzxkXZdgZLvUU8UWbMpODiBtjSC+uEVf2rZ5/8HeWUURsi61xhwhy3n2nvHBn2+rFbHbqIv1IzHBXWv4UuQlhusxg9NoYZHzcZ6lspNUFIy/JQ9rtqYuQT5WW2l+AAYAiftkAkLUNVa6LRya0M0SfvRpxhuf3jVDg1o73r8UzddPAGPmDKG+pJeVy/Yb7YaZwouiFlGh7MDrCikWF+oz506lNHyiL6Lk5VwRBpWPWkz7axeypNIW+e372O9gvNrJ3NAqbmLj7xfbaso1YDudzYQMQNfMf+zup8/bGrFKdo6DsVX5zTgB5v1DcEsSgI3hJbpkK2dWDNeJpolP4h3+QW50ur31kgONPeHwi4c7nNchyJSWQ9KNfBe2ynfJ2cT6hzQ2A8nTo1HUeBxPWkaFh+2IYu6uSnR9AG+9b2XePthzZzbc5LVzFEHzBsjS/FFrlXC92tidlDpxrzt9D4UL8NZ9r+UfMvwz2QfSJB72NQ+d5COW2+SbWaloXyRNbw0tGaSXGiHKeMmiy8JhiIh3qmthmIaZt31JDwVxqlAVczuRl1z7nZgEzVbznwDSYh0k+mUkWxcrA4eHCOERGNWjzID19NHIMKXRefq1jhQ/vYN2rN89EZlx0pqetS9q8zHpUEMOUf+GIoY7OEriimGLy0FYJB9YtMFacTiFHH0tmifR2PlW8tLg7OGAE=
 
 **tool call: python**
 
 ```
 
 import pandas as pd, numpy as np
-pd.set_option('display.width',250); pd.set_option('display.max_rows',200)
-m=pd.read_csv('data/macro_history.csv'); print(m.to_string())
+pd.set_option('display.width',250); pd.set_option('display.max_columns',30); pd.set_option('display.max_rows',200)
+m=pd.read_csv('data/macro_history.csv'); s=pd.read_csv('data/scenario.csv')
+print(m.to_string())
+print(s.to_string())
 t=pd.read_csv('data/transitions.csv')
-cols=[c for c in t.columns if c.startswith('to_')]
-t['n']=t[cols].sum(1)
+c=[x for x in t.columns if x.startswith('to_')]
+t['n']=t[c].sum(1)
 g=t.groupby('year')
-print(pd.DataFrame({'n':g.n.sum(),'D':g.to_D.sum()}).assign(dr=lambda d:d.D/d.n))
-print(t.pivot(index='year',columns='from_rating',values='n'))
-t['dr']=t.to_D/t.n
-print(t.pivot(index='year',columns='from_rating',values='dr').round(3))
+print(pd.DataFrame({'dr':g.to_D.sum()/g.n.sum(),'n':g.n.sum()}))
+print(t.pivot(index='year',columns='from_rating',values='to_D')/t.pivot(index='year',columns='from_rating',values='n'))
 
 ```
 
 ## [5] tool
 
-<stdin>:7: Pandas4Warning: Starting with pandas version 4.0 all arguments of sum will be keyword-only.
+<stdin>:9: Pandas4Warning: Starting with pandas version 4.0 all arguments of sum will be keyword-only.
 
     quarter       gdp  unemployment       hpi  bbb_spread      sp500       djia    nasdaq       vix       cpi
 0       -79  119.1192        3.8126       NaN         NaN        NaN        NaN  422.6339       NaN  108.4954
@@ -302,28 +274,117 @@ print(t.pivot(index='year',columns='from_rating',values='dr').round(3))
 77       -2  159.1635        8.7799  284.8275      2.3430  2063.7829  2003.3790  113.4327   22.5825  186.6563
 78       -1  157.6590       10.6570  281.1016      2.6610  2063.0579  2046.7560  107.0330   24.0742  189.8237
 79        0  157.7319        9.9799  279.3272      2.6033  2182.8923  2173.7437  108.5437   21.8553  190.7935
-          n    D      dr
-year                    
-1     10000  124  0.0124
-2     10000   70  0.0070
-3     10000   56  0.0056
-4     10000   48  0.0048
-5     10000  164  0.0164
-6     10000  117  0.0117
-7     10000   83  0.0083
-8     10000   57  0.0057
-9     10000   81  0.0081
-10    10000   64  0.0064
-11    10000   56  0.0056
-12    10000   57  0.0057
-13    10000   53  0.0053
-14    10000  888  0.0888
-15    10000  175  0.0175
-16    10000   83  0.0083
-17    10000  482  0.0482
-18    10000  146  0.0146
-19    10000  134  0.0134
-20    10000  116  0.0116
+    scenario  quarter       gdp  unemployment       hpi  bbb_spread      sp500       djia    nasdaq      vix       cpi
+0   baseline        1  158.3711        7.5511  279.0055      2.5114  2254.6397  2195.1571  107.1600  20.8142  190.8954
+1   baseline        2  159.1760        5.7133  280.7638      2.4196  2367.0348  2188.5722  108.3608  19.8226  192.0582
+2   baseline        3  159.9499        6.0646  282.0841      2.4392  2476.3781  2187.9935  109.0146  20.0307  192.9994
+3   baseline        4  160.6923        6.4374  282.9603      2.4589  2581.7493  2193.4162  109.1113  20.2410  193.7154
+4   baseline        5  161.4028        6.8332  283.3881      2.4785  2682.2298  2204.8850  108.6494  20.4534  194.2038
+5   baseline        6  162.0809        7.2533  283.3655      2.4982  2776.9158  2222.4947  107.6360  20.6681  194.4628
+6   baseline        7  162.7261        7.6992  282.8927      2.5178  2864.9315  2246.3912  106.0865  20.8851  194.4915
+7   baseline        8  163.3382        8.1725  281.9718      2.5375  2945.4427  2276.7741  104.0245  21.1043  194.2899
+8   baseline        9  163.9166        8.6749  280.6073      2.5571  3017.6699  2313.8988  101.4807  21.3258  193.8585
+9    adverse        1  157.8261        9.4858  276.4555      2.7397  2222.0523  2203.6179  104.0156  23.1984  189.8945
+10   adverse        2  157.5382        9.0162  273.1356      2.8760  2265.8756  2213.9759   99.0993  24.6240  189.0533
+11   adverse        3  156.8703        8.5698  269.3844      3.0124  2314.6090  2204.5409   93.8686  26.1373  188.2691
+12   adverse        4  155.8272        8.1455  265.2209      3.1488  2368.5307  2175.5651   88.3991  27.7435  187.5413
+13   adverse        5  154.4165        7.7422  260.6658      3.2852  2427.9525  2127.8190   82.7663  29.4484  186.8692
+14   adverse        6  153.3066        8.0534  256.5366      3.1794  2485.4882  2095.6429   77.8424  28.1165  186.1586
+15   adverse        7  152.4911        8.3771  252.8154      3.0735  2540.9349  2078.3557   73.5422  26.8448  185.4099
+16   adverse        8  151.9654        8.7138  249.4864      2.9677  2594.0940  2075.5944   69.7934  25.6306  184.6236
+17   adverse        9  151.7265        9.0641  246.5353      2.8618  2644.7718  2087.3011   66.5348  24.4713  183.8003
+18    severe        1  157.6272        9.9144  275.7697      2.8187  2215.1801  2201.9391  103.1783  24.0630  189.6700
+19    severe        2  156.9433        9.8493  271.1080      3.0341  2244.9172  2208.9197   96.7254  26.4936  188.3835
+20    severe        3  155.6877        9.7846  265.3997      3.2495  2271.9887  2194.4830   89.4252  29.1698  186.9373
+21    severe        4  153.8743        9.7203  258.7146      3.4649  2296.2891  2159.0475   81.5357  32.1162  185.3354
+22    severe        5  151.5228        9.6565  251.1330      3.6804  2317.7229  2103.6323   73.3167  35.3603  183.5819
+23    severe        6  148.6585        9.5930  242.7443      3.8958  2336.2054  2029.8089   65.0169  38.9321  181.6814
+24    severe        7  146.3485        9.6519  235.5602      3.6956  2357.7869  1976.3505   58.4057  35.6020  179.9510
+25    severe        8  144.5684        9.7112  229.4893      3.4954  2382.5503  1941.7634   53.1482  32.5567  178.3862
+26    severe        9  143.2997        9.7709  224.4555      3.2953  2410.5915  1925.0950   48.9923  29.7719  176.9830
+          dr      n
+year               
+1     0.0124  10000
+2     0.0070  10000
+3     0.0056  10000
+4     0.0048  10000
+5     0.0164  10000
+6     0.0117  10000
+7     0.0083  10000
+8     0.0057  10000
+9     0.0081  10000
+10    0.0064  10000
+11    0.0056  10000
+12    0.0057  10000
+13    0.0053  10000
+14    0.0888  10000
+15    0.0175  10000
+16    0.0083  10000
+17    0.0482  10000
+18    0.0146  10000
+19    0.0134  10000
+20    0.0116  10000
+from_rating         A        AA  AAA         B        BB       BBB     CCC/C
+year                                                                        
+1            0.000502  0.000000  0.0  0.039112  0.006557  0.002525  0.408163
+2            0.000000  0.000000  0.0  0.013966  0.003006  0.001013  0.285714
+3            0.000000  0.000000  0.0  0.020609  0.000882  0.000771  0.184211
+4            0.000469  0.000000  0.0  0.013393  0.001824  0.000514  0.198473
+5            0.001809  0.000000  0.0  0.061511  0.014382  0.002825  0.379845
+6            0.000463  0.002252  0.0  0.032800  0.007264  0.001043  0.310734
+7            0.000464  0.000000  0.0  0.017652  0.002966  0.000785  0.256410
+8            0.000000  0.000000  0.0  0.013889  0.003509  0.000000  0.177778
+9            0.000427  0.000000  0.0  0.024295  0.003077  0.000800  0.264901
+10           0.000000  0.000000  0.0  0.020178  0.001558  0.000000  0.229299
+11           0.000410  0.000000  0.0  0.013821  0.001584  0.000541  0.224490
+12           0.000000  0.000000  0.0  0.014975  0.002194  0.000271  0.276423
+13           0.000000  0.000000  0.0  0.013582  0.002237  0.001080  0.235772
+14           0.022102  0.016611  0.0  0.290323  0.114090  0.047877  0.796875
+15           0.000471  0.000000  0.0  0.033490  0.006163  0.001369  0.311047
+16           0.000000  0.000000  0.0  0.014502  0.001554  0.000273  0.216730
+17           0.007108  0.002370  0.0  0.149831  0.039115  0.013421  0.561321
+18           0.000491  0.000000  0.0  0.031646  0.003507  0.000274  0.248571
+19           0.000000  0.000000  0.0  0.030151  0.006516  0.000552  0.238255
+20           0.000000  0.000000  0.0  0.024631  0.002021  0.000278  0.241497
+
+
+## [6] assistant
+
+**[reasoning]**
+
+> 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
+
+**tool call: python**
+
+```
+
+import pandas as pd, numpy as np
+from scipy.stats import norm
+m=pd.read_csv('data/macro_history.csv')
+t=pd.read_csv('data/transitions.csv')
+c=[x for x in t.columns if x.startswith('to_')]
+t['n']=t[c].sum(axis=1)
+mix=t.pivot(index='year',columns='from_rating',values='n'); print(mix)
+# mix-standardized: pooled rate per rating, then year Z via Vasicek-ish: fit per year probit shift
+R=['AAA','AA','A','BBB','BB','B','CCC/C']
+D=t.pivot(index='year',columns='from_rating',values='to_D')[R]; N=mix[R]
+pd_=(D.sum()/N.sum()); print(pd_)
+from scipy.optimize import minimize_scalar
+Z=[]
+for y in N.index:
+    f=lambda z: -np.sum(D.loc[y]*np.log(np.clip(norm.cdf(norm.ppf(pd_.clip(1e-5))+z),1e-12,1))+(N.loc[y]-D.loc[y])*np.log(1-norm.cdf(norm.ppf(pd_.clip(1e-5))+z)))
+    Z.append(minimize_scalar(f,bounds=(-3,3),method='bounded').x)
+m['year']=(m.quarter+79)//4+1
+agg=m.groupby('year').agg(['mean','max','min'])
+agg.columns=['_'.join(x) for x in agg.columns]
+agg['Z']=Z
+print(agg[['Z','unemployment_mean','unemployment_max','bbb_spread_mean','bbb_spread_max','vix_max','gdp_min','nasdaq_mean','cpi_mean']].round(3))
+print(agg.corr()['Z'].sort_values())
+
+```
+
+## [7] tool
+
 from_rating     A   AA  AAA     B    BB   BBB  CCC/C
 year                                                
 1            1991  427   88   946  2440  3961    147
@@ -346,828 +407,744 @@ year
 18           2035  352   42  1580  1996  3645    350
 19           2092  361   41  1592  1995  3621    298
 20           2099  362   39  1624  1979  3603    294
-from_rating      A     AA  AAA      B     BB    BBB  CCC/C
-year                                                      
-1            0.001  0.000  0.0  0.039  0.007  0.003  0.408
-2            0.000  0.000  0.0  0.014  0.003  0.001  0.286
-3            0.000  0.000  0.0  0.021  0.001  0.001  0.184
-4            0.000  0.000  0.0  0.013  0.002  0.001  0.198
-5            0.002  0.000  0.0  0.062  0.014  0.003  0.380
-6            0.000  0.002  0.0  0.033  0.007  0.001  0.311
-7            0.000  0.000  0.0  0.018  0.003  0.001  0.256
-8            0.000  0.000  0.0  0.014  0.004  0.000  0.178
-9            0.000  0.000  0.0  0.024  0.003  0.001  0.265
-10           0.000  0.000  0.0  0.020  0.002  0.000  0.229
-11           0.000  0.000  0.0  0.014  0.002  0.001  0.224
-12           0.000  0.000  0.0  0.015  0.002  0.000  0.276
-13           0.000  0.000  0.0  0.014  0.002  0.001  0.236
-14           0.022  0.017  0.0  0.290  0.114  0.048  0.797
-15           0.000  0.000  0.0  0.033  0.006  0.001  0.311
-16           0.000  0.000  0.0  0.015  0.002  0.000  0.217
-17           0.007  0.002  0.0  0.150  0.039  0.013  0.561
-18           0.000  0.000  0.0  0.032  0.004  0.000  0.249
-19           0.000  0.000  0.0  0.030  0.007  0.001  0.238
-20           0.000  0.000  0.0  0.025  0.002  0.000  0.241
+from_rating
+AAA      0.000000
+AA       0.001329
+A        0.001909
+BBB      0.003765
+BB       0.010465
+B        0.043443
+CCC/C    0.293126
+dtype: float64
+          Z  unemployment_mean  ...  nasdaq_mean  cpi_mean
+year                            ...                       
+1    -0.054              3.820  ...      341.647   109.881
+2    -0.356              3.849  ...      322.286   117.538
+3    -0.441              3.427  ...      368.029   125.784
+4    -0.482              5.061  ...      326.853   135.143
+5     0.102              8.774  ...      437.926   142.426
+6    -0.136              7.053  ...      369.396   141.664
+7    -0.337              9.136  ...      432.794   140.235
+8    -0.485              9.170  ...      661.525   143.762
+9    -0.289              8.609  ...      743.449   144.518
+10   -0.412              6.094  ...      528.433   151.122
+11   -0.451              3.673  ...      441.963   160.084
+12   -0.419              2.986  ...      329.804   168.548
+13   -0.429              4.197  ...      298.058   180.232
+14    1.056              6.876  ...      158.984   174.576
+15   -0.113              5.933  ...      173.532   183.586
+16   -0.438              5.962  ...      186.475   195.611
+17    0.576              8.185  ...      151.464   201.062
+18   -0.222              6.892  ...      143.197   200.987
+19   -0.215              8.618  ...      135.424   192.673
+20   -0.305              9.130  ...      112.896   188.427
 
-
-## [6] assistant
-
-**[reasoning]**
-
-> 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
-
-**tool call: bash**
-
-```
-mkdir -p /w; cat > /w/common.py <<'EOF'
-import pandas as pd, numpy as np
-from scipy.stats import norm
-from scipy.optimize import minimize
-R=['AAA','AA','A','BBB','BB','B','CCC/C']; S=R+['D']
-cols=['to_AAA','to_AA','to_A','to_BBB','to_BB','to_B','to_CCC_C','to_D']
-t=pd.read_csv('data/transitions.csv')
-years=sorted(t.year.unique())
-C=np.zeros((len(years),7,8))
-for _,r in t.iterrows(): C[r.year-1,R.index(r.from_rating)]=r[cols].values
-mh=pd.read_csv('data/macro_history.csv'); sc=pd.read_csv('data/scenario.csv')
-def feats(df):
-    df=df.sort_values('quarter').reset_index(drop=True)
-    f=pd.DataFrame({'quarter':df.quarter})
-    for v in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
-        f[v+'_g']=np.log(df[v]).diff()
-        f[v+'_g4']=np.log(df[v]).diff(4)
-    for v in ['unemployment','bbb_spread','vix']:
-        f[v]=df[v]; f[v+'_d']=df[v].diff(); f[v+'_d4']=df[v].diff(4)
-    f['lvix']=np.log(df.vix)
-    return f
-FH=feats(mh)
-FS={s:feats(pd.concat([mh,sc[sc.scenario==s].drop(columns='scenario')])) for s in ['baseline','adverse','severe']}
-def yq(y): return [4*(y-20)-3+k for k in range(4)]
-EOF
-echo ok
-```
-
-## [7] tool
-
-ok
+[20 rows x 9 columns]
+nasdaq_min          -0.386516
+nasdaq_mean         -0.373113
+nasdaq_max          -0.328524
+sp500_min           -0.054414
+sp500_mean          -0.039508
+djia_max            -0.023590
+djia_mean           -0.008632
+sp500_max           -0.003950
+djia_min            -0.002435
+unemployment_min     0.015447
+bbb_spread_min       0.070997
+gdp_min              0.123091
+gdp_mean             0.143156
+gdp_max              0.172356
+quarter_min          0.212821
+quarter_mean         0.212821
+quarter_max          0.212821
+cpi_max              0.233540
+cpi_mean             0.245287
+cpi_min              0.258880
+unemployment_mean    0.263648
+hpi_min              0.347359
+hpi_max              0.352192
+hpi_mean             0.356825
+vix_min              0.443490
+unemployment_max     0.583665
+bbb_spread_mean      0.619556
+bbb_spread_max       0.888751
+vix_mean             0.954205
+vix_max              0.976979
+Z                    1.000000
+Name: Z, dtype: float64
 
 
 ## [8] assistant
 
 **[reasoning]**
 
-> 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
+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
 
-**tool call: bash**
+**tool call: python**
 
 ```
-cat >> /w/common.py <<'EOF'
-from scipy.linalg import fractional_matrix_power
-def init_u():
-    A=C.sum(0); A=A/A.sum(1,keepdims=True)
-    M=np.eye(8); M[:7]=A
-    Q=np.real(fractional_matrix_power(M,0.25)); Q=np.clip(Q,1e-7,None); Q/=Q.sum(1,keepdims=True)
-    th=[]
-    for i in range(7):
-        tail=np.cumsum(Q[i,::-1])[::-1][1:]  # P(state>=k), k=1..7
-        tail=np.clip(tail,1e-7,1-1e-7)
-        u=norm.ppf(tail)
-        th.append(u[0]); th+=list(np.log(np.maximum(-np.diff(u),1e-3)))
-    return np.array(th)
-def qmat(th,s):
-    """th: 49 params; s: shift scalar -> 8x8 quarterly matrix"""
-    M=np.zeros((8,8)); M[7,7]=1
-    for i in range(7):
-        p=th[7*i:7*i+7]; u=np.concatenate([[p[0]],p[0]-np.cumsum(np.exp(p[1:]))])
-        tail=norm.cdf(u+s)
-        full=np.concatenate([[1],tail,[0]])
-        M[i]=np.maximum(full[:-1]-full[1:],1e-12)
-    return M
-def nll(th,shifts):
-    L=0
-    for yi,y in enumerate(years):
-        P=np.eye(8)
-        for s in shifts[yi]: P=P@qmat(th,s)
-        L-= (C[yi]*np.log(P[:7]+1e-300)).sum()
-    return L
-EOF
-cat > /w/single.py <<'EOF'
-import sys; sys.path.insert(0,'/w'); from common import *
-mu=FH.mean(); sd=FH.std()
-def X(F,names): 
-    Z=((F[names]-mu[names])/sd[names]).fillna(0); Z.index=F.quarter; return Z
-th0=init_u()
-def fit(names,lag=0):
-    Z=X(FH,names)
-    def f(p):
-        th=p[:49]; b=p[49:]
-        sh=[[float(Z.loc[q-lag].values@b) if (q-lag) in Z.index else 0 for q in yq(y)] for y in years]
-        return nll(th,sh)
-    p0=np.concatenate([th0,np.zeros(len(names))])
-    r=minimize(f,p0,method='L-BFGS-B',options={'maxiter':3000})
-    return r
-base=fit([])
-print('none',base.fun)
-cands=[c for c in FH.columns if c!='quarter']
-for c in cands:
-    r=fit([c]); print(c, round(base.fun-r.fun,1), r.x[49:].round(3))
-EOF
-cd / && cd ~ ; cp -r /root/data . 2>/dev/null; ls; python /w/single.py
+
+code = r'''
+import pandas as pd, numpy as np
+from scipy.stats import norm
+from scipy.optimize import minimize
+m=pd.read_csv('data/macro_history.csv').set_index('quarter')
+t=pd.read_csv('data/transitions.csv')
+R=['AAA','AA','A','BBB','BB','B','CCC/C']; C=['to_AAA','to_AA','to_A','to_BBB','to_BB','to_B','to_CCC_C','to_D']
+years=sorted(t.year.unique())
+cnt={y:t[t.year==y].set_index('from_rating').loc[R,C].values.astype(float) for y in years}
+# pooled annual matrix -> quarterly root init
+P=sum(cnt.values()); P=(P+0.01)/ (P+0.01).sum(1,keepdims=True)
+w,V=np.linalg.eig(P); Q=np.real(V@np.diag(w**0.25)@np.linalg.inv(V)); Q=np.clip(Q,1e-7,None); Q/=Q.sum(1,keepdims=True)
+def thr_from(Q):
+    # cum prob of ending at or worse than column j (j=1..7), from worst: cumulative from right
+    cum=np.cumsum(Q[:,::-1],axis=1)[:,::-1][:,1:]  # P(state>=j) for j=1..7
+    return norm.ppf(np.clip(cum,1e-9,1-1e-9))
+T0=thr_from(Q)
+def build(T,s,sens):
+    cum=norm.cdf(T+ (sens[:,None]*s))
+    cum=np.concatenate([np.ones((7,1)),cum,np.zeros((7,1))],1)
+    Qs=cum[:,:-1]-cum[:,1:]
+    Qs=np.clip(Qs,0,None)
+    Qf=np.zeros((8,8)); Qf[:7]=Qs; Qf[7,7]=1
+    return Qf
+def annual(T,svec,sens):
+    A=np.eye(8)
+    for s in svec: A=A@build(T,s,sens)
+    return A[:7]
+'''
+open('common.py','w').write(code)
+
 ```
 
 ## [9] tool
 
-Traceback (most recent call last):
-  File "/w/single.py", line 1, in <module>
-    import sys; sys.path.insert(0,'/w'); from common import *
-                                         ^^^^^^^^^^^^^^^^^^^^
-  File "/w/common.py", line 6, in <module>
-    t=pd.read_csv('data/transitions.csv')
-      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/pandas/io/parsers/readers.py", line 873, in read_csv
-    return _read(filepath_or_buffer, kwds)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/pandas/io/parsers/readers.py", line 300, in _read
-    parser = TextFileReader(filepath_or_buffer, **kwds)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/pandas/io/parsers/readers.py", line 1645, in __init__
-    self._engine = self._make_engine(f, self.engine)
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/pandas/io/parsers/readers.py", line 1904, in _make_engine
-    self.handles = get_handle(
-                   ^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/pandas/io/common.py", line 930, in get_handle
-    handle = open(
-             ^^^^^
-FileNotFoundError: [Errno 2] No such file or directory: 'data/transitions.csv'
-
-
-
 ## [10] assistant
 
-**tool call: bash**
+**[reasoning]**
+
+> CAQSjwcKEAgTGAI4AUIIdGhpbmtpbmcSDI+BooAQafVe7vQGxRoMgNEbBayJUzE+3r51IjAZE45cb3MsMzpGHd420cBJCw2vmP3XXu9gidURdeUTRAYfAs8iImb+ocv/bd34tRsqrAbLpzcURclt51X435YUCrcEW5BAhuTMwMTN5WDROZurPpstzrN8/5wRAHDFItVFmDN0Y5ZG/sr9nmtl3AlOX64P47an+5y2kZ5u2duUmPcEW1MBWLKyc46DlGnXzw0ceUQW3G35V1HXYZNEM3lMV3jl56ysCoPeow9WXJRBC5F13dIz3/RaRPbiJWEq3EMRi1wni/c5w+r14iqyZ6Y8+WMNBWJsfKo8whYBmKIls1JxWc1aBjQVwuHeLZLTBbv9FEp4lCFt+Qzt62T3pJtkWJozNr4inBcTIMPjEwRu0e+1qvsxH2BDmZFIyabx1wpfuTU3C0lzP1sDY+Gh0hsfxj93NPEmrMvH0LW9cA1dik1f5wWr4Id05DRk8WUDsaCu10JjssBM4pPbxQjj8Qse4pShMPgkBnraMx1Wxh6IKvJ/K3UAUEU9O9euTuLNsMEiZ7SOZW6Xk26qTpgtXqGwAaa5SivEiRbo9tR62JP/X3iUVubm/sNJ4yen8V525kqjRF5lK9zN6u3ZxDjF8Y46KAluAJiBXURDjBf3vVQlH0zQ0tKRETUXCfjchL5Wr/C9s8DETfI4HH+c9ffFgGZ7UX4C7pwBwT7+8OFSAJ9IAP3ETCx6fDeh0apxKpvJlXh7y773XsEHStXkh6qx0bzpKMQIzy9akqYGcEhT80D0Zg312oFKJS6DrCFXkCRstxhGS3hgRlbdDmJl35JwvJP884nEA/vUDO+ltrHiuNRAtY6/P7JI2Z0YLFSRoVUE0RyfdrSMIIZzlExcPgOpZ19ttXWzf39+7VKOcd2G9a7YNGY6vjIWfpSfG+sdf58fXKzGmcj4qTC2Gdy5PpZG6uMm//LzqcorP4nLO9qCZbjDWSWlMAvXR1YmGaWI5ORlSsWyieU6r5jqesD/RGGfl5Q5s9BKVlAJwQDHBncH0jFlPktr7DymotMXO6okA1OZOgFfnvWQXEAIzTJ3gba6mDsQlg/YD90vriLRz+j/wNcb3gIJsEfTYPy/2BFuCjWk4L3btt3/VaKikQKysM0dveioWxV+lBKxGwEaYFEuwRvJKEIolnNJ+VonrSF2LXcExRgB
+
+**tool call: python**
 
 ```
-cd -; pwd
+
+code = r'''
+exec(open('common.py').read())
+def pack_T(T):
+    d=-np.diff(T,axis=1); d=np.clip(d,1e-3,None)
+    return np.concatenate([T[:,:1],np.log(d)],1).ravel()
+def unpack_T(p):
+    p=p.reshape(7,7); T=np.concatenate([p[:,:1], p[:,:1]-np.cumsum(np.exp(p[:,1:]),1)],1); return T
+def qtrs(y): e=-76+4*(y-1); return [e-3,e-2,e-1,e]
+def fit(feat, fyears, sens_free=True, verbose=False):
+    k=feat.shape[1]
+    X={y: feat.loc[qtrs(y)].values for y in fyears}
+    mu=np.nanmean(np.vstack(list(X.values())),0); sd=np.nanstd(np.vstack(list(X.values())),0)
+    Xs={y:(X[y]-mu)/sd for y in fyears}
+    def unp(p):
+        T=unpack_T(p[:49]); b=p[49:49+k]; sens=np.ones(7)
+        if sens_free: sens=np.concatenate([[1],np.exp(p[49+k:49+k+6])]) if False else np.exp(np.concatenate([[0],p[49+k:55+k]]))
+        return T,b,sens
+    def nll(p):
+        T,b,sens=unp(p); L=0
+        for y in fyears:
+            A=annual(T,Xs[y]@b,sens); L-=np.sum(cnt[y]*np.log(np.clip(A,1e-12,1)))
+        return L
+    p0=np.concatenate([pack_T(T0),np.zeros(k)+0.05,np.zeros(6 if sens_free else 0)])
+    r=minimize(nll,p0,method='L-BFGS-B',options={'maxiter':5000,'maxfun':200000})
+    T,b,sens=unp(r.x)
+    return dict(nll=r.fun,T=T,b=b,sens=sens,mu=mu,sd=sd,x=r.x,ok=r.success)
+'''
+open('fitlib.py','w').write(code)
+
 ```
 
 ## [11] tool
 
-bash: line 1: cd: OLDPWD not set
-
-/workspace
-
-
 ## [12] assistant
 
-**tool call: bash**
+**tool call: python**
 
 ```
-cd /workspace; ls; time python /w/single.py
+
+exec(open('fitlib.py').read())
+import time
+fy=list(range(4,21))
+m['lvix']=np.log(m.vix); m['lspr']=np.log(m.bbb_spread); m['dgdp']=np.log(m.gdp).diff(); m['dun']=m.unemployment.diff()
+specs={'vix':['vix'],'lvix':['lvix'],'spr':['bbb_spread'],'vix+spr':['vix','bbb_spread'],'un':['unemployment'],'vix+un':['vix','unemployment'],'spr+un':['bbb_spread','unemployment'],'vix+spr+un':['vix','bbb_spread','unemployment'],'vix+dgdp':['vix','dgdp']}
+for k,v in specs.items():
+    t0=time.time(); r=fit(m[v],fy,sens_free=False)
+    print(k, round(r.nll,2), r.b.round(3), r.ok, round(time.time()-t0,1))
+
 ```
 
 ## [13] tool
 
-data
+Traceback (most recent call last):
+  File "<stdin>", line 2, in <module>
+  File "<string>", line 2, in <module>
+  File "<string>", line 12, in <module>
+  File "/usr/local/lib/python3.12/site-packages/numpy/linalg/_linalg.py", line 1498, in eig
+    _assert_stacked_square(a)
+  File "/usr/local/lib/python3.12/site-packages/numpy/linalg/_linalg.py", line 258, in _assert_stacked_square
+    raise LinAlgError('Last 2 dimensions of the array must be square')
+numpy.linalg.LinAlgError: Last 2 dimensions of the array must be square
+
 
 
 ## [14] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cd /workspace; cat >> /w/common.py <<'EOF'
-def umat(th):
-    p=th.reshape(7,7); return np.concatenate([p[:,:1],p[:,:1]-np.cumsum(np.exp(p[:,1:]),1)],1)
-def qmat_u(U,s):
-    tail=norm.cdf(U+s)  # 7x7
-    full=np.concatenate([np.ones((7,1)),tail,np.zeros((7,1))],1)
-    M=np.zeros((8,8)); M[7,7]=1; M[:7]=np.maximum(full[:,:-1]-full[:,1:],1e-12); return M
-def nll_fast(th,shifts):
-    U=umat(th); L=0
-    for yi in range(len(years)):
-        P=qmat_u(U,shifts[yi][0])
-        for s in shifts[yi][1:]: P=P@qmat_u(U,s)
-        L-=(C[yi]*np.log(P[:7]+1e-300)).sum()
-    return L
-EOF
-cat > /w/single.py <<'EOF'
-import sys,time; sys.path.insert(0,'/w'); from common import *
-mu=FH.mean(); sd=FH.std()
-def X(F,names): 
-    Z=((F[names]-mu[names])/sd[names]).fillna(0); Z.index=F.quarter; return Z
-th0=init_u()
-t0=time.time()
-r=minimize(lambda th: nll_fast(th,[[0]*4]*20),th0,method='L-BFGS-B',options={'maxiter':500})
-thb=r.x; print('none',r.fun,time.time()-t0)
-np.save('/w/thb.npy',thb)
-def fit(names,lag=0):
-    Z=X(FH,names)
-    QQ=np.array([[Z.loc[q-lag].values if (q-lag) in Z.index else np.zeros(len(names)) for q in yq(y)] for y in years])
-    f=lambda b: nll_fast(thb,QQ@b)
-    r=minimize(f,np.zeros(len(names)),method='L-BFGS-B'); return r
-cands=[c for c in FH.columns if c!='quarter']
-for c in cands:
-    r=fit([c]); print(c, round(-r.fun,1), r.x.round(3))
-EOF
-timeout 3000 python /w/single.py
+python - <<'E'
+s=open('common.py').read()
+s=s.replace("P=(P+0.01)/ (P+0.01).sum(1,keepdims=True)","P=(P+0.01)/ (P+0.01).sum(1,keepdims=True); P=np.vstack([P,np.eye(8)[7]])")
+s=s.replace("Q=np.clip(Q,1e-7,None); Q/=Q.sum(1,keepdims=True)","Q=np.clip(Q,1e-7,None); Q/=Q.sum(1,keepdims=True); Q=Q[:7]")
+open('common.py','w').write(s)
+E
 ```
 
 ## [15] tool
 
-none 88088.77090554716 1.0333936214447021
-gdp_g -84779.4 [-0.241]
-gdp_g4 -85355.7 [-0.214]
-hpi_g -87957.7 [0.064]
-hpi_g4 -88026.9 [0.037]
-sp500_g -85294.3 [-0.343]
-sp500_g4 -86856.0 [-0.224]
-djia_g -85752.2 [-0.355]
-djia_g4 -87317.7 [-0.171]
-nasdaq_g -84415.6 [-0.289]
-nasdaq_g4 -85823.5 [-0.216]
-cpi_g -84979.5 [-0.27]
-cpi_g4 -86741.4 [-0.152]
-unemployment -87491.8 [0.144]
-unemployment_d -86854.5 [0.228]
-unemployment_d4 -86027.6 [0.23]
-bbb_spread -83759.7 [0.27]
-bbb_spread_d -85653.0 [0.291]
-bbb_spread_d4 -85297.9 [0.277]
-vix -82607.5 [0.266]
-vix_d -84688.7 [0.305]
-vix_d4 -84522.6 [0.281]
-lvix -83181.5 [0.289]
-
-
 ## [16] assistant
 
-**[reasoning]**
-
-> CAQSsgsKEAgTGAI4AUIIdGhpbmtpbmcSDMS8iU6siByqHV6KxhoMbJriSO3LpGh7hOv/IjBFhHjTLNIhDBP0ruaV3BvxZM8ppMyoVNP0QezZfDFzelnBzzUSufseTtWhHZeHclAqzwqCLQJluwV6Ooqv9xoYUa6W79SKSWEoECqFuLYu+CqwT1j90h1wwFIIS/C1CS3gIKOVdjhtPKkokhhzU/4HX1V/PyfyJs7ZVor7wYN57K0Pfc0uhZR2kpc590pgc7Dsk6zWFeHkdLxbQKAf1xf/M2GxoW8tv7AHYNpfMQCE8phYfbwFRGieO0nVnn9BZ+pyfmsrEnVljo6R7Jw4JqJIvhMJ/G/ARrr/KjyReWpRPbvNfeIBg7xxlRDTnTdMDNyDzLQ0pgke8eUD5lniOQV6Blw8IrASprQmRidn8diywHzR2zSY9vxq104qLkdR1I6bfetl8/mAx2I6A1rjBJMLDXtZ76zJdiYvEXRqM2N3sSRAkjeGptoDjyJkNAO6nenz6nD1G8pRZy5X1yzAL2At9bh8TGBzxqXU1ncjTrocdA+QjKPrW62ceb/99raS2YD9R/6Aw7/yn2YxcLaZ9P81UNraGCfU9oBQm+342B4Z7TiccEwbwaHqDZaCM9zZ4hEjXz9s8mfJX6nO11BETLzqj6+sHlPztyM3/EDssnuw+HL0PaKdzqQfKDJaagwVegPl/iZwWMFZ5An8/OhTPWhx/j/JE3i5OLpxE8K/eERERLu1gSQm7VYOaA1kLA0s0xKVD/mKJ87KFev8XZ3zF6VL1I+C1b2U4HAOq1TsaxjOLqhxDNnOn/ppj2sIgT2sEkDR+XpD2lAH03mUpFq5wlq0CyXlRYPPTd5jHYvnJ3UcV7kOqTyL9QlqzQRiAnaU0zc5eZZM4SlZ4G4avqQn8fdHpCocmjij7bSsekRsKZELyLSxMN2bpyG/L0jAN4dWoShhM2W4ot1mxn7WevDhI6U1+AHRabuMLCCRhXffRM+9L1p0U23k9xQIsg592xYWxbuthvDke4SZSaQ3pxFNY48Pbd6sXou+lFZHpBu6Cg7Iokz3l5XepONVnx82a4Gc5eUTLBBbSW0t51EbLhwlhdIJmQupGSXpaq5xHgBggMZ41CV+24v733RZLUI60/KM6uaU9sgTnaFHgOM2s2gk0Nqv9fd2Fbe+uXOtPYmp+VFJNQkt+ovFTUScwJn61xA/UfWpQk1Qq3zNcTQExVEhouJ9KOyBxtW6uSz51yWhbeejQeteD1LBP4nV62uymofhXnPPRoD+iLgM7oC7+8SAZUB19yTggMfKDT96gwgaAJ79MXgSlpjvwbna8ri3PhTFTq/tTx3esjyE6WOqtNT5lThqexJJybwVGReEYP5jIRZW77VNxf8hXpLlAGhk1JvqiW0ZmdUg0ikkOB2QtyBba0He8n20IK+rhzpF8RCpGxBnFOSKBIoYL9NZXLWJtxcUiM3oMY8EswbdEAtDFt78SE0TBgDau7e9Ub4EaFGG2tKgsY5xnHVheYPh4E2nvEtbEnPpK4wptmCq9vPWRgFxb6SrZhnUBGYzjLguXnic+pfd+UTaue2f87mlqIMR1IRSC3YyoHlIKrIxKxaOT2tVvcuYGAr8Omxcs/mjLRYZKFLQY1zO5HGkAbEa1++VcObo3T5acEmjJKI8kMU10cr0UXigFGcQ2DBey/RTuVxKGbPb4/rsx+M4BarsxSY3wDJU3aB+mkwz5VjSPo+FB6UJk6kULEQb7tV3iDBThCmxzi8tRH1gCiX20wMiMloQ9vGBHtsDYY/1APgbx4N6xEzxQEAn6davZw4pP2i/bKWkaOrJSjucmPZyA5hyJ1jdHXv/9ShXe0Gydfd86mxMz9b5myjg7LGPJd9lEJewA/1sZcTD3JV02ii96XS4qFAFaFrIPysYhNl0OvRGcyCF3/xtaCGnrBoYAQ==
-
-**tool call: bash**
+**tool call: python**
 
 ```
-cd /workspace; cat > /w/multi.py <<'EOF'
-import sys,time; sys.path.insert(0,'/w'); from common import *
-mu=FH.mean(); sd=FH.std()
-def X(F,names): 
-    Z=((F[names]-mu[names])/sd[names]).fillna(0); Z.index=F.quarter; return Z
-thb=np.load('/w/thb.npy')
-def QQ(names,lag=0):
-    Z=X(FH,names)
-    return np.array([[Z.loc[q-lag].values if (q-lag) in Z.index else np.zeros(len(names)) for q in yq(y)] for y in years])
-def fitb(names,lag=0,th=thb):
-    Q=QQ(names,lag); r=minimize(lambda b: nll_fast(th,Q@b),np.zeros(len(names)),method='L-BFGS-B'); return r
-for names in [['vix'],['vix','bbb_spread'],['vix','unemployment'],['vix','gdp_g'],['vix','nasdaq_g'],['vix','cpi_g'],['vix','hpi_g'],['vix','sp500_g'],['vix','unemployment_d'],
-              ['bbb_spread','unemployment','gdp_g','nasdaq_g'],['vix','bbb_spread','unemployment','gdp_g','nasdaq_g','hpi_g','cpi_g']]:
-    r=fitb(names); print(names, round(-r.fun,1), r.x.round(3))
-for lag in [1,2]:
-    r=fitb(['vix'],lag); print('lag',lag,round(-r.fun,1))
-EOF
-timeout 3000 python /w/multi.py
+
+exec(open('fitlib.py').read())
+import time
+fy=list(range(4,21))
+m['lvix']=np.log(m.vix); m['lspr']=np.log(m.bbb_spread); m['dgdp']=np.log(m.gdp).diff(); m['dun']=m.unemployment.diff()
+specs={'vix':['vix'],'lvix':['lvix'],'spr':['bbb_spread'],'vix+spr':['vix','bbb_spread'],'un':['unemployment'],'vix+un':['vix','unemployment'],'spr+un':['bbb_spread','unemployment'],'vix+spr+un':['vix','bbb_spread','unemployment'],'vix+dgdp':['vix','dgdp']}
+for k,v in specs.items():
+    t0=time.time(); r=fit(m[v],fy,sens_free=False)
+    print(k, round(r.nll,2), r.b.round(3), r.ok, round(time.time()-t0,1))
+
 ```
 
 ## [17] tool
 
-['vix'] -82607.5 [0.266]
-['vix', 'bbb_spread'] -82601.7 [ 0.285 -0.023]
-['vix', 'unemployment'] -82594.8 [0.258 0.016]
-['vix', 'gdp_g'] -82565.2 [ 0.238 -0.039]
-['vix', 'nasdaq_g'] -82598.5 [0.285 0.026]
-['vix', 'cpi_g'] -82567.5 [ 0.24  -0.038]
-['vix', 'hpi_g'] -82581.7 [0.264 0.025]
-['vix', 'sp500_g'] -82595.5 [0.282 0.03 ]
-['vix', 'unemployment_d'] -82577.9 [ 0.285 -0.04 ]
-['bbb_spread', 'unemployment', 'gdp_g', 'nasdaq_g'] -83230.3 [ 0.142 -0.01  -0.073 -0.1  ]
-['vix', 'bbb_spread', 'unemployment', 'gdp_g', 'nasdaq_g', 'hpi_g', 'cpi_g'] -82473.5 [ 0.273 -0.037 -0.041 -0.066  0.047  0.021 -0.044]
-lag 1 -82984.4
-lag 2 -83101.9
+Traceback (most recent call last):
+  File "<stdin>", line 9, in <module>
+AttributeError: 'dict' object has no attribute 'nll'
+
 
 
 ## [18] assistant
 
-**[reasoning]**
-
-> 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
-
-**tool call: bash**
+**tool call: python**
 
 ```
-cd /workspace; cat > /w/joint.py <<'EOF'
-import sys,time; sys.path.insert(0,'/w'); from common import *
-mu=FH.mean(); sd=FH.std()
-def X(F,names): 
-    Z=((F[names]-mu[names])/sd[names]).fillna(0); Z.index=F.quarter; return Z
-thb=np.load('/w/thb.npy')
-def QQ(names,lag=0):
-    Z=X(FH,names)
-    return np.array([[Z.loc[q-lag].values if (q-lag) in Z.index else np.zeros(len(names)) for q in yq(y)] for y in years])
-def fitj(names,lag=0):
-    Q=QQ(names,lag); k=len(names)
-    r=minimize(lambda b: nll_fast(thb,Q@b),np.zeros(k),method='L-BFGS-B')
-    p0=np.concatenate([thb,r.x])
-    f=lambda p: nll_fast(p[:49],Q@p[49:])
-    r=minimize(f,p0,method='L-BFGS-B',options={'maxiter':400,'maxfun':100000})
-    return r
-import itertools,pickle
-specs=eval(sys.argv[1])
-out={}
-for names in specs:
-    t0=time.time(); r=fitj(names); out[tuple(names)]=r.x
-    print(names, round(-r.fun,1), r.x[49:].round(3), r.nit, round(time.time()-t0))
-    sys.stdout.flush()
-pickle.dump(out,open('/w/fits_%s.pkl'%sys.argv[2],'wb'))
-EOF
-timeout 3000 python /w/joint.py "[[],['vix'],['bbb_spread'],['vix','bbb_spread']]" a
+
+exec(open('fitlib.py').read())
+import time
+fy=list(range(4,21))
+m['lvix']=np.log(m.vix); m['lspr']=np.log(m.bbb_spread); m['dgdp']=np.log(m.gdp).diff(); m['dun']=m.unemployment.diff()
+specs={'vix':['vix'],'lvix':['lvix'],'spr':['bbb_spread'],'vix+spr':['vix','bbb_spread'],'un':['unemployment'],'vix+un':['vix','unemployment'],'spr+un':['bbb_spread','unemployment'],'vix+spr+un':['vix','bbb_spread','unemployment'],'vix+dgdp':['vix','dgdp']}
+for k,v in specs.items():
+    t0=time.time(); r=fit(m[v],fy,sens_free=False)
+    print(k, round(r['nll'],2), r['b'].round(3), r['ok'], round(time.time()-t0,1))
+
 ```
 
 ## [19] tool
-
-[] -88088.8 [] 1 1
-['vix'] -81531.0 [0.31] 400 147
-
 
 ## [20] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cd /workspace; cat >> /w/common.py <<'EOF'
-def nll_grad(p,Q):
-    """p: 49 th + k betas; Q: years x 4 x k feature array. returns nll, grad"""
-    th=p[:49]; b=p[49:]; P_=th.reshape(7,7)
-    E=np.exp(P_[:,1:]); U=np.concatenate([P_[:,:1],P_[:,:1]-np.cumsum(E,1)],1)
-    S=Q@b if len(b) else np.zeros(Q.shape[:2])
-    L=0; gU=np.zeros((7,7)); gb=np.zeros(len(b))
-    for yi in range(Q.shape[0]):
-        Ms=[];Ph=[]
-        for k in range(4):
-            z=U+S[yi,k]; tail=norm.cdf(z)
-            full=np.concatenate([np.ones((7,1)),tail,np.zeros((7,1))],1)
-            M=np.zeros((8,8)); M[7,7]=1; M[:7]=np.maximum(full[:,:-1]-full[:,1:],1e-14)
-            Ms.append(M); Ph.append(norm.pdf(z))
-        pre=[np.eye(8)]
-        for k in range(4): pre.append(pre[-1]@Ms[k])
-        suf=[np.eye(8)]
-        for k in range(3,-1,-1): suf.insert(0,Ms[k]@suf[0])
-        P=pre[4]; Pc=np.maximum(P[:7],1e-300)
-        L-=(C[yi]*np.log(Pc)).sum()
-        G=np.zeros((8,8)); G[:7]=-C[yi]/Pc
-        for k in range(4):
-            gM=pre[k].T@G@suf[k+1].T
-            gq=gM[:7]  # 7x8
-            gfull=gq[:,1:8]-gq[:,0:7]  # for full k=1..7
-            gz=gfull*Ph[k]
-            gU+=gz
-            if len(b): gb+=gz.sum()*Q[yi,k]
-    gp0=gU.sum(1); gd=-E*np.cumsum(gU[:,::-1],1)[:,::-1][:,1:]
-    g=np.concatenate([np.concatenate([gp0[:,None],gd],1).ravel(),gb])
-    return L,g
-EOF
-cat > /w/gtest.py <<'EOF'
-import sys; sys.path.insert(0,'/w'); from common import *
-from scipy.optimize import check_grad
-th=np.load('/w/thb.npy'); Q=np.random.randn(20,4,2)*0.5
-p=np.concatenate([th,[0.2,-0.1]])
-L,g=nll_grad(p,Q); print(L, nll_fast(th,Q@p[49:]))
-eps=1e-6; idx=[0,3,10,30,48,49,50]
-for i in idx:
-    pp=p.copy(); pp[i]+=eps; print(i,g[i],(nll_grad(pp,Q)[0]-L)/eps)
-EOF
-python /w/gtest.py
+cat > run1.py <<'E'
+exec(open('fitlib.py').read())
+import time,sys
+fy=list(range(4,21))
+m['lvix']=np.log(m.vix); m['dgdp']=np.log(m.gdp).diff()
+specs={'vix':['vix'],'lvix':['lvix'],'spr':['bbb_spread'],'vix+spr':['vix','bbb_spread'],'un':['unemployment'],'vix+un':['vix','unemployment'],'spr+un':['bbb_spread','unemployment'],'vix+spr+un':['vix','bbb_spread','unemployment'],'vix+dgdp':['vix','dgdp']}
+k=sys.argv[1]; v=specs[k]
+t0=time.time(); r=fit(m[v],fy,sens_free=False)
+print(k, round(r['nll'],2), r['b'].round(3), r['ok'], round(time.time()-t0,1),flush=True)
+E
+for k in vix lvix spr vix+spr un vix+un spr+un vix+spr+un vix+dgdp; do nohup python run1.py $k > out_$k.txt 2>&1 & done; nproc
 ```
 
 ## [21] tool
 
-87939.24299222644 87939.24299222644
-0 4.06917978256639 4.069515853188932
-3 0.01272854364868419 0.012732925824820995
-10 -0.6809134034888809 -0.6809132173657417
-30 53.50707411332649 53.50829451344907
-48 31.561494972266207 31.58021718263626
-49 2270.6855110660254 2270.6928284605965
-50 3012.9999506260074 3013.0024097161368
+4
 
 
 ## [22] assistant
 
+**[reasoning]**
+
+> CAQSqQgKEAgTGAI4AUIIdGhpbmtpbmcSDDaCvw8fW0zCluiwGhoMnney8+UseGV2VX8TIjCm/ZsqD/fEWMtc5/cwQ6aqjD86p5H2v1XEc9o0GVgJoaRPnkLZ5JPZK6S/eT3+Qj8qxgc20cV0nfinx8BUReJ9Bi/FnQBNraFb5zaLD0yxzIoSwcf7EO0+dWGlZI4r8A09b7c2QEEQm9qInnsW7bzFFxuWTnPqmkeRdkF/ITbI5RUKhmus0y2ZfJ1CxrqJ43dobX2deRrhgzONJrjEmuQ3c/RxvqnMjQlY+pQI3/JgOuUO8zfRyJSaJk+oJyOinHDHBWXW1e+JqBCmEDpbT6oLB+lSbQ3dMo1qXr3mSEJAaoKU9jn+l3DkFmqG1YyHGLsff1EfTue4zkbqWlTzRqb0nyOJzA2Kku+stVl3sp3Ql+jKQrKdvlXWaXeY/0HB0585YE7vzOIhgD3JCD++uJL4wvN5zIXSfXCWbMIYzsGGIVMEeSALh0oWqHrRcpQd1g/fg1xP/FKmzGGE6HM0HRohhpGyPdFkNUC+ox3rXA8qOvT+tZ4KN5vnru35drTGTDaZS7nP5cmVhS4ONdrwQotZMKw3vWC+nv6l404qiYAxNpiv4gwuNUCf0jNsJs+Y+R3lznufl2Ei6VWZQw0qCpfvHOtCL8Knco2eDUw2jgq9QcbRvzksawcaJ7I/3oi1HRyB0c3NZWUVeSml0iStn7zL5LbDK7VPdeKAYoL1nyOn/BZZnlFDh68eK8VEkS1uQcZ04uuZimDZcOVsoLuq30jgBLxJycVOPWWt4Uvm0mAxxawUi/Na8TizmPyunTbpWi21+Y9f3VqsN1aQReoiXnV00x50R3W5zlT6zQ2QG1GFQs2H/nuAXsU6T0nUItg+ljc6+F7XWsjhGzxPFEPVKbJp23ioNmGo98Wb4//tX0SttiOgeYIZc3/tgbyx3YQ8npU8qdA8ObGAKM3suQX80aEeahQFYHlb2/XtjFfAbsUEz4hWfpr3QXNDiAAy10gEqXNI7pC2CJYtFM1yo/N25kZH/Xl9AxFo0DFlhkGBt7yN62hi8LqwiXOvvKmoGKpnHeqPUDQ/vTBKuZAnZMZinGJDxNsegg/XdPLNrLY1DOPDvbdTy7sq/BGq+P4cZl8zf+IMca9TXK1rXUNXgEpepyXUAUsHMkkeLyFOjxW6NhxtzWQTap6tZS9Vi5vwcHk1F4UGlQQU9m3JmniGDwgk4NdopMTThA0x72RZeSqGjSdvFMDiA5muqlrECQSb6FTA4SFUbelUKro2M3AZPkSTAM+ukg5iiP2XO84yjFNcgkhHFFJYCUyKkqHK9vtSbxA65yjHAY7+vuQIUSJBE8Uh8NDXUBkaceU5l7Q8LXkZS/hh1YZgNviBRuIxHuMFVkRrJUbsoJCC7BG8S8EYAQ==
+
 **tool call: bash**
 
 ```
-cd /workspace; cat > /w/joint.py <<'EOF'
-import sys,time; sys.path.insert(0,'/w'); from common import *
-mu=FH.mean(); sd=FH.std()
-def X(F,names): 
-    Z=((F[names]-mu[names])/sd[names]).fillna(0); Z.index=F.quarter; return Z
-thb=np.load('/w/thb.npy')
-def QQ(names,lag=0):
-    Z=X(FH,names)
-    return np.array([[Z.loc[q-lag].values if (q-lag) in Z.index else np.zeros(len(names)) for q in yq(y)] for y in years]).reshape(20,4,len(names))
-def fitj(names,lag=0):
-    Q=QQ(names,lag); k=len(names)
-    p0=np.concatenate([thb,np.full(k,0.1)])
-    r=minimize(nll_grad,p0,args=(Q,),jac=True,method='L-BFGS-B',options={'maxiter':5000,'maxfun':20000})
-    return r
-import pickle
-if __name__=='__main__':
-    specs=eval(sys.argv[1]); out={}
-    for names in specs:
-        t0=time.time(); r=fitj(names); out[tuple(names)]=r.x
-        print(names, round(-r.fun,1), r.x[49:].round(3), r.nit, round(time.time()-t0)); sys.stdout.flush()
-    pickle.dump(out,open('/w/fits_%s.pkl'%sys.argv[2],'wb'))
-EOF
-timeout 1000 python /w/joint.py "[[],['vix']]" a
+sleep 240; cat out_*
 ```
 
 ## [23] tool
 
-[] -88088.8 [] 1 0
-['vix'] -81531.0 [0.31] 369 17
-
-
 ## [24] assistant
-
-**[reasoning]**
-
-> CAQS7QYKEAgTGAI4AUIIdGhpbmtpbmcSDGFPKRCwnFpaHo+LnxoMhISgCMtX/HHQkScOIjDYaAQSpUoh0XC+aYwuYSpHX67uqT4tS1sBZ4iy40jmuSz+1h1Vk2yyWWqFB839Kt8qigb3o422R9KsIdytUHFL95Fkz/zT1vSJy7E5BjGVHDJvzSeKhyCcwgaXNccjJ076CXhGGFILXPM9GLxcEUmsevjaTFuW3kSniWcCYGcxp9SBghub0kTNyNitgweEMSxNoaLC/3odmfyqQ3VJbvHf6ofSNjceV0iJRO0LbfKybp4XzMoKlyoJSSAYZAJ4m3LYvj/vQdF6W8HLIXVfmtc2sBdSpeJ8bFPlN1NxVAN+qlyp0A7uxi6b7mu8p2Wg+1wB7AGnUhLaqt+Z0Y4lIyv2i4HdKwjumX6AIOD2aJVSxhDirCr6G/VUILcK8tBCV6p4UMyY/xe8yXiGrEvLgL7DdaC/sLQEdCoijq+8490QtRWYCMWqOMBiWm5pYYsRAOZO1kWHLD0mZvQiYanN3payB9jLmVaNLDs4Tp75JTnvTuQMZRRCdOwzcY214W1NmYZrEIkq83M6Vkjx8J3QfIfUo8X5IetibS9uilhXo808F6zN35vdotjsQbwzPTz65me0j6tC/GflNEEBhVgKH3STtogHtRiiDwVo2ZZFALXzA0UgrXPJHRB869QHqlVNVI+FGlXm7VIRV9K04wQvwWgzj6w4nKtiUh9rLvxE0qbzMr5peQZxNS3dgzCd+LSqU989MWC7ibx7JkVDP5qsyb78nG16q4HzyIWIAg8UnF0vZZ3InkLRIIx26LTiQWsgbTc9YmKwh5U4rkm34goXvCUv20q98PdbXiplwOMADgczAu3/FdCpqOO0gRHAq44KHgnvlyTGRe+DzlUGIIohmW9/BOZSGpW8Ls1gtZJt1sIGJ3N7r+cVnNwdaACLb/0iQAhn0xfutGKizuI4om9KRa6/Bj7pic/Is/NEqwivEcYMYUskqtOwaMpqKMKgCBgFxbC8j8hj/0+H3kYGYzA8NB6oY8lcXNU2WBwtIVuiwwrC2ak5aac9//ZG5sS3IBbNFPkHJnFv+Umr3lPSeULWu4k6QnSHuyG99lHrxgrKj15l2vubr1RN/sTt6sDv1NVvmDxEVwQXA+mzoS5vR5PsGAE=
 
 **tool call: bash**
 
 ```
-cd /workspace; timeout 3000 python /w/joint.py "[['bbb_spread'],['lvix'],['vix','bbb_spread'],['vix','gdp_g'],['vix','unemployment'],['vix','nasdaq_g'],['vix','hpi_g'],['vix','cpi_g'],['vix','unemployment_d'],['vix','sp500_g'],['vix','djia_g'],['bbb_spread','gdp_g','nasdaq_g','unemployment']]" b
+cat out_*
 ```
 
 ## [25] tool
-
-['bbb_spread'] -82740.1 [0.327] 343 12
-['lvix'] -82062.7 [0.354] 388 12
-['vix', 'bbb_spread'] -81529.9 [ 0.32  -0.011] 368 11
-['vix', 'gdp_g'] -81439.0 [ 0.268 -0.061] 384 11
-['vix', 'unemployment'] -81486.8 [0.296 0.032] 397 12
-['vix', 'nasdaq_g'] -81529.3 [ 0.3   -0.014] 370 15
-['vix', 'hpi_g'] -81516.5 [0.308 0.021] 441 16
-['vix', 'cpi_g'] -81432.1 [ 0.266 -0.068] 389 19
-['vix', 'unemployment_d'] -81530.8 [0.309 0.002] 441 22
-['vix', 'sp500_g'] -81520.2 [0.328 0.032] 382 18
-['vix', 'djia_g'] -81524.6 [0.323 0.028] 370 18
-['bbb_spread', 'gdp_g', 'nasdaq_g', 'unemployment'] -81981.8 [ 0.154 -0.054 -0.167  0.009] 404 19
-
 
 ## [26] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cd /workspace; cat > /w/fe.py <<'EOF'
-import sys; sys.path.insert(0,'/w'); from common import *
-thb=np.load('/w/thb.npy')
-Q=np.zeros((20,4,20))
-for y in range(20): Q[y,:,y]=1
-p0=np.concatenate([thb,np.zeros(20)])
-r=minimize(nll_grad,p0,args=(Q,),jac=True,method='L-BFGS-B',options={'maxiter':5000})
-print(-r.fun); s=r.x[49:]; s=s-np.median(s)
-np.save('/w/fe.npy',r.x)
-A=FH.copy(); A['year']=(A.quarter+3)//4+20  # q=-79..-76 -> year1
-A['year']=np.floor((A.quarter+3)/4).astype(int)+20
-agg=A.groupby('year').agg(['mean','max','min'])
-df=pd.DataFrame({'s':s},index=years)
-for c in ['vix','bbb_spread','unemployment','gdp_g','cpi_g','nasdaq_g','hpi_g','sp500_g','unemployment_d']:
-    df[c+'_mean']=agg[(c,'mean')].reindex(years).values
-    df[c+'_ext']=agg[(c,'max' if c in['vix','bbb_spread','unemployment','unemployment_d'] else 'min')].reindex(years).values
-print(df.round(3).to_string())
-print(df.corr()['s'].round(3))
-EOF
-python /w/fe.py
+cd ~; timeout 60 python -c "
+exec(open('fitlib.py').read())
+import time
+T=T0; t0=time.time()
+for i in range(100): annual(T,np.zeros(4),np.ones(7))
+print((time.time()-t0)/100)
+"; cat out_*
 ```
 
 ## [27] tool
 
--81489.75052247127
-        s  vix_mean  vix_ext  bbb_spread_mean  bbb_spread_ext  unemployment_mean  unemployment_ext  gdp_g_mean  gdp_g_ext  cpi_g_mean  cpi_g_ext  nasdaq_g_mean  nasdaq_g_ext  hpi_g_mean  hpi_g_ext  sp500_g_mean  sp500_g_ext  unemployment_d_mean  unemployment_d_ext
-1   0.182       NaN      NaN              NaN             NaN              3.820             4.155       0.008      0.004       0.008      0.005         -0.120        -0.248         NaN        NaN           NaN          NaN                0.114               0.774
-2   0.020       NaN      NaN            3.421           3.424              3.849             4.192       0.018      0.011       0.024      0.021          0.045        -0.029         NaN        NaN           NaN          NaN                0.009               0.409
-3  -0.082    18.566   18.566            3.175           3.483              3.427             3.718       0.020      0.011       0.012      0.003          0.021        -0.013       0.002      0.002           NaN          NaN               -0.125               0.706
-4  -0.068    17.375   19.297            2.635           2.966              5.061             6.316       0.006     -0.015       0.017      0.006         -0.031        -0.133       0.006     -0.004           NaN          NaN                0.122               1.886
-5   0.294    26.641   59.358            2.709           5.562              8.774            18.919      -0.028     -0.111       0.005     -0.038          0.023        -0.359       0.014     -0.000           NaN          NaN                3.685              14.056
-6   0.162    17.990   20.252            2.200           2.592              7.053             7.414      -0.003     -0.022       0.002     -0.003         -0.036        -0.106       0.018      0.011           NaN          NaN               -2.876               0.668
-7  -0.020    16.217   23.807            2.591           3.076              9.136            10.048       0.005     -0.004      -0.003     -0.011          0.116         0.052       0.007     -0.011           NaN          NaN                0.659               1.954
-8  -0.126    13.511   16.004            2.281           2.542              9.170            10.592       0.008     -0.007       0.010      0.008          0.126         0.004       0.026      0.009           NaN          NaN               -0.498               1.054
-9  -0.020    17.857   20.304            2.640           2.855              8.609            10.503      -0.000     -0.023      -0.002     -0.006         -0.060        -0.105       0.014      0.005        -0.004       -0.046               -0.131               2.445
-10 -0.065    19.313   22.132            2.223           2.327              6.094             7.349       0.015      0.003       0.016      0.007         -0.111        -0.259       0.012      0.005        -0.010       -0.060               -0.944              -0.066
-11 -0.147    17.849   21.314            1.870           1.946              3.673             3.989       0.016      0.011       0.015      0.008         -0.019        -0.153      -0.005     -0.044         0.008       -0.003               -0.173               0.229
-12 -0.043    20.796   21.436            2.010           2.217              2.986             3.322       0.014      0.001       0.015      0.005         -0.064        -0.097       0.034      0.021         0.006       -0.014                0.025               0.702
-13 -0.020    19.023   21.047            2.893           3.175              4.197             4.958       0.005     -0.016       0.013      0.010         -0.006        -0.060       0.012     -0.005         0.010       -0.045                0.240               1.642
-14  1.029    49.415  119.158            4.186           7.277              6.876            13.128      -0.018     -0.074      -0.009     -0.051         -0.144        -0.624       0.021     -0.001        -0.002       -0.149                0.263               9.000
-15  0.080    25.720   33.076            2.525           2.847              5.933             6.338       0.005     -0.002       0.013      0.006         -0.031        -0.128      -0.014     -0.028         0.045        0.013                0.153               1.156
-16 -0.080    17.439   19.900            2.239           2.538              5.962             6.411       0.010      0.005       0.021      0.015          0.086         0.033      -0.006     -0.014         0.073        0.046                0.154               0.477
-17  0.663    38.783   94.385            2.981           5.933              8.185            14.122      -0.017     -0.075       0.001     -0.042         -0.128        -0.580      -0.004     -0.013        -0.018       -0.132                0.000               8.122
-18  0.066    18.590   25.770            1.781           1.982              6.892             7.324       0.002     -0.001      -0.005     -0.015          0.036        -0.105       0.008      0.003         0.055        0.024                0.094               0.959
-19  0.134    26.082   30.827            2.293           2.633              8.618            10.303       0.003     -0.008      -0.011     -0.015         -0.027        -0.177      -0.004     -0.008         0.010       -0.033                0.282               2.412
-20  0.024    23.224   24.384            2.518           2.661              9.130            10.657       0.003     -0.009       0.001     -0.018         -0.047        -0.078      -0.013     -0.023         0.022       -0.000                0.516               1.877
-s                      1.000
-vix_mean               0.957
-vix_ext                0.974
-bbb_spread_mean        0.648
-bbb_spread_ext         0.896
-unemployment_mean      0.246
-unemployment_ext       0.570
-gdp_g_mean            -0.761
-gdp_g_ext             -0.742
-cpi_g_mean            -0.538
-cpi_g_ext             -0.831
-nasdaq_g_mean         -0.558
-nasdaq_g_ext          -0.886
-hpi_g_mean             0.099
-hpi_g_ext              0.034
-sp500_g_mean          -0.357
-sp500_g_ext           -0.818
-unemployment_d_mean    0.156
-unemployment_d_ext     0.717
-Name: s, dtype: float64
+Traceback (most recent call last):
+  File "<string>", line 2, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: 'fitlib.py'
+cat: 'out_*': No such file or directory
+
 
 
 ## [28] assistant
 
-**[reasoning]**
-
-> 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
-
 **tool call: bash**
 
 ```
-cd /workspace; python - <<'EOF'
-s=open('/w/common.py').read()
-s=s.replace("    f['lvix']=np.log(df.vix)\n    return f","    f['lvix']=np.log(df.vix)\n    for c in list(f.columns[1:]): f[c+'_l1']=f[c].shift(1); f[c+'_l2']=f[c].shift(2)\n    return f")
-open('/w/common.py','w').write(s)
-EOF
-timeout 3000 python /w/joint.py "[['vix','vix_l1'],['vix','gdp_g','cpi_g'],['vix','gdp_g4'],['vix','cpi_g4'],['vix','vix_l1','gdp_g'],['vix','gdp_g','gdp_g_l1'],['vix','cpi_g','cpi_g_l1'],['vix','bbb_spread_l1'],['vix','unemployment_l1'],['vix','nasdaq_g4']]" c
+pwd; ls; timeout 60 python -c "
+exec(open('fitlib.py').read())
+import time
+T=T0; t0=time.time()
+for i in range(100): annual(T,np.zeros(4),np.ones(7))
+print((time.time()-t0)/100)
+"; cat out_*
 ```
 
 ## [29] tool
 
-['vix', 'vix_l1'] -81522.1 [0.305 0.042] 385 19
-['vix', 'gdp_g', 'cpi_g'] -81404.7 [ 0.253 -0.038 -0.047] 395 20
-['vix', 'gdp_g4'] -81252.0 [ 0.281 -0.089] 356 17
-['vix', 'cpi_g4'] -81453.7 [ 0.301 -0.043] 381 19
-['vix', 'vix_l1', 'gdp_g'] -81372.2 [ 0.177  0.199 -0.106] 378 16
-['vix', 'gdp_g', 'gdp_g_l1'] -81297.8 [ 0.29  -0.035 -0.098] 372 16
-['vix', 'cpi_g', 'cpi_g_l1'] -81428.2 [ 0.275 -0.053 -0.019] 410 20
-['vix', 'bbb_spread_l1'] -81530.8 [ 0.31  -0.004] 372 18
-['vix', 'unemployment_l1'] -81468.4 [0.313 0.045] 368 18
-['vix', 'nasdaq_g4'] -81528.4 [0.314 0.011] 403 20
+/workspace
+common.py
+data
+fitlib.py
+out_lvix.txt
+out_spr+un.txt
+out_spr.txt
+out_un.txt
+out_vix+dgdp.txt
+out_vix+spr+un.txt
+out_vix+spr.txt
+out_vix+un.txt
+out_vix.txt
+run1.py
+0.001803286075592041
 
 
 ## [30] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cd /workspace; timeout 3000 python /w/joint.py "[['gdp_g4'],['vix','gdp_g4','gdp_g4_l1'],['vix','gdp_g4','unemployment'],['vix','gdp_g4','bbb_spread'],['vix','gdp_g4','cpi_g4'],['vix','gdp_g4','hpi_g4'],['vix','gdp_g4','unemployment_d4'],['vix','gdp_g4','nasdaq_g4'],['vix','gdp_g4','sp500_g4'],['vix','gdp_g4_l1'],['vix','gdp_g4','gdp_g']]" d
+pkill -f run1.py; cd /workspace; cat > fast.py <<'E'
+import pandas as pd, numpy as np
+from scipy.stats import norm
+from scipy.special import ndtr, ndtri
+from scipy.optimize import minimize
+m=pd.read_csv('data/macro_history.csv').set_index('quarter')
+t=pd.read_csv('data/transitions.csv')
+R=['AAA','AA','A','BBB','BB','B','CCC/C']; C=['to_AAA','to_AA','to_A','to_BBB','to_BB','to_B','to_CCC_C','to_D']
+years=sorted(t.year.unique())
+cnt=np.array([t[t.year==y].set_index('from_rating').loc[R,C].values.astype(float) for y in years])  # 20x7x8
+P=cnt.sum(0); P=(P+0.01)/(P+0.01).sum(1,keepdims=True); P=np.vstack([P,np.eye(8)[7]])
+w,V=np.linalg.eig(P); Q=np.real(V@np.diag(w**0.25)@np.linalg.inv(V)); Q=np.clip(Q,1e-7,None); Q/=Q.sum(1,keepdims=True); Q=Q[:7]
+cum=np.cumsum(Q[:,::-1],axis=1)[:,::-1][:,1:]; T0=ndtri(np.clip(cum,1e-9,1-1e-9))
+def qtrs(y): e=-76+4*(y-1); return [e-3,e-2,e-1,e]
+def buildmany(T,s,sens):
+    # s: (n,) -> (n,8,8)
+    cum=ndtr(T[None]+sens[None,:,None]*s[:,None,None])
+    n=len(s); one=np.ones((n,7,1)); zero=np.zeros((n,7,1))
+    cum=np.concatenate([one,cum,zero],2)
+    Qs=np.clip(cum[:,:,:-1]-cum[:,:,1:],0,None)
+    Qf=np.zeros((n,8,8)); Qf[:,:7]=Qs; Qf[:,7,7]=1
+    return Qf
+def annuals(T,S,sens):
+    # S: (ny,4)
+    ny=S.shape[0]; M=buildmany(T,S.ravel(),sens).reshape(ny,4,8,8)
+    A=M[:,0]@M[:,1]@M[:,2]@M[:,3]
+    return A[:,:7]
+def pack_T(T):
+    d=np.clip(-np.diff(T,axis=1),1e-3,None); return np.concatenate([T[:,:1],np.log(d)],1).ravel()
+def unpack_T(p):
+    p=p.reshape(7,7); return np.concatenate([p[:,:1], p[:,:1]-np.cumsum(np.exp(p[:,1:]),1)],1)
+def fit(Xq_fn, fyears, k, sens_free=False, b0=None):
+    # Xq_fn(params_b, years)-> S (ny,4); here linear
+    pass
+def fit_lin(feat, fyears, sens_free=False, transform=None):
+    k=feat.shape[1]
+    X=np.array([feat.loc[qtrs(y)].values for y in fyears])  # ny,4,k
+    flat=X.reshape(-1,k); mu=flat.mean(0); sd=flat.std(0)
+    Xs=(X-mu)/sd; cn=cnt[[y-1 for y in fyears]]
+    ns=6 if sens_free else 0
+    def unp(p):
+        T=unpack_T(p[:49]); b=p[49:49+k]
+        sens=np.exp(np.concatenate([[0],p[49+k:49+k+ns]])) if sens_free else np.ones(7)
+        return T,b,sens
+    def nll(p):
+        T,b,sens=unp(p); S=Xs@b
+        A=annuals(T,S,sens); return -np.sum(cn*np.log(np.clip(A,1e-12,1)))
+    p0=np.concatenate([pack_T(T0),np.full(k,0.05),np.zeros(ns)])
+    r=minimize(nll,p0,method='L-BFGS-B',options={'maxiter':20000,'maxfun':10**6})
+    T,b,sens=unp(r.x)
+    return dict(nll=r.fun,T=T,b=b,sens=sens,mu=mu,sd=sd,ok=r.success,npar=len(p0))
+E
+timeout 60 python -c "
+exec(open('fast.py').read())
+import time
+S=np.zeros((17,4)); t0=time.time()
+for i in range(100): annuals(T0,S,np.ones(7))
+print((time.time()-t0)/100)"
 ```
 
 ## [31] tool
 
-['gdp_g4'] -85125.5 [-0.242] 181 9
-['vix', 'gdp_g4', 'gdp_g4_l1'] -81251.1 [ 0.284 -0.079 -0.01 ] 384 19
-['vix', 'gdp_g4', 'unemployment'] -81240.7 [ 0.286 -0.101 -0.02 ] 363 17
-['vix', 'gdp_g4', 'bbb_spread'] -81252.0 [ 0.281 -0.089  0.   ] 392 21
-['vix', 'gdp_g4', 'cpi_g4'] -81252.0 [ 0.281 -0.089 -0.   ] 383 22
-['vix', 'gdp_g4', 'hpi_g4'] -81250.8 [ 0.282 -0.087  0.006] 379 20
-['vix', 'gdp_g4', 'unemployment_d4'] -81252.0 [ 0.281 -0.089 -0.   ] 362 18
-['vix', 'gdp_g4', 'nasdaq_g4'] -81251.8 [ 0.28  -0.089 -0.003] 343 18
-['vix', 'gdp_g4', 'sp500_g4'] -81250.9 [ 0.278 -0.09  -0.009] 306 16
-['vix', 'gdp_g4_l1'] -81297.7 [ 0.31  -0.076] 428 23
-['vix', 'gdp_g4', 'gdp_g'] -81249.6 [ 0.288 -0.096  0.013] 410 22
+bash: line 1: pkill: command not found
+
+0.0003152012825012207
 
 
 ## [32] assistant
 
-**[reasoning]**
-
-> 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
-
 **tool call: bash**
 
 ```
-cd /workspace; cat >> /w/common.py <<'EOF'
-def nll_grad2(p,Q,ref=3):
-    """p: 49 th + 6 log-loadings (rating ref fixed at 1) + k betas"""
-    th=p[:49]; la=np.insert(p[49:55],ref,0.0); a=np.exp(la); b=p[55:]; P_=th.reshape(7,7)
-    E=np.exp(P_[:,1:]); U=np.concatenate([P_[:,:1],P_[:,:1]-np.cumsum(E,1)],1)
-    S=Q@b
-    L=0; gU=np.zeros((7,7)); gb=np.zeros(len(b)); ga=np.zeros(7)
-    for yi in range(Q.shape[0]):
-        Ms=[];Ph=[]
-        for k in range(4):
-            z=U+a[:,None]*S[yi,k]; tail=norm.cdf(z)
-            full=np.concatenate([np.ones((7,1)),tail,np.zeros((7,1))],1)
-            M=np.zeros((8,8)); M[7,7]=1; M[:7]=np.maximum(full[:,:-1]-full[:,1:],1e-14)
-            Ms.append(M); Ph.append(norm.pdf(z))
-        pre=[np.eye(8)]
-        for k in range(4): pre.append(pre[-1]@Ms[k])
-        suf=[np.eye(8)]
-        for k in range(3,-1,-1): suf.insert(0,Ms[k]@suf[0])
-        P=pre[4]; Pc=np.maximum(P[:7],1e-300)
-        L-=(C[yi]*np.log(Pc)).sum()
-        G=np.zeros((8,8)); G[:7]=-C[yi]/Pc
-        for k in range(4):
-            gq=(pre[k].T@G@suf[k+1].T)[:7]
-            gz=(gq[:,1:8]-gq[:,0:7])*Ph[k]
-            gU+=gz
-            gb+=(gz*a[:,None]).sum()*Q[yi,k]
-            ga+=gz.sum(1)*S[yi,k]
-    gp0=gU.sum(1); gd=-E*np.cumsum(gU[:,::-1],1)[:,::-1][:,1:]
-    gla=np.delete(ga*a,ref)
-    g=np.concatenate([np.concatenate([gp0[:,None],gd],1).ravel(),gla,gb])
-    return L,g
-def qmat_full(th,s,a=None):
-    U=umat(th); a=np.ones(7) if a is None else a
-    tail=norm.cdf(U+a[:,None]*s)
-    full=np.concatenate([np.ones((7,1)),tail,np.zeros((7,1))],1)
-    M=np.zeros((8,8)); M[7,7]=1; M[:7]=np.maximum(full[:,:-1]-full[:,1:],0); M[:7]/=M[:7].sum(1,keepdims=True); return M
-EOF
-cat > /w/load.py <<'EOF'
-import sys,pickle; sys.path.insert(0,'/w'); from common import *
-from joint import QQ
-names=['vix','gdp_g4']
-fits=pickle.load(open('/w/fits_d.pkl','rb')) if False else None
-Q=QQ(names); thb=np.load('/w/thb.npy')
-p0=np.concatenate([thb,np.zeros(6),[0.28,-0.09]])
-L,g=nll_grad2(p0,Q); eps=1e-6
-for i in [50,53,55,56]:
-    pp=p0.copy(); pp[i]+=eps; print(i,g[i],(nll_grad2(pp,Q)[0]-L)/eps)
-r=minimize(nll_grad2,p0,args=(Q,),jac=True,method='L-BFGS-B',options={'maxiter':5000,'maxfun':20000})
-print(-r.fun, np.exp(np.insert(r.x[49:55],3,0)).round(3), r.x[55:].round(3))
-np.save('/w/fit_load.npy',r.x)
-EOF
-timeout 3000 python /w/load.py
+cd /workspace; ps aux | grep run1 | awk '{print $2}' | xargs kill 2>/dev/null; sed -i 's/fitlib.py/fast.py/; s/fit(m\[v\],fy,sens_free=False)/fit_lin(m[v],fy)/' run1.py; for k in vix lvix spr vix+spr un vix+un spr+un vix+spr+un vix+dgdp; do nohup python run1.py $k > out_$k.txt 2>&1 & done; sleep 100; cat out_*
 ```
 
 ## [33] tool
 
-50 226.0043938894614 226.00541706196964
-53 470.89734488955594 470.8995402324945
-55 13819.419651609984 13819.579791743308
-56 -6129.0962289670115 -6129.029527073726
--81247.88668222974 [0.849 1.063 1.018 1.    1.02  1.014 0.998] [ 0.277 -0.088]
+bash: line 1: ps: command not found
+
+un 76766.77 [0.191] True 78.8
 
 
 ## [34] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cd /workspace; python - <<'EOF'
-s=open('/w/common.py').read()
-s=s.replace("    f['lvix']=np.log(df.vix)\n","    f['lvix']=np.log(df.vix)\n    f['vix2']=df.vix**2\n    f['gdp_g2']=np.log(df.gdp).diff(2)\n    f['gdp_g8']=np.log(df.gdp).diff(8)\n")
-open('/w/common.py','w').write(s)
-EOF
-timeout 3000 python /w/joint.py "[['vix','gdp_g4'],['vix','vix2','gdp_g4'],['lvix','gdp_g4'],['vix','gdp_g2'],['vix','gdp_g8'],['vix','gdp_g4','gdp_g8']]" e
+cd /workspace; for p in /proc/[0-9]*; do c=$(tr '\0' ' ' < $p/cmdline 2>/dev/null); case "$c" in *run1*) echo ${p#/proc/} $c;; esac; done
 ```
 
 ## [35] tool
 
-['vix', 'gdp_g4'] -81252.0 [ 0.281 -0.089] 356 17
-['vix', 'vix2', 'gdp_g4'] -81251.0 [ 0.262  0.018 -0.089] 422 21
-['lvix', 'gdp_g4'] -81714.5 [ 0.309 -0.1  ] 357 17
-['vix', 'gdp_g2'] -81326.6 [ 0.27  -0.091] 373 19
-['vix', 'gdp_g8'] -81342.4 [ 0.302 -0.067] 374 14
-['vix', 'gdp_g4', 'gdp_g8'] -81251.2 [ 0.282 -0.083 -0.007] 393 14
+215 python run1.py vix
+216 python run1.py lvix
+217 python run1.py spr
+218 python run1.py vix+spr
+219 python run1.py un
+220 python run1.py vix+un
+221 python run1.py spr+un
+222 python run1.py vix+spr+un
+223 python run1.py vix+dgdp
+359 python run1.py vix
+360 python run1.py lvix
+361 python run1.py spr
+362 python run1.py vix+spr
+364 python run1.py vix+un
+365 python run1.py spr+un
+366 python run1.py vix+spr+un
+367 python run1.py vix+dgdp
+423 timeout -k 5s 240s bash --login -c cd /workspace; for p in /proc/[0-9]*; do c=$(tr '\0' ' ' < $p/cmdline 2>/dev/null); case "$c" in *run1*) echo ${p#/proc/} $c;; esac; done
+429 bash --login -c cd /workspace; for p in /proc/[0-9]*; do c=$(tr '\0' ' ' < $p/cmdline 2>/dev/null); case "$c" in *run1*) echo ${p#/proc/} $c;; esac; done
 
 
 ## [36] assistant
 
-**[reasoning]**
-
-> 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
-
 **tool call: bash**
 
 ```
-cd /workspace; cat > /w/final.py <<'EOF'
-import sys; sys.path.insert(0,'/w'); from common import *
-names=['vix','gdp_g4']
-mu=FH.mean(); sd=FH.std()
-def Z(F): 
-    z=((F[names]-mu[names])/sd[names]).fillna(0); z.index=F.quarter; return z
-ZH=Z(FH)
-Q=np.array([[ZH.loc[q].values for q in yq(y)] for y in years])
-thb=np.load('/w/thb.npy')
-r=minimize(nll_grad,np.concatenate([thb,[0.1,-0.1]]),args=(Q,),jac=True,method='L-BFGS-B',options={'maxiter':5000,'maxfun':20000})
-th=r.x[:49]; b=r.x[49:]; print(-r.fun,b)
-shift=lambda z: float(z@b)
-rows=[]; bt=[]
-# history
-for yi,y in enumerate(years):
-    P=np.eye(8)
-    for q in yq(y): P=P@qmat_full(th,shift(ZH.loc[q].values))
-    Qr=np.real(fractional_matrix_power(P,0.25)); Qr=np.clip(Qr,0,None); Qr/=Qr.sum(1,keepdims=True)
-    err=np.abs(np.linalg.matrix_power(Qr,4)-P).max()
-    if err>1e-4: print('root err',y,err)
-    for i in range(7): rows.append(['history',yq(y)[-1],R[i]]+list(Qr[i]))
-    n=C[yi].sum(1); dr=(n*P[:7,7]).sum()/n.sum()
-    for s in ['baseline','adverse','severe']: bt.append([s,y,dr])
-    obs=C[yi][:,7].sum()/n.sum()
-    print(y, round(obs,4), round(dr,4))
-pf=pd.read_csv('data/portfolio.csv'); v0=np.zeros(8); v0[:7]=pf.set_index('rating').loc[R,'obligors'].values; v0/=v0.sum()
-pred=[]
-for s in ['baseline','adverse','severe']:
-    ZS=Z(FS[s]); v=v0.copy()
-    for q in range(1,10):
-        sh=shift(ZS.loc[q].values); M=qmat_full(th,sh)
-        for i in range(7): rows.append([s,q,R[i]]+list(M[i]))
-        v=v@M
-        if q in (4,9):
-            for j in range(8): pred.append([s,q,S[j],v[j]])
-            print(s,q,'D=%.4f'%v[7], (v[:7]/v[:7].sum()).round(3))
-    print(s,'shifts',[round(shift(ZS.loc[q].values),3) for q in range(1,10)])
-pd.DataFrame(pred,columns=['scenario','quarter','state','share']).to_csv('predictions.csv',index=False,float_format='%.8f')
-pd.DataFrame(rows,columns=['scenario','quarter','from_rating']+cols).to_csv('matrices.csv',index=False,float_format='%.10f')
-pd.DataFrame(bt,columns=['scenario','year','default_rate']).to_csv('backtest.csv',index=False,float_format='%.8f')
-print('hist shifts per year', [[round(shift(ZH.loc[q].values),2) for q in yq(y)] for y in years][-6:])
-EOF
-python /w/final.py; wc -l predictions.csv matrices.csv backtest.csv
+kill 215 216 217 218 219 220 221 222 223; sleep 150; cat /workspace/out_*
 ```
 
 ## [37] tool
 
--81251.9986237409 [ 0.28110388 -0.08872028]
-1 0.0124 0.0077
-2 0.007 0.0064
-3 0.0056 0.006
-4 0.0048 0.0056
-root err 5 0.001184314280974652
-5 0.0164 0.0165
-6 0.0117 0.012
-7 0.0083 0.0083
-8 0.0057 0.0057
-9 0.0081 0.0073
-10 0.0064 0.0066
-11 0.0056 0.005
-12 0.0057 0.0055
-13 0.0053 0.0061
-root err 14 0.030242007366569346
-14 0.0888 0.0875
-15 0.0175 0.0161
-16 0.0083 0.009
-root err 17 0.008629174892778035
-17 0.0482 0.0502
-18 0.0146 0.015
-19 0.0134 0.0164
-20 0.0116 0.0125
-baseline 4 D=0.0130 [0.004 0.022 0.144 0.362 0.289 0.153 0.027]
-baseline 9 D=0.0272 [0.004 0.023 0.151 0.364 0.275 0.159 0.023]
-baseline shifts [0.011, -0.023, -0.045, -0.049, -0.046, -0.041, -0.036, -0.03, -0.025]
-adverse 4 D=0.0171 [0.004 0.021 0.14  0.361 0.289 0.156 0.029]
-adverse 9 D=0.0402 [0.003 0.021 0.142 0.36  0.275 0.171 0.028]
-adverse shifts [0.059, 0.079, 0.096, 0.137, 0.184, 0.171, 0.151, 0.124, 0.09]
-severe 4 D=0.0195 [0.004 0.021 0.139 0.36  0.289 0.158 0.03 ]
-severe 9 D=0.0560 [0.003 0.019 0.135 0.356 0.273 0.181 0.034]
-severe shifts [0.076, 0.119, 0.163, 0.236, 0.319, 0.408, 0.364, 0.312, 0.252]
-hist shifts per year [[-0.08, 0.01, 0.16, 0.12], [-0.06, -0.13, -0.13, -0.19], [-0.11, 1.34, 0.11, 0.1], [0.15, -0.1, -0.12, 0.06], [-0.0, 0.12, 0.2, 0.03], [-0.02, -0.05, -0.02, -0.01]]
-   49 predictions.csv
-  330 matrices.csv
-   61 backtest.csv
-  440 total
+lvix 71530.22 [0.355] True 101.0
+spr+un 71733.04 [0.333 0.004] True 94.7
+spr 71733.57 [0.335] True 97.0
+un 76766.77 [0.191] True 78.8
+vix+dgdp 70932.98 [ 0.27  -0.061] True 94.3
+vix+spr+un 70958.02 [ 0.296 -0.002  0.039] True 99.1
+vix+spr 71000.76 [0.284 0.03 ] True 104.2
+vix+un 70958.03 [0.294 0.039] True 96.7
+vix 71006.89 [0.31] True 102.7
 
 
 ## [38] assistant
 
 **[reasoning]**
 
-> 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
+> CAQS/gsKEAgTGAI4AUIIdGhpbmtpbmcSDElIQg0zaK/OcgfrmxoMtkuVlidm+m+wEqRLIjD4MCGx5IKhI1v4BGFRZC7Iy7udUsqW8BbQTFZxRXXr0FlM7C+Sfh0puhjZnbom1+cqmwsnIjMQeZy0RAUfhFo8vYfsElzccp7CAKx1zjzBT65S3XuqVyJZoS4WTp/eSncH3yTKHXBfv/wKbqcbaHQyE/k/9GXN+s3J1ZdpcVeerpX+mVDOfCXX9VkIRGVgHhwy1o3GYLRfB5+ERM9PfTrYXkNkgz9hqu40zJJbBZj/btjR7VXYFE32uMQOpOhOYC08G6rZrwC9P1YKrqXb8ns8FhbFm3p1hWdROMtGnC1FJXd5j5z7MklYez+651nca806eWGFJdiYmtv5teVNDEH/MCuaZl5kollmhgGkEjk/4NJdm4Nv2NVkNqzgjb3rytB5HSyNmL3r7ZElc4ZQ5hE2EeNhpJCVpWlNCeLmmL9AZdnAKgJtdczR/3sJkuWlZyeLbCBr1QXwfEnbBgsK0SpL3QihuGlEC8VRoQrQAsdMlwrBvoWy7jtxEhOOxW39wyyCOAENJZJSJjPeynQ2ci344VqFcCV8Mf6XDAWTtAV8uGDfjfGs/iE2HXSovIS4hvVyZwijcU3WpG+HqTkEymKZKJxC6niNa/4zR81vLpw+eXC+4NICM5ROW07ttCQqSnMSAVbazN/pzoGE3g9VxVOvbtoGMsX3+POhq5pmHk/6x+0t8kDAE4Nw0RmOslzUvj/AnAXC3JacppEz0vHqsgpxZwnDMFULf0FiabbowXdjTD9k06BTG9ui1YnwF8CTJSSLupaME86Dp4CNCLCx6E0BNkwFkJDr1Sd4fAwcUhc81lLPtVbKuRh92Z1A7zUbww02uN/Aog5K1+jwsKl82SDl2DiV5PeTXZ+DxFID3rYfj/ZuTM85t2+/prCESQ14ca4wVnkl0GdbY6hxZFwnivSEWwdeONJzz0Mz7Cxc2PbOekG3vBlj7F/wBxsfyrqMdiKHObuSCzucBNYrZ4cBfd0iVY10bCp658yI+etMpdqpIeKwmWp4Bg9gGAO4ecCc+j6BFkTXRBDmDXRYOhZePWHNt0HaIVroOPhqzXX3UYhf+JXsabJAADvP6+k6tD8zczQOm8H9Z4EE47E24bZtiL1ejDp3BlOuJDutq+B31Vki3lTazRv7PA7KhqjofWcDkRirXIo4I+78RJEZwfUa8iTLEkeDMhsZrm+poX7QSZo/6Cy0+dCyFNTFF/aKuVy71b9MFX9UXoVqfH+fnojxAAy7NhVoJbB/sYMSqsTEGdzgzJ//m6DR6QJE7at+1lfko4qP507YXa9cchlU9epykbi/GP+0XS1rVHhKxWei4pu4CWGybR8SOTqtiOMucdFqkYr3uu5hf865CFZ4Znuw7WvG5s+mRUqwD9zG9FCiKk9pC+sR1BPa1QqiAyVgEMfm5iMWujRvs1X0iy8WatAyPRLBsN3oEvXz/1L2834k0GnxgAY4UmqKwXQH3up7ZmdJSPy0p0R6Dhs9tx8iPB+PUPltHRvJk1K791Mw3+UHgsFbtMUCssUBwF73bqb3z/VE7XKiIE2gVnsmjUzDOiAoV2SBvCj8uahtt/Y/WknCpZ9igbp8h5qlsyZM33Al7wk47+ugD3tnrVi509d5oUX6++RZX4djUq8AQeNhw+0uNJnWeb3N/dbiO7iz+lOnQX+dwyoY+PVwiQNI40QHRAbWsSIzeQKN8Y5ikIaf65xggUY6s35xw6izbQ6iRqV76ZK5fGAgHVZHdXw+RLIvMXY3v+9bFBf2RoKVjf5ajnnARsLp3Tmz0gC5592bbmNqMuxrfQn+GPZlGzYZU65tkWiul+o/Y2mfU6a/p1oyhgQFQCgXHLxDynvRSTNvBO+w6rAvfp9aw2bDC0U9FUiqOe7Guoo3Zm07bGYROdPIbYioql2/mybG5MDyH4G+uRXgsOMmQIrg9x7V74RlkYY2ekC9dMM/NQYkkn6a1l1Rclz1tYvwLPqV8ePTb58q2YJHA9AlGAE=
+
+**tool call: bash**
+
+```
+cd /workspace; cat > run2.py <<'E'
+exec(open('fast.py').read())
+import time,sys
+fy=list(range(4,21))
+m['lvix']=np.log(m.vix); m['dgdp']=np.log(m.gdp).diff(); m['dun']=m.unemployment.diff(); m['dhpi']=np.log(m.hpi).diff(); m['infl']=np.log(m.cpi).diff()
+m['dgdp4']=np.log(m.gdp).diff(4); m['dhpi4']=np.log(m.hpi).diff(4); m['infl4']=np.log(m.cpi).diff(4); m['dnas']=np.log(m.nasdaq).diff()
+m['lagvix']=m.vix.shift(1); m['dspr']=m.bbb_spread.diff()
+v=sys.argv[1].split(',')
+t0=time.time(); r=fit_lin(m[v],fy)
+print(sys.argv[1], round(r['nll'],2), r['b'].round(3), r['ok'], round(time.time()-t0,1),flush=True)
+E
+for k in vix,dgdp,unemployment vix,dgdp,dhpi vix,dgdp,infl vix,dgdp4 vix,dgdp,dnas vix,dgdp,lagvix vix,dgdp,dun vix,dgdp,bbb_spread; do nohup python run2.py $k > o2_$k.txt 2>&1 & done; sleep 220; cat o2_*
+```
+
+## [39] tool
+
+vix,dgdp,bbb_spread 70930.1 [ 0.286 -0.068 -0.023] True 62.2
+vix,dgdp,dhpi 70916.92 [ 0.268 -0.062  0.022] True 51.7
+vix,dgdp,dnas 70927.08 [ 0.289 -0.062  0.028] True 69.3
+vix,dgdp,dun 70826.34 [ 0.269 -0.148 -0.123] True 59.8
+vix,dgdp,infl 70892.1 [ 0.251 -0.038 -0.057] True 67.6
+vix,dgdp,lagvix 70875.74 [ 0.176 -0.111  0.2  ] True 64.4
+vix,dgdp,unemployment 70931.69 [ 0.272 -0.053  0.009] True 57.2
+vix,dgdp4 70761.8 [ 0.282 -0.091] True 61.9
+
+
+## [40] assistant
+
+**[reasoning]**
+
+> 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
+
+**tool call: bash**
+
+```
+cd /workspace; sed -i "s/m\['dspr'\]=m.bbb_spread.diff()/m['dspr']=m.bbb_spread.diff(); m['dgdp2']=np.log(m.gdp).diff(2); m['dgdp8']=np.log(m.gdp).diff(8); m['lagvix2']=m.vix.shift(2); m['vixma4']=m.vix.rolling(4).mean(); m['dun4']=m.unemployment.diff(4); m['lgdp']=np.log(m.gdp)/" run2.py
+for k in lvix,dgdp4 vix,dgdp4,unemployment vix,dgdp4,dun4 vix,dgdp4,dhpi4 vix,dgdp4,infl4 vix,dgdp8 vix,dgdp4,bbb_spread vix,dgdp4,lagvix; do nohup python run2.py $k > o3_$k.txt 2>&1 & done; sleep 230; cat o3_*
+```
+
+## [41] tool
+
+lvix,dgdp4 71222.39 [ 0.311 -0.102] True 59.1
+vix,dgdp4,bbb_spread 70761.17 [ 0.289 -0.092 -0.009] True 69.7
+vix,dgdp4,dhpi4 nan [0.05 0.05 0.05] False 1.7
+vix,dgdp4,dun4 70761.79 [ 0.282 -0.091 -0.   ] True 63.7
+vix,dgdp4,infl4 70761.61 [ 0.282 -0.09  -0.002] True 64.6
+vix,dgdp4,lagvix 70761.57 [ 0.282 -0.091 -0.004] True 75.6
+vix,dgdp4,unemployment 70761.29 [ 0.283 -0.093 -0.004] True 57.4
+vix,dgdp8 70857.96 [ 0.303 -0.061] True 60.5
+
+
+## [42] assistant
+
+**[reasoning]**
+
+> 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
+
+**tool call: bash**
+
+```
+cd /workspace; cat > run3.py <<'E'
+exec(open('fast.py').read())
+import time,sys,pickle
+fy=list(range(4,21))
+m['dgdp4']=np.log(m.gdp).diff(4); m['dgdp3']=np.log(m.gdp).diff(3); m['dgdp5']=np.log(m.gdp).diff(5); m['vix2']=m.vix**2
+v=sys.argv[1].split(','); sf=sys.argv[2]=='1'
+t0=time.time(); r=fit_lin(m[v],fy,sens_free=sf)
+print(sys.argv[1],sf, round(r['nll'],2), r['b'].round(3), r['sens'].round(3), r['ok'], round(time.time()-t0,1),flush=True)
+pickle.dump(r,open(f'fit_{sys.argv[1]}_{sys.argv[2]}.pkl','wb'))
+E
+for k in "vix,dgdp4 1" "vix,dgdp4 0" "vix,dgdp3 0" "vix,dgdp5 0" "vix,vix2,dgdp4 0"; do set -- $k; nohup python run3.py $1 $2 > o4_$1_$2.txt 2>&1 & done; sleep 200; cat o4_*
+```
+
+## [43] tool
+
+vix,dgdp3 False 70788.01 [ 0.279 -0.095] [1. 1. 1. 1. 1. 1. 1.] True 83.1
+vix,dgdp4 False 70761.8 [ 0.282 -0.091] [1. 1. 1. 1. 1. 1. 1.] True 76.2
+vix,dgdp4 True 70758.79 [ 0.241 -0.078] [1.    1.228 1.174 1.16  1.178 1.165 1.156] True 71.3
+vix,dgdp5 False 70775.45 [ 0.29  -0.081] [1. 1. 1. 1. 1. 1. 1.] True 79.0
+vix,vix2,dgdp4 False 70760.89 [ 0.263  0.017 -0.092] [1. 1. 1. 1. 1. 1. 1.] True 77.5
+
+
+## [44] assistant
+
+**[reasoning]**
+
+> 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
+
+**tool call: bash**
+
+```
+cd /workspace; cat > final.py <<'E'
+exec(open('fast.py').read())
+import pickle, json
+r=pickle.load(open('fit_vix,dgdp4_0.pkl','rb'))
+T,b,mu,sd=r['T'],r['b'],r['mu'],r['sd']
+s=pd.read_csv('data/scenario.csv'); port=pd.read_csv('data/portfolio.csv').set_index('rating').loc[R,'obligors'].values.astype(float)
+def feats(gdp_series, vix_series):
+    lg=np.log(gdp_series); d4=lg.diff(4)
+    return pd.DataFrame({'vix':vix_series,'dgdp4':d4})
+# history with imputation
+h=m.copy()
+lg=np.log(h.gdp); d4=lg.diff(4)
+for q in range(-79,-75):
+    k=max(q+79,1); d4[q]=(lg[-79+k]-lg[-79])*4/k
+vixh=h.vix.copy(); med=vixh.median(); vixh=vixh.fillna(med)
+FH=pd.DataFrame({'vix':vixh,'dgdp4':d4})
+def S_of(F): return ((F[['vix','dgdp4']].values-mu)/sd)@b
+SH=pd.Series(S_of(FH),index=FH.index)
+rows=[]; bt=[]
+ann_def={}
+for y in years:
+    qs=qtrs(y); Ms=buildmany(T,SH.loc[qs].values,np.ones(7))
+    # history matrix: geometric-average quarterly matrix for the year = 4th root of annual product
+    A=Ms[0]@Ms[1]@Ms[2]@Ms[3]
+    w,V=np.linalg.eig(A); Qy=np.real(V@np.diag(w.astype(complex)**0.25)@np.linalg.inv(V))
+    Qy=np.clip(Qy,0,None); Qy/=Qy.sum(1,keepdims=True)
+    for i,rt in enumerate(R): rows.append(['history',qs[-1],rt]+list(Qy[i]))
+    n0=cnt[y-1].sum(1); ann_def[y]=(n0@A[:7,7])/n0.sum()
+obs={y:cnt[y-1][:,7].sum()/cnt[y-1].sum() for y in years}
+print(pd.DataFrame({'model':ann_def,'obs':obs}).round(4))
+preds=[]
+for sc in ['baseline','adverse','severe']:
+    ss=s[s.scenario==sc].set_index('quarter')
+    gdp=pd.concat([m.gdp,ss.gdp]); vix=pd.concat([m.vix,ss.vix])
+    F=pd.DataFrame({'vix':vix,'dgdp4':np.log(gdp).diff(4)}).loc[1:9]
+    Sq=S_of(F); Ms=buildmany(T,Sq,np.ones(7))
+    x=np.concatenate([port/port.sum(),[0]])
+    for q in range(1,10):
+        for i,rt in enumerate(R): rows.append([sc,q,rt]+list(Ms[q-1][i]))
+        x=x@Ms[q-1]
+        if q in (4,9):
+            for j,st in enumerate(R+['D']): preds.append([sc,q,st,x[j]])
+    print(sc, np.round(Sq,3))
+    for y in years: bt.append([sc,y,ann_def[y]])
+P=pd.DataFrame(preds,columns=['scenario','quarter','state','share']); P.to_csv('predictions.csv',index=False,float_format='%.8f')
+pd.DataFrame(rows,columns=['scenario','quarter','from_rating']+C).to_csv('matrices.csv',index=False,float_format='%.10f')
+pd.DataFrame(bt,columns=['scenario','year','default_rate']).to_csv('backtest.csv',index=False,float_format='%.8f')
+print(P.pivot_table(index='state',columns=['scenario','quarter'],values='share').loc[R+['D']].round(4))
+print('SH hist range', SH.describe())
+E
+python final.py; wc -l predictions.csv matrices.csv backtest.csv
+```
+
+## [45] tool
+
+     model     obs
+1   0.0062  0.0124
+2   0.0053  0.0070
+3   0.0051  0.0056
+4   0.0053  0.0048
+5   0.0163  0.0164
+6   0.0120  0.0117
+7   0.0081  0.0083
+8   0.0055  0.0057
+9   0.0071  0.0081
+10  0.0063  0.0064
+11  0.0048  0.0056
+12  0.0052  0.0057
+13  0.0058  0.0053
+14  0.0872  0.0888
+15  0.0156  0.0175
+16  0.0087  0.0083
+17  0.0497  0.0482
+18  0.0147  0.0146
+19  0.0160  0.0134
+20  0.0121  0.0116
+baseline [-0.    -0.035 -0.059 -0.063 -0.06  -0.055 -0.05  -0.044 -0.038]
+adverse [0.048 0.069 0.085 0.127 0.175 0.162 0.142 0.115 0.08 ]
+severe [0.066 0.109 0.152 0.227 0.312 0.403 0.36  0.307 0.246]
+scenario adverse         baseline          severe        
+quarter        4       9        4       9       4       9
+state                                                    
+AAA       0.0036  0.0033   0.0038  0.0036  0.0036  0.0029
+AA        0.0206  0.0200   0.0216  0.0227  0.0202  0.0179
+A         0.1382  0.1366   0.1423  0.1480  0.1364  0.1274
+BBB       0.3550  0.3464   0.3580  0.3551  0.3533  0.3366
+BB        0.2843  0.2643   0.2852  0.2672  0.2833  0.2580
+B         0.1534  0.1629   0.1502  0.1544  0.1550  0.1699
+CCC/C     0.0282  0.0272   0.0263  0.0226  0.0292  0.0321
+D         0.0167  0.0393   0.0127  0.0263  0.0191  0.0552
+SH hist range count    80.000000
+mean     -0.021993
+std       0.303974
+min      -0.281574
+25%      -0.156370
+50%      -0.106512
+75%      -0.004618
+max       1.806509
+dtype: float64
+   49 predictions.csv
+  330 matrices.csv
+   61 backtest.csv
+  440 total
+
+
+## [46] assistant
+
+**[reasoning]**
+
+> CAQSrwkKEAgTGAI4AUIIdGhpbmtpbmcSDAev0vmwkF0DrcaX1BoM7hwL7s5BrHMA7+2KIjBYHANOr0Ae+kXwISHFigY3+64KsVsDGxua3O7HKjhzx1s0IZ+9VVwn3KzXzH9X6XcqzAhWGxLyVsWx2zY47LyvTFm5ZS7TfoKYvEfKDXwEouVKchctftuUowBWpART9f3I+RSrKSlZB2Xvqhgg2jk9r5yhJacw3h66RJcGpvUl2VDzmtiUlwERNlm+CDx7y9rFH4JjnpTD7QUviA7NncLYTsTYAKEub97F+2w4jsHM4/Q78tRXd0zCodJ4GaCdjhB+kPhIhzi8+iiEcHAyL4m5yBTe4LUPNkQYZAdeAl4tbuXV4IUKlFlp/Cf8Bnp1F0QVgN9gtpVCboP0AJAOrpU+/BEmcUJyD/EriFJO/iec95sSWVLKmNYdZk0rslhOZaymU9Rvpguh/mGpNnDMzMuDvKG7dvwkeeHgI94a/meS8qbjXKHvriZRJ4W5qFs3PfViu679J8Nwwy5ZWHOPkMnf398uKy6Kuo/T2HbEX/T5KPtdlBgg+PqSRGkTf6akz44TEyDDD7BlMr0rJ6Pa/tGUqNf0Jev/HImyFydxuX7l3nRiRe32Wwv72gRYZVyDVbwp+BIeFmryesG88tmsQkug4F+QcU3g5NaDg4UXGmOM7hWMBdbNm1vhyLrDq5u8QmOyYy/4SWrNVxPakFnZRCJq8ZeLBAXJYVSokFzlvq0uA5LyXslldop6pCX9D7KN6rYLc1lUyWwrv/1W7gv0in61TQn1seTFx8/Qtc/mBUEMRC/stJBA9WSZNkHN6TXE+63Oh4FA4toJ6J0b+vNvFGQb3Ml2FA0xL/Tym4HNGryM9j05iQSSnaTwzAyhnJ/jZavXpcVz9A1k3Z681swjL2sYReb7dG2tldlCqd3jJisRRwLhhcAi5kMLQl/+L3qQCTWjLNMauVidH39lAh7gm+G9Yk3SWs2jKeHNjxyMerQc1mSsDZvP/XmUR35rngeFO4/Rzfx4kA0QWfiuyH0I/vo6NJWmeVrngCl9SNIOUXPXbksU7az8zkF3LQoYyz1yS5ZlvcL90Qg1V/9GGBNDTErPzkVB2Dwtk16e6JtTm+rBBbBLPKs3PaBmn+QjhRMMxxNV3MpLc+sAiFjVM8qT6cUt9d9Zm1+vYvXDSSxWavQBJcBQ9b5tlPre3uTtTrNPjOKAAsM3lV8yU4DUb2jbWNNgLtAIBSCPooDsqEsWUvZyJDZsD4ajkUThS9GIKqAtOOzufVaxvn1I8nB0trWbMkKdh2/f8BVBAhBY4rVTmUUoiiVktRomzJvGuUQY6pdIo5Dm3a+/OLtN/9Un1Zl4aWi83IPKaKtqba2Z/GbVDVShzLON30on+AZsOUHO0ebMwKLof69PsxHUjNqYNYh1uYY102UOq/nzYQ8TRRhrf5PWz0XXnV1KnfNmiC3ErVegdRc/kR2gm/O40YbeSI7EJJ/RdHJ/+/XqWp4ild1pP1Wqh6F72nA6584VMU1Hfa+PDfgz5u1TtK+k88HjNXM4I3XcHAkxnbNv/cemvY58GFjZXmWF9ncWBJlLT/x1ZPejnRgB
 
 **tool call: bash**
 
 ```
 cd /workspace; python -c "
-import pandas as pd; p=pd.read_csv('predictions.csv'); print(p.groupby(['scenario','quarter']).share.sum()); print(len(p))"
+import pandas as pd; M=pd.read_csv('matrices.csv'); print(M.iloc[:,3:].sum(1).describe()); P=pd.read_csv('predictions.csv'); print(P.groupby(['scenario','quarter']).share.sum())"; head -3 matrices.csv
 ```
 
-## [39] tool
+## [47] tool
 
+<string>:2: Pandas4Warning: Starting with pandas version 4.0 all arguments of sum will be keyword-only.
+
+count    3.290000e+02
+mean     1.000000e+00
+std      7.843855e-11
+min      1.000000e+00
+25%      1.000000e+00
+50%      1.000000e+00
+75%      1.000000e+00
+max      1.000000e+00
+dtype: float64
 scenario  quarter
 adverse   4          1.0
           9          1.0
@@ -1176,66 +1153,74 @@ baseline  4          1.0
 severe    4          1.0
           9          1.0
 Name: share, dtype: float64
-48
+scenario,quarter,from_rating,to_AAA,to_AA,to_A,to_BBB,to_BB,to_B,to_CCC_C,to_D
+history,-76,AAA,0.9847953549,0.0149018400,0.0001310680,0.0000007072,0.0000904899,0.0000008148,0.0000795184,0.0000002069
+history,-76,AA,0.0011987442,0.9848250774,0.0133946057,0.0004125361,0.0000583050,0.0000816214,0.0000131904,0.0000159200
 
 
-## [40] assistant
+## [48] assistant
 
 **tool call: submit**
 
 ```
-I wrote all three files: predictions.csv (48 rows; the shares sum to 1 for every scenario and checkpoint), matrices.csv (329 rows) and backtest.csv (60 rows). One model, fitted once on history, produced all three scenarios.
+predictions.csv (48 rows), matrices.csv (329 rows) and backtest.csv (60 rows) are written in /workspace. I fitted one model to the history and ran all three scenarios through it, with no per-scenario changes.
 
-**Cumulative default share of the original cohort**
+**Model.** I used a one-factor credit-cycle model on quarterly matrices. A single base quarterly migration matrix gets shifted each quarter by a stress index, in probit (normal-quantile) space. Four quarterly matrices multiplied together give each year's annual matrix, and I fitted that to the annual counts by maximum likelihood. Working quarter by quarter handles the one-quarter spikes inside a year, which an annual average would hide.
 
-| Scenario | Quarter 4 | Quarter 9 |
+The stress index is linear in two inputs: the VIX level, which raises stress, and year-on-year GDP growth, which lowers it. I chose them by comparing likelihoods over about 20 candidate inputs. VIX alone beat BBB spread and unemployment, and adding year-on-year GDP growth helped a lot. Adding spread, unemployment, inflation, lags or a separate sensitivity per rating improved the fit by almost nothing, so I left them out.
+
+**Fit to history.** The model tracks the annual default rates closely, including the stress years:
+
+| Year | Model | Observed |
 |---|---|---|
-| Baseline | 1.30% | 2.72% |
-| Adverse | 1.71% | 4.02% |
-| Severe | 1.95% | 5.60% |
+| 14 | 8.72% | 8.88% |
+| 17 | 4.97% | 4.82% |
+| 5 | 1.63% | 1.64% |
 
-Under stress the surviving obligors drift down the grades. At quarter 9 the share of survivors in B is 15.9% under baseline, 17.1% under adverse and 18.1% under severe, and in CCC/C 2.3%, 2.8% and 3.4%.
+The fit leaves out years 1–3 because VIX starts later. For those years, in the history matrices and the backtest only, I filled VIX with its median and extrapolated GDP growth. Year 1 is underpredicted as a result: 0.62% against 1.24% observed. This doesn't affect the projections.
 
-**The model**
-- **Structure:** each quarter has a transition matrix, built from rating-specific thresholds for each target state. One shared credit factor moves every grade by the same amount in probit space. Four quarterly matrices multiply into each year's annual matrix, and that is fitted to the annual counts by maximum likelihood.
-- **Drivers:** the factor is a linear combination of the VIX level and year-over-year GDP growth, both standardised on history. Higher VIX and weaker GDP growth both push towards downgrade and default.
-- **Why quarterly:** the three big default years (5, 14 and 17) each contain a single spike quarter. Fitting quarter by quarter captures that timing, and it beat a model with a free factor for each year.
-- **How the drivers were chosen:** VIX was the best single driver. Adding year-over-year GDP growth was the one large improvement (about 280 log-likelihood points). Nothing else added much on top of those two: spreads, unemployment, house prices, equity returns, inflation, lags and a squared VIX term. Giving each grade its own sensitivity barely helped either, so all grades share one factor.
+**Projections** (shares of the original cohort):
 
-**Fit to history:** the backtest default rates track the observed ones closely, for example 8.75% modelled against 8.88% observed in year 14 and 5.0% against 4.8% in year 17. Two caveats:
-- **Early years:** VIX only starts in year 3, so before then it is set to its historical average. Year 1's high default rate is therefore under-fitted (0.77% modelled against 1.24% observed).
-- **Backtest file:** history is the same in every scenario, so backtest.csv repeats identical values under all three scenario names.
+| Scenario | Default by Q4 | Default by Q9 | B + CCC/C at Q9 |
+|---|---|---|---|
+| Baseline | 1.27% | 2.63% | 17.7% |
+| Adverse | 1.67% | 3.93% | 19.0% |
+| Severe | 1.91% | 5.52% | 20.2% |
 
-**History matrices in matrices.csv:** each historical year's quarterly matrix is the fourth root of the model's annual matrix, with negatives clipped and rows renormalised. For calm years it reproduces the annual matrix almost exactly. For the stress years it does not: the largest single-cell gap is about 0.001 in year 5, 0.009 in year 17 and 0.03 in year 14. That is because no single repeated quarterly matrix can reproduce a year with one spike quarter.
-
-Main risk: the scenarios move VIX and GDP gradually and apart from each other, while in history they moved together in sharp one-quarter spikes. The split between the two drivers is therefore less certain than the overall fit suggests. If the true process leans more on GDP, the severe projection understates defaults; if it leans more on VIX, it overstates them.
+**Checks.**
+- The shares sum to 1 at every scenario and checkpoint, and every matrix row sums to 1.
+- The backtest has the same values under all three scenarios, because it is one model run over the historical macro path.
+- The history matrices are the fourth root of each year's fitted annual matrix, so each is an average quarterly matrix for that year rather than the individual quarters.
 ```
 
-## [41] tool
+## [49] tool
 
-I wrote all three files: predictions.csv (48 rows; the shares sum to 1 for every scenario and checkpoint), matrices.csv (329 rows) and backtest.csv (60 rows). One model, fitted once on history, produced all three scenarios.
+predictions.csv (48 rows), matrices.csv (329 rows) and backtest.csv (60 rows) are written in /workspace. I fitted one model to the history and ran all three scenarios through it, with no per-scenario changes.
 
-**Cumulative default share of the original cohort**
+**Model.** I used a one-factor credit-cycle model on quarterly matrices. A single base quarterly migration matrix gets shifted each quarter by a stress index, in probit (normal-quantile) space. Four quarterly matrices multiplied together give each year's annual matrix, and I fitted that to the annual counts by maximum likelihood. Working quarter by quarter handles the one-quarter spikes inside a year, which an annual average would hide.
 
-| Scenario | Quarter 4 | Quarter 9 |
+The stress index is linear in two inputs: the VIX level, which raises stress, and year-on-year GDP growth, which lowers it. I chose them by comparing likelihoods over about 20 candidate inputs. VIX alone beat BBB spread and unemployment, and adding year-on-year GDP growth helped a lot. Adding spread, unemployment, inflation, lags or a separate sensitivity per rating improved the fit by almost nothing, so I left them out.
+
+**Fit to history.** The model tracks the annual default rates closely, including the stress years:
+
+| Year | Model | Observed |
 |---|---|---|
-| Baseline | 1.30% | 2.72% |
-| Adverse | 1.71% | 4.02% |
-| Severe | 1.95% | 5.60% |
+| 14 | 8.72% | 8.88% |
+| 17 | 4.97% | 4.82% |
+| 5 | 1.63% | 1.64% |
 
-Under stress the surviving obligors drift down the grades. At quarter 9 the share of survivors in B is 15.9% under baseline, 17.1% under adverse and 18.1% under severe, and in CCC/C 2.3%, 2.8% and 3.4%.
+The fit leaves out years 1–3 because VIX starts later. For those years, in the history matrices and the backtest only, I filled VIX with its median and extrapolated GDP growth. Year 1 is underpredicted as a result: 0.62% against 1.24% observed. This doesn't affect the projections.
 
-**The model**
-- **Structure:** each quarter has a transition matrix, built from rating-specific thresholds for each target state. One shared credit factor moves every grade by the same amount in probit space. Four quarterly matrices multiply into each year's annual matrix, and that is fitted to the annual counts by maximum likelihood.
-- **Drivers:** the factor is a linear combination of the VIX level and year-over-year GDP growth, both standardised on history. Higher VIX and weaker GDP growth both push towards downgrade and default.
-- **Why quarterly:** the three big default years (5, 14 and 17) each contain a single spike quarter. Fitting quarter by quarter captures that timing, and it beat a model with a free factor for each year.
-- **How the drivers were chosen:** VIX was the best single driver. Adding year-over-year GDP growth was the one large improvement (about 280 log-likelihood points). Nothing else added much on top of those two: spreads, unemployment, house prices, equity returns, inflation, lags and a squared VIX term. Giving each grade its own sensitivity barely helped either, so all grades share one factor.
+**Projections** (shares of the original cohort):
 
-**Fit to history:** the backtest default rates track the observed ones closely, for example 8.75% modelled against 8.88% observed in year 14 and 5.0% against 4.8% in year 17. Two caveats:
-- **Early years:** VIX only starts in year 3, so before then it is set to its historical average. Year 1's high default rate is therefore under-fitted (0.77% modelled against 1.24% observed).
-- **Backtest file:** history is the same in every scenario, so backtest.csv repeats identical values under all three scenario names.
+| Scenario | Default by Q4 | Default by Q9 | B + CCC/C at Q9 |
+|---|---|---|---|
+| Baseline | 1.27% | 2.63% | 17.7% |
+| Adverse | 1.67% | 3.93% | 19.0% |
+| Severe | 1.91% | 5.52% | 20.2% |
 
-**History matrices in matrices.csv:** each historical year's quarterly matrix is the fourth root of the model's annual matrix, with negatives clipped and rows renormalised. For calm years it reproduces the annual matrix almost exactly. For the stress years it does not: the largest single-cell gap is about 0.001 in year 5, 0.009 in year 17 and 0.03 in year 14. That is because no single repeated quarterly matrix can reproduce a year with one spike quarter.
-
-Main risk: the scenarios move VIX and GDP gradually and apart from each other, while in history they moved together in sharp one-quarter spikes. The split between the two drivers is therefore less certain than the overall fit suggests. If the true process leans more on GDP, the severe projection understates defaults; if it leans more on VIX, it overstates them.
+**Checks.**
+- The shares sum to 1 at every scenario and checkpoint, and every matrix row sums to 1.
+- The backtest has the same values under all three scenarios, because it is one model run over the historical macro path.
+- The history matrices are the fourth root of each year's fitted annual matrix, so each is an average quarterly matrix for that year rather than the individual quarters.
 

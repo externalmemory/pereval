@@ -1,6 +1,6 @@
 # anthropic/claude-opus-5-5 — ccar (id=instance-2-vasicek-legacy-seed-1320224556)
 
-- 9/9 points predicted; Winkler regret 0.070 (agent 0.177 vs oracle 0.107, degenerate 1.593); MAE 0.004; coverage 0.993; mean width 0.176.
+- 9/9 points predicted; Winkler regret 0.074 (agent 0.181 vs oracle 0.107, degenerate 1.593); MAE 0.018; coverage 0.986; mean width 0.178.
 - messages 18 | limit None | seed None
 
 ---
@@ -89,372 +89,349 @@ default_rate   80.0     0.040185  ...     0.054794      0.145322
 
 **[reasoning]**
 
-> CAQSvwUKEAgTGAI4AUIIdGhpbmtpbmcSDBNjMxGYo/j7pDHMJBoM2ncaGScN2tcuuRTIIjC11Z1cJuxt7m9tN3bY6yOl68kLpFxJXLEneWJfyLYD+5I72NjD4XKvTTSZDhxCCvYq3AQZFg2Tb0zN/1H9qdPczcRyyHhKsDzZSH/5HGu0BqHpR1XBo+AeiMXUzEzdHggcYFuzLRWky5MFd2UrRDP3APuLjfqnwcDjkMaoW1gUylL8ysxMNCpgJCGAYxEIUaKvqvdGxhDMDsfeVU0wQ7ZxqS3AXoRkiFWCaF7YOvJhRQmZTWxTsefIaPfFRyDo48AYbemojrGrthii0id4CM5LipOerWPT6LZ83tJzMhj6x6y4SH0SsoBnV9FjhI7CF6cbZ6bsnrxQZVkpf9BvDAkdZ78xKmqR5QXMzq81ape4NOKplUwnK8JtOG6FvxzfOzxKdbHozaRg8QukluOF0TVFmKRrAmJd5TR8lhLcHFpqeKJXEkX9ZGN0GOuhZLhCufabAqC77t9sgEnrAJxgG0/mVoLCtTseqIkkVHtFjZmKU/TnV0DNT9Oa8jr9vMCSkkunBkBsvoXeINRGxvrBWRq7rpo98eKh7DSXpWn9Kmn4JITMX8wuFAdD8GlF8wRPdXfUApxO7AdRE6coWSueYHjhKFGAdVJptHDMul9VhmnKufLC7dWG8n2IPaXVmTyuCiY9bnKhrpx71NtuDq8ljTdW1tUsdvm3J1gr7SxnPQnLUuU9QHF0C4nmSm7y+zZ1uBX03mZ/o2+BmA97u3IaA4bWCY69aWpO8B4J6JZtm/7vwmMopVA5WFaD0uLAgjgC6u3GImBnikiDCY8O3uc0roSmCOtm5YuAr00le6o7u95/HUzEJn6Z8hQzdQVpemWRUhQdNNoNTdS+tGVTXnA3TQIOvZ8nzT5gS3TbU0UP4vTtGAE=
+> CAQSzAUKEAgTGAI4AUIIdGhpbmtpbmcSDBuxDB9dRPIwiA8UNRoMyFZ5yjzzOPq0FmxZIjBOOqVs7iaArmLiyXfOYqsWTSwZgJqoTjQLeuKON2WW/bjThXRk/bAtHt/zYouyJw4q6QSdd1zADZI58P9c8V265sp+aTZiRGRISNPhhSgFQHT4/ygbrZMoEM+9cgBT6JTS7ifEg0+0U9xEscCN0Ey84yUNr6tbtjZ4QTBcDayTJYUAfFKZO8BYHMwQ1SQqb0uAvai0Eyq2cukFlhpPnewsZ+fgj1ll7yx2soVTHwFq6VXOXvRwzYhlT25WlfjVb2m0fue0ApGLJJ0lEIIB6IFaGE4mDCTDF441Q/S5aq0hnOXPtNPp2AH53PyUcq9a5LIDdLD1SN7mLyga4VQE8eNHpcom/v9i/mHZWhqjDhu7gc526bodr4YnhRYMuqVeuLcgXetfvOLxZ3G5zUVIpselWIrldT4wctpZLt5nUQYVu2Nkt+shVsn5EFX/mC+GwYZz3gAxQnB7fVJT6jhjHShPORpLAUa2mcUlVY+G2B+YScc4EvmjafXap++QUCl/eiEa+Isj7EVg7leNPkiwtDbDA/h1Z9nSEPYwfSP1/TQwoW6DI8lqMqaEK0r/7cKCwwj7QlBRJRybMp51F9/oZBjXtub5cx+Vov+JqGk4l5gUnuCOBeT8NG99YxubgURDTsEdzTQS95w5WZL5tX1+11yk8HS6vJ1oN8hOOU9n85gLYMRCaeZlGEaozs21EH9tsT0FQ0bOhPq1uaG5b5BZXhMQNc4m0YEE4iE7g9+fIsrTPHK+pAAI9NW9ofuJ1TxDojKhZffyRcwOCarxijnOO9G26PKk0k5nE7Qfn7JAgGfn1PHhogSbFapbxRXYLu/ZYaUQQ6WEr+QIuafXETpAKFlmw5nNvGc4ftsfKaB/oGMo4PXuGmDoYO2RJHcauxgB
 
 **tool call: python**
 
 ```
 
 import pandas as pd,numpy as np
-d=pd.read_csv('data/train.csv');s=pd.read_csv('data/scenario.csv')
-a=pd.concat([d,s]).reset_index(drop=True)
-for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
-    a[c+'_g4']=np.log(a[c]).diff(4); a[c+'_g1']=np.log(a[c]).diff(1)
-a['ly']=np.log(a.default_rate)
-print(a.corr()['ly'].sort_values().to_string())
-print(a[['quarter','default_rate','unemployment','bbb_spread','gdp_g4','hpi_g4']].to_string())
+d=pd.read_csv('data/train.csv')
+pd.set_option('display.width',250);pd.set_option('display.max_rows',100)
+print(d.to_string())
 
 ```
 
 ## [5] tool
 
-sp500_g4       -0.666273
-nasdaq_g4      -0.603782
-djia_g4        -0.530094
-nasdaq_g1      -0.445005
-gdp_g4         -0.376684
-gdp_g1         -0.347310
-sp500_g1       -0.320174
-cpi_g1         -0.282658
-djia_g1        -0.266847
-djia           -0.054733
-cpi_g4         -0.053581
-sp500          -0.049005
-nasdaq         -0.015752
-hpi_g1         -0.010458
-quarter         0.013417
-gdp             0.014307
-cpi             0.089306
-hpi_g4          0.106170
-hpi             0.153212
-unemployment    0.242452
-bbb_spread      0.426011
-vix             0.844114
-default_rate    0.933026
-ly              1.000000
-    quarter  default_rate  unemployment  bbb_spread    gdp_g4    hpi_g4
-0         1      0.037574        9.3006         NaN       NaN       NaN
-1         2      0.092997        9.2327         NaN       NaN       NaN
-2         3      0.044043        8.9567         NaN       NaN       NaN
-3         4      0.055300        7.7753         NaN       NaN       NaN
-4         5      0.027578        7.5383         NaN  0.038915       NaN
-5         6      0.056340        6.1933         NaN  0.043157       NaN
-6         7      0.055530        5.8049         NaN  0.043652       NaN
-7         8      0.046841        6.9903         NaN  0.023995       NaN
-8         9      0.024827        7.2261         NaN  0.028115       NaN
-9        10      0.037517        6.5486      2.3120  0.038106       NaN
-10       11      0.062589        4.7786      2.2942  0.046653       NaN
-11       12      0.046627        4.5812      2.0665  0.068291       NaN
-12       13      0.091239        4.3997      2.3620  0.065569       NaN
-13       14      0.031165        4.6850      2.4073  0.052106       NaN
-14       15      0.037070        5.1278      2.1696  0.024241  0.000101
-15       16      0.028800        4.5457      1.8625  0.029801  0.019725
-16       17      0.018319        4.3764      1.5486  0.030521  0.029081
-17       18      0.011119        3.7483      1.2207  0.053897  0.022488
-18       19      0.014964        3.3086      1.0060  0.077113  0.007508
-19       20      0.014131        3.4694      1.0213  0.066216 -0.056333
-20       21      0.018416        3.3028      0.8715  0.072905 -0.108312
-21       22      0.012228        3.4950      0.3203  0.048205 -0.126832
-22       23      0.013846        3.6274      0.4931  0.044838 -0.122353
-23       24      0.023696        3.7517      0.5321  0.038859 -0.090858
-24       25      0.018347        4.0713      0.4988  0.020291 -0.045538
-25       26      0.045869        3.9464      1.0001  0.031920 -0.011300
-26       27      0.024714        4.5389      1.3173  0.030991  0.013115
-27       28      0.036092        4.6163      1.2834  0.038262  0.022441
-28       29      0.024433        4.6914      1.2059  0.046465  0.058586
-29       30      0.016682        4.3460      1.2065  0.052540  0.066617
-30       31      0.046189        4.6629      1.1948  0.051868  0.072221
-31       32      0.043076        5.4129      1.6789  0.040242  0.084933
-32       33      0.057369        5.5536      2.3244  0.034314  0.039421
-33       34      0.037088        5.9276      1.5152  0.022580  0.020350
-34       35      0.038266        9.6394      1.9155 -0.004278 -0.000638
-35       36      0.037758        9.0956      2.0840 -0.001850 -0.025331
-36       37      0.058892        7.2243      2.7307  0.004852 -0.013592
-37       38      0.050781        6.6221      2.2234  0.004699  0.036249
-38       39      0.071622        8.8753      2.6529  0.009513  0.073398
-39       40      0.072894        9.9052      2.7508  0.008598  0.108166
-40       41      0.026235        9.4238      2.7120  0.003582  0.102821
-41       42      0.054625       11.6730      3.0588 -0.018919  0.050835
-42       43      0.064243       12.5618      2.8787 -0.019419  0.009748
-43       44      0.019756        8.4187      2.4482 -0.004302 -0.021556
-44       45      0.009106        6.1321      2.3140  0.028880  0.010074
-45       46      0.015412        5.5679      1.7960  0.068227  0.065452
-46       47      0.022211        4.9370      1.7482  0.104983  0.110335
-47       48      0.014179        4.8868      1.3856  0.102458  0.154864
-48       49      0.010261        5.7544      1.5939  0.070377  0.177495
-49       50      0.020359        4.1594      1.2585  0.070124  0.190092
-50       51      0.039656        3.8598      1.2130  0.064908  0.203936
-51       52      0.028414        3.9236      0.7181  0.069583  0.219629
-52       53      0.025010        3.6993      1.1545  0.067664  0.212560
-53       54      0.024719        4.4330      1.0449  0.034848  0.231655
-54       55      0.053085        4.3229      1.4299  0.022805  0.221350
-55       56      0.059271        3.6291      1.2038  0.028746  0.180906
-56       57      0.077258        3.9796      1.8963  0.031964  0.137135
-57       58      0.145322        3.4673      2.1225  0.041679  0.066674
-58       59      0.058915        4.0645      2.0751  0.034895  0.005574
-59       60      0.100972        3.6810      2.0098  0.011752 -0.003696
-60       61      0.068431        4.3224      1.7756  0.005946  0.028304
-61       62      0.064225        4.8975      1.4634  0.000735  0.056517
-62       63      0.028387        3.6303      1.2834  0.038062  0.119981
-63       64      0.038945        4.2873      1.6439  0.044489  0.131860
-64       65      0.029186        3.5519      1.0816  0.069730  0.116001
-65       66      0.024362        3.3517      1.1120  0.079156  0.115144
-66       67      0.021795        5.2490      1.5222  0.035403  0.093006
-67       68      0.023798        5.4842      1.8543  0.033535  0.060263
-68       69      0.010849        5.7431      1.9645  0.013447  0.036912
-69       70      0.020545        3.8717      1.7422  0.037360  0.039927
-70       71      0.014456        4.3698      1.5016  0.051247  0.029089
-71       72      0.026094        3.7675      1.6094  0.066872  0.035972
-72       73      0.054382        3.7157      1.6293  0.066211  0.051636
-73       74      0.024860        3.8156      1.0050  0.056229  0.026223
-74       75      0.035776        4.6666      1.0514  0.045136  0.017802
-75       76      0.040193        5.0604      1.3709  0.020491  0.017543
-76       77      0.107943        4.8794      1.7990  0.027467 -0.004207
-77       78      0.040246        5.1204      1.4021  0.017140  0.001499
-78       79      0.056475        4.2763      0.8228  0.047670  0.007945
-79       80      0.031982        3.8546      0.7894  0.064153  0.033425
-80       81           NaN        4.2640      1.1336  0.029535  0.010759
-81       82           NaN        4.7169      1.4777 -0.000855 -0.036614
-82       83           NaN        5.2180      1.8218 -0.046340 -0.079832
-83       84           NaN        5.7723      2.1660 -0.075738 -0.134896
-84       85           NaN        6.3854      2.5101 -0.075738 -0.134896
-85       86           NaN        7.0637      2.8542 -0.075738 -0.134896
-86       87           NaN        7.8140      3.1983 -0.075738 -0.134896
-87       88           NaN        8.6440      3.5425 -0.075737 -0.134896
-88       89           NaN        9.5622      3.8866 -0.075737 -0.134896
+    quarter       gdp  unemployment       hpi  bbb_spread      sp500       djia      nasdaq      vix       cpi  default_rate
+0         1  119.6078        9.3006       NaN         NaN        NaN        NaN    482.5013      NaN  125.0936      0.037574
+1         2  120.1930        9.2327       NaN         NaN        NaN        NaN    472.2537      NaN  124.6449      0.092997
+2         3  121.4081        8.9567       NaN         NaN        NaN        NaN    473.2188      NaN  124.2013      0.044043
+3         4  122.6960        7.7753       NaN         NaN        NaN        NaN    460.8373      NaN  124.3421      0.055300
+4         5  124.3541        7.5383       NaN         NaN        NaN        NaN    488.6292      NaN  123.5950      0.027578
+5         6  125.4937        6.1933       NaN         NaN        NaN        NaN    468.9426      NaN  123.3352      0.056340
+6         7  126.8252        5.8049       NaN         NaN        NaN        NaN    452.5544      NaN  125.6511      0.055530
+7         8  125.6757        6.9903       NaN         NaN        NaN        NaN    439.4541      NaN  126.3409      0.046841
+8         9  127.8999        7.2261       NaN         NaN        NaN        NaN    430.6951      NaN  130.5078      0.024827
+9        10  130.3680        6.5486       NaN      2.3120        NaN        NaN    475.6062      NaN  133.1867      0.037517
+10       11  132.8822        4.7786  130.2162      2.2942        NaN        NaN    453.4960      NaN  134.3274      0.062589
+11       12  134.5581        4.5812  131.7227      2.0665        NaN        NaN    486.9473      NaN  137.6586      0.046627
+12       13  136.5672        4.3997  131.6034      2.3620        NaN        NaN    450.8673      NaN  137.5078      0.091239
+13       14  137.3410        4.6850  130.3511      2.4073        NaN        NaN    454.6545      NaN  137.2484      0.031165
+14       15  136.1427        5.1278  130.2293      2.1696        NaN        NaN    451.3413  18.7723  136.5711      0.037070
+15       16  138.6284        4.5457  134.3467      1.8625        NaN        NaN    483.0283  12.5571  137.2853      0.028800
+16       17  140.7996        4.3764  135.4868      1.5486        NaN        NaN    513.6946  11.7583  137.5950      0.018319
+17       18  144.9464        3.7483  133.3157      1.2207        NaN        NaN    541.9742  10.4754  138.8976      0.011119
+18       19  147.0564        3.3086  131.2107      1.0060        NaN        NaN    603.4066  11.1600  137.3273      0.014964
+19       20  148.1185        3.4694  126.9878      1.0213        NaN        NaN    623.4161  11.7784  135.6850      0.014131
+20       21  151.4481        3.3028  121.5787      0.8715        NaN        NaN    681.6251  11.5809  133.4620      0.018416
+21       22  152.1047        3.4950  117.4353      0.3203        NaN        NaN    806.4173   8.2986  132.9649      0.012228
+22       23  153.8001        3.6274  116.1000      0.4931        NaN        NaN    853.8381   8.9819  132.8235      0.013846
+23       24  153.9876        3.7517  115.9586      0.5321        NaN        NaN    928.1901  11.8507  131.1635      0.023696
+24       25  154.5526        4.0713  116.1664      0.4988        NaN        NaN    978.6965  15.2632  131.1917      0.018347
+25       26  157.0382        3.9464  116.1157      1.0001        NaN        NaN    998.8190  17.7833  131.2004      0.045869
+26       27  158.6411        4.5389  117.6327      1.3173        NaN        NaN   1047.8272  12.8578  132.7303      0.024714
+27       28  159.9937        4.6163  118.5903      1.2834        NaN        NaN   1084.7152  14.7849  133.8860      0.036092
+28       29  161.9034        4.6914  123.1754      1.2059        NaN        NaN   1119.0811  13.8116  135.5326      0.024433
+29       30  165.5096        4.3460  124.1144      1.2065        NaN        NaN   1213.1815  11.5023  136.7926      0.016682
+30       31  167.0866        4.6629  126.4426      1.1948        NaN        NaN   1148.1384  14.5542  136.8689      0.046189
+31       32  166.5634        5.4129  129.1026      1.6789        NaN        NaN   1037.7921  17.6274  136.1985      0.043076
+32       33  167.5554        5.5536  128.1281      2.3244        NaN        NaN    908.3697  17.4336  134.2093      0.057369
+33       34  169.2893        5.9276  126.6660      1.5152        NaN        NaN   1037.1799  13.0809  134.4445      0.037088
+34       35  166.3733        9.6394  126.3619      1.9155        NaN        NaN   1168.4329  16.5452  135.7874      0.038266
+35       36  166.2555        9.0956  125.8734      2.0840   836.6039   739.5885   1251.4714  17.5414  135.7958      0.037758
+36       37  168.3704        7.2243  126.3984      2.7307   848.0019   715.1610   1195.3670  23.4807  134.1227      0.058892
+37       38  170.0867        6.6221  131.3417      2.2234   872.9304   739.4868   1197.0359  20.0122  133.6816      0.050781
+38       39  167.9636        8.8753  135.9854      2.6529   872.6845   753.8960   1139.6555  26.6102  133.7032      0.071622
+39       40  167.6911        9.9052  140.2522      2.7508   855.5180   742.8941   1078.9033  24.8666  134.2583      0.072894
+40       41  168.9745        9.4238  140.0864      2.7120   900.4669   773.2097   1141.1683  22.0541  134.8400      0.026235
+41       42  166.8991       11.6730  138.1911      3.0588   932.7273   813.5668   1198.0320  20.6065  134.8119      0.054625
+42       43  164.7334       12.5618  137.3175      2.8787  1033.3631   888.6368   1417.9161  20.1198  133.7506      0.064243
+43       44  166.9713        8.4187  137.2613      2.4482  1068.1931   942.0016   1565.4256  13.9152  135.2957      0.019756
+44       45  173.9256        6.1321  141.5048      2.3140  1119.2766   960.0645   1762.4559  15.1799  138.8501      0.009106
+45       46  178.6836        5.5679  147.5385      1.7960  1291.5863  1046.2115   2285.1473  15.0057  141.3412      0.015412
+46       47  182.9681        4.9370  153.3358      1.7482  1388.8920  1098.8462   2528.0980  17.1648  142.4644      0.022211
+47       48  184.9860        4.8868  160.2524      1.3856  1474.7756  1212.9005   2919.5647  12.6241  147.7297      0.014179
+48       49  186.6069        5.7544  168.9881      1.5939  1571.4888  1284.5348   3215.2762  10.1573  154.7561      0.010261
+49       50  191.6634        4.1594  178.4272      1.2585  1680.6885  1341.3233   3417.1941  10.3424  162.2427      0.020359
+50       51  195.2381        3.8598  188.0234      1.2130  1733.7503  1407.9351   3542.8402  13.9944  169.6304      0.039656
+51       52  198.3163        3.9236  199.6128      0.7181  1845.5999  1466.6731   3997.7278  11.1309  181.4720      0.028414
+52       53  199.6704        3.6993  209.0114      1.1545  1894.5058  1477.4985   3913.2284  12.9265  188.3368      0.025010
+53       54  198.4603        4.4330  224.9405      1.0449  1930.9005  1486.9073   3809.4539  15.4924  194.1782      0.024719
+54       55  199.7416        4.3229  234.6081      1.4299  1987.0664  1494.2907   3706.4364  18.4930  200.1312      0.053085
+55       56  204.0999        3.6291  239.1966      1.2038  2054.5377  1464.8615   3628.7942  24.8824  202.1873      0.059271
+56       57  206.1558        3.9796  239.7324      1.8963  2023.9428  1391.7108   3284.5834  29.5086  201.0464      0.077258
+57       58  206.9068        3.4673  240.4495      2.1225  1998.7356  1353.7050   3128.9372  35.3251  197.6010      0.145322
+58       59  206.8347        4.0645  235.9195      2.0751  2082.8939  1434.3646   3258.3268  23.3796  195.9962      0.058915
+59       60  206.5126        3.6810  238.3142      2.0098  2094.3955  1490.6647   3616.6486  26.2244  196.5019      0.100972
+60       61  207.3852        4.3224  246.6148      1.7756  2165.0443  1597.6613   3958.6040  25.9555  197.9610      0.068431
+61       62  207.0590        4.8975  254.4304      1.4634  2441.5575  1671.4500   4645.0035  24.1760  198.4341      0.064225
+62       63  214.8589        3.6303  265.9934      1.2834  2686.2799  1799.7527   5157.3727  19.0692  202.7165      0.028387
+63       64  215.9076        4.2873  271.9043      1.6439  2610.7082  1841.1431   4919.6932  17.7776  206.2654      0.038945
+64       65  222.3623        3.5519  276.9476      1.0816  2662.9517  1922.2378   5071.3113  11.7828  212.2104      0.029186
+65       66  224.1151        3.3517  285.4797      1.1120  2960.2467  2143.5432   5647.6927  10.7717  218.8284      0.024362
+66       67  222.6019        5.2490  291.9194      1.5222  3050.7035  2229.7495   6196.5058  13.3476  223.3171      0.021795
+67       68  223.2708        5.4842  288.7938      1.8543  3185.1923  2228.4914   6405.2823  12.3628  222.3836      0.023798
+68       69  225.3725        5.7431  287.3614      1.9645  3317.0849  2231.2480   6754.8689  10.0355  222.6215      0.010849
+69       70  232.6463        3.8717  297.1086      1.7422  3256.6737  2203.3530   6363.2843  11.0640  227.9872      0.020545
+70       71  234.3070        4.3698  300.5358      1.5016  3513.1481  2282.9124   6930.3593  11.7085  233.9219      0.014456
+71       72  238.7118        3.7675  299.3715      1.6094  3407.4217  2277.9855   6893.9248  14.5330  241.0494      0.026094
+72       73  240.7998        3.7157  302.5894      1.6293  3416.5354  2237.5723   6284.5785  16.6100  244.7763      0.054382
+73       74  246.1025        3.8156  305.0026      1.0050  3594.1015  2448.3957   7149.0650  10.9357  252.7610      0.024860
+74       75  245.1250        4.6666  305.9337      1.0514  3657.5201  2592.7793   7374.0131  17.4838  258.3697      0.035776
+75       76  243.6538        5.0604  304.6696      1.3709  3518.4337  2592.2209   6931.0034  20.9375  264.0541      0.040193
+76       77  247.5055        4.8794  301.3192      1.7990  3527.6258  2700.9601   6671.0470  26.7114  266.5365      0.107943
+77       78  250.3570        5.1204  305.4600      1.4021  3765.8797  2893.1151   7758.3718  18.2188  273.6635      0.040246
+78       79  257.0932        4.2763  308.3740      0.8228  4258.6582  3092.2350   9785.5672  16.0651  280.1371      0.056475
+79       80  259.7973        3.8546  315.0253      0.7894  4388.7499  3233.3078  10055.9192  18.4328  286.4728      0.031982
 
 
 ## [6] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: python**
 
 ```
 
-import pandas as pd,numpy as np,statsmodels.api as sm
+import pandas as pd,numpy as np,statsmodels.api as sm,itertools
 d=pd.read_csv('data/train.csv');s=pd.read_csv('data/scenario.csv')
-a=pd.concat([d,s]).reset_index(drop=True)
-for c in ['gdp','hpi','sp500','nasdaq','djia']: a[c+'_g4']=np.log(a[c]).diff(4)
-a['ly']=np.log(a.default_rate);a['lv']=np.log(a.vix)
-t=a[a.default_rate.notna()&a.vix.notna()]
-for f in [['vix'],['lv'],['lv','sp500_g4'],['lv','bbb_spread'],['lv','unemployment'],['lv','gdp_g4'],['lv','nasdaq_g4']]:
-    tt=t.dropna(subset=f);m=sm.OLS(tt.ly,sm.add_constant(tt[f])).fit();print(f,m.params.round(3).values,m.pvalues.round(3).values,round(m.rsquared,3),len(tt),round(np.sqrt(m.scale),3))
-m=sm.OLS(t.ly,sm.add_constant(t[['lv']])).fit();r=m.resid
-print(pd.concat([t,r.rename('r')],axis=1).corr()['r'].sort_values().to_string())
-print(a[['quarter','vix','default_rate']].iloc[10:].T.to_string())
+a=pd.concat([d,s],ignore_index=True)
+for c in ['gdp','hpi','sp500','djia','nasdaq','cpi']:
+    a[c+'_g4']=np.log(a[c]).diff(4); a[c+'_g1']=np.log(a[c]).diff(1)
+a['unemp_d4']=a.unemployment.diff(4);a['unemp_d1']=a.unemployment.diff(1)
+a['spr_d4']=a.bbb_spread.diff(4);a['lvix']=np.log(a.vix)
+a['ly']=np.log(a.default_rate)
+t=a[a.quarter<=80]
+print(t.drop(columns=['quarter']).corr()[['ly','default_rate']].round(2).to_string())
+print(a[a.quarter>=78][['gdp_g4','hpi_g4','unemp_d4','bbb_spread','vix','nasdaq_g4','sp500_g4']].round(3))
+print(t[['gdp_g4','hpi_g4','unemp_d4','bbb_spread','vix','nasdaq_g4']].describe().round(3))
 
 ```
 
 ## [7] tool
 
-['vix'] [-5.003  0.093] [0. 0.] 0.713 66 0.335
-['lv'] [-7.975  1.639] [0. 0.] 0.722 66 0.33
-['lv', 'sp500_g4'] [-6.814  1.32  -1.936] [0.   0.   0.01] 0.736 41 0.347
-['lv', 'bbb_spread'] [-8.115  1.749 -0.104] [0.    0.    0.197] 0.729 66 0.328
-['lv', 'unemployment'] [-7.981  1.674 -0.018] [0.    0.    0.408] 0.725 66 0.331
-['lv', 'gdp_g4'] [-7.888  1.615 -0.561] [0.    0.    0.753] 0.722 66 0.332
-['lv', 'nasdaq_g4'] [-7.143  1.389 -0.821] [0. 0. 0.] 0.777 66 0.298
-nasdaq_g4      -3.889081e-01
-sp500_g4       -3.259104e-01
-djia_g4        -1.827654e-01
-bbb_spread     -1.349032e-01
-unemployment   -9.913668e-02
-gdp_g4         -3.432979e-02
-lv              7.668781e-16
-vix             1.684632e-02
-hpi_g4          2.622129e-02
-quarter         9.244204e-02
-nasdaq          1.170310e-01
-hpi             1.385838e-01
-gdp             1.508623e-01
-cpi             1.687659e-01
-sp500           2.691383e-01
-djia            2.695728e-01
-default_rate    4.109736e-01
-ly              5.276107e-01
-r               1.000000e+00
-                     10         11         12         13        14       15         16         17         18         19         20         21         22         23         24         25         26         27         28         29         30         31         32         33         34         35         36         37         38         39         40         41         42         43         44         45         46         47         48         49         50         51        52         53         54         55         56         57         58         59         60         61         62         63         64         65         66         67         68         69         70         71         72        73         74         75         76         77         78         79       80       81       82       83       84       85      86       87       88
-quarter       11.000000  12.000000  13.000000  14.000000  15.00000  16.0000  17.000000  18.000000  19.000000  20.000000  21.000000  22.000000  23.000000  24.000000  25.000000  26.000000  27.000000  28.000000  29.000000  30.000000  31.000000  32.000000  33.000000  34.000000  35.000000  36.000000  37.000000  38.000000  39.000000  40.000000  41.000000  42.000000  43.000000  44.000000  45.000000  46.000000  47.000000  48.000000  49.000000  50.000000  51.000000  52.000000  53.00000  54.000000  55.000000  56.000000  57.000000  58.000000  59.000000  60.000000  61.000000  62.000000  63.000000  64.000000  65.000000  66.000000  67.000000  68.000000  69.000000  70.000000  71.000000  72.000000  73.000000  74.00000  75.000000  76.000000  77.000000  78.000000  79.000000  80.000000  81.0000  82.0000  83.0000  84.0000  85.0000  86.0000  87.000  88.0000  89.0000
-vix                 NaN        NaN        NaN        NaN  18.77230  12.5571  11.758300  10.475400  11.160000  11.778400  11.580900   8.298600   8.981900  11.850700  15.263200  17.783300  12.857800  14.784900  13.811600  11.502300  14.554200  17.627400  17.433600  13.080900  16.545200  17.541400  23.480700  20.012200  26.610200  24.866600  22.054100  20.606500  20.119800  13.915200  15.179900  15.005700  17.164800  12.624100  10.157300  10.342400  13.994400  11.130900  12.92650  15.492400  18.493000  24.882400  29.508600  35.325100  23.379600  26.224400  25.955500  24.176000  19.069200  17.777600  11.782800  10.771700  13.347600  12.362800  10.035500  11.064000  11.708500  14.533000  16.610000  10.93570  17.483800  20.937500  26.711400  18.218800  16.065100  18.432800  20.0202  21.7443  23.6169  25.6508  27.8598  30.2591  32.865  35.6953  38.7693
-default_rate   0.062589   0.046627   0.091239   0.031165   0.03707   0.0288   0.018319   0.011119   0.014964   0.014131   0.018416   0.012228   0.013846   0.023696   0.018347   0.045869   0.024714   0.036092   0.024433   0.016682   0.046189   0.043076   0.057369   0.037088   0.038266   0.037758   0.058892   0.050781   0.071622   0.072894   0.026235   0.054625   0.064243   0.019756   0.009106   0.015412   0.022211   0.014179   0.010261   0.020359   0.039656   0.028414   0.02501   0.024719   0.053085   0.059271   0.077258   0.145322   0.058915   0.100972   0.068431   0.064225   0.028387   0.038945   0.029186   0.024362   0.021795   0.023798   0.010849   0.020545   0.014456   0.026094   0.054382   0.02486   0.035776   0.040193   0.107943   0.040246   0.056475   0.031982      NaN      NaN      NaN      NaN      NaN      NaN     NaN      NaN      NaN
+                ly  default_rate
+gdp           0.01          0.04
+unemployment  0.24          0.17
+hpi           0.15          0.15
+bbb_spread    0.43          0.43
+sp500        -0.05         -0.08
+djia         -0.05         -0.09
+nasdaq       -0.02         -0.01
+vix           0.84          0.88
+cpi           0.09          0.10
+default_rate  0.93          1.00
+gdp_g4       -0.38         -0.33
+gdp_g1       -0.35         -0.29
+hpi_g4        0.11          0.05
+hpi_g1       -0.01         -0.06
+sp500_g4     -0.67         -0.61
+sp500_g1     -0.32         -0.32
+djia_g4      -0.53         -0.55
+djia_g1      -0.27         -0.30
+nasdaq_g4    -0.60         -0.54
+nasdaq_g1    -0.45         -0.40
+cpi_g4       -0.05         -0.10
+cpi_g1       -0.28         -0.33
+unemp_d4      0.22          0.14
+unemp_d1      0.13          0.09
+spr_d4        0.57          0.55
+lvix          0.85          0.84
+ly            1.00          0.93
+    gdp_g4  hpi_g4  unemp_d4  bbb_spread     vix  nasdaq_g4  sp500_g4
+77   0.017   0.001     1.305       1.402  18.219      0.082     0.047
+78   0.048   0.008    -0.390       0.823  16.065      0.283     0.152
+79   0.064   0.033    -1.206       0.789  18.433      0.372     0.221
+80   0.030   0.011    -0.615       1.134  20.020      0.291     0.186
+81  -0.001  -0.037    -0.404       1.478  21.744      0.021     0.061
+82  -0.046  -0.080     0.942       1.822  23.617     -0.331    -0.102
+83  -0.076  -0.135     1.918       2.166  25.651     -0.477    -0.191
+84  -0.076  -0.135     2.121       2.510  27.860     -0.477    -0.190
+85  -0.076  -0.135     2.347       2.854  30.259     -0.477    -0.124
+86  -0.076  -0.135     2.596       3.198  32.865     -0.477    -0.092
+87  -0.076  -0.135     2.872       3.542  35.695     -0.477    -0.069
+88  -0.076  -0.135     3.177       3.887  38.769     -0.477    -0.058
+       gdp_g4  hpi_g4  unemp_d4  bbb_spread     vix  nasdaq_g4
+count  76.000  66.000    76.000      71.000  66.000     76.000
+mean    0.039   0.052    -0.225       1.613  16.538      0.152
+std     0.026   0.081     1.993       0.623   5.625      0.200
+min    -0.019  -0.127    -7.625       0.320   8.299     -0.209
+25%     0.024   0.008    -1.077       1.199  11.800     -0.000
+50%     0.038   0.036    -0.029       1.549  15.222      0.132
+75%     0.054   0.100     0.776       2.071  18.995      0.284
+max     0.105   0.232     5.051       3.059  35.325      0.646
 
 
 ## [8] assistant
 
 **[reasoning]**
 
-> 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
+> CAQSxgcKEAgTGAI4AUIIdGhpbmtpbmcSDAFdjpielg6Sh67P7RoM8gwIgKuqiViOJZ3eIjB1ub2y8HLdZSvS5gZPpJWEfKLhHKJ00lJiOuRe1jKbKMjZSe+c2c9KIbEPU4V4ln8q4wYOcA6I8GwtvKzZjCGvZx48uXh8BDpmkvzZFJBgKmuOuNgvNFqtqpYvXH/aj6wPT+gl9LuIvjPjOmHIa+BST3YOUC73Li9uuQH+m4j16s+FlaGV5ARbCSZdJ4hOzWPT5euDkTAI986dzudpn9eOZqgge9SYfF3QOugMvAMaRVCFHo22ocazH0qk1c2V+n9oLZQa4Xuys7dZTL5ltacb2y7sIMXkZTxDMMBbngrtHlNesivOXSQe5/4bhN4+VpTI2Km3Q0IWQJ0nfcnNBCWDm2poggkTVomVdp5vmowE2naXOmKBH5irMslvXxoOR4GFybN9Onp8YHreRaD9E4arDo1xu2DC836Aek6ZNzXNZQaf31XpSPBrogMZnSlx8t/DsFDQxXpw4XUMEzExv8S6oLPWEn6lj2arctk0ZemmHT2OTb/GEaEcqucg3wk2ETa1Ah+KLTzwFBXkW+Ig+Qgx4ehXCMSpNouwttYIch5pDdAkPpFgrxkAmjdYi9O0iJ55RcmJ1utOSfT/h2G9cuw1NI6rI0aZStz2hrRRp9N0/dCIhQKIZ04Mb506IQoMZw+pn5ynCI3yzOr+tyZK9qhyJipMZsnC5DdK6yaAAApV98N3O+nxpvndYwjuf0N5g2FtDzTdnyXz0I1UJvSAR0zrSDJ2eYK/7apjPu2q6pYsd7f33hRb3po5m5jn1FdklwYw1us/K5dCeFSv4FusUHIUvrxq+VqmhKyeiBHg1+E5qsRfkZTZRvpuIB63cLTeyv6YNGO6kTru66vPfng0WGI23er0QqJ6p37KnBJJ24SCKmx+qZFLWYQ6G+Pdl0tcXSumnAF6KuQ02PuviDmOcYJTl5nOddvDudfDWtUBO+wHgacHnAN3+6yu9CP0JtgWv09pIvYuQ3tBdpfftgB+O++SEogf8Rj8UJnLh8q1AFADpxoXZ4K0n7N/Q4HQBhRO20icxHp7tRvc/HC5JR9hjYzcDMrjktToe8nLUajZdlEe77fY48gyB75P7mV3z370AlDLOgrS0nnUQg2rGDwtuUvRjPStumHekIn5r7iw7TXkMIFTh7KFM6U15/UZImawcmnd2Rn2U0kUMupoE9aCr8Y0t1MOkjtF+fwWhzXDtk27sN/X57RyAx6RK8AghjzPq339E51IPhoYAQ==
 
 **tool call: python**
 
 ```
 
-import pandas as pd,numpy as np,statsmodels.api as sm
+import pandas as pd,numpy as np,statsmodels.api as sm,itertools
 d=pd.read_csv('data/train.csv');s=pd.read_csv('data/scenario.csv')
-a=pd.concat([d,s]).reset_index(drop=True)
-for c in ['gdp','hpi','sp500','nasdaq','djia']:
-  for k in [1,2,4]: a[f'{c}_g{k}']=np.log(a[c]).diff(k)
-a['ly']=np.log(a.default_rate);a['lv']=np.log(a.vix)
-print(a[['nasdaq_g4','nasdaq_g1','sp500_g4']].describe().T); print(a[['quarter','nasdaq_g4','nasdaq_g1','sp500_g4']].tail(9))
-t=a[a.default_rate.notna()&a.vix.notna()]
-t41=t.dropna(subset=['sp500_g4'])
-for f in [['lv'],['lv','nasdaq_g4'],['lv','nasdaq_g1'],['lv','nasdaq_g2'],['lv','sp500_g4'],['lv','nasdaq_g4','sp500_g4'],['lv','djia_g4']]:
-  for tt in [t,t41]:
-    tt=tt.dropna(subset=f);m=sm.OLS(tt.ly,sm.add_constant(tt[f])).fit();print(f,len(tt),m.params.round(3).values,m.bse.round(3).values,round(m.aic,1))
-m=sm.OLS(t.ly,sm.add_constant(t[['lv','nasdaq_g4']])).fit()
-from scipy import stats;print(stats.shapiro(m.resid), stats.kurtosis(m.resid), m.resid.skew())
+a=pd.concat([d,s],ignore_index=True)
+for c in ['gdp','hpi','sp500','nasdaq','cpi']:
+    a[c+'_g4']=np.log(a[c]).diff(4)
+a['unemp_d4']=a.unemployment.diff(4)
+a['spr_d4']=a.bbb_spread.diff(4);a['lvix']=np.log(a.vix);a['ly']=np.log(a.default_rate)
+a['lspr']=np.log(a.bbb_spread)
+t=a[(a.quarter<=80)&a.vix.notna()]
+cands=['bbb_spread','gdp_g4','hpi_g4','unemp_d4','nasdaq_g4','spr_d4','unemployment','cpi_g4']
+for base in ['lvix','vix']:
+  for yv in ['ly']:
+    for k in [0,1]:
+      for extra in itertools.combinations(cands,k):
+        X=sm.add_constant(t[[base,*extra]]);m=sm.OLS(t[yv],X,missing='drop').fit()
+        print(base,extra,round(m.rsquared_adj,3),round(m.aic,1),m.params.round(3).to_dict(),m.pvalues.round(3).to_dict() if k else '')
+m=sm.OLS(t.default_rate,sm.add_constant(t.vix)).fit();print(m.rsquared,m.params)
+r=sm.OLS(t.ly,sm.add_constant(t.lvix)).fit().resid
+print(np.corrcoef(r[1:],r[:-1])[0,1])
 
 ```
 
 ## [9] tool
 
-           count      mean       std  ...       50%       75%       max
-nasdaq_g4   85.0  0.101821  0.254176  ...  0.111926  0.282851  0.645750
-nasdaq_g1   88.0  0.022307  0.088401  ...  0.031907  0.089535  0.259722
-sp500_g4    50.0  0.111007  0.128467  ...  0.117231  0.214892  0.339341
-
-[3 rows x 8 columns]
-    quarter  nasdaq_g4  nasdaq_g1  sp500_g4
-80       81   0.291059  -0.119326  0.186179
-81       82   0.020737  -0.119326  0.060793
-82       83  -0.330725  -0.119326 -0.102495
-83       84  -0.477304  -0.119326 -0.190761
-84       85  -0.477304  -0.119326 -0.190155
-85       86  -0.477304  -0.119326 -0.124315
-86       87  -0.477304  -0.119326 -0.092268
-87       88  -0.477304  -0.119326 -0.068801
-88       89  -0.477304  -0.119326 -0.057769
-['lv'] 66 [-7.975  1.639] [0.353 0.127] 43.0
-['lv'] 41 [-8.006  1.641] [0.504 0.178] 37.7
-['lv', 'nasdaq_g4'] 66 [-7.143  1.389 -0.821] [0.382 0.131 0.209] 30.4
-['lv', 'nasdaq_g4'] 41 [-6.986  1.334 -0.833] [0.584 0.195 0.291] 31.6
-['lv', 'nasdaq_g1'] 66 [-7.727  1.564 -0.862] [0.381 0.134 0.538] 42.3
-['lv', 'nasdaq_g1'] 41 [-7.802  1.583 -0.813] [0.534 0.184 0.718] 38.3
-['lv', 'nasdaq_g2'] 66 [-7.527  1.507 -0.895] [0.37  0.129 0.314] 37.0
-['lv', 'nasdaq_g2'] 41 [-7.597  1.526 -0.843] [0.528 0.181 0.424] 35.6
-['lv', 'sp500_g4'] 41 [-6.814  1.32  -1.936] [0.644 0.204 0.718] 32.5
-['lv', 'sp500_g4'] 41 [-6.814  1.32  -1.936] [0.644 0.204 0.718] 32.5
-['lv', 'nasdaq_g4', 'sp500_g4'] 41 [-6.886  1.316 -0.62  -0.585] [0.649 0.204 0.647 1.583] 33.5
-['lv', 'nasdaq_g4', 'sp500_g4'] 41 [-6.886  1.316 -0.62  -0.585] [0.649 0.204 0.647 1.583] 33.5
-['lv', 'djia_g4'] 41 [-7.479  1.498 -0.918] [0.635 0.206 0.684] 37.8
-['lv', 'djia_g4'] 41 [-7.479  1.498 -0.918] [0.635 0.206 0.684] 37.8
-ShapiroResult(statistic=np.float64(0.9692228055764046), pvalue=np.float64(0.10001817860396528)) 1.278957214231304 -0.5951366413871527
+lvix () 0.717 43.0 {'const': -7.975, 'lvix': 1.639} 
+lvix ('bbb_spread',) 0.72 43.2 {'const': -8.115, 'lvix': 1.749, 'bbb_spread': -0.104} {'const': 0.0, 'lvix': 0.0, 'bbb_spread': 0.197}
+lvix ('gdp_g4',) 0.713 44.8 {'const': -7.888, 'lvix': 1.615, 'gdp_g4': -0.561} {'const': 0.0, 'lvix': 0.0, 'gdp_g4': 0.753}
+lvix ('hpi_g4',) 0.713 44.9 {'const': -7.973, 'lvix': 1.636, 'hpi_g4': 0.108} {'const': 0.0, 'lvix': 0.0, 'hpi_g4': 0.835}
+lvix ('unemp_d4',) 0.742 37.8 {'const': -7.793, 'lvix': 1.573, 'unemp_d4': 0.053} {'const': 0.0, 'lvix': 0.0, 'unemp_d4': 0.009}
+lvix ('nasdaq_g4',) 0.769 30.4 {'const': -7.143, 'lvix': 1.389, 'nasdaq_g4': -0.821} {'const': 0.0, 'lvix': 0.0, 'nasdaq_g4': 0.0}
+lvix ('spr_d4',) 0.746 36.8 {'const': -7.425, 'lvix': 1.444, 'spr_d4': 0.201} {'const': 0.0, 'lvix': 0.0, 'spr_d4': 0.005}
+lvix ('unemployment',) 0.716 44.2 {'const': -7.981, 'lvix': 1.674, 'unemployment': -0.018} {'const': 0.0, 'lvix': 0.0, 'unemployment': 0.408}
+lvix ('cpi_g4',) 0.716 44.1 {'const': -8.043, 'lvix': 1.654, 'cpi_g4': 0.609} {'const': 0.0, 'lvix': 0.0, 'cpi_g4': 0.379}
+vix () 0.708 45.1 {'const': -5.003, 'vix': 0.093} 
+vix ('bbb_spread',) 0.707 46.3 {'const': -4.962, 'vix': 0.097, 'bbb_spread': -0.069} {'const': 0.0, 'vix': 0.0, 'bbb_spread': 0.394}
+vix ('gdp_g4',) 0.706 46.5 {'const': -4.907, 'vix': 0.09, 'gdp_g4': -1.264} {'const': 0.0, 'vix': 0.0, 'gdp_g4': 0.477}
+vix ('hpi_g4',) 0.704 46.9 {'const': -5.01, 'vix': 0.093, 'hpi_g4': 0.226} {'const': 0.0, 'vix': 0.0, 'hpi_g4': 0.665}
+vix ('unemp_d4',) 0.737 39.1 {'const': -4.941, 'vix': 0.089, 'unemp_d4': 0.057} {'const': 0.0, 'vix': 0.0, 'unemp_d4': 0.006}
+vix ('nasdaq_g4',) 0.758 33.8 {'const': -4.624, 'vix': 0.079, 'nasdaq_g4': -0.808} {'const': 0.0, 'vix': 0.0, 'nasdaq_g4': 0.0}
+vix ('spr_d4',) 0.737 39.1 {'const': -4.803, 'vix': 0.082, 'spr_d4': 0.203} {'const': 0.0, 'vix': 0.0, 'spr_d4': 0.006}
+vix ('unemployment',) 0.703 47.1 {'const': -4.993, 'vix': 0.093, 'unemployment': -0.003} {'const': 0.0, 'vix': 0.0, 'unemployment': 0.89}
+vix ('cpi_g4',) 0.709 45.7 {'const': -5.059, 'vix': 0.094, 'cpi_g4': 0.794} {'const': 0.0, 'vix': 0.0, 'cpi_g4': 0.259}
+0.7812081183732824 const   -0.028084
+vix      0.003993
+dtype: float64
+0.2693686514874506
 
 
 ## [10] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: python**
 
 ```
 
-import pandas as pd,numpy as np,statsmodels.api as sm
+import pandas as pd,numpy as np,statsmodels.api as sm,itertools
 d=pd.read_csv('data/train.csv');s=pd.read_csv('data/scenario.csv')
-a=pd.concat([d,s]).reset_index(drop=True)
-a['ng4']=np.log(a.nasdaq).diff(4);a['ly']=np.log(a.default_rate);a['lv']=np.log(a.vix)
-print(a.ng4[:80].min())
-t=a[a.default_rate.notna()&a.vix.notna()&a.ng4.notna()]
-for f in [['lv','ng4'],['vix','ng4']]:
-  m=sm.OLS(t.ly,sm.add_constant(t[f])).fit();print(f,m.aic)
-m=sm.OLS(t.ly,sm.add_constant(t[['lv','ng4']])).fit()
-from statsmodels.stats.stattools import durbin_watson;print(durbin_watson(m.resid))
-sc=a[a.quarter>80];X=sm.add_constant(sc[['lv','ng4']],has_constant='add')
-p=m.get_prediction(X).summary_frame(alpha=0.05)
-# smearing-free: report median exp(mean); interval exp(obs ci)
-out=pd.DataFrame({'quarter':sc.quarter.astype(int).values,'y_pred':np.exp(p['mean'].values+0.5*m.scale*0),
- 'y_lower':np.exp(p.obs_ci_lower.values),'y_upper':np.exp(p.obs_ci_upper.values)})
-out.to_csv('predictions.csv',index=False);print(out)
+a=pd.concat([d,s],ignore_index=True)
+for c in ['gdp','hpi','sp500','nasdaq','cpi','djia']:
+    a[c+'_g4']=np.log(a[c]).diff(4);a[c+'_g1']=np.log(a[c]).diff(1)
+a['unemp_d4']=a.unemployment.diff(4);a['unemp_d1']=a.unemployment.diff()
+a['spr_d4']=a.bbb_spread.diff(4);a['lvix']=np.log(a.vix);a['ly']=np.log(a.default_rate)
+t=a[(a.quarter<=80)&a.vix.notna()]
+def f(cols,df=t):
+    m=sm.OLS(df.ly,sm.add_constant(df[cols]),missing='drop').fit();print(cols,m.nobs,round(m.aic,1),m.params.round(3).to_dict(),m.pvalues.round(3).to_dict());return m
+for c in [['lvix','nasdaq_g4','unemp_d4'],['lvix','nasdaq_g4','spr_d4'],['lvix','nasdaq_g4','unemp_d4','spr_d4'],['lvix','nasdaq_g1'],['lvix','nasdaq_g4','nasdaq_g1'],['lvix','sp500_g4'],['lvix','djia_g4'],['lvix','nasdaq_g4','gdp_g4','hpi_g4','bbb_spread']]:f(c)
+full=a[a.quarter<=80]
+for c in [['nasdaq_g4'],['nasdaq_g4','unemp_d4'],['nasdaq_g4','gdp_g4','unemp_d4','cpi_g4']]:f(c,full)
 
 ```
 
 ## [11] tool
 
--0.20861172678516038
-['lv', 'ng4'] 30.44782281662745
-['vix', 'ng4'] 33.7711159545093
-1.7425598999884322
-   quarter    y_pred   y_lower   y_upper
-0       81  0.040013  0.021788  0.073483
-1       82  0.056034  0.030592  0.102635
-2       83  0.083874  0.044759  0.157172
-3       84  0.106108  0.055626  0.202404
-4       85  0.119014  0.062375  0.227084
-5       86  0.133490  0.069892  0.254959
-6       87  0.149727  0.078259  0.286463
-7       88  0.167939  0.087564  0.322089
-8       89  0.188366  0.097906  0.362403
+['lvix', 'nasdaq_g4', 'unemp_d4'] 66.0 30.6 {'const': -7.178, 'lvix': 1.394, 'nasdaq_g4': -0.696, 'unemp_d4': 0.027} {'const': 0.0, 'lvix': 0.0, 'nasdaq_g4': 0.003, 'unemp_d4': 0.191}
+['lvix', 'nasdaq_g4', 'spr_d4'] 66.0 31.5 {'const': -7.072, 'lvix': 1.356, 'nasdaq_g4': -0.684, 'spr_d4': 0.077} {'const': 0.0, 'lvix': 0.0, 'nasdaq_g4': 0.009, 'spr_d4': 0.345}
+['lvix', 'nasdaq_g4', 'unemp_d4', 'spr_d4'] 66.0 32.4 {'const': -7.139, 'lvix': 1.378, 'nasdaq_g4': -0.651, 'unemp_d4': 0.023, 'spr_d4': 0.036} {'const': 0.0, 'lvix': 0.0, 'nasdaq_g4': 0.014, 'unemp_d4': 0.327, 'spr_d4': 0.692}
+['lvix', 'nasdaq_g1'] 66.0 42.3 {'const': -7.727, 'lvix': 1.564, 'nasdaq_g1': -0.862} {'const': 0.0, 'lvix': 0.0, 'nasdaq_g1': 0.114}
+['lvix', 'nasdaq_g4', 'nasdaq_g1'] 66.0 32.4 {'const': -7.154, 'lvix': 1.393, 'nasdaq_g4': -0.853, 'nasdaq_g1': 0.148} {'const': 0.0, 'lvix': 0.0, 'nasdaq_g4': 0.001, 'nasdaq_g1': 0.797}
+['lvix', 'sp500_g4'] 41.0 32.5 {'const': -6.814, 'lvix': 1.32, 'sp500_g4': -1.936} {'const': 0.0, 'lvix': 0.0, 'sp500_g4': 0.01}
+['lvix', 'djia_g4'] 41.0 37.8 {'const': -7.479, 'lvix': 1.498, 'djia_g4': -0.918} {'const': 0.0, 'lvix': 0.0, 'djia_g4': 0.188}
+['lvix', 'nasdaq_g4', 'gdp_g4', 'hpi_g4', 'bbb_spread'] 66.0 31.7 {'const': -7.155, 'lvix': 1.497, 'nasdaq_g4': -0.859, 'gdp_g4': -1.054, 'hpi_g4': 0.336, 'bbb_spread': -0.163} {'const': 0.0, 'lvix': 0.0, 'nasdaq_g4': 0.0, 'gdp_g4': 0.59, 'hpi_g4': 0.504, 'bbb_spread': 0.048}
+['nasdaq_g4'] 76.0 108.2 {'const': -3.138, 'nasdaq_g4': -1.833} {'const': 0.0, 'nasdaq_g4': 0.0}
+['nasdaq_g4', 'unemp_d4'] 76.0 110.1 {'const': -3.14, 'nasdaq_g4': -1.806, 'unemp_d4': 0.008} {'const': 0.0, 'nasdaq_g4': 0.0, 'unemp_d4': 0.78}
+['nasdaq_g4', 'gdp_g4', 'unemp_d4', 'cpi_g4'] 76.0 106.7 {'const': -2.874, 'nasdaq_g4': -1.657, 'gdp_g4': -9.465, 'unemp_d4': -0.068, 'cpi_g4': 1.488} {'const': 0.0, 'nasdaq_g4': 0.0, 'gdp_g4': 0.009, 'unemp_d4': 0.104, 'cpi_g4': 0.166}
 
 
 ## [12] assistant
 
 **[reasoning]**
 
-> CAQSiQoKEAgTGAI4AUIIdGhpbmtpbmcSDNiTWl0WrOpYA7n75hoM9yTKTbqQd11WZLnoIjBNINXxPd1DlEe0RQ7ykTdNRFL4z9c/pD+PoP4RgBr4m8zoV/B3AN8Yzp1TNsCdgSYqpgm+/v9+uFI3EEj/VZsUTbki0IiluiM4W3n1l74Ozfsgyepwkq4JyUUCqwqFwdP//1Hlrx48MlqZMR3j042e/eyoXylmBz/g2grYyCMEkwv9tZa6CLp21GDpkHSjaKunuzeAX/+vDqlXYCU0ggJP5o5Y4m4cC00R2aof1P9tgB9XlEqmSoH6990+DPFC4hIheUxXF67APzC5nQZst1/7TwNGoa292kGREgkvAVyJbcKnpggCyGJSULjr0Xea5BtTCEM91qSKV8GgOrxA9cnvWIAXaTwYOvnfSPejj8Bm0dEGDuubK2g1wdpgktjqrAe9m/etN9ZegNQCucdLVgfVmU6vJEiCZ+q1MojhXhR9QFihKbCKmMBsmo6r+UHD5oVGFZb9tK3rvAe3II88mLDP5jxN28HkHHo3Hc6U+k2NdZaTX2FdLbrCzKtS/+ZIldTpXVQ3sRiEQLraMqX85C0kSO57xt9JgqS1lkKpfsnNBiHgU0jER6TTJ/mZDC7XzeyW4RQFp8xo43XhNXvH8ntz94SURd01PUakI076OAb2mnB6dTirNcp+Q1RHXT2VBHhG2h9waLROYcfdxJKuRTTfZsERkZ9aI/7w6CgAR/bBXUHQunsK/KxqZ7mCCKDvKOLVo63elngz5CBvwKNj6ix5YivQRH+mk9cht3mv+7uq7tCdJYt5aHQK0PAVdydVF56V7jK8g66DBYajkdm7mkUQCu9vBTwgiqrtKqJqznrTX3bsQCYLWRNSeCuT7hol4mRh6/X/oZVQlKzkt5xQ/t6L7dgKMnAWAAAI7sNkcYPHz4d0TCC5uVH7cFWky5hHZl6Ja44QqKuFJeVwImFQdhVNDLHxB8DNmlZh9v0JpPXPohFRkJKnBw5M3RhgFGfvGq0nxeT9w96lWW4mJYXm8wry9AwslmMBmTR3xMDCUXo0h+HHNPNumn+8u6dd9OZB6zSFh6hlKEw8/7nFGmbMqi5UtAiykMDIKjqpqybmRFdGo3Uob+FEIGlg7eaMp8Y56qdGAFR0Y/6Jx6039+ohVmIHpmb9kCiNm62NXkXJ1RMVnAvVA856xC4EKaAYrwlVYJC4ta8Dfj/nr4fQEpAHpMY0SUf07bYXrAL6iJ9IDuj5xaCkSywZYB/jbGHeBNj46Bv93zvOQ14BFaWMnp2Ckbjitjp6onO8tF5rNZTWfHZZycj+Ws1qUXCf4TrRH06v7n/pXbI07iBVP1cS+mF6txcGgbllsf7lcJfsBCc35C027JZF5/vdMd8vFXCemWDNthTRiHku8S/Vx9vZsdzVyCLO2KsWhuBArf3NdMFPC2t5r2d3kqxP2duo9e/1LPlRzZlJadBb2CO73xALlo2Tp0LFlQYwZVDOjvHSCR2wosZuwhaN3xf3BIwewig1zi6sixgobaUHv98Em4ZsnZV5ikrjwgCiVhpAORwuVqkNQaDwNHOIps/JZfYBclXF+wLn/ZP+LYxoA0pW6CFTQM4p2W8gjeEG3KMhY1E7a0Wyj2nsqzyA/yf/SLbVi0rY+J6UEvt7XubglPSuv9pFR01URMwBKEghgYnhrLZi0snWYbDMqygUTu9X6Z2oaxgB
-
-**tool call: python**
-
-```
-
-import pandas as pd,numpy as np,statsmodels.api as sm
-d=pd.read_csv('data/train.csv');s=pd.read_csv('data/scenario.csv')
-a=pd.concat([d,s]).reset_index(drop=True)
-a['ng4']=np.log(a.nasdaq).diff(4);a['ly']=np.log(a.default_rate);a['lv']=np.log(a.vix)
-t=a[a.default_rate.notna()&a.vix.notna()&a.ng4.notna()];sc=a[a.quarter>80]
-res={}
-for k,f in {'full':['lv','ng4'],'lv':['lv']}.items():
-  m=sm.OLS(t.ly,sm.add_constant(t[f])).fit()
-  res[k]=m.get_prediction(sm.add_constant(sc[f],has_constant='add')).summary_frame(alpha=0.05)
-  res[k]['se']=(res[k].obs_ci_upper-res[k]['mean'])/1.997
-w=0.7
-mu=w*res['full']['mean']+(1-w)*res['lv']['mean']
-var=w*res['full'].se**2+(1-w)*res['lv'].se**2+w*(1-w)*(res['full']['mean']-res['lv']['mean'])**2
-sd=np.sqrt(var)*1.05
-out=pd.DataFrame({'quarter':sc.quarter.astype(int).values,'y_pred':np.exp(mu).values,'y_lower':np.exp(mu-1.99*sd).values,'y_upper':np.exp(mu+1.99*sd).values})
-print(pd.concat([out,np.exp(res['lv']['mean']).reset_index(drop=True)],axis=1))
-out.to_csv('predictions.csv',index=False)
-
-```
-
-## [13] tool
-
-   quarter    y_pred   y_lower   y_upper      mean
-0       81  0.041918  0.021410  0.082072  0.046724
-1       82  0.055261  0.028686  0.106456  0.053499
-2       83  0.076328  0.036572  0.159299  0.061255
-3       84  0.093715  0.042458  0.206851  0.070137
-4       85  0.105765  0.048318  0.231513  0.080306
-5       86  0.119366  0.054929  0.259392  0.091950
-6       87  0.134715  0.062377  0.290945  0.105282
-7       88  0.152038  0.070754  0.326702  0.120547
-8       89  0.171588  0.080165  0.367272  0.138025
-
-
-## [14] assistant
+> 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
 
 **tool call: bash**
 
 ```
-cat predictions.csv; wc -l predictions.csv
+cat > model.py <<'EOF'
+import pandas as pd,numpy as np,statsmodels.api as sm
+from scipy import stats
+d=pd.read_csv('data/train.csv');s=pd.read_csv('data/scenario.csv')
+a=pd.concat([d,s],ignore_index=True)
+a['nasdaq_g4']=np.log(a.nasdaq).diff(4);a['lvix']=np.log(a.vix);a['ly']=np.log(a.default_rate)
+cols=['lvix','nasdaq_g4']
+t=a[(a.quarter<=80)].dropna(subset=cols+['ly'])
+m=sm.OLS(t.ly,sm.add_constant(t[cols])).fit()
+print(m.summary().tables[1]); r=m.resid; print('resid sd',r.std(),'skew',stats.skew(r),'kurt',stats.kurtosis(r))
+sc=a[a.quarter>80]
+X=sm.add_constant(sc[cols],has_constant='add')
+pr=m.get_prediction(X).summary_frame(alpha=0.05)
+mu=pr['mean'].values; se=np.sqrt(pr['mean_se']**2+m.scale).values*1.1
+q=stats.t.ppf(0.975,m.df_resid)
+out=pd.DataFrame({'quarter':sc.quarter.values,'y_pred':np.exp(mu+0.5*m.scale),
+ 'y_lower':np.exp(mu-q*se),'y_upper':np.exp(mu+q*se)})
+out.to_csv('predictions.csv',index=False);print(out)
+EOF
+python model.py
+```
+
+## [13] tool
+
+==============================================================================
+                 coef    std err          t      P>|t|      [0.025      0.975]
+------------------------------------------------------------------------------
+const         -7.1435      0.382    -18.690      0.000      -7.907      -6.380
+lvix           1.3895      0.131     10.588      0.000       1.127       1.652
+nasdaq_g4     -0.8211      0.209     -3.935      0.000      -1.238      -0.404
+==============================================================================
+resid sd 0.2934364997771795 skew -0.5815245014431808 kurt 1.278957214231304
+   quarter    y_pred   y_lower   y_upper
+0       81  0.041831  0.020503  0.078088
+1       82  0.058579  0.028795  0.109039
+2       83  0.087683  0.042034  0.167360
+3       84  0.110927  0.052147  0.215907
+4       85  0.124419  0.058472  0.242240
+5       86  0.139553  0.065513  0.272002
+6       87  0.156528  0.073343  0.305664
+7       88  0.175567  0.082043  0.343763
+8       89  0.196921  0.091705  0.386910
+
+
+## [14] assistant
+
+**[reasoning]**
+
+> CAQS1wYKEAgTGAI4AUIIdGhpbmtpbmcSDLOXQA4y+Bgcr4PQCRoMT1q0i3FXgb46nTHxIjAFf5S0dDicPNGKyQO2vVd9gZ3MGPoHBkYj35stoldtzzfNNRiP57KcNI/HJ1JrJp8q9AX3Y09a1TvJy6fCIjOFfWVD+RsgoxIxvnBZPSz8FVUUYPEgsGf7kTQfaiFRIKS9x3hHIYy1fJhJC82uM0bdPodgGaJo3Q/Nkv5wpjPZumgKEqU1QBuIobMzqDpXx36RltpFVguC1/rzNSPtWTCC927dBaXAJc6hGW0OVoPe06Vrc17a5nWjW8HBgUhBlzJ7YrLU8gUucGuLxNOH4b2Bp/py1WfCVtTA8QOyUGjqY+C/EBA61bkH+avW4eRGDfpNawP9+AauFN3cCIK7ytE0xbLiZTJw5mdljW0D+RNl3/qbWkKCKO1Ehd0imQv4bEzPIgrSr5zRjeBSEvsv6997vyiMVRb5BtEH5noTfdtHAXHwXlDN7pQ8ommd/8U5A0bpCbaB5hs05nEpRSIu8Nr7aheEvHRfkBMLNdXW17lrfeR2XKjkFUtlEA2wY75GmmW5/VPjt1YwOATERZpqvvODLyi/R9m87qeLwCBrymcfwIm11c3H6rApMAHy0/KokXPz+v8fzOoZFAN/Vd26+VkV9mB4d4/aGCHcjTgaFOUnu5Tfron+UMWjIZD6KT5M0rlpUTb4A88qa3pS5eWyihSLnlGPX3DCw1RqLVmpYW/OJdG+CIr7i4JN3lfFwYUFh/VDWmnETR2HekINr/Ed3ryYPZ8qUrBlTeYrwbm/uHtT8mzi+mOljEKo3rZ12gIV36uRtuwXYLbriQHuR8SonlqYMoETMQ97p2Ilrr5bOXLrXA7ZZYlY+PnpWtCsNYGacKIGomAYCqMvUm6HcOxirKN0iPM2wV5+87Nlkg4ByFpniSgpgi0Q5oaQ282xJ6vC5FJla7PNXqscVC9Gz3ISScCBhlkPcPCTJZeRKVvPKhrSyClz6IbPWTs+pif7N11MYxsNMzYElsl4fshKuDi06d1QPuo7ZtKnM3DNKBmSs9abeUqDq0aQW5XnE1VcKY7JN2/KHmld/tGiKTHcBWoU9k1hWUq8As/H79HVLbid0oYmanjk9LkBlrUYAQ==
+
+**tool call: bash**
+
+```
+wc -l predictions.csv
 ```
 
 ## [15] tool
 
-quarter,y_pred,y_lower,y_upper
-81,0.04191849999037294,0.021410067181818853,0.08207170143469023
-82,0.05526074683080378,0.02868557059298639,0.10645596643787279
-83,0.076327665806647,0.036572221058544255,0.15929884482993686
-84,0.09371451343981041,0.04245767650461749,0.20685093373645336
-85,0.1057651464507187,0.04831810830911803,0.2315129171071259
-86,0.11936573174692663,0.054929209530591404,0.2593916431210264
-87,0.1347150728398238,0.06237655345632391,0.29094507222086863
-88,0.15203808116047435,0.07075428530353314,0.3267021640285679
-89,0.17158837731702045,0.08016548380841844,0.3672724198939633
 10 predictions.csv
 
 
@@ -463,10 +440,10 @@ quarter,y_pred,y_lower,y_upper
 **tool call: submit**
 
 ```
-predictions.csv written: 9 rows (quarters 81–89), with columns quarter,y_pred,y_lower,y_upper. The model is a regression of log(default_rate) on log(VIX) and the 4-quarter log change in Nasdaq, averaged with a log(VIX)-only model at 0.7/0.3 weights. Intervals are 95% prediction intervals on the log scale that include the disagreement between the two models. Projected default rate rises from 4.2% (2.1–8.2%) in Q81 to 17.2% (8.0–36.7%) in Q89.
+predictions.csv written (9 scenario quarters 81–89). Model: OLS of log(default_rate) on log(VIX) and 4-quarter log growth of NASDAQ (coef 1.39, -0.82; adj R²≈0.77), fit on quarters with VIX available. Point = lognormal mean; 95% PI from OLS prediction SE (parameter + residual) inflated 10%, on log scale. Predictions rise from ~4.2% (q81) to ~19.7% (q89), PI for q89 ≈ [9.2%, 38.7%].
 ```
 
 ## [17] tool
 
-predictions.csv written: 9 rows (quarters 81–89), with columns quarter,y_pred,y_lower,y_upper. The model is a regression of log(default_rate) on log(VIX) and the 4-quarter log change in Nasdaq, averaged with a log(VIX)-only model at 0.7/0.3 weights. Intervals are 95% prediction intervals on the log scale that include the disagreement between the two models. Projected default rate rises from 4.2% (2.1–8.2%) in Q81 to 17.2% (8.0–36.7%) in Q89.
+predictions.csv written (9 scenario quarters 81–89). Model: OLS of log(default_rate) on log(VIX) and 4-quarter log growth of NASDAQ (coef 1.39, -0.82; adj R²≈0.77), fit on quarters with VIX available. Point = lognormal mean; 95% PI from OLS prediction SE (parameter + residual) inflated 10%, on log scale. Predictions rise from ~4.2% (q81) to ~19.7% (q89), PI for q89 ≈ [9.2%, 38.7%].
 

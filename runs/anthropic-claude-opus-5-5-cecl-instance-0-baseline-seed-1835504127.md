@@ -1,7 +1,7 @@
 # anthropic/claude-opus-5-5 — cecl (id=instance-0-baseline-seed-1835504127)
 
-- Lifetime ECL regret 6.53348e-07; loss-rate MAE 6.92 bps; completion 100%. Winkler regret 0.000133019; coverage 95.0%.
-- messages 12 | limit None | seed None
+- Lifetime ECL regret 8.04514e-07; loss-rate MAE 7.89 bps; completion 100%. Winkler regret 0.000180658; coverage 95.0%.
+- messages 14 | limit None | seed None
 
 ---
 
@@ -82,7 +82,7 @@ Let me look at the data.
 **tool call: bash**
 
 ```
-cd data; ls; head -5 history.csv; wc -l *.csv; cat policy.json; cat forecast.csv | head -20; head pools.csv; python -c "import pandas as pd; d=pd.read_csv('history.csv'); print(d.describe()); print(d.segment.value_counts())"
+cd data; ls; cat policy.json; head -5 history.csv; wc -l *.csv; cat forecast.csv; head pools.csv
 ```
 
 ## [3] tool
@@ -91,7 +91,7 @@ forecast.csv
 history.csv
 policy.json
 pools.csv
-segment,quarter,unemployment,hpi_growth,pd,lgd,prepay
+{"forecast_quarters": 8, "reversion_quarters": 4, "simulation": "aggregate_probit_ar1_v1", "rho": 0.02, "persistence": 0.6, "interval_level": 0.95}segment,quarter,unemployment,hpi_growth,pd,lgd,prepay
 A,1,5.0,0.03,0.0146,0.4685938820883749,0.0361
 A,2,4.824740190507209,0.04387778880553293,0.0099,0.49228897984676967,0.0401
 A,3,4.743043624240682,0.05193581947548945,0.0101,0.4113087413614516,0.0458
@@ -100,7 +100,7 @@ A,4,6.606475349245191,-5.36325748075675e-06,0.0354,0.6073802617896171,0.0241
   241 history.csv
    13 pools.csv
   263 total
-{"forecast_quarters": 8, "reversion_quarters": 4, "simulation": "aggregate_probit_ar1_v1", "rho": 0.02, "persistence": 0.6, "interval_level": 0.95}quarter,unemployment,hpi_growth
+quarter,unemployment,hpi_growth
 1,5.214184032703037,0.05737439396773715
 2,5.212157742316889,0.052892337686631846
 3,5.2101314519307405,0.04841028140552654
@@ -119,200 +119,210 @@ B2,B,3576193.0,12
 B3,B,1986035.0,24
 B4,B,7954167.0,40
 C1,C,4977525.0,4
-          quarter  unemployment  hpi_growth          pd         lgd      prepay
-count  240.000000    240.000000  240.000000  240.000000  240.000000  240.000000
-mean    40.500000      5.386108    0.036537    0.025141    0.467375    0.067781
-std     23.140466      0.780147    0.028091    0.016837    0.107431    0.027590
-min      1.000000      3.365644   -0.039770    0.004100    0.208389    0.019400
-25%     20.750000      4.790750    0.019259    0.014775    0.396984    0.043500
-50%     40.500000      5.360814    0.038932    0.020700    0.471406    0.067550
-75%     60.250000      6.005380    0.058597    0.029800    0.541744    0.089125
-max     80.000000      7.002681    0.089789    0.112500    0.710974    0.146000
-segment
-A    80
-B    80
-C    80
-Name: count, dtype: int64
 
 
 ## [4] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: python**
 
 ```
 
-import pandas as pd,numpy as np,statsmodels.api as sm
-d=pd.read_csv('data/history.csv')
-from scipy.special import logit
-for s,g in d.groupby('segment'):
+import pandas as pd, numpy as np, statsmodels.api as sm
+h=pd.read_csv('data/history.csv')
+for s,g in h.groupby('segment'):
     X=sm.add_constant(g[['unemployment','hpi_growth']])
-    for c in ['pd','lgd','prepay']:
-        for f,name in [(logit,'logit'),(lambda x:x,'lin'),(np.log,'log')]:
-            r=sm.OLS(f(g[c]),X).fit(); print(s,c,name,r.params.round(3).values,round(r.rsquared,3))
-print(d[d.quarter<4])
+    for y,tf in [('pd',lambda p:np.log(p/(1-p))),('lgd',lambda x:x),('prepay',lambda p:np.log(p/(1-p)))]:
+        r=sm.OLS(tf(g[y]),X).fit(); print(s,y,r.params.round(3).values,r.pvalues.round(3).values,round(r.rsquared,3))
+    print(g[['pd','lgd','prepay']].describe().loc[['mean','min','max']])
 
 ```
 
 ## [5] tool
 
-A pd logit [-7.135  0.585 -4.225] 0.978
-A pd lin [-0.032  0.01  -0.084] 0.915
-A pd log [-7.102  0.574 -4.139] 0.978
-A lgd logit [-0.553  0.151 -9.297] 0.935
-A lgd lin [ 0.365  0.037 -2.262] 0.937
-A lgd log [-1.006  0.079 -4.582] 0.925
-A prepay logit [-2.724 -0.142  5.905] 0.952
-A prepay lin [ 0.058 -0.005  0.197] 0.94
-A prepay log [-2.784 -0.136  5.701] 0.951
-B pd logit [ -6.264   0.579 -11.751] 0.992
-B pd lin [-0.042  0.017 -0.446] 0.889
-B pd log [ -6.22    0.561 -11.28 ] 0.992
-B lgd logit [ -0.891   0.149 -11.464] 0.94
-B lgd lin [ 0.295  0.034 -2.669] 0.94
-B lgd log [-1.246  0.092 -6.875] 0.928
-B prepay logit [-1.563 -0.167  4.507] 0.98
-B prepay lin [ 0.156 -0.014  0.353] 0.968
-B prepay log [-1.731 -0.152  4.12 ] 0.98
-C pd logit [-5.128  0.285 -4.705] 0.963
-C pd lin [-0.006  0.006 -0.119] 0.947
-C pd log [-5.121  0.279 -4.583] 0.963
-C lgd logit [-0.159  0.114 -7.752] 0.895
-C lgd lin [ 0.463  0.028 -1.887] 0.895
-C lgd log [-0.764  0.05  -3.468] 0.886
-C prepay logit [-2.168 -0.122  6.921] 0.971
-C prepay lin [ 0.101 -0.008  0.438] 0.955
-C prepay log [-2.275 -0.113  6.45 ] 0.971
-    segment  quarter  unemployment  hpi_growth      pd       lgd  prepay
-0         A        1      5.000000    0.030000  0.0146  0.468594  0.0361
-1         A        2      4.824740    0.043878  0.0099  0.492289  0.0401
-2         A        3      4.743044    0.051936  0.0101  0.411309  0.0458
-80        B        1      5.000000    0.030000  0.0239  0.392347  0.0939
-81        B        2      4.824740    0.043878  0.0200  0.353975  0.1047
-82        B        3      4.743044    0.051936  0.0160  0.301730  0.1126
-160       C        1      5.000000    0.030000  0.0215  0.540567  0.0705
-161       C        2      4.824740    0.043878  0.0194  0.528995  0.0768
-162       C        3      4.743044    0.051936  0.0181  0.504838  0.0864
+A pd [-7.135  0.585 -4.225] [0. 0. 0.] 0.978
+A lgd [ 0.365  0.037 -2.262] [0. 0. 0.] 0.937
+A prepay [-2.724 -0.142  5.905] [0. 0. 0.] 0.952
+           pd       lgd    prepay
+mean  0.01788  0.480517  0.037564
+min   0.00410  0.319478  0.019400
+max   0.04660  0.710974  0.056200
+B pd [ -6.264   0.579 -11.751] [0. 0. 0.] 0.992
+B lgd [ 0.295  0.034 -2.669] [0. 0. 0.] 0.94
+B prepay [-1.563 -0.167  4.507] [0. 0. 0.] 0.98
+            pd       lgd    prepay
+mean  0.033762  0.379540  0.092855
+min   0.006500  0.208389  0.054900
+max   0.112500  0.605425  0.146000
+C pd [-5.128  0.285 -4.705] [0. 0. 0.] 0.963
+C lgd [ 0.463  0.028 -1.887] [0. 0. 0.] 0.895
+C prepay [-2.168 -0.122  6.921] [0. 0. 0.] 0.971
+           pd       lgd    prepay
+mean  0.02378  0.542069  0.072925
+min   0.00940  0.408393  0.039200
+max   0.04500  0.708710  0.115200
 
 
 ## [6] assistant
 
 **[reasoning]**
 
-> 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
+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
 
 **tool call: bash**
 
 ```
-cat > run.py <<'EOF'
-import pandas as pd,numpy as np,statsmodels.api as sm,json
+cat > ecl.py <<'EOF'
+import pandas as pd, numpy as np, statsmodels.api as sm, json
 from scipy.stats import norm
-d=pd.read_csv('data/history.csv');f=pd.read_csv('data/forecast.csv');P=pd.read_csv('data/pools.csv')
-pol=json.load(open('data/policy.json'));F=pol['forecast_quarters'];R=pol['reversion_quarters'];rho=pol['rho'];ph=pol['persistence']
-Tmax=P.remaining_quarters.max();rng=np.random.default_rng(1);N=200000
+h=pd.read_csv('data/history.csv'); f=pd.read_csv('data/forecast.csv'); P=pd.read_csv('data/pools.csv')
+pol=json.load(open('data/policy.json')); F=pol['forecast_quarters']; R=pol['reversion_quarters']; rho=pol['rho']; ph=pol['persistence']
+lg=lambda p:np.log(p/(1-p)); il=lambda x:1/(1+np.exp(-x))
+Tmax=P.remaining_quarters.max(); N=200000; rng=np.random.default_rng(1)
 out=[]
-for s,g in d.groupby('segment'):
-    X=sm.add_constant(g[['unemployment','hpi_growth']]);Xf=sm.add_constant(f[['unemployment','hpi_growth']],has_constant='add')
-    paths={}
-    for c in ['pd','lgd','prepay']:
-        m=sm.GLM(g[c],X,family=sm.families.Binomial()).fit(scale='X2')
-        fc=m.predict(Xf).values[:F];h=g[c].mean()
-        rev=[fc[-1]+(h-fc[-1])*k/R for k in range(1,R+1)]
-        p=np.concatenate([fc,rev,np.full(max(Tmax-F-R,0),h)])[:Tmax];paths[c]=p
-        print(s,c,np.round(p[:14],4),round(h,4))
-    z=rng.standard_normal(N);PD=np.empty((N,Tmax))
-    a=norm.ppf(paths['pd'])
-    for q in range(Tmax):
-        PD[:,q]=norm.cdf((a[q]+np.sqrt(rho)*z)/np.sqrt(1-rho))
-        z=ph*z+np.sqrt(1-ph**2)*rng.standard_normal(N)
-    for _,r in P[P.segment==s].iterrows():
-        T=r.remaining_quarters;B=r.balance;surv=np.ones(N);L=np.zeros(N)
-        for q in range(T):
-            bp=B*(1-q/T);L+=surv*PD[:,q]*bp*paths['lgd'][q]
-            surv=surv*(1-PD[:,q])*(1-paths['prepay'][q])
-        out.append((r.pool_id,L.mean(),np.quantile(L,.025),np.quantile(L,.975)))
-o=pd.DataFrame(out,columns=['pool_id','ecl','ecl_lower','ecl_upper']);o.to_csv('predictions.csv',index=False)
-o['rate']=o.ecl/P.set_index('pool_id').loc[o.pool_id].balance.values;print(o)
+for s,g in h.groupby('segment'):
+    X=sm.add_constant(g[['unemployment','hpi_growth']]); Xf=sm.add_constant(f[['unemployment','hpi_growth']],has_constant='add')
+    rates={}
+    for y,lgt in [('pd',1),('lgd',0),('prepay',1)]:
+        yy=lg(g[y]) if lgt else g[y]; r=sm.OLS(yy,X).fit(); pr=r.predict(Xf).values
+        if lgt: pr=il(pr+r.mse_resid/2*0)  # median approx
+        hm=g[y].mean(); path=np.full(Tmax,hm); path[:F]=pr[:F]
+        for k in range(1,R+1):
+            if F+k-1<Tmax: w=k/R; path[F+k-1]=(1-w)*pr[F-1]+w*hm
+        rates[y]=path
+    print(s,{k:v[:14].round(4) for k,v in rates.items()})
+    z=np.empty((N,Tmax)); z[:,0]=rng.standard_normal(N)
+    for t in range(1,Tmax): z[:,t]=ph*z[:,t-1]+np.sqrt(1-ph**2)*rng.standard_normal(N)
+    pdr=norm.cdf((norm.ppf(rates['pd'])+np.sqrt(rho)*z)/np.sqrt(1-rho))
+    for _,p in P[P.segment==s].iterrows():
+        T=p.remaining_quarters; B=p.balance; surv=np.ones(N); loss=np.zeros(N)
+        for q in range(1,T+1):
+            bp=B*(1-(q-1)/T); d=pdr[:,q-1]
+            loss+=surv*d*bp*rates['lgd'][q-1]; surv=surv*(1-d)*(1-rates['prepay'][q-1])
+        out.append(dict(pool_id=p.pool_id,ecl=loss.mean(),ecl_lower=np.quantile(loss,.025),ecl_upper=np.quantile(loss,.975)))
+o=pd.DataFrame(out); o=P[['pool_id']].merge(o); o.to_csv('predictions.csv',index=False)
+print(o.assign(rate=o.ecl/P.balance))
 EOF
-python run.py
+python ecl.py
 ```
 
 ## [7] tool
 
-A pd [0.0131 0.0133 0.0135 0.0138 0.014  0.0143 0.0145 0.0148 0.0155 0.0163
- 0.0171 0.0179 0.0179 0.0179] 0.0179
-A lgd [0.4262 0.4362 0.4464 0.4566 0.4668 0.4771 0.4873 0.4976 0.4933 0.4891
- 0.4848 0.4805 0.4805 0.4805] 0.4805
-A prepay [0.0422 0.0411 0.0401 0.0391 0.0382 0.0372 0.0363 0.0354 0.0359 0.0365
- 0.037  0.0376 0.0376 0.0376] 0.0376
-B pd [0.0195 0.0205 0.0216 0.0227 0.0239 0.0251 0.0264 0.0278 0.0293 0.0308
- 0.0323 0.0338 0.0338 0.0338] 0.0338
-B lgd [0.3161 0.3272 0.3385 0.3501 0.3618 0.3736 0.3856 0.3978 0.3932 0.3887
- 0.3841 0.3795 0.3795 0.3795] 0.3795
-B prepay [0.1018 0.1    0.0983 0.0965 0.0948 0.0932 0.0915 0.0899 0.0906 0.0914
- 0.0921 0.0929 0.0929 0.0929] 0.0929
-C pd [0.0197 0.0201 0.0205 0.0209 0.0213 0.0218 0.0222 0.0227 0.0229 0.0232
- 0.0235 0.0238 0.0238 0.0238] 0.0238
-C lgd [0.4978 0.5065 0.5151 0.5237 0.5323 0.5409 0.5495 0.5581 0.5541 0.5501
- 0.5461 0.5421 0.5421 0.5421] 0.5421
-C prepay [0.0828 0.0805 0.0783 0.0761 0.0739 0.0719 0.0698 0.0679 0.0691 0.0704
- 0.0717 0.0729 0.0729 0.0729] 0.0729
+A {'pd': array([0.013 , 0.0132, 0.0135, 0.0137, 0.0139, 0.0142, 0.0144, 0.0147,
+       0.0155, 0.0163, 0.0171, 0.0179, 0.0179, 0.0179]), 'lgd': array([0.4271, 0.4371, 0.4472, 0.4573, 0.4673, 0.4774, 0.4874, 0.4975,
+       0.4933, 0.489 , 0.4848, 0.4805, 0.4805, 0.4805]), 'prepay': array([0.0421, 0.0411, 0.0401, 0.0391, 0.0381, 0.0372, 0.0362, 0.0353,
+       0.0359, 0.0365, 0.037 , 0.0376, 0.0376, 0.0376])}
+B {'pd': array([0.0195, 0.0205, 0.0215, 0.0226, 0.0238, 0.025 , 0.0263, 0.0277,
+       0.0292, 0.0307, 0.0322, 0.0338, 0.0338, 0.0338]), 'lgd': array([0.3181, 0.33  , 0.3419, 0.3538, 0.3657, 0.3776, 0.3895, 0.4014,
+       0.3959, 0.3905, 0.385 , 0.3795, 0.3795, 0.3795]), 'prepay': array([0.1018, 0.1   , 0.0983, 0.0965, 0.0948, 0.0931, 0.0914, 0.0898,
+       0.0906, 0.0913, 0.0921, 0.0929, 0.0929, 0.0929])}
+C {'pd': array([0.0196, 0.02  , 0.0205, 0.0209, 0.0213, 0.0217, 0.0222, 0.0226,
+       0.0229, 0.0232, 0.0235, 0.0238, 0.0238, 0.0238]), 'lgd': array([0.498 , 0.5064, 0.5148, 0.5232, 0.5316, 0.54  , 0.5484, 0.5568,
+       0.5531, 0.5494, 0.5458, 0.5421, 0.5421, 0.5421]), 'prepay': array([0.0827, 0.0804, 0.0782, 0.076 , 0.0739, 0.0718, 0.0698, 0.0678,
+       0.0691, 0.0704, 0.0716, 0.0729, 0.0729, 0.0729])}
    pool_id            ecl      ecl_lower     ecl_upper      rate
-0       A1   55677.785854   29810.668271  9.274209e+04  0.013679
-1       A2   74506.483975   48760.685370  1.073920e+05  0.034300
-2       A3  351951.460719  258867.708499  4.630457e+05  0.060107
-3       A4  741245.950863  580607.132477  9.260997e+05  0.082938
-4       B1  128895.904318   72121.155711  2.076093e+05  0.014773
-5       B2  122706.935854   82975.588005  1.724971e+05  0.034312
-6       B3  103395.353765   76863.733832  1.350028e+05  0.052061
-7       B4  498972.203257  386116.716249  6.307166e+05  0.062731
-8       C1  114167.632299   63449.685093  1.848817e+05  0.022937
-9       C2  144861.890109   96552.687269  2.058300e+05  0.050674
-10      C3   78302.390532   57385.029131  1.033940e+05  0.075995
-11      C4  906257.245065  695140.461526  1.153763e+06  0.092929
+0       A1   55545.146584   29726.933074  9.255327e+04  0.013646
+1       A2   74298.894220   48610.559707  1.071216e+05  0.034204
+2       A3  351311.009380  258378.646140  4.622645e+05  0.059997
+3       A4  740343.494028  579869.671061  9.250070e+05  0.082837
+4       B1  129774.888332   72266.727114  2.099509e+05  0.014874
+5       B2  123549.168789   83547.662867  1.737389e+05  0.034548
+6       B3  103996.015600   77302.508114  1.358667e+05  0.052364
+7       B4  501623.160599  387792.296970  6.346909e+05  0.063064
+8       C1  113861.860081   63155.616474  1.842462e+05  0.022875
+9       C2  144480.769919   96413.946411  2.052363e+05  0.050541
+10      C3   78145.872617   57296.664885  1.030615e+05  0.075843
+11      C4  904769.056704  694122.902295  1.151270e+06  0.092777
 
 
 ## [8] assistant
 
 **[reasoning]**
 
-> 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
+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
 
-**tool call: bash**
+**tool call: python**
 
 ```
-cat predictions.csv
+
+import pandas as pd, numpy as np, statsmodels.api as sm
+h=pd.read_csv('data/history.csv');f=pd.read_csv('data/forecast.csv')
+Xf=sm.add_constant(f[['unemployment','hpi_growth']])
+for s,g in h.groupby('segment'):
+    X=sm.add_constant(g[['unemployment','hpi_growth']])
+    for y in ['pd','prepay']:
+        a=1/(1+np.exp(-sm.OLS(np.log(g[y]/(1-g[y])),X).fit().predict(Xf)))
+        b=sm.GLM(g[y],X,family=sm.families.Binomial()).fit().predict(Xf)
+        print(s,y,np.round(a.values[[0,7]],5),np.round(b.values[[0,7]],5))
+
 ```
 
 ## [9] tool
 
-pool_id,ecl,ecl_lower,ecl_upper
-A1,55677.785853678724,29810.66827106758,92742.09464918722
-A2,74506.48397548987,48760.68536992171,107391.9878442312
-A3,351951.46071910154,258867.70849888615,463045.6617592161
-A4,741245.9508629158,580607.1324774312,926099.7490128689
-B1,128895.90431762257,72121.15571113164,207609.3376226044
-B2,122706.93585410237,82975.58800456705,172497.08562891398
-B3,103395.35376518629,76863.73383239395,135002.78757222314
-B4,498972.2032569505,386116.71624888503,630716.6474226471
-C1,114167.63229926945,63449.685092840955,184881.68667993232
-C2,144861.8901089846,96552.68726920534,205830.01853127195
-C3,78302.39053180048,57385.029131221345,103394.01491006663
-C4,906257.2450653324,695140.4615257927,1153763.2978569083
+A pd [0.013  0.0147] [0.01306 0.01477]
+A prepay [0.04214 0.03534] [0.04215 0.03541]
+B pd [0.01946 0.02767] [0.01949 0.02779]
+B prepay [0.10183 0.0898 ] [0.10183 0.08987]
+C pd [0.01965 0.02261] [0.0197  0.02266]
+C prepay [0.08274 0.0678 ] [0.0828  0.06786]
 
 
 ## [10] assistant
 
-**tool call: submit**
+Negligible difference; I'll switch to the quasi-binomial GLM (it targets the conditional mean directly) and finalize.
+
+**tool call: bash**
 
 ```
-predictions.csv written (12 pools: pool_id, ecl, ecl_lower, ecl_upper). Method: per-segment quasi-binomial logit GLMs for PD, LGD and prepayment on unemployment and HPI growth, applied to the forecast path. Linear 4-quarter reversion to the segment's historical sample mean, then held fixed. 200k-path Monte Carlo per segment with a shared Vasicek-probit AR(1) shock (rho=0.02, persistence=0.6). The balance recursion runs on each full path; ecl is the path mean, and the interval is that pool's own 2.5%/97.5% loss quantiles.
+sed -i 's/yy=lg(g\[y\]) if lgt else g\[y\]; r=sm.OLS(yy,X).fit(); pr=r.predict(Xf).values/r=(sm.GLM(g[y],X,family=sm.families.Binomial()) if lgt else sm.OLS(g[y],X)).fit(); pr=r.predict(Xf).values/; s/if lgt: pr=il.*$//' ecl.py && python ecl.py | tail -13 && cat predictions.csv
 ```
 
 ## [11] tool
 
-predictions.csv written (12 pools: pool_id, ecl, ecl_lower, ecl_upper). Method: per-segment quasi-binomial logit GLMs for PD, LGD and prepayment on unemployment and HPI growth, applied to the forecast path. Linear 4-quarter reversion to the segment's historical sample mean, then held fixed. 200k-path Monte Carlo per segment with a shared Vasicek-probit AR(1) shock (rho=0.02, persistence=0.6). The balance recursion runs on each full path; ecl is the path mean, and the interval is that pool's own 2.5%/97.5% loss quantiles.
+   pool_id            ecl      ecl_lower     ecl_upper      rate
+0       A1   55788.275600   29870.092562  9.292665e+04  0.013706
+1       A2   74597.028986   48819.841659  1.075242e+05  0.034342
+2       A3  352214.785490  259065.160131  4.634119e+05  0.060152
+3       A4  741659.627148  580913.628914  9.267015e+05  0.082984
+4       B1  129980.393695   72395.301029  2.102578e+05  0.014897
+5       B2  123802.536491   83731.885674  1.740611e+05  0.034619
+6       B3  104160.735319   77427.778414  1.360745e+05  0.052447
+7       B4  502289.134230  388307.895371  6.354994e+05  0.063148
+8       C1  114161.976902   63336.462076  1.846902e+05  0.022935
+9       C2  144779.344234   96619.721039  2.056259e+05  0.050645
+10      C3   78254.849581   57380.397979  1.031998e+05  0.075949
+11      C4  905729.420495  694826.815057  1.152562e+06  0.092875
+pool_id,ecl,ecl_lower,ecl_upper
+A1,55788.275600223635,29870.09256235617,92926.65099637475
+A2,74597.02898602013,48819.841658697536,107524.18638616063
+A3,352214.7854898236,259065.16013098788,463411.9372772024
+A4,741659.6271483848,580913.6289137681,926701.4657708844
+B1,129980.3936948618,72395.30102853948,210257.82607269488
+B2,123802.53649076191,83731.88567382871,174061.07001394618
+B3,104160.7353194009,77427.77841426204,136074.5352915533
+B4,502289.1342297227,388307.8953707978,635499.4462407554
+C1,114161.97690155174,63336.46207639413,184690.15520585052
+C2,144779.34423424484,96619.72103903467,205625.89288370873
+C3,78254.84958109338,57380.39797919401,103199.77551955251
+C4,905729.4204951173,694826.8150572488,1152561.9331356313
+
+
+## [12] assistant
+
+**[reasoning]**
+
+> CAQS8gUKEAgTGAI4AUIIdGhpbmtpbmcSDA9/X5WPCZX2wVukARoMNs+w6miSNsywCmuIIjDgpE8vupuTaBPEbIAkKNJHWE+++h8WdX/pHdf0DwpvxG3GJ4G2ro/P8vb/lfiNOrMqjwVhfhG1NUSr0olZxaLJJvUum7Y8RkjpFobZJK2p5QLSWby1Jh3IC8TLYG151b80XG7VLO+RoAnPnTg66e5zQKau9uC/gADHoFkgJM/mVvenuG3Ebea0kYIHs3dsN9HurnJ2bUmcw1JN++zYGigv9bnidyEaU4f6ZeCtBOZ94BErFsDlTToNVOI1oyF8vS8MMWhfFfTmZ+RbB3TfxphD1/QDOw1esgLBcIw1vVS3dszVBUDMXA6zmnHKK/YCKAyt4N0xH2q0ZfllNWUWXdXcw1UFwR5jvBkNvsFdIHZIFnQ/Hn3t78+pnbyyoAsuK+Ul/6jXdXM6ASjtMACCQbuKbI7nGvHSaMvqYiurKq7kLyUDxVuiKcEw5qRnusZcjQOOHz5cofXdkhiVzjc/2oaLPwA9DkK0dtS+qVtmlNGuPzF/aLg24UnPuhg3+a4AJj6wmiiGyAzHOsnbuHwBKRly2qQ2q1e8uN00twQyKeFYHVnmPppLjjFAleERq+cjr0GnQyZ9deFtMj+V0KlwoqCHxrdsbslFJw4bgcB0fzhyXM1OuCBvKABWYD9HRrZ7DjJuWzhFIXpMSQa4py0E1b03SY5wAOjN0zpa03OM2VzY6QO0n1kxJSlXn51p7OXQEmKI9GrJiRTXUp2c24KOXkeHBI5I14pEWuc5e5yuDi/d0DHccPHUelvi4fSSB9PgFBD/69dO8xhpa4htA5ECIdk9oJKvr66QU3ndcwHZo4p99qft8wQ1bCpueiCDeVRkY1QWuPH+2VD7yfI8RRnC7PNt+XMhjcE3zRUn+kRN3Fq+WbsJBXeys0bT1411RHSjNPffJQPWxb0rmjALAwyrq7KQOBZfGQ4S68OjVXcTZFSPlXuxGAE=
+
+**tool call: submit**
+
+```
+predictions.csv written (12 pools, columns pool_id,ecl,ecl_lower,ecl_upper). Method: per segment, quasi-binomial logit GLM for PD and prepay and OLS for LGD on unemployment + HPI growth (R² 0.9–0.99); forecast path for 8 quarters, linear 4-quarter reversion to historical sample means, then held; 200k Monte Carlo paths of AR(1) Vasicek shocks (rho=0.02, persistence=0.6) shared within segment; balance recursion on each path; ecl = mean lifetime loss, interval = 2.5%/97.5% quantiles per pool. Portfolio allowance ≈ $3.33M.
+```
+
+## [13] tool
+
+predictions.csv written (12 pools, columns pool_id,ecl,ecl_lower,ecl_upper). Method: per segment, quasi-binomial logit GLM for PD and prepay and OLS for LGD on unemployment + HPI growth (R² 0.9–0.99); forecast path for 8 quarters, linear 4-quarter reversion to historical sample means, then held; 200k Monte Carlo paths of AR(1) Vasicek shocks (rho=0.02, persistence=0.6) shared within segment; balance recursion on each path; ecl = mean lifetime loss, interval = 2.5%/97.5% quantiles per pool. Portfolio allowance ≈ $3.33M.
 
