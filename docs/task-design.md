@@ -76,7 +76,7 @@ Each orbital task ships two reference solvers that bracket it and guard against 
 
 ### Pairing Is Not the Lever
 
-The obvious reading of the tables is that they waste power: runs are paired on identical instances and the numbers are reported as unpaired mean ± 2 SD. `scripts/paired_analysis.py` tests that against the archived runs, over every model pair sharing at least three instances, and the criticism does not survive.
+The obvious reading of the tables is that they waste power: runs are paired on identical instances and the numbers are reported unpaired, as median (worst). `scripts/paired_analysis.py` tests that against the archived runs, over every model pair sharing at least three instances, and the criticism does not survive.
 
 | Pairing scale | Pairs | Median paired / independent SD | Variance reduction |
 | --- | --- | --- | --- |
