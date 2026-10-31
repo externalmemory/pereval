@@ -1,8 +1,10 @@
 # Running the Suite on Local Hardware
 
-The question here is not how a local model ranks. It is whether a model running on one desktop machine can **complete** the tasks at all, and if not, what stops it. That is a different question from the one the score table answers, so these results live here and no local model appears in the main table. A row there needs a cell in all eight columns to earn a mean rank, and the first local model tested can only run three of them.
+The question here is not how a local model ranks. It is whether a model running on one desktop machine can **complete** the tasks at all, and if not, what stops it. That is a different question from the one the score table answers, so these results live here and no local model appears in the main table. A row there needs a cell in all eight columns to earn a mean rank.
 
-The short answer from the first attempt: the binding constraint is **context, not capability**, and the limit is set by RAM rather than by the model. On 48 GB, three of the seven tasks run and four do not, for reasons that have nothing to do with how good the model is at credit modelling.
+The short answer, after two models and three context sweeps: **all eight tasks run on 48 GB**, and the thing that looked like a hardware ceiling was a server default. `mlx_lm.server` prefills a prompt in chunks of `--prefill-step-size`, and lowering it from the default 2048 to 256 moved the measured ceiling from 89,601 tokens to past 298,658 on the same machine, the same model and the same memory. On six of the eight tasks what is left is a capability question rather than a deployability one, and the capability that fails is interval calibration. On the two heaviest it is still both: a real agent loop survived 216,198 tokens and died at 231,531, well short of what the probe reported, and migration has only ever finished with its instances truncated.
+
+An earlier version of this document concluded the opposite: that the binding constraint was context rather than capability, that the limit was set by RAM, and that four of the tasks could not run at all. Every part of that was wrong. The sections below keep the measurements that refuted it rather than quietly replacing the conclusion.
 
 ## Why Local Serving Is the Point
 
@@ -10,20 +12,21 @@ The reason to care about a local model is not this suite. It is the work the sui
 
 So the question a local run answers is a deployability question: can an agent that never leaves the building do this class of work. The tasks here are synthetic on purpose, which is what makes them usable as a proxy. They pose the modelling problem without posing the data problem, so the ceiling and calibration findings transfer even though the data does not need protecting.
 
-Two consequences follow, and they point in opposite directions.
+Two consequences follow.
 
-**The context finding gets worse, not better, under a real deployment.** A real CCAR exercise has more history, more segments, more scenarios and more documentation than a synthetic three-scenario instance, so its agent loop is longer than the ones measured here, not shorter. A ceiling that already blocks four of seven synthetic tasks blocks more of the real thing.
+**The deployability answer is yes, and on a desktop rather than on a cluster.** A real CCAR exercise carries more history, more segments, more scenarios and more documentation than a synthetic three-scenario instance, so its agent loop is longer than the ones measured here. The relevant number is therefore not what these tasks used but what the machine serves: a single growing conversation past 298,658 tokens on 48 GB of unified memory. That figure is an upper bound on a favourable workload rather than a budget a task can spend, because an unguarded migration loop killed the server at 231,531 tokens, 78% of it, as recorded under [The Probe Ceiling Overstates What an Agent Loop Reaches](#the-probe-ceiling-overstates-what-an-agent-loop-reaches). A bank with on-prem accelerators has more headroom than that, and this says it does not need it to start.
 
-**The hardware finding gets better.** The constraint turned out to be RAM rather than model quality, and a bank is not deploying on a 48 GB desktop. On-prem hardware with several hundred GB of accelerator memory removes the ceiling entirely and leaves only the calibration question, which is the one the scores here actually speak to. Read that way, the result is encouraging: the thing that broke was the thing money fixes, and the thing that cannot be fixed with money is still open.
+**The capability answer is not yes.** What is left after the ceiling is removed is what the scores speak to, and it is one specific failure rather than a diffuse one: interval coverage collapses while the point estimates stay in a credible range. A model risk function will waive a slow model. It will not waive intervals that are confident and wrong.
 
 ## Setup
 
 | | |
 | --- | --- |
 | Machine | Mac Mini, 48 GB unified memory, same LAN, static IP |
-| Server | `caffeinate -i mlx_lm.server --model mlx-community/Qwen3.6-35B-A3B-4bit-DWQ --host 0.0.0.0 --port 8081` |
+| Server, first attempt | `caffeinate -i mlx_lm.server --model mlx-community/Qwen3.6-35B-A3B-4bit-DWQ --host 0.0.0.0 --port 8081` |
+| Server, tuned | the same plus `--prefill-step-size 256 --prompt-cache-size 1`, which is what lifted the context ceiling past every task |
 | Server build | mlx_lm 0.32.2, macOS 27.0.1, arm64, applegpu_g17s |
-| Inspect model string | `openai-api/macmini/mlx-community/Qwen3.6-35B-A3B-4bit-DWQ` |
+| Inspect model string | `openai-api/macmini/<repo>/<model>`, for example `openai-api/macmini/mlx-community/gemma-4-26B-A4B-it-qat-4bit` |
 | Credentials | `MACMINI_BASE_URL=http://<ip>:8081/v1` and `MACMINI_API_KEY` in `.env` |
 
 Inspect reaches any OpenAI-compatible endpoint through `openai-api/<service>/<model>`, where `<service>` names the `<SERVICE>_BASE_URL` and `<SERVICE>_API_KEY` pair to read. The base URL must stop at `/v1`, because Inspect appends the route itself. Model ids containing slashes survive, since only the first path segment is stripped to find the service.
@@ -105,43 +108,119 @@ Three CCAR instances were run twice, once in the three-instance run and again in
 | 2 | 0.1536092188756754 | 0.1536092188756754 | 31, 31 |
 | 0 | 0.08701395118909286 | 0.07517589998792479 | 59, 46 |
 
-That is a sharp contrast with the archived hosted rows, where re-running the same model on byte-identical instances moved cells by 7.4x and the reproducibility study found swings up to 30x ([detail](limitations.md#run-to-run-reproducibility)). Greedy decoding on this server is deterministic, so an agent loop over it is deterministic too, and the usual run-to-run noise disappears.
+That is a sharp contrast with the archived hosted rows, where re-running the same model on byte-identical instances moved cells by 7.4x and the reproducibility study found swings up to 30x ([detail](limitations.md#run-to-run-reproducibility)). Greedy decoding on this server is deterministic, so an agent loop over it is deterministic too, and the usual run-to-run noise disappears. That is not a property of local serving but of a default nobody chose, and it has a cost that took a failed task to notice: see [Every Local Run Was Greedy and No Hosted Run Was](#every-local-run-was-greedy-and-no-hosted-run-was).
 
 The one instance that diverged is the one whose first run hit the token limit, at 59 calls against 46. The divergence therefore originates in the sandbox rather than the model: the agent writes and runs its own Python, and anything time-dependent or unseeded in that code changes the tool output, which changes the next prompt and forks the trajectory. Determinism in the server does not buy determinism in the loop, but it removes the model as a source of variance, which makes a single local run worth more than a single hosted run.
 
-## The Binding Constraint Is Context
+## Every Local Run Was Greedy and No Hosted Run Was
 
-Peak prompt length per sample, measured over the four most recent archived runs of each task, local runs excluded. Prompt size is `input_tokens` plus the cached halves, because a provider that caches reports only the uncached remainder in `input_tokens` and reading that field alone understates a long agent loop by orders of magnitude.
+`mlx_lm.server` defaults `--temp` to **0.0** and Inspect sends no temperature unless one is configured, so every local run in this document decoded greedily. Every hosted row in the main table ran at its provider's default, which is normally 1.0. That asymmetry sat in the setup unnoticed and it does two things, one of which looked like a finding.
 
-| Task | Median peak context | Max peak context | Runs on 48 GB |
+Verified rather than assumed: four identical prompts at `temperature 1.0, top_p 0.95, top_k 64` returned four different sentences, and the same prompt at the server's default returned the same sentence twice. The request body's temperature is honoured, and the default really is greedy.
+
+**The reproducibility result above is an artifact of that default.** Bit-identical reruns are what temperature 0 does. It is still a real operational advantage, because it removes the model as a source of variance and makes a single local run worth more than a single hosted run, but it is not a property of local serving and it is not free: it comes at the cost of comparability with every row it is being compared against.
+
+**Greedy decoding can lock an agent loop into a repetition cycle it cannot leave.** That is how the migration task failed, and the failure is unusually legible:
+
+| Signature | Value |
+| --- | --- |
+| Instances affected | all three, byte-identical, same input hash and 209 events each |
+| Assistant messages per sample | 41 |
+| First assistant message | SHA-256 `e3b0c442...`, the hash of the empty string |
+| Tokens per call | 16,384, the full budget, `stop_reason: max_tokens` |
+| Where they went | entirely into the `reasoning` content part, `text` empty |
+| Tool calls emitted | zero |
+| Reasoning length | 43,236 chars, one 120-char window repeated 41 times |
+| Ended by | the 2.5M token limit, at a peak context of 122,081 |
+
+Gemma 4 returns reasoning as a separate content part, so a call that spends its whole budget inside it produces an assistant message with no content and no tool call. Inspect answered each one with "Please proceed to the next step using your best judgement." and the loop ran 42 times. The repeated window is the model arguing with itself about whether the `year` column in `transitions.csv` is the start or the end of the year, which is a real ambiguity in the task and a trivial one to resolve by reading the file. It never read the file, because it never emitted a tool call.
+
+The useful part is what this rules out. A larger token budget cannot fix an infinite loop, and neither can a larger context window: the run died at 122,081 tokens of context that contained nothing but 41 copies of the same paragraph and 42 identical nudges. The only lever that touches it is the sampler.
+
+The mechanics of setting it are worth recording, because one of the three parameters fails silently. Inspect's OpenAI-compatible provider forwards `temperature` and `top_p` from `GenerateConfig` and has no `top_k` at all, so `--top-k 64` is accepted on the command line and dropped before the request. It has to go through `extra_body`:
+
+```yaml
+# --generate-config gemma_sampling.yaml
+temperature: 1.0
+top_p: 0.95
+extra_body:
+  top_k: 64
+```
+
+## The Context Ceiling Was a Server Default
+
+This section previously concluded that four of the eight tasks were unreachable because a 48 GB machine cannot hold enough context. That conclusion was wrong, and the error was mine rather than the hardware's.
+
+`mlx_lm.server` prefills a prompt in chunks of `--prefill-step-size`, default 2048, and peak memory during prefill scales with that chunk size against the full context. Shrinking it moves the ceiling by more than a factor of three, at a cost of nothing that matters:
+
+| Prefill step | Ceiling, one growing conversation | Prefill at 89.6k | Prefill at 9.9k |
 | --- | --- | --- | --- |
-| Two-body | 38,536 | 82,791 | yes |
-| CECL | 82,251 | 418,234 | yes |
-| Migration | 91,925 | 168,810 | only with a token limit |
-| CCAR | 108,312 | 604,889 | yes, one of eight truncated |
-| Ballistic | 175,942 | 440,026 | no |
-| Three-body | 181,814 | 511,297 | no |
-| Quantile | 264,388 | 331,177 | no |
+| 2048 (default) | 89,601 to 99,601 | 726 tok/s | 2,154 tok/s |
+| 512 | 139,308 to 149,308 | 776 tok/s | 1,992 tok/s |
+| 256 | **above 298,658, no failure** | 743 tok/s | 1,751 tok/s |
 
-Against that, the measured ceiling for this model on this machine is **113k to 120k tokens**. Past it the server does not degrade, it dies: the worker thread exits and every subsequent request returns `404 {"error": "generation thread died"}` while `/v1/models` keeps answering 200, so a health check on the models route reports a healthy server that cannot generate.
+All three rows are Gemma 4 26B A4B on the same machine, measured by growing one conversation in 10k chunks until the worker died. At 256 the probe ran out of turns at 298,658 tokens without the server dying, which is past the model's declared 262,144 window, so `max_position_embeddings` is not enforced and RoPE extrapolates instead. Serving a prompt that long is not the same as attending to it usefully, and nothing here tests the latter. The three settings are within 7% of each other on prefill throughput at 89.6k, and the 19% penalty at small contexts falls on calls that take five seconds. The setting is free.
 
-### How the Ceiling Was Measured
+A second default matters for the eval rather than for the probe. `--prompt-cache-size` retains 10 distinct KV caches, so under sequential sampling a finished sample's cache stays resident while the next one grows. At Gemma's 40 KiB per token a single 100k conversation is 4 GiB of retained cache, and ten of them is more than the machine has. `--prompt-cache-size 1` keeps the live conversation's prefix cache, measured at 96 to 97% hit rate throughout the sweep, and drops only the finished ones.
 
-Three times, because the first two answers were wrong.
+### Why the Memory Arithmetic Did Not Predict It
+
+Weights plus KV cache at each model's failure point, computed from each `config.json`:
+
+| | Weights | KV per token | Ceiling at step 2048 | KV at ceiling | Weights + KV |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3.6-35B-A3B | 19.5 GB | 20 KiB, 10 full-attention layers x 2 KV heads | 113k observed | 2.2 GiB | 21.7 GiB |
+| Qwen3.6-27B-OptiQ | 20.4 GB | 64 KiB, 16 x 4 | 39,744 to 49,744 | 2.7 GiB | 23.1 GiB |
+| Gemma 4 26B A4B | 15.6 GB | 40 KiB, 5 x 8, plus 0.2 GiB constant | 89,601 to 99,601 | 3.8 GiB | 19.4 GiB |
+
+Three models spanning 3.2x in KV geometry and 4.8 GB in weights all die with 19 to 23 GiB committed, and the one using the least memory is not the one that reaches furthest. The persistent allocations do not explain the ceiling.
+
+What does is transient. `iogpu.wired_limit_mb` is 40960 on this machine against `hw.memsize` of exactly 48 GiB, and a heavy 35B run reported `Physical footprint (peak): 38.5G`, which is 1.5 GiB under that cap. Subtracting the 21.7 GiB of weights and KV leaves **16.8 GiB of transient allocation**, live only while a prompt is being prefilled. That is the quantity `--prefill-step-size` controls, and it is why the ceiling responded to a flag and not to a smaller model.
+
+KV geometry still explains the ranking of the three, and only the ranking. The 27B is worst because it carries both the largest weights and 3.2x the 35B's KV per token, and its mixed-precision `OptiQ` quantization is the reason the weights are large: 8-bit embeddings, `lm_head`, `k_proj`, `v_proj`, `o_proj` and all of layers 0 and 63 put it near 6 bits per weight rather than 4.
+
+### Five Wrong Predictions, For The Record
+
+The ceiling was predicted five times from memory arithmetic and missed every time, including once in the wrong direction. Predicted 155k to 170k for the 27B against a measured 44.7k. Predicted 270k for Gemma at step 512 against a measured 144k, then 235k at step 256 under one fit and 161k under another, against a measured figure above 298k. The direction was right three times out of five and the magnitude never. The lesson recorded here is that on this hardware the ceiling is cheap to measure and not worth predicting: one sweep costs 15 minutes and one server restart.
+
+### Past the Ceiling the Server Dies Rather Than Degrades
+
+The failure mode is abrupt and it lies. The worker thread exits, every subsequent generation request returns `404 {"error": "generation thread died"}`, and `/v1/models` keeps answering 200, so a health check on the models route reports a healthy server that cannot generate. Every runner here therefore health-checks with a real two-token completion instead.
+
+`vmmap <pid> | grep -i "physical footprint"` is the way to read memory on macOS, since Activity Monitor has no peak column and `phys_footprint` counts Metal buffers in unified memory where plain RSS does not. Observed during a heavy 35B run: `Physical footprint: 29.2G`, `Physical footprint (peak): 38.5G`.
+
+### How the Ceiling Was Measured, and Why the First Two Answers Were Wrong
+
+Three times for the 35B, all at the default prefill step, and the method rather than the number is what the later sweeps reused.
 
 A one-shot prefill probe reached 149,426 tokens successfully and failed at 250,000, which suggested a ceiling somewhere between. That was confounded: the earlier prompts in the same probe were still held in the prompt cache, so the 250k call ran with roughly 212k already resident. The number was a total-KV budget, not a per-prompt ceiling.
 
 Growing a **single** conversation in 30k-token chunks then served 119,326 tokens and died on the next call at approximately 149k, which is lower than the cold 149,426 that had succeeded. So the two measurements disagree, and the one that matters for an agent is the lower one, because an agent loop is exactly a single growing conversation.
 
-The live run settled it. Migration instance 1 grew in exact 3,260-token increments, reached a prompt of **113,021 tokens**, and killed the worker on the next call. That is the operational ceiling: not a published spec, not a flag, just where this model on this machine stops.
+The live run settled it. Migration instance 1 grew in exact 3,260-token increments, reached a prompt of **113,021 tokens**, and killed the worker on the next call. That is the operational ceiling for that model at the default step: not a published spec, not a flag, just where this model on this machine stopped.
 
-The arithmetic behind it, with **low confidence** on the coefficient: the 4-bit 35B holds roughly 19.5 GB of weights, and KV plus activations cost roughly 0.12 to 0.15 GB per 1k tokens of context. `vmmap <pid> | grep -i "physical footprint"` is the way to read this on macOS, since Activity Monitor has no peak column and `phys_footprint` counts Metal buffers in unified memory where plain RSS does not. Observed during a heavy run: `Physical footprint: 29.2G`, `Physical footprint (peak): 38.5G`.
+The method that survived is the third one, run deliberately instead of by accident: one conversation, grown in fixed chunks, with the prefix cache carrying the shared part. It costs about 15 minutes and one server restart per setting, which is why predicting it was never worth the error bars.
 
-### The Context Numbers Are Behavior, Not Requirements
+### The Hosted Context Table Was Not Predictive
 
-The median peaks above are what hosted models used, not what the tasks demand, and the difference is large. Qwen3.6 completed CECL with a peak prompt of **20,502 tokens** against a hosted median of 82,251, because it wrote long single scripts instead of iterating in many short tool calls. It spent 549k output tokens on instance 0 and only 634k prompt tokens in total.
+The earlier version of this section sized the local ceiling against hosted peak contexts drawn from the four most recent runs of each task. That sample was biased, and it was biased in the direction that made the conclusion look inevitable: the most recent runs are small fast iterative models, the class a local candidate belongs to, and within-task spread across all archived runs is 10x to 100x. Over every archived hosted sample instead, local runs excluded. Prompt size is `input_tokens` plus the cached halves, because a provider that caches reports only the uncached remainder in `input_tokens` and reading that field alone understates a long agent loop by orders of magnitude.
 
-That cuts both ways. It means a 176k median does not prove ballistic needs 176k, and a model with a different working style might fit it in half that. It also means a local model's context demand cannot be predicted from the hosted column at all.
+| Task | Runs | Samples | Min peak | Median peak | Max peak | Under 89.6k | Under 298k |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Two-body | 31 | 88 | 2,444 | 29,992 | 138,039 | 99% | 100% |
+| CECL | 19 | 43 | 1,524 | 40,778 | 418,234 | 77% | 95% |
+| Ballistic | 31 | 103 | 11,298 | 49,448 | 440,026 | 79% | 97% |
+| Three-body | 34 | 72 | 12,410 | 55,811 | 511,297 | 58% | 93% |
+| CCAR | 21 | 91 | 1,434 | 73,548 | 604,889 | 62% | 92% |
+| Migration | 48 | 76 | 2,016 | 78,827 | 486,893 | 53% | 92% |
+| Quantile | 14 | 20 | 25,584 | 148,841 | 331,177 | 30% | 80% |
+| Flyby | 13 | 38 | 22,315 | 175,004 | 752,480 | 37% | 74% |
+
+Two things follow. The four-run medians overstated the all-sample median by 2x to 3.5x on exactly the three tasks the document declared unrunnable: ballistic 175,942 against 49,448, three-body 181,814 against 55,811, quantile 264,388 against 148,841. And even at the untuned 89,601 ceiling, the majority of hosted samples of every task except quantile and flyby would have fit, which should have been enough to question the conclusion before a server flag did.
+
+Peak context is behaviour, not requirement, and the 10x to 100x within-task spread is the proof. Qwen3.6 completed CECL with a peak prompt of **20,502 tokens** against a hosted median of 40,778, because it wrote long single scripts instead of iterating in many short tool calls. It spent 549k output tokens on instance 0 and only 634k prompt tokens in total.
+
+That cuts both ways. A 49k median does not prove ballistic needs 49k, and a model with a different working style might need triple it. It also means a local model's context demand cannot be predicted from the hosted column at all, in either direction.
 
 ## What Makes the Endpoint Fast Enough
 
@@ -188,28 +267,117 @@ And `--kv-bits 8` **disables the prompt cache entirely**. Look at the repeat tim
 
 `--prompt-cache-bytes 20000000000` was also tried as a crash guard, on the theory that capping the cache would make the allocator fail gracefully instead of killing the worker. It does not work. The worker still died with the flag set.
 
-## A Token Limit Converts a Crash Into a Score
+## A Token Limit Converts a Crash Into a Score, and It Was Still the Wrong Fix
 
-The useful mitigation turned out to be a limit on the Inspect side, not the server side. The question is which limit discriminates a healthy long run from a runaway one, and output tokens do not: a healthy two-body instance scored at 268,492 output tokens while the migration instance that crashed the server was at 275,120. Total tokens do discriminate, with the healthy maximum at 2,108,703 against 3,014,518 on the crashed run.
+**This section used to open by saying the useful mitigation was a limit on the Inspect side rather than the server side, and that is backwards.** The server side is where the fix was: `--prefill-step-size 256` moved the measured ceiling from 89,601 tokens to past 298,658, and from 29 Oct onward every local run dropped `--token-limit` entirely, with eight completing at status `success`. The Inspect-side limit was a stopgap that bought finished runs at the price of truncated cells. It is recorded here because the truncation is still inside the archived numbers, not because it is the setting to use.
 
-`--token-limit 2500000` therefore trips at roughly 100k of context, below the ceiling, and turns a fatal server crash into a recorded `sample.limit` on a sample that still gets scored. Migration instances 0 and 1 both tripped it, at peak prompts of 93,129 and 106,285, as did CCAR instance 5 at 80,827, and all three runs completed with status `success` where the unguarded migration attempt the night before had killed the server mid-sample. Three of fourteen samples across the four tasks were truncated by it, and only one of those three sets its task's cell.
+The discriminating-metric finding is the part that stands. Output tokens do not separate a healthy long run from a runaway one: a healthy two-body instance reached 268,492 output tokens while the migration instance that killed the server was at 275,120. Total tokens do separate them, 2,108,703 against 3,014,518.
+
+`--token-limit 2500000` trips at roughly 100k of context and converts a fatal server crash into a recorded `sample.limit` on a sample that still gets scored. On the 35B it caught migration instances 0 and 1 at peak contexts of 93,129 and 106,285, and CCAR instance 5 at 80,827, and those runs completed at status `success` where the unguarded migration attempt the night before had killed the server mid-sample. Three of fourteen samples were truncated, and only one of those three sets its task's cell.
+
+**Peak context means fresh prompt tokens plus the cached prefix, and the distinction matters more than it looks.** `mlx_lm.server` reports only the uncached portion in `input_tokens`, so reading that field alone understates the true context by 3x to 5x: the same three samples read as 18,745, 35,102 and 21,325 on fresh tokens against the 93,129, 106,285 and 80,827 above. Any ceiling analysis built on `input_tokens` will conclude a task fits when it does not.
+
+**On Gemma the guard was not selective at all.** Both migration runs had all three instances truncated, six samples out of six, at peak contexts of 122,081 across the board on 28 Oct and 103,661, 105,790 and 47,830 on the rerun. The published Gemma migration cell is therefore an upper bound on every instance behind it, not on one of three.
 
 The cost is that a truncated cell is an upper bound rather than a measurement, exactly as it is for the archived minimax migration row, and that **nothing in the score distinguishes the two**. `completion`, `matrix_quarters` and `fit_years` all read as complete on the truncated instances. Only `sample.limit` on the eval log shows it, which is the same trap recorded under [A Time-Limited Run Still Produces a Score](limitations.md#a-time-limited-run-still-produces-a-score).
 
+### The Probe Ceiling Overstates What an Agent Loop Reaches
+
+**Dropping the token limit brought the crash back, and it came back below the measured ceiling.** The unguarded migration run on 28 Oct reached a peak context of 231,531 tokens across 110 model calls and 223 messages, and the server died with `generation thread died`. The 256-step sweep had run the previous evening and reached 298,658 tokens without a failure, so the flag was in place. Moderate confidence on that last point: it rests on the sweep's timestamp and on every Gemma task run after it hitting the same server, not on a recorded restart.
+
+The probe and the agent loop are not the same workload. The probe grows one conversation against a warm prompt cache with a stable prefix. An agent loop interleaves tool output, forks its prefix at every sandbox result, and shares the machine with a Docker container. So **298,658 is an upper bound on a favourable workload rather than a ceiling a task can spend**, and the true figure for migration sits somewhere below 231,531.
+
+**The survival bracket is narrow, and CCAR sets its lower edge.** Unguarded CCAR reached a peak context of 216,198 tokens on 30 Oct and the run completed at status `success`. Unguarded migration reached 231,531 and the worker died. The real agent-loop ceiling on this machine therefore sits between **216,198 and 231,531**, a 7% band, not at the 298,658 the probe reported.
+
+Peak context reached per task, from completed runs:
+
+| Task | Peak context | Share of the 298,658 probe ceiling | Token limit in force |
+| --- | --- | --- | --- |
+| CCAR | **216,198** | 72% | none |
+| migration | 122,081 | 41% | 2,500,000, all instances truncated |
+| CECL | 47,573 | 16% | 2,500,000 |
+| three-body | 39,040 | 13% | 2,500,000 |
+| two-body | 31,069 | 10% | none |
+| flyby | 27,298 | 9% | 2,500,000 |
+| quantile | 25,455 | 9% | 2,500,000 |
+| ballistic | 20,991 | 7% | 2,500,000 |
+
+Migration's 122,081 is the truncated figure, not what the task wants; unguarded it goes to 231,531 and over the edge. CCAR's 216,198 is the honest number for the heaviest task that has ever completed, and it is 10x the ballistic figure, so the spread across tasks is far wider than any headroom claim that quotes a single number can carry. This qualifies the headroom claim made twice elsewhere in this document: six tasks are settled by a wide margin, CCAR clears the bracket's lower edge by nothing at all, and migration does not clear it.
+
+The no-submit loop makes this worse rather than better, because thrashing turns keep growing the context. The CECL sample described in the next section passed 136,558 tokens while producing no tool calls, against 47,573 for the whole completed CECL run, so a sample can be driven toward the bracket by a failure mode that has nothing to do with the task's real context demand.
+
+## The Message Limit Is the Guard That Actually Binds
+
+**The runaway mode that costs the most is not a crash and not a context overflow. It is the agent finishing the work and then refusing to submit.** CECL instance 0 wrote a complete `predictions.csv`, all twelve pools with point estimates and bounds, eleven minutes into the run. It then spent the next seventeen hours producing replies that contained no tool call.
+
+| Signal, CECL instance 0 | Value |
+| --- | --- |
+| Wall clock | 17.2 hours, sample still unfinished |
+| Cumulative model time | 16.69 hours, so the server was 97% busy |
+| Generate calls | 250, of which 248 returned |
+| Call duration | median 162s, p90 520s, max 1,572s |
+| Messages | 263 of the task's `message_limit=500` |
+| Assistant turns | 248 |
+| Tool calls | **12** |
+| Stop reasons | 733 `stop`, 12 `tool_calls`, 4 `max_tokens` |
+| Output tokens | median 1,692 per call, 630,313 in total |
+
+**It is not truncation and it is not the server.** Four of 248 calls hit `max_tokens`; the rest stopped normally at a median of 1,692 tokens. Every POST returned `HTTP/1.0 200 OK`. The model produces fluent, normal-length prose, `basic_agent` re-prompts it because there is no tool call to execute, and the cycle repeats at two to twenty-six minutes a turn until the message limit ends the sample. This is the same family as the repetition loop under [Every Local Run Was Greedy and No Hosted Run Was](#every-local-run-was-greedy-and-no-hosted-run-was), and greedy decoding is the obvious suspect, but that is inferred rather than tested. Low confidence on the cause, high confidence on the shape.
+
+**It is intermittent, which is why it went unnoticed.** Per-sample message counts, same tasks, same instance counts:
+
+| Run | Messages per sample |
+| --- | --- |
+| CCAR, 28 Oct | 32, 62, 24, 24, 30, 34, 12, 10 |
+| CCAR, 30 Oct | 32, 30, **218**, 34, 28, 24, **500**, 24 |
+| CECL, 27 Oct | **170**, 52, 28 |
+
+Two samples out of eight account for the 30 Oct CCAR run taking 511.6 minutes against 64.0 minutes for the same eight instances two days earlier. An 8x difference in run time that presents as server degradation is two thrashing samples, and the decode rate that appears to fall from 51.6 to 22.1 tok/s is confounded with prefill on their long contexts. Nothing was wrong with the server.
+
+**A message-limit hit still produces a scored cell.** This is measured, not assumed: the 30 Oct CCAR sample that hit 500 messages ended with `sample.limit` set, the run completed with status `success`, and the run produced a cell of 0.1718. The scorer reads `predictions.csv` out of the sandbox, and by the time the loop starts thrashing that file has long since been written. The same caveat applies as for the token limit above, that a truncated cell is an upper bound and **nothing in the score distinguishes the two**: only `sample.limit` on the eval log shows it.
+
+**The default message limit is therefore a cost driver, not a safety net.** It is 500 on six of the eight tasks, 600 on the flyby and 800 on quantile, and at a median 162s per turn 500 licenses a single sample to burn eleven hours after its work is complete. `-T message_limit=100` would bound a thrashing sample to about four hours and would have cost nothing on any run recorded here, because no sample has ever recovered and submitted after turn 100 and the worst healthy sample used 170. It is a deviation from the convention the archived rows were measured under, so it belongs in its own experiment rather than mid-row.
+
+### A Working Run and a Dead One Look Identical
+
+**The `.eval` file's modification time is not a liveness signal, and treating it as one destroyed a working run.** Inspect writes running samples to a SQLite sample buffer under `~/.local/share/inspect_ai/samplebuffer/` and only touches the `.eval` when a sample completes. A run that is 97% busy on a sample taking seventeen hours leaves the `.eval` untouched for seventeen hours, exactly as a dead run would. An `ESTAB` socket to the server with empty queues is likewise not evidence of an abandoned request: the server speaks HTTP/1.0 and opens one connection per request, so a long request in flight looks like that for its whole duration.
+
+The signals that do work, in order of cost:
+
+- `~/.local/share/inspect_ai/traces/trace-<pid>.log` records every `generate` enter and exit with a duration, and its modification time moves every few minutes on a healthy run. This is the one to watch, and the one that settled the diagnosis here.
+- The sample buffer database holds the running sample's messages, events and tool calls, and is readable with `sqlite3` while the run is live.
+- `py-spy dump --pid <pid>` shows only that the event loop is idle in `select`, which is what a healthy async client looks like between I/O completions. It does not discriminate, and on this box it needs `sudo`, because `ptrace_scope` is 1 and a backgrounded chain reparents to init.
+
+Two Gemma runs were killed on the strength of the `.eval` mtime, at 13 and 17 hours. Both were working. The first had completed 324 generate calls and was on its second instance when it was killed, and its trace log ends with a successful response seconds before the kill.
+
 ## What Would Close the Gap
 
-Four of seven tasks are blocked, and the fix is not a better model. Going from the 35B-A3B to a 27B at the same quantization frees roughly 5 to 6 GB of weights, which at 0.12 to 0.15 GB per 1k buys roughly **40k to 50k more context**, for a ceiling near 155k to 170k. That brackets ballistic (176k median) from below, misses three-body (182k), and is nowhere near quantile (264k). **Moderate confidence on the direction, low on the magnitude**, since the coefficient was revised three times.
+The gap is no longer context, and the fix was never a better model. One server flag moved the measured ceiling from 89,601 tokens to past 298,658, which settles six of the eight tasks outright, so for those the levers that remain are all about the scores. CCAR and migration are not settled: they reached 216,198 and 231,531 tokens, 72% and 78% of a ceiling that is itself optimistic, and migration crashed the server at that figure.
 
-More memory is the lever that actually works, because the ceiling is close to linear in whatever is left after the weights. The other lever is to cut context demand rather than raise the ceiling: the agent loop's context is dominated by accumulated tool output, so trimming or summarizing it would move every blocked task at once, and it would change what the archived columns mean, so it is a change to the harness rather than to the serving setup.
+**Sampling is the first lever, and it was set wrong by default.** See [Every Local Run Was Greedy and No Hosted Run Was](#every-local-run-was-greedy-and-no-hosted-run-was). Greedy decoding is what put the migration agent into a repetition loop, and it is also the reason the local rows are not strictly comparable with the hosted ones.
+
+**Calibration is the second, and nothing here says it is cheap.** Coverage is the component that collapses, on every task where an interval is scored, on both local models tested. The point estimates stay in a credible range while the intervals are narrow and misplaced, which is a prompting and scoring-feedback problem as much as a model one. Nothing in the serving setup touches it.
+
+**More memory is no longer on the list.** The ceiling turned out to be transient prefill workspace rather than a persistent allocation, so buying RAM buys a smaller multiple of what a flag already gave for free. Moderate confidence: the mechanism is inferred from a 16.8 GiB residual and from the response to `--prefill-step-size`, not from an allocator trace.
+
+**Cutting context demand is still available and still a harness change.** The agent loop's context is dominated by accumulated tool output, so trimming or summarizing it would move every task at once, and it would change what the archived columns mean. That makes it a change to the harness rather than to the serving setup, and out of scope here.
 
 ## Candidates Still To Test
 
-Queued, all at 4-bit on the same 48 GB machine:
+Tested so far, all at 4-bit on the same 48 GB machine:
 
-- Qwen3.6-27B
+| Model | Ceiling at step 2048 | Weights | Decode | Prefill at 10k | Cells |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3.6-35B-A3B-4bit-DWQ | 113k observed | 19.5 GB | 41 tok/s | 2,453 tok/s | four tasks, one an upper bound |
+| Qwen3.6-27B-OptiQ | 39,744 to 49,744 | 20.4 GB | 14 tok/s | 374 tok/s | none, screened out on the ceiling |
+| Gemma 4 26B A4B QAT | 89,601 to 99,601 | 15.6 GB | 74 tok/s | 2,100 tok/s | all eight tasks |
+
+The 27B was screened out before any task ran: the smallest ceiling of the three despite being the smallest model by parameter count, because `OptiQ` mixed precision puts it near 6 bits per weight and its KV geometry is 3.2x the 35B's per token. It is also the slowest of the three by a factor of three on decode, which is the one axis where a local model has no margin to give away.
+
+Still queued:
+
 - Qwen3.8-27B
-- Gemma 4 26B A4B
 
-All three are smaller than the 35B-A3B tested, so all three should raise the context ceiling and lower the capability margin. Given that the three runnable tasks already show miscalibration rather than a modelling failure, and that coverage is the component that collapses, the thing to watch on a smaller model is interval coverage rather than the point estimates.
+The thing to watch is interval coverage rather than the point estimates, because that is the component that has failed on both models tested and it is the component a model risk function will not waive.
 
-The protocol for each: `-T n_instances=3 -T seed=1 --max-tokens 16384 --max-connections 1 --token-limit 2500000 --time-limit 10800`, eight instances for CCAR, and a transcript saved to `runs/` per sample. Report the ceiling measurement alongside the cells, because on this hardware the ceiling is the result.
+The protocol for each: `--prefill-step-size 256 --prompt-cache-size 1` on the server, a real completion as the health check rather than `/v1/models`, and on the Inspect side `-T n_instances=3 -T seed=1 --max-tokens 16384 --max-connections 1 --token-limit 2500000 --time-limit 86400`, eight instances for CCAR, three single-instance runs at seeds 1, 2 and 3 for quantile, and a transcript saved to `runs/` per sample. Sampling goes in a `--generate-config` file, because Inspect's OpenAI provider forwards `temperature` and `top_p` but silently drops `top_k`, which has to ride in `extra_body` instead. Measure the ceiling first and report it alongside the cells, because a ceiling reached mid-suite costs a human restart and a ceiling measured first costs 15 minutes. Watch progress on `~/.local/share/inspect_ai/traces/trace-<pid>.log` rather than on the `.eval` file, for the reason given under [A Working Run and a Dead One Look Identical](#a-working-run-and-a-dead-one-look-identical).
