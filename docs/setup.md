@@ -62,6 +62,25 @@ ZEN_API_KEY=<your key>
 
 Inspect loads `.env` automatically. Models are then addressed as `openai-api/zen/<model-id>`, for example `openai-api/zen/deepseek-v4-flash-free`. Any other Inspect-supported provider works too; set the corresponding provider environment variable instead.
 
+**The Zen example above is no longer reproducible as written.** As of 2026-11-01 the credential this project used against `https://opencode.ai/zen/v1` returns HTTP 401, so the worked example is kept for the record rather than as a working recipe: a reader following it with a current key should expect it to fail. Many of the free model endpoints the archived rows were measured on have also been retired, which is a separate problem recorded in [limitations.md](limitations.md#serving-provenance-is-not-controlled).
+
+The surface that currently works for this project is the OpenCode Go subscription, which is a different endpoint from Zen and from the pay-as-you-go inference path, with its own model catalogue:
+
+```
+OPENCODE_GO_BASE_URL=https://opencode.ai/inference/go/openai/v1
+OPENCODE_GO_API_KEY=<your key>
+```
+
+Models are then addressed as `openai-api/opencode-go/<model-id>`, for example `openai-api/opencode-go/gpt-6-luna`. Two request headers are mandatory for direct callers and Inspect does not send either by default, so pass them with `--model-config <file>`:
+
+```yaml
+default_headers:
+  user-agent: "pereval/0.1 (+https://github.com/externalmemory/pereval)"
+  x-opencode-session: "<any stable uuid per conversation>"
+```
+
+A generic SDK or HTTP-library `user-agent` is rejected. Note that `https://opencode.ai/inference/...` without the `go/` segment is a different billing surface entirely, the pay-as-you-go wallet and the anonymous free pool, and a Go subscription key sent there returns 402 or 429 rather than an authentication error, which makes a working key look broken. Remaining quota is readable from `GET https://opencode.ai/inference/go/v1/usage`, which returns integer percentages and reset timestamps for a rolling five-hour, weekly and monthly window.
+
 ## Running an Evaluation
 
 Generate a single task instance to inspect it directly (no Docker):
