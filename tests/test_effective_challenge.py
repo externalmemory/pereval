@@ -345,6 +345,36 @@ def test_claiming_the_whole_circle_costs_the_period():
     assert 355.0 < agg["mean_width"] <= 360.0
 
 
+@pytest.mark.parametrize("lo,hi,width", [
+    (0.0, 360.0, 360.0),      # exactly one period: the case 359.999 above dodged
+    (0.0, 720.0, 360.0),      # two periods: still only the whole circle
+    (0.0, 400.0, 360.0),      # more than everything is not cheaper than a quarter
+    (-180.0, 180.0, 360.0),   # a full circle written symmetrically
+])
+def test_an_exact_full_period_interval_keeps_its_width(lo, hi, width):
+    """`np.mod(hi - lo, period)` sent every one of these to zero, which read the least
+    informative admissible answer as a point prediction and scored it as the most
+    confident one. [0, 360] is the natural way to write a full-circle claim, so the
+    boundary the test above missed by 0.001 is the boundary an agent actually hits."""
+    agg = score_points(_circular_points(), {(1.0,): (10.0, lo, hi)}, 360.0)
+    assert agg["mean_width"] == pytest.approx(width)
+    assert agg["coverage"] == pytest.approx(1.0)
+    assert agg["winkler_agent"] == pytest.approx(width, rel=0.02)
+
+
+@pytest.mark.parametrize("lo,hi,width", [
+    (350.0, 30.0, 40.0),      # the wrapping arc through the origin still wraps
+    (10.0, 10.0, 0.0),        # a point stays a point
+    (4990.0, 5010.0, 20.0),   # an unwrapped interval far from the branch
+    (400.0, 30.0, 350.0),     # wrapping from beyond one period
+])
+def test_the_cap_does_not_disturb_the_other_boundaries(lo, hi, width):
+    """Capping an ordered width must not touch the wrapping direction, which is the only
+    way to express an arc through the origin."""
+    assert localize_interval(lo, hi, 10.0, 360.0)[1] \
+        - localize_interval(lo, hi, 10.0, 360.0)[0] == pytest.approx(width)
+
+
 def test_a_correct_circular_interval_is_unaffected():
     """The fix must not move the cases the old code got right."""
     agg = score_points(_circular_points(), {(1.0,): (10.0, 8.0, 12.0)}, 360.0)
@@ -472,6 +502,80 @@ def test_a_fixed_method_shows_zero_spread():
     out = reduce([_score({"winkler_regret": 2.0}) for _ in range(4)]).value
     assert out["regret_spread"] == pytest.approx(0.0)
     assert out["regret_worst"] == pytest.approx(2.0)
+
+
+#: The primary metric each task family's scorer actually emits, with the secondary
+#: diagnostics that sit beside it. Taken from archived logs, one per family, rather
+#: than written from the scorer source: the defect below was that the reducer was
+#: only ever tested against synthetic winkler dictionaries, so the one family whose
+#: primary is named `score` was never run through it at all.
+_TASK_FAMILY_SHAPES = [
+    ("migration", "score", {"score_degenerate": 1.0, "completion": 1.0}),
+    ("twobody", "winkler_regret", {"coverage": 0.9, "mean_width": 4.0}),
+    ("threebody", "winkler_regret", {"coverage": 0.9, "mean_width": 4.0}),
+    ("hyperbolic", "winkler_regret", {"coverage": 0.9, "mean_width": 4.0}),
+    ("ballistic", "winkler_regret", {"coverage": 0.9, "mean_width": 4.0}),
+    ("ccar", "winkler_regret", {"coverage": 0.9, "mean_width": 4.0}),
+    ("quantile", "pinball_regret", {"coverage": 0.9}),
+    # CECL emits winkler_regret as a SECONDARY diagnostic. Reducing it on that
+    # instead of ecl_regret would silently change which metric the row reports.
+    ("cecl", "ecl_regret", {"winkler_regret": 7.0, "coverage": 0.9}),
+]
+
+
+@pytest.mark.parametrize("family,primary,extra",
+                         _TASK_FAMILY_SHAPES,
+                         ids=[s[0] for s in _TASK_FAMILY_SHAPES])
+def test_every_task_family_reduces_on_its_own_primary_metric(family, primary, extra):
+    """The contract test the reducer never had, which is why migration slipped through.
+
+    Every scorer in the suite also emits a per-run `regret_worst` and a per-run
+    `regret_spread` of zero, so a family missing from `_REGRET_KEYS` does not fail
+    loudly: the generic averaging loop fills both fields with the MEAN of those
+    per-run values, reporting the mean as the worst case and zero as the spread.
+    That is perfect reproducibility manufactured from wandering runs, and it is the
+    pessimistic convention inverted. Run the real emitted shape, not a synthetic one.
+    """
+    runs = (0.1, 0.5, 0.9)
+    out = stability()([
+        _score({primary: r, "regret_worst": r, "regret_spread": 0.0, **extra})
+        for r in runs
+    ])
+    v = out.value
+    assert v["runs"] == float(len(runs)), family
+    assert v[primary] == pytest.approx(np.mean(runs)), family
+    assert v["regret_worst"] == pytest.approx(max(runs)), family
+    assert v["regret_spread"] == pytest.approx(max(runs) - min(runs)), family
+    # The secondary diagnostics are averaged and must not be mistaken for primary.
+    for k, x in extra.items():
+        assert v[k] == pytest.approx(x), (family, k)
+    # The explanation has to name the metric, the mean, the worst, the spread and
+    # every individual run, so a reader can audit the reduction from the log alone.
+    assert primary in out.explanation, family
+    for r in runs:
+        assert f"{r:.4g}" in out.explanation, (family, r)
+    assert len(out.metadata["per_run"]) == len(runs), family
+
+
+def test_an_unrecognised_primary_metric_fails_closed():
+    """A new task family must be added to _REGRET_KEYS deliberately.
+
+    Before this, an unrecognised schema produced `regret_spread` 0.0, `regret_worst`
+    equal to the mean, and an explanation reading "mean nan", which is a record that
+    looks measured and is not. Silence was the defect, so the fix is an exception
+    rather than a sentinel.
+    """
+    with pytest.raises(ValueError, match="primary regret metric"):
+        stability()([_score({"mystery_regret": 1.0, "regret_worst": 1.0,
+                             "regret_spread": 0.0}) for _ in range(3)])
+
+
+def test_a_recognised_but_unreadable_primary_is_not_reported_as_measured():
+    """All runs non-finite: nan, not the averaged per-run values left by the loop."""
+    out = stability()([_score({"score": float("nan"), "regret_worst": 0.4,
+                               "regret_spread": 0.0}) for _ in range(3)]).value
+    assert np.isnan(out["regret_worst"])
+    assert np.isnan(out["regret_spread"])
 
 
 def test_single_run_scores_already_carry_the_stability_keys():

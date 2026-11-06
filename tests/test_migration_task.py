@@ -258,6 +258,63 @@ def test_malformed_submissions_cannot_gain_credit(bundle, text):
     assert r["score"] == pytest.approx(1.0)
 
 
+def _scaled_oracle(truth, scale):
+    """The true distributions, every share multiplied by one constant."""
+    rows = [HEAD.rstrip("\n")]
+    for name in truth["scenario_names"]:
+        for q in ("4", "9"):
+            t = truth["scenarios"][name]["rating_distribution"][q]
+            for s in ORDER:
+                rows.append(f"{name},{q},{s},{t[s] * scale:.10f}")
+    return "\n".join(rows) + "\n"
+
+
+@pytest.mark.parametrize("scale", [0.49, 0.50, 0.51, 1.49, 1.50, 1.51, 0.10, 2.70])
+def test_total_mass_has_no_cliff_and_reports_a_finding(bundle, scale):
+    """The window used to be `0.5 <= total <= 1.5`, an undocumented constant.
+
+    It made the penalty for losing portfolio mass discontinuous and arbitrary:
+    1.49x the correct mass scored perfectly, exactly 0.5x scored as the degenerate
+    answer, and the difference between them was the last decimal place rather than
+    anything about the submission. Scale cannot be scored here in any case, because
+    `_live` renormalises the seven live grades before the distance is taken, so the
+    shape half of the score is already scale invariant by design; gating the total
+    would make the default half scale sensitive while the shape half stayed immune.
+
+    So the contract the prompt states is enforced as a reported finding instead,
+    which is where every other admissibility property in this module lives.
+    """
+    truth = bundle["truth"]
+    start = np.array([bundle["holdout_mix"][s] for s in ORDER[:-1]])
+    r = score_predictions(truth, _scaled_oracle(truth, scale))
+    checks = model_checks(None, _scaled_oracle(truth, scale), None, start, truth)
+    assert r["score"] == pytest.approx(0.0, abs=1e-6), scale
+    assert r["completion"] == 1.0, scale
+    assert checks["fail_prediction_shares_sum_to_one"] == 1.0, scale
+
+
+def test_the_unscaled_oracle_reports_no_mass_finding(bundle):
+    """The check must not fire on a clean submission, or it says nothing."""
+    truth = bundle["truth"]
+    start = np.array([bundle["holdout_mix"][s] for s in ORDER[:-1]])
+    checks = model_checks(None, _scaled_oracle(truth, 1.0), None, start, truth)
+    assert checks["fail_prediction_shares_sum_to_one"] == 0.0
+
+
+def test_a_share_above_one_is_still_rejected_whole(bundle):
+    """The per-share range is the gate, and it is the one the prompt states.
+
+    "a fraction of the original cohort between 0 and 1" is a contract about each
+    share, not about the total, and a value outside it is not a distribution in any
+    units. This is what keeps a submission written in percent from gaining credit
+    now that the arbitrary total window is gone.
+    """
+    truth = bundle["truth"]
+    r = score_predictions(truth, _scaled_oracle(truth, 3.0))
+    assert r["completion"] == 0.0
+    assert r["score"] == pytest.approx(1.0)
+
+
 def test_reference_beats_the_degenerate_by_a_wide_margin():
     """The anchor that makes the column readable.
 

@@ -143,6 +143,44 @@ def parse_predictions(text: str | None) -> dict[str, dict[int, np.ndarray]]:
     falls back to the degenerate for a scenario or checkpoint that is simply
     absent, so an agent that runs out of budget after two scenarios keeps credit
     for the two it finished.
+
+    What is enforced per share is the range the prompt states, "a fraction of the
+    original cohort between 0 and 1". A value outside it is not a distribution in
+    any units, so a submission written in percent is still rejected whole, which is
+    what it was before and what `test_malformed_submissions_cannot_gain_credit`
+    asserts.
+
+    Total mass is NOT a completeness failure, though, and the only bound on it is
+    that it be positive, because a non-positive total cannot be normalised at all.
+    This used to require `0.5 <= total <= 1.5`, an undocumented constant that
+    produced a cliff with no justification on either side: a submission carrying
+    1.49x the correct mass scored perfectly and one carrying exactly 0.5x scored as
+    the degenerate answer, so losing half the portfolio cost either nothing or
+    everything depending on the last decimal place. The per-share range does the
+    work that window was reaching for, and does it from the stated contract rather
+    than from a constant nobody chose.
+
+    Normalising rather than gating is the coherent choice, not a leniency. `_live`
+    already renormalises the seven live grades before the distance is taken, by
+    design and as documented at the top of this module, so the shape half of the
+    score is scale invariant whatever this function does. Were the total treated as
+    part of the answer, the default half would become scale sensitive while the
+    shape half stayed immune, and one uniform presentation error would be punished
+    in one component and ignored in the other. Scale is a property of the artefact;
+    the distribution is the answer.
+
+    So the sum-to-one requirement the prompt states is enforced where every other
+    admissibility property in this module is enforced: as a reported finding,
+    `fail_prediction_shares_sum_to_one`, which `model_checks` computes from
+    `_raw_prediction_blocks` and which deliberately does not normalise. See
+    "Admissibility Is a Tie-Breaker, Not a Weight or a Gate" in
+    docs/tasks/migration.md. A submission can score well and carry that finding at
+    once, which is the intended reading rather than a contradiction: the forecast
+    was accurate and the artefact was not clean.
+
+    Measured over 61 archived migration logs, one submission ever deviated
+    materially: Qwen3.6-35B on instance-1-seed-1731038949, whose six cells carry
+    0.9663 to 0.9917 of the mass. It scores 0.7961 and reports the finding.
     """
     if not text:
         return {}
@@ -165,10 +203,10 @@ def parse_predictions(text: str | None) -> dict[str, dict[int, np.ndarray]]:
         if set(d) != set(ORDER):
             return {}
         v = np.array([d[st] for st in ORDER], dtype=float)
-        if not np.isfinite(v).all() or (v < 0).any():
+        if not np.isfinite(v).all() or (v < 0).any() or (v > 1.0).any():
             return {}
         total = v.sum()
-        if not 0.5 <= total <= 1.5:
+        if not total > 0.0:
             return {}
         out.setdefault(scen, {})[q] = v / total
     return out

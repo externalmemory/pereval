@@ -80,6 +80,52 @@ The problem is reproducibility, not change control. Rerunning a development tool
 
 The reproducibility study below already measured this once by hand and found the spread large for capable models and near zero only for models that had collapsed to a fixed deterministic method, which is the worst behaviour the tasks exist to expose. Making it a first-class mode on every task is what turns that observation into a reportable property.
 
+## Three More Defects Found by a Second Independent Review
+
+A second independent review, against commit `6a2a0de` on 5 November 2026, found three more defects. None of them is a modelling criticism: all three are places where the harness reported a measurement it had not made. That is the right thing to attack, because it is the suite's own central claim. All three reproduce, all three are fixed, and the archival consequence is recorded below rather than asserted.
+
+### The Stability Reducer Reported the Mean as the Worst Case
+
+`_REGRET_KEYS` in `pereval/scorers/stability.py` listed `ecl_regret`, `winkler_regret` and `pinball_regret`. Migration's primary metric is named `score`, so `_primary()` returned `None` for it and the reducer fell through to its generic averaging loop. Every scorer in the suite also emits a per-run `regret_worst` and a per-run `regret_spread` of zero, so that loop filled both fields with the mean of those per-run values. The reported worst case was the mean of the k runs rather than their maximum, and the reported spread was the mean of k zeros, which is exactly zero.
+
+So a migration run with `repeats=3` reported perfect reproducibility whatever its runs did, and reported an optimistic mean where the suite's convention is the pessimistic maximum. Both directions are wrong and the second one inverts the convention the whole repository is built on.
+
+It is not hypothetical. One archived run used `repeats=3`, minimax-m3.1-flash:free on 21 October, and its stored reduction says:
+
+| Instance | Reported worst | True worst | Reported spread | True spread |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 0.4527 | **0.6343** | 0.0 | **0.3975** |
+| 1 | 0.1620 | 0.1860 | 0.0 | 0.0590 |
+| 2 | 0.2317 | 0.2684 | 0.0 | 0.0656 |
+
+**No published number came from it.** The figure this document already reports for that run, under A Time-Limited Run Still Produces a Score, reads `0.487 (0.634)`, which is the correct median and worst of instance 0's three draws computed by hand from the per-run values. The reducer was bypassed rather than trusted, so the documentation was right while the harness was wrong. That is luck rather than process, and it is the reason the fix includes a contract test rather than only a corrected tuple.
+
+`score` is now in `_REGRET_KEYS`, placed last so that a scorer emitting both a named regret and a `score` is still reduced on the named one, which is what keeps CECL anchored to `ecl_regret` rather than to the `winkler_regret` it also reports. An unrecognised schema now raises instead of emitting a stable-looking record, because the failure mode was silence. A recognised but unreadable primary reports `nan` for both fields rather than the averaged per-run values. `tests/test_effective_challenge.py` now runs the actual emitted score shape of all eight task families through the reducer and asserts the explanation names the metric, the mean, the worst case, the spread and every individual run, which is the test that would have caught this: the existing ones only ever fed it synthetic Winkler dictionaries.
+
+### An Exact Full-Circle Interval Collapsed to a Point
+
+`localize_interval` took the submitted width as `np.mod(hi - lo, period)`. For `[0, 360]` that is zero. So the natural way to write a full-circle claim, which is an honest refusal to localize and should cost the whole period, was read instead as a point prediction and scored as the most confident answer possible. `[0, 720]` collapsed the same way, and `[0, 400]` was read as a 40-degree interval, so claiming more than everything was cheaper than claiming a ninth of it.
+
+The function's own docstring promised the opposite, saying that claiming the whole circle costs the full period rather than collapsing to a point, which is what makes this a defect and not a design choice. The test named `test_claiming_the_whole_circle_costs_the_period` used `359.999`, missing the failing boundary by one thousandth of a degree.
+
+An ordered width is now capped at the period instead of wrapped. A width given in the wrapping direction still wraps, because that is the only way to express an arc through the origin, so `[350, 30]` is still the 40-degree arc and `[4990, 5010]` is still 20 degrees. The boundary cases are parameterised in the tests at exactly `[0, 360]`, `[0, 720]`, `[0, 400]` and `[-180, 180]`.
+
+Archival consequence: **not established either way.** Nine samples across the circular tasks carry a width under one degree with zero coverage, seven of them exactly zero, which is the signature this defect would leave. It is also the signature of a genuine point submission and of an unreadable artefact. Only one of the nine retains enough of its submission to check, and its spans are 3 to 67 degrees rather than multiples of 360, so that zero has another cause. The remaining eight cannot be attributed, for the same reason the three-body re-scoring above could not be completed: a transcript records the conversation and not the sandbox filesystem. No cell is relabelled on a suspicion.
+
+### Total Predicted Mass Had an Arbitrary Cliff
+
+`parse_predictions` in the migration scorer accepted any total between 0.5 and 1.5 and divided through by it. The review read that as laundering: an agent could submit half the portfolio and score perfectly. The measured behaviour is both narrower and stranger than that. Exactly 0.5 and exactly 1.5 were **rejected**, because the oracle shares sum to one only up to floating point and the guard is inclusive, so a submission at 1.49x the correct mass scored perfectly while one at 1.51x scored as the degenerate answer. The penalty for losing portfolio mass was discontinuous, and which side of the cliff a submission landed on was decided by its last decimal place.
+
+The remedy the review proposed, rejecting materially non-unit mass, is the wrong fix, and the reason is in this scorer's own design. `_live` renormalises the seven live grades before the distance is taken, deliberately and documented at the top of the module, so the shape half of the score is already scale invariant. Gating the total would make the default half scale sensitive while the shape half stayed immune, so one uniform presentation error would be punished in one component and ignored in the other. Scale is a property of the artefact; the distribution is the answer.
+
+The arbitrary constant is gone. What is enforced per share is the range the prompt actually states, a fraction between 0 and 1, which is a contract about each share rather than about the total and which still rejects a submission written in percent. The total need only be positive, since a non-positive total cannot be normalised. The sum-to-one requirement is enforced where every other admissibility property in this module is enforced, as the reported finding `fail_prediction_shares_sum_to_one`, computed from the unnormalised raw parse. A submission can score well and carry that finding at once, which is the intended reading and not a contradiction: the forecast was accurate and the artefact was not clean. See Admissibility Is a Tie-Breaker, Not a Weight or a Gate in `docs/tasks/migration.md`.
+
+Archival consequence: **none.** Every one of the 73 archived migration samples that still carries its `predictions.csv` re-scores bit-identically under the new parse. Six samples have ever failed the mass check and five of those are unreadable artefacts already scoring 1.0, where the check fires on emptiness rather than on mass. Exactly one real deviation has ever been submitted, Qwen3.6-35B on instance-1-seed-1731038949, whose six cells carry 0.9663 to 0.9917 of the mass. It scored 0.7961 before and scores 0.7961 now, and it reports the finding in both cases. Under the review's proposed fix it would have become 1.0, which is the degenerate answer, so a 3.4% mass error would have cost a 26% worsening of a published cell on a submission that is substantively informative.
+
+### What the Three Have in Common
+
+Two of the three were invisible because a per-run field that happens to be correct for a single run was silently reused as if it summarised many, and the third was invisible because a test chose a value 0.001 away from the boundary it was named after. Neither failure needs a modelling mistake to occur, and neither would have been caught by adding another task. 271 tests passed on the commit that contained all three.
+
 ## What the Re-Run Actually Cost
 
 Nine free runs were spent re-measuring the four `n/m` cells. One cell came back. The rest is a record of how much of an eval's effort goes into establishing that a number is not a measurement.

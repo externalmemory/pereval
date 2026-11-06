@@ -87,10 +87,23 @@ def localize_interval(lo: float, hi: float, ref: float, period: float | None):
     as [350, 30] is still read as the 40-degree arc through zero, which is what an agent
     writing it means, and claiming the whole circle costs the full period rather than
     collapsing to a point.
+
+    The boundary cases, because taking the width modulo the period gets two of them
+    wrong. [0, 360] is an honest refusal to localize and has to cost 360, but its
+    difference is an exact multiple of the period and the modulo sends it to zero, which
+    reads a full-circle claim as a point prediction and is the most favourable possible
+    misreading of the least informative possible answer. An ordered submission wider than
+    one period, [0, 720], cannot mean more than the whole circle either, and the modulo
+    scores it as zero as well, while a value like [0, 400] would be read as a 40-degree
+    interval, so claiming more than everything would be cheaper than claiming a quarter
+    of it. Both are fixed by capping an ordered width at the period instead of wrapping
+    it. A width given in the wrapping direction, lo above hi, still wraps: that is the
+    only way to express an arc through the origin.
     """
     if period is None:
         return (hi, lo) if lo > hi else (lo, hi)
-    width = float(np.mod(hi - lo, period))
+    raw = float(hi) - float(lo)
+    width = min(raw, float(period)) if raw >= 0.0 else float(np.mod(raw, period))
     mid = float(_localize([lo + width / 2.0], ref, period)[0])
     return mid - width / 2.0, mid + width / 2.0
 

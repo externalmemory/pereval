@@ -40,8 +40,25 @@ from __future__ import annotations
 import numpy as np
 from inspect_ai.scorer import Score, ScoreReducer, score_reducer
 
-# The primary regret key differs by scorer; check each supported task family.
-_REGRET_KEYS = ("ecl_regret", "winkler_regret", "pinball_regret")
+# The primary regret key differs by scorer, so this lists every task family, in
+# priority order. CECL emits `winkler_regret` as a secondary diagnostic alongside
+# `ecl_regret`, so `ecl_regret` has to come first or CECL would be reduced on the
+# wrong metric. `score` comes last for the same reason: migration's primary is
+# `score`, but a scorer that emits both a named regret and a `score` should be
+# reduced on the named one.
+#
+# Migration was missing from this tuple for its first three weeks, and nothing
+# caught it, because every scorer also emits a per-run `regret_worst` and
+# `regret_spread`. With no primary key recognised, the generic averaging loop
+# below filled those two fields with the MEAN of the per-run values: `regret_worst`
+# became the mean of the k runs rather than their maximum, and `regret_spread`
+# became the mean of k zeros, which is zero. So three runs that scored 0.487,
+# 0.2367 and 0.6343 were reported as a worst case of 0.4527 with a spread of
+# exactly zero, which is a claim of perfect reproducibility manufactured from
+# wandering runs. That is the one failure mode this reducer exists to detect, and
+# it is also the pessimistic direction inverted. The real run it happened on is
+# recorded in docs/limitations.md.
+_REGRET_KEYS = ("ecl_regret", "winkler_regret", "pinball_regret", "score")
 
 
 def _primary(value: dict) -> str | None:
@@ -57,24 +74,43 @@ def stability() -> ScoreReducer:
         if not values:
             return scores[0]
         key = _primary(values[0])
+        if key is None:
+            # Fail closed rather than emit a stable-looking record. Averaging the
+            # per-run `regret_worst` and `regret_spread` is worse than no number:
+            # it reports a worst case that is really a mean and a spread of zero,
+            # and a reader cannot tell it apart from a genuinely reproducible run.
+            # A new task family has to be added to _REGRET_KEYS deliberately.
+            raise ValueError(
+                "stability() cannot identify a primary regret metric. Add this "
+                "scorer's primary key to pereval.scorers.stability._REGRET_KEYS. "
+                f"Recognised: {_REGRET_KEYS}. Emitted: {tuple(sorted(values[0]))}."
+            )
         keys = {k for v in values for k, x in v.items() if isinstance(x, int | float)}
         out: dict[str, float] = {}
         for k in keys:
             xs = [float(v[k]) for v in values if k in v and np.isfinite(float(v[k]))]
             out[k] = float(np.mean(xs)) if xs else float("nan")
-        if key is not None:
-            regrets = [float(v[key]) for v in values
-                       if key in v and np.isfinite(float(v[key]))]
-            if regrets:
-                out["regret_worst"] = float(np.max(regrets))
-                out["regret_spread"] = float(np.max(regrets) - np.min(regrets))
+        regrets = [float(v[key]) for v in values
+                   if key in v and np.isfinite(float(v[key]))]
+        if regrets:
+            out["regret_worst"] = float(np.max(regrets))
+            out["regret_spread"] = float(np.max(regrets) - np.min(regrets))
+        else:
+            # The primary metric is recognised but unreadable in every run. The
+            # averaged per-run values left in `out` by the loop above are the mean
+            # masquerading as the worst case, so overwrite them rather than ship
+            # them: nan says no measurement, which is the honest answer.
+            out["regret_worst"] = float("nan")
+            out["regret_spread"] = float("nan")
         out["runs"] = float(len(values))
         n = len(values)
-        detail = ", ".join(f"{float(v[key]):.4g}" for v in values) if key else ""
+        detail = ", ".join(f"{float(v[key]):.4g}" if key in v else "-"
+                           for v in values)
         return Score(
             value=out,
             explanation=(
-                f"{n} same-instance runs; mean {out.get(key, float('nan')):.4g}, "
+                f"{n} same-instance runs on {key}; "
+                f"mean {out.get(key, float('nan')):.4g}, "
                 f"worst {out.get('regret_worst', float('nan')):.4g}, "
                 f"spread {out.get('regret_spread', float('nan')):.4g}"
                 + (f" [{detail}]" if detail else "")
