@@ -28,6 +28,31 @@ Two consequences follow.
 | Server build | mlx_lm 0.32.2, macOS 27.0.1, arm64, applegpu_g17s |
 | Inspect model string | `openai-api/macmini/<repo>/<model>`, for example `openai-api/macmini/mlx-community/gemma-4-26B-A4B-it-qat-4bit` |
 | Credentials | `MACMINI_BASE_URL=http://<ip>:8081/v1` and `MACMINI_API_KEY` in `.env` |
+| Weight revisions | pinned below, because a repo name is not a version |
+
+### The Weights Are Pinned By Commit, Not By Name
+
+A Hugging Face repo name does not identify a set of tensors. `mlx-community` and `unsloth` re-quantize in place, so "the same model" re-downloaded later can be different weights, and a published cell measured against the old ones stops being reproducible without anyone touching this repository.
+
+That is not a hypothetical. Of the four models pulled to this machine, one moved during the project: `mlx-community/Qwen3.6-27B-OptiQ-4bit` went from `7575c79a` to `3413c683` on 2026-10-30, after it was downloaded here. No published cell rests on it, so it cost nothing, but the next one might.
+
+Every revision actually used, verified against `main` on 2026-11-09:
+
+| Model | Revision used | Still `main`? | Repo last modified |
+| --- | --- | --- | --- |
+| `mlx-community/gemma-4-26B-A4B-it-qat-4bit` | `0e3cbab38ce568cf6e23543010d08d03b731910c` | yes | 2026-06-05 |
+| `mlx-community/Qwen3.6-35B-A3B-4bit-DWQ` | `73c707af4243243b18193444467872d20cff9399` | yes | 2026-04-17 |
+| `unsloth/gemma-4-26B-A4B-it-qat-GGUF` | `7b92b5b28818151e8669af2e45e88d6086f490dd` | yes | 2026-07-17 |
+| `mlx-community/Qwen3.6-27B-OptiQ-4bit` | `7575c79af388aa16ce4722fe6c3fd0d3a8e964d2` | **no**, now `3413c683` | 2026-10-30 |
+
+The first row is the one that matters: it backs the `gemma-4-26B-A4B (local)` row of the main table, and its local weights have since been deleted from the machine to reclaim disk. The row is still reproducible, because that revision is still what `main` points at and the repo has not changed since June. Pass the revision explicitly rather than trusting the name:
+
+```bash
+hf download mlx-community/gemma-4-26B-A4B-it-qat-4bit \
+  --revision 0e3cbab38ce568cf6e23543010d08d03b731910c
+```
+
+Since `Qwen3.6-35B-A3B-4bit-DWQ` has not moved since April, the greedy October runs and any re-run at corrected sampling use identical tensors, so the sampler and `--prefill-step-size` are the only variables between them.
 
 Inspect reaches any OpenAI-compatible endpoint through `openai-api/<service>/<model>`, where `<service>` names the `<SERVICE>_BASE_URL` and `<SERVICE>_API_KEY` pair to read. The base URL must stop at `/v1`, because Inspect appends the route itself. Model ids containing slashes survive, since only the first path segment is stripped to find the service.
 
