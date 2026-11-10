@@ -1,47 +1,51 @@
-"""Render the README score matrix: one swatch image per rank, plus the markdown table.
+"""Render the README score matrix: the figure, the numbers as text, and the CSV.
 
 Usage: python scripts/render_scores.py
-  writes docs/images/sw/{01..14,na}.png
-  rewrites the table in README.md between the scores:begin / scores:end markers
+  writes docs/images/scores-{light,dark}.png   the figure the README shows
+         docs/scores.csv                       the same cells, machine readable
+  rewrites README.md between the scores:begin / scores:end markers
 
-Why swatches and not a rendered picture of the table. GitHub's markdown
-sanitizer allows none of style, class, bgcolor, color or <font>, so a table cell
-cannot be given a background. The allowlist does pass <img> with src, alt, width
-and height, so each cell carries a small solid swatch next to its number. That
-keeps one table rather than a markdown copy and a PNG copy of the same numbers,
-and the numbers stay selectable, greppable and diffable.
+Why a figure and not a coloured markdown table. GitHub's markdown sanitizer
+allows none of style, class, bgcolor, color or <font>, so a table cell cannot be
+given a background. Per-cell <img> swatches were tried (commit b7b8a5e) and
+dropped: they read worse than a rendered table, and the four surfaces GitHub
+puts behind a table cell, two themes times zebra striping, confine a swatch
+ramp to OKLCH L 0.53 to 0.64, too narrow for fourteen separable steps.
 
-The ROWS table below is the single source for the figures and the README. Edit
-it here when a row is added and re-run.
+What the figure costs, and how that is paid back. An image cannot be selected,
+copied, grepped, read by a screen reader or diffed when a number changes, and
+alt text substitutes for none of those: it is not selectable in any browser.
+So the README carries the same table as text inside a collapsed <details>
+block, which is on the allowlist, and this script also writes docs/scores.csv
+so a score change shows up as a reviewable text diff rather than a new PNG.
+
+ROWS below is the single source for all three outputs. Edit it here when a row
+is added and re-run.
 
 Colour encodes RANK WITHIN A COLUMN, not the value. The columns are not
 comparable with each other and the README's own preamble says only
 order-of-magnitude gaps mean anything inside one, so shading by value would
 imply a precision the numbers do not carry.
 
-The ramp. A swatch has to read on all four surfaces GitHub puts behind a table
-cell, because its markdown tables are zebra-striped and it has two themes:
-#ffffff, #f6f8fa, #0d1117 and #161b22. Clearing WCAG 3:1 for graphical objects
-against all four at once confines the steps to roughly OKLCH L 0.53 to 0.64,
-which is far too narrow for the green-yellow-red ramp this figure used to
-carry: yellow at that lightness is olive, and the far end came out brick rather
-than red. The ramp is therefore diverging in the orthodox form, two hues around
-a neutral midpoint, with lightness monotone decreasing across all fourteen
-steps so the order survives greyscale and colour-vision deficiency.
+Both ramps are diverging in the orthodox form, green through a neutral
+midpoint to red, with lightness monotone across all fourteen steps. The
+lightness gradient is what carries the order for a red-green colourblind
+reader, and it is not decoration: the ramps these replaced were
+near-constant-lightness hue sweeps, and the dark one collapsed to OKLab dE 3.9
+between its poles under simulated protanopia, which is no signal at all.
 
-Measured by scripts/check_ramp.py: every step at or above 3.04:1 on all four
-surfaces, L monotone from 0.636 to 0.530, and pole separation of OKLab dE 25.8
-normal, 20.7 protan, 9.8 deutan against a target of 8. Adjacent steps sit
-0.0066 apart in L and are NOT separable by eye. That is deliberate and it is
-also unavoidable: thirteen gaps at the 0.06 ordinal floor would need a span of
-0.78, and the dual-surface band is 0.106 wide, so a fourteen-step ramp that
-works in both themes cannot have distinguishable neighbours. Only the gradient
-across the column reads; the exact rank is in each image's alt text and the
-value is printed beside it.
+scripts/check_ramp.py gates all of it: APCA 60 and WCAG 4.5 for the ink printed
+on every step, lightness monotone, and pole separation under simulated
+colour-vision deficiency.
 """
-import numpy as np
-from PIL import Image
+import csv
 from pathlib import Path
+
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 COLS = ["CCAR", "CECL", "Migration", "Ballistic", "Two-body", "Three-body", "Flyby", "Quantile"]
 NAN = float("nan")
@@ -86,20 +90,82 @@ ROWS = [
 # baseline is italic and also ranked, since it is a method an agent could choose.
 ITALIC = {"Oracle (true model)", "Naive baseline", "Degenerate answer"}
 
-# Diverging green -> neutral -> red, OKLCH L 0.635 down to 0.529, chroma 0.135 at
-# the poles through 0.015 at the midpoint. Validated by scripts/check_ramp.py.
-# Unranked rows carry no swatch at all rather than a neutral one, because a grey
-# swatch would be indistinguishable from the ramp's own neutral midpoint.
-RAMP = ["#4fa054","#579b5a","#5e9660","#659065","#6b8b6b","#718570","#777f77",
-        "#837675","#8d6f6c","#956763","#9c605b","#a25852","#a74f4a","#ac4642"]
+# Diverging: green through a neutral midpoint to red, lightness monotone across
+# all fourteen steps so the order survives greyscale and colour-vision
+# deficiency. Each mode has its own ramp against its own surface and ink.
+LIGHT_RAMP = ["#befabf","#c0f4c0","#c2eec2","#c4e7c4","#c6e1c6","#c8dac8","#cbd3cb",
+              "#d5cac8","#dcc2bf","#e2bab6","#e6b3ad","#eaaba5","#eda49d","#ef9d95"]
+DARK_RAMP  = ["#003b0a","#003f0b","#104216","#1f4421","#2b462c","#364836","#414941",
+              "#534746","#614744","#6e4643","#7a4642","#864541","#914440","#9c433f"]
 
-SWDIR = Path("docs/images/sw")
-PX = 16               # source pixels; displayed at 11
-DISPLAY = 11
-README = Path("README.md")
-BEGIN = "<!-- scores:begin (generated by scripts/render_scores.py; do not edit by hand) -->"
-END = "<!-- scores:end -->"
+THEME = {
+ "light": dict(ramp=LIGHT_RAMP, surface="#fcfcfb", ink="#1a1a19", muted="#6b6b67",
+               ref="#f0efec", grid="#fcfcfb", rankbg="#eceae6"),
+ "dark":  dict(ramp=DARK_RAMP,  surface="#1a1a19", ink="#fcfcfb", muted="#b3b3ae",
+               ref="#2a2a28", grid="#1a1a19", rankbg="#303030"),
+}
 
+def render(mode, path):
+    t = THEME[mode]
+    n = len(LIGHT_RAMP)
+    nrow, ncol = len(ROWS), len(COLS)
+    CW, RH = 1.22, 1.0
+    LBL = 3.5          # label column width, in cell units
+    RANKW = 1.15
+    fig_w = (LBL + ncol * CW + RANKW) * 0.78
+    fig_h = (nrow + 3.4) * 0.34
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=200)
+    fig.patch.set_facecolor(t["surface"])
+    ax.set_facecolor(t["surface"])
+    ax.set_xlim(0, LBL + ncol * CW + RANKW)
+    ax.set_ylim(-1.35, nrow + 1.5)
+    ax.axis("off")
+
+    def y(i):
+        return nrow - 1 - i + 0.5
+
+    # column headers
+    for j, c in enumerate(COLS):
+        ax.text(LBL + j * CW + CW / 2, nrow + 0.65, c, ha="center", va="center",
+                fontsize=7.1, color=t["ink"], fontweight="bold", rotation=0)
+    ax.text(LBL + ncol * CW + RANKW / 2, nrow + 0.65, "Mean\nrank", ha="center", va="center",
+            fontsize=7.0, color=t["ink"], fontweight="bold", linespacing=1.15)
+
+    for i, (name, mr, cells, disp) in enumerate(ROWS):
+        is_ref = mr is None
+        ax.text(LBL - 0.18, y(i), name, ha="right", va="center", fontsize=7.4,
+                color=t["muted"] if is_ref else t["ink"],
+                style="italic" if is_ref else "normal")
+        for j in range(ncol):
+            v = cells[j]
+            if is_ref or not np.isfinite(v):
+                fc = t["ref"]
+            else:
+                r = RANKS[j][i]
+                idx = int(round((r - 1) / (len(ranked) - 1) * (n - 1)))
+                fc = t["ramp"][max(0, min(n - 1, idx))]
+            ax.add_patch(Rectangle((LBL + j * CW + 0.012, y(i) - RH / 2 + 0.012),
+                                   CW - 0.024, RH - 0.024, facecolor=fc,
+                                   edgecolor=t["grid"], linewidth=0.9))
+            ax.text(LBL + j * CW + CW / 2, y(i), disp[j], ha="center", va="center",
+                    fontsize=6.9, color=t["muted"] if is_ref else t["ink"],
+                    style="italic" if is_ref else "normal")
+        rtxt = "floor" if i == 0 else ("not ranked" if is_ref else f"{mr:.2f}")
+        ax.add_patch(Rectangle((LBL + ncol * CW + 0.012, y(i) - RH / 2 + 0.012),
+                               RANKW - 0.024, RH - 0.024, facecolor=t["rankbg"],
+                               edgecolor=t["grid"], linewidth=0.9))
+        ax.text(LBL + ncol * CW + RANKW / 2, y(i), rtxt, ha="center", va="center",
+                fontsize=6.4 if is_ref else 7.2, color=t["muted"] if is_ref else t["ink"],
+                style="italic" if is_ref else "normal",
+                fontweight="normal" if is_ref else "bold")
+
+    ax.text(0, -0.78,
+            "Shading is rank within each column, best to worst; the columns are not comparable "
+            "with each other.\nEvery cell is worst-case regret over at least three runs. Lower is better.",
+            ha="left", va="center", fontsize=6.4, color=t["muted"], linespacing=1.5)
+    fig.savefig(path, facecolor=t["surface"], bbox_inches="tight", pad_inches=0.16)
+    plt.close(fig)
+    print("wrote", path)
 ranked = [i for i, r in enumerate(ROWS) if r[1] is not None]
 M = np.array([r[2] for r in ROWS], dtype=float)
 
@@ -120,30 +186,26 @@ def rank_in_col(j):
 RANKS = {j: rank_in_col(j) for j in range(len(COLS))}
 
 
-def write_swatches():
-    """One opaque square per rank, plus a neutral one.
-
-    Opaque and square on purpose: GitHub's markdown CSS paints the theme's
-    default canvas behind every <img>, so a transparent or rounded swatch would
-    show a pale halo on the zebra-striped rows.
-    """
-    SWDIR.mkdir(parents=True, exist_ok=True)
-    out = []
-    for n, hexv in enumerate(RAMP, start=1):
-        p = SWDIR / f"{n:02d}.png"
-        Image.new("RGB", (PX, PX), hexv).save(p, optimize=True)
-        out.append(p)
-    print(f"wrote {len(out)} swatches to {SWDIR}/ "
-          f"({sum(q.stat().st_size for q in out)} bytes total)")
 
 
-def swatch(rank):
-    """<img> for a rank. Unranked cells get nothing, not a neutral swatch."""
-    if rank is None:
-        return ""
-    idx = max(1, min(len(RAMP), int(round(rank))))
-    return (f'<img src="{SWDIR}/{idx:02d}.png" width="{DISPLAY}" height="{DISPLAY}"'
-            f' alt="rank {rank:g}">')
+CSV = Path("docs/scores.csv")
+README = Path("README.md")
+BEGIN = "<!-- scores:begin (generated by scripts/render_scores.py; do not edit by hand) -->"
+END = "<!-- scores:end -->"
+
+FIGURE = """<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/scores-dark.png">
+  <img alt="Score matrix: {nrow} rows across {ncol} tasks, {nranked} of the rows ranked, each \
+cell shaded by its rank within that column, green for best through to red for worst. The same numbers are in the collapsed \
+block below and in docs/scores.csv." src="docs/images/scores-light.png">
+</picture>"""
+
+
+def mean_rank_text(i):
+    mr = ROWS[i][1]
+    if mr is not None:
+        return f"{mr:.2f}"
+    return "floor" if i == 0 else "not ranked"
 
 
 def markdown_table():
@@ -151,44 +213,68 @@ def markdown_table():
              "| --- |" + " --- |" * (len(COLS) + 1)]
     for i, (name, mr, cells, disp) in enumerate(ROWS):
         em = "*" if name in ITALIC else ""
-        is_ranked = mr is not None
         out = [f"{em}{name}{em}"]
         for j in range(len(COLS)):
-            r = RANKS[j][i] if (is_ranked and np.isfinite(cells[j])) else None
             txt = disp[j]
-            if r == 1:
+            if mr is not None and np.isfinite(cells[j]) and RANKS[j][i] == 1:
                 txt = f"**{txt}**"
             elif em:
                 txt = f"*{txt}*"
-            sw = swatch(r)
-            out.append(f"{sw} {txt}" if sw else txt)
-        rtxt = "floor" if mr is None and i == 0 else ("not ranked" if mr is None else f"{mr:.2f}")
-        out.append(f"{em}{rtxt}{em}" if em else rtxt)
+            out.append(txt)
+        rt = mean_rank_text(i)
+        out.append(f"{em}{rt}{em}" if em else rt)
         lines.append("| " + " | ".join(out) + " |")
-    unranked = " and ".join(f"*{r[0]}*" for r in ROWS if r[1] is None)
-    legend = (f"Swatch is rank within that column, {swatch(1)} best through "
-              f"{swatch(len(RAMP))} worst; the {unranked} rows are unranked and carry none. "
-              "Each swatch repeats its rank in the image alt text, so the ordering does not rest "
-              "on colour alone. "
-              "**Bold** marks the best cell in a column. Mean rank is a Borda count within each "
-              "column and is deliberately the only aggregate, since the cells are not comparable "
-              "across columns.")
-    return "\n".join(lines) + "\n\n" + legend
+    return "\n".join(lines)
 
 
-def splice_readme(table):
+def write_csv():
+    CSV.parent.mkdir(parents=True, exist_ok=True)
+    with CSV.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["model", "ranked"] + [c.lower().replace("-", "_") for c in COLS]
+                   + [f"{c.lower().replace('-', '_')}_rank" for c in COLS] + ["mean_rank"])
+        for i, (name, mr, cells, disp) in enumerate(ROWS):
+            ranks = [f"{RANKS[j][i]:g}" if mr is not None and np.isfinite(cells[j]) else ""
+                     for j in range(len(COLS))]
+            vals = ["" if not np.isfinite(v) else repr(v) for v in cells]
+            w.writerow([name, "yes" if mr is not None else "no"] + vals + ranks
+                       + [mean_rank_text(i)])
+    print(f"wrote {CSV} ({len(ROWS)} rows)")
+
+
+def splice_readme(block):
     src = README.read_text()
     a, b = src.find(BEGIN), src.find(END)
     if a < 0 or b < 0:
         raise SystemExit(f"markers not found in {README}; expected {BEGIN} and {END}")
-    new = src[:a] + BEGIN + "\n\n" + table + "\n\n" + src[b:]
+    new = src[:a] + BEGIN + "\n\n" + block + "\n\n" + src[b:]
     if new == src:
         print(f"{README} already current")
     else:
         README.write_text(new)
-        print(f"rewrote the table in {README} ({len(ROWS)} rows, {len(COLS)} columns)")
+        print(f"rewrote the scores block in {README}")
+
+
+def readme_block():
+    return "\n\n".join([
+        FIGURE.format(nrow=len(ROWS), ncol=len(COLS), nranked=len(ranked)),
+        "Shading is rank within that column, green best through red worst; the "
+        + " and ".join(f"*{r[0]}*" for r in ROWS if r[1] is None)
+        + " rows are unranked and are shaded neutral. **Bold** below marks the best cell in a "
+          "column. Mean rank is a Borda count within each column and is deliberately the only "
+          "aggregate, since the cells are not comparable across columns.",
+        "<details>",
+        "<summary>The same table as text, to read, copy or search</summary>",
+        markdown_table(),
+        "Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks as well "
+        "and makes a changed score a reviewable diff rather than a new image.",
+        "</details>",
+    ])
 
 
 if __name__ == "__main__":
-    write_swatches()
-    splice_readme(markdown_table())
+    Path("docs/images").mkdir(parents=True, exist_ok=True)
+    render("light", "docs/images/scores-light.png")
+    render("dark", "docs/images/scores-dark.png")
+    write_csv()
+    splice_readme(readme_block())

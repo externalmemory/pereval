@@ -1,27 +1,32 @@
-"""Check the README swatch ramp against the four surfaces GitHub puts behind a table cell.
+"""Check the figure's two rank ramps against the ink printed on them.
 
 Usage: python scripts/check_ramp.py   (exit 0 if every check passes, 1 otherwise)
 
-A swatch is a graphical object that carries meaning, so WCAG 1.4.11 asks 3:1
-against its background. GitHub zebra-stripes markdown tables and ships two
-themes, so there are four backgrounds, not one. The other two checks are the
-ones that apply to a ramp rather than to a categorical palette: lightness
-monotone across the steps, and pole separation under simulated colour-vision
-deficiency.
+Every cell of the figure prints its number on the fill, so the binding
+constraint is text contrast against that fill, not mark contrast against a
+surface: APCA 60 and WCAG 4.5, each ramp in its own mode, plus the neutral fill
+the unranked rows use with its muted ink.
+
+Lightness monotonicity is a gate, not a nicety. Both ramps are diverging, green
+through a neutral midpoint to red, and the lightness gradient is what carries
+the order for a red-green colourblind reader. The ramps these replaced were
+near-constant-lightness hue sweeps: the dark one measured OKLab dE 3.9 between
+its poles under simulated protanopia, so its gradient conveyed nothing. Pole
+separation under simulated CVD is therefore a gate as well.
 
 Colour maths: sRGB transfer function and WCAG 2 relative luminance; OKLab per
-Ottosson (2020); CVD simulation per Machado, Oliveira and Fernandes (2009) at
-severity 1.0, the model the OKLab dE thresholds in common use are calibrated to.
+Ottosson (2020); APCA per the WCAG 3 draft; CVD simulation per Machado,
+Oliveira and Fernandes (2009) at severity 1.0, the model the OKLab dE
+thresholds in common use are calibrated to.
 """
 import math
 import sys
 
-from render_scores import RAMP
+from render_scores import LIGHT_RAMP, DARK_RAMP, THEME
 
-SURFACES = {"github light": "#ffffff", "github light zebra": "#f6f8fa",
-            "github dark": "#0d1117", "github dark zebra": "#161b22"}
-CONTRAST_MIN = 3.0          # WCAG 1.4.11, non-text contrast
-CVD_TARGET = 8.0            # OKLab dE x100 between the ramp's poles
+APCA_MIN = 60.0             # absolute Lc, text on fill
+WCAG_MIN = 4.5              # WCAG 2 ratio, text on fill
+CVD_TARGET = 8.0            # OKLab dE x100 between a ramp's poles, worst of protan/deutan
 
 MACHADO = {
     "protan": [[0.152286, 1.052583, -0.204868],
@@ -91,38 +96,61 @@ def deltaE(h1, h2, kind=None):
     return math.dist(a, b) * 100
 
 
-def main():
+def apca(text, background):
+    """APCA Lc, signed; compare absolute values. Light text on dark reads negative."""
+    def y(h):
+        r, g, b = (c ** 2.4 for c in hex2srgb(h))
+        return 0.2126729 * r + 0.7151522 * g + 0.0721750 * b
+    ytxt, ybg = y(text), y(background)
+    ytxt = 0.0 if ytxt <= 0.022 else ytxt
+    ybg = 0.0 if ybg <= 0.022 else ybg
+    ytxt = ytxt if ytxt > 0.022 else ytxt + (0.022 - ytxt) ** 1.414
+    ybg = ybg if ybg > 0.022 else ybg + (0.022 - ybg) ** 1.414
+    if ybg > ytxt:
+        sapc = (ybg ** 0.56 - ytxt ** 0.57) * 1.14
+        lc = 0.0 if sapc < 0.1 else sapc - 0.027
+    else:
+        sapc = (ybg ** 0.65 - ytxt ** 0.62) * 1.14
+        lc = 0.0 if sapc > -0.1 else sapc + 0.027
+    return lc * 100
+
+
+def check_ramp(label, ramp, ink, ref, muted):
     ok = True
-    print(f"\nRamp: {len(RAMP)} steps\n")
-    print("  step  hex       OKL     C      " + "".join(f"{k:<20}" for k in SURFACES))
-    for n, hexv in enumerate(RAMP, start=1):
-        label = f"{n:>4}"
+    print(f"\n{label}: {len(ramp)} steps, ink {ink}\n")
+    print("  step  fill      OKL     C      APCA         WCAG")
+    for n, hexv in enumerate(list(ramp) + [ref], start=1):
+        is_ref = n > len(ramp)
+        txt = muted if is_ref else ink
         L, C, _ = oklch(hexv)
-        cells = []
-        for s in SURFACES.values():
-            cr = contrast(hexv, s)
-            if cr < CONTRAST_MIN:
-                ok = False
-            cells.append(f"{cr:.2f}:1 {'ok ' if cr >= CONTRAST_MIN else 'FAIL'}".ljust(20))
-        print(f"  {label}  {hexv}  {L:.3f}  {C:.3f}  " + "".join(cells))
-
-    Ls = [oklch(h)[0] for h in RAMP]
-    gaps = [Ls[i] - Ls[i + 1] for i in range(len(Ls) - 1)]
-    mono = all(g > 0 for g in gaps)
+        a, w = abs(apca(txt, hexv)), contrast(txt, hexv)
+        good = a >= APCA_MIN and w >= WCAG_MIN
+        ok = ok and good
+        print(f"  {'  ref' if is_ref else f'{n:>4}'}  {hexv}  {L:.3f}  {C:.3f}  "
+              f"{a:6.1f} {'ok  ' if a >= APCA_MIN else 'FAIL'}  "
+              f"{w:.2f}:1 {'ok' if w >= WCAG_MIN else 'FAIL'}")
+    Ls = [oklch(h)[0] for h in ramp]
+    gaps = [Ls[i + 1] - Ls[i] for i in range(len(Ls) - 1)]
+    mono = all(g > 0 for g in gaps) or all(g < 0 for g in gaps)
     ok = ok and mono
-    print(f"\n  [{'PASS' if mono else 'FAIL'}] lightness monotone decreasing"
-          f"   span {Ls[0]:.3f} to {Ls[-1]:.3f}, smallest adjacent gap {min(gaps):.4f}")
-    print("         adjacent steps are below the 0.06 separation floor by design: the exact")
-    print("         rank is in each swatch's alt text and the value is printed beside it")
+    print(f"\n  [{'PASS' if mono else 'FAIL'}] lightness monotone   {Ls[0]:.3f} to {Ls[-1]:.3f},"
+          f" smallest adjacent gap {min(abs(g) for g in gaps):.4f}")
 
-    poles = (RAMP[0], RAMP[-1])
+    poles = (ramp[0], ramp[-1])
     worst = min(deltaE(*poles, k) for k in ("protan", "deutan"))
     ok = ok and worst >= CVD_TARGET
-    print(f"\n  [{'PASS' if worst >= CVD_TARGET else 'FAIL'}] pole separation"
-          f"   normal {deltaE(*poles):.1f}, protan {deltaE(*poles, 'protan'):.1f},"
-          f" deutan {deltaE(*poles, 'deutan'):.1f}, tritan {deltaE(*poles, 'tritan'):.1f}"
+    print(f"  [{'PASS' if worst >= CVD_TARGET else 'FAIL'}] pole separation      normal "
+          f"{deltaE(*poles):.1f}, protan {deltaE(*poles, 'protan'):.1f}, deutan "
+          f"{deltaE(*poles, 'deutan'):.1f}, tritan {deltaE(*poles, 'tritan'):.1f}"
           f"   (target {CVD_TARGET:g})")
+    return ok
 
+
+def main():
+    ok = True
+    for mode, ramp in (("light", LIGHT_RAMP), ("dark", DARK_RAMP)):
+        t = THEME[mode]
+        ok &= check_ramp(f"{mode} ramp", ramp, t["ink"], t["ref"], t["muted"])
     print(f"\n  -> {'ALL CHECKS PASS' if ok else 'FAILED, fix the marked checks'}\n")
     return 0 if ok else 1
 
