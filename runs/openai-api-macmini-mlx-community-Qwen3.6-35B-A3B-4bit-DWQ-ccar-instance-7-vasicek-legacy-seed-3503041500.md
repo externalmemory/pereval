@@ -1,7 +1,7 @@
 # openai-api/macmini/mlx-community/Qwen3.6-35B-A3B-4bit-DWQ — ccar (id=instance-7-vasicek-legacy-seed-3503041500)
 
-- 9/9 points predicted; Winkler regret 0.181 (agent 0.266 vs oracle 0.085, degenerate 0.762); MAE 0.018; coverage 0.649; mean width 0.047.
-- messages 64 | limit None | seed None
+- 9/9 points predicted; Winkler regret 0.014 (agent 0.098 vs oracle 0.085, degenerate 0.762); MAE 0.017; coverage 0.974; mean width 0.088.
+- messages 92 | limit None | seed None
 
 ---
 
@@ -49,9 +49,7 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 
 **[reasoning]**
 
-> Let me start by examining the data to understand the structure and then build a model to predict default rates.
-> 
-> First, I'll look at the training data and scenario data to understand what we're working with.
+> Let me start by examining the data files to understand their structure and content before building a model.
 > 
 
 
@@ -61,13 +59,16 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **tool call: bash**
 
 ```
-ls data/
+ls -la data/
 ```
 
 ## [3] tool
 
-scenario.csv
-train.csv
+total 20
+drwxr-xr-x 2 root root 4096 Nov 10 10:12 .
+drwxr-xr-x 1 root root 4096 Nov 10 10:12 ..
+-rw-r--r-- 1 root root  807 Nov 10 10:12 scenario.csv
+-rw-r--r-- 1 root root 6491 Nov 10 10:12 train.csv
 
 
 ## [4] assistant
@@ -104,34 +105,28 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
 
 ## [6] assistant
 
-**[reasoning]**
-
-> <think>
-> 
-> 
-
-
-
-
-
 **tool call: bash**
 
 ```
-wc -l data/train.csv data/scenario.csv
+head -5 data/scenario.csv && echo "---" && cat data/scenario.csv | wc -l
 ```
 
 ## [7] tool
 
-  81 data/train.csv
-  10 data/scenario.csv
-  91 total
+quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
+81,213.6347,6.2898,488.6401,2.4174,6471.0612,1816.8254,5263.4876,19.0387,251.3708
+82,209.969,6.5991,473.7185,2.5886,6316.2625,1810.9421,4712.9285,20.6907,249.0702
+83,206.3662,6.9235,459.2526,2.7598,5988.2246,1807.1616,4219.9577,22.4861,246.7907
+84,202.8252,7.264,445.2285,2.9311,5825.0968,1703.4189,3778.5514,24.4373,244.5321
+---
+10
 
 
 ## [8] assistant
 
 **[reasoning]**
 
-> Let me look at the full data to understand the structure better.
+> Let me examine the full data more carefully. The scenario has 9 rows (10 lines including header). I need to understand the training data structure - some macro series start later than others. Let me look at the complete dataset.
 > 
 
 
@@ -141,95 +136,24 @@ wc -l data/train.csv data/scenario.csv
 **tool call: bash**
 
 ```
-cat data/train.csv
+cat data/train.csv | wc -l
 ```
 
 ## [9] tool
 
-quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi,default_rate
-1,106.7792,6.5587,,,,,216.04,,114.8357,0.014464
-2,107.3173,6.211,,,,,232.2141,,114.1514,0.023817
-3,107.2908,6.5566,,,,,244.3976,,113.4655,0.035626
-4,107.9102,5.7155,,,,,254.654,,112.3306,0.034708
-5,108.8015,5.4866,,,,,228.0949,,111.0805,0.025799
-6,112.4629,4.1431,,,,,237.5686,,111.3932,0.026587
-7,112.7942,4.3695,,,,,252.8706,,111.8978,0.03563
-8,113.5143,4.5434,,,,,251.8586,,112.7259,0.038652
-9,116.1373,4.7767,,,,,255.9874,,116.0849,0.020768
-10,116.5498,5.8003,,,,,241.1175,,119.2593,0.018346
-11,119.6975,4.2726,190.6755,,,,246.4009,15.0916,123.9355,0.022356
-12,120.524,4.0918,196.1593,,,,255.8827,15.0915,126.1279,0.024936
-13,123.3443,3.3843,201.1923,,,,240.3577,12.4405,129.171,0.016281
-14,124.2311,4.3787,205.4341,1.4837,,,248.5812,12.5775,131.5464,0.015649
-15,126.5799,3.3761,207.1471,1.5201,,,256.4671,10.7253,133.1051,0.027385
-16,127.5252,3.1887,206.5315,2.1435,,,236.6533,16.1514,131.8445,0.029105
-17,130.7242,3.0721,208.2695,1.9055,,,286.4874,12.8162,133.019,0.023324
-18,130.0696,3.9279,210.7141,2.0401,,,315.3445,13.7046,135.2357,0.023393
-19,128.9369,4.8628,212.3144,2.0732,,,321.1473,14.7021,135.3913,0.027004
-20,132.2058,3.7845,214.907,1.8811,,,354.4852,14.2471,134.6312,0.034035
-21,132.8657,4.015,219.4262,1.9861,,,383.3521,16.4304,135.6712,0.030886
-22,133.6942,4.7301,220.4751,2.1256,,,444.0092,11.0718,135.7488,0.030442
-23,133.6142,4.9959,221.2851,1.9355,,,507.9225,12.7084,135.7449,0.036021
-24,137.2047,4.4765,225.0412,1.8266,,,540.6817,14.1439,137.8942,0.019758
-25,137.7362,5.1695,224.8968,1.7421,,,531.1975,13.0079,139.1022,0.048528
-26,141.7477,4.77,222.6638,1.4848,,,628.5672,10.5946,143.7763,0.021485
-27,139.7397,5.5581,223.1406,2.7465,,,467.6736,20.2383,145.3663,0.040471
-28,141.8332,5.6519,224.0967,2.5791,,,451.8053,19.5562,146.1233,0.025568
-29,140.556,6.0016,226.5984,2.6025,,,444.7448,16.6099,147.1496,0.028208
-30,137.9541,7.7376,226.6321,3.1667,,,420.9829,19.9069,147.8794,0.071345
-31,137.6954,7.6841,221.8316,3.0956,,,437.2535,18.275,148.7163,0.067755
-32,140.4208,7.5298,220.3625,2.3225,699.1576,379.2005,497.9559,14.2705,150.1311,0.038397
-33,141.7968,6.8179,219.7204,2.4746,722.6926,386.5604,536.6448,14.8595,152.4452,0.093801
-34,143.1425,6.9084,219.0684,2.6476,727.9204,384.4,545.3977,12.0751,154.8498,0.039183
-35,145.2794,6.2292,219.5922,2.4148,748.6508,420.0449,566.2626,15.1074,158.5532,0.020585
-36,145.9589,6.797,212.4368,2.5162,834.5796,438.8524,647.3695,13.003,158.5667,0.039314
-37,146.0182,6.6692,208.3547,2.8061,900.9862,469.5279,727.2808,15.9416,157.6373,0.029808
-38,147.5495,6.5571,210.558,2.692,960.3086,479.309,760.1684,16.7738,157.816,0.028506
-39,148.2031,6.5519,211.8134,2.4934,925.5479,481.9437,713.2095,19.7568,160.0053,0.034197
-40,148.788,6.6703,217.7854,2.9393,887.9841,465.7122,635.5718,23.7567,160.9077,0.055747
-41,151.0289,6.3628,222.2572,3.1166,930.1941,483.2429,666.7207,25.737,161.0139,0.027688
-42,153.2037,5.0657,228.9983,2.9171,928.0099,483.5023,639.5457,25.475,162.6335,0.063802
-43,156.5139,4.6021,227.4807,2.8793,996.6388,526.6167,713.1262,31.1506,160.3578,0.029266
-44,157.4862,4.9745,224.7926,3.1146,1079.5999,528.71,758.3808,32.6723,158.5487,0.055362
-45,155.9372,6.4946,226.834,2.7994,1115.8467,520.743,766.1709,24.4061,158.9474,0.058522
-46,157.8888,6.1299,230.1764,2.705,1168.5681,528.1947,845.3776,20.3506,163.1623,0.034834
-47,159.5735,6.5394,232.9844,2.1276,1271.3948,554.0425,951.775,14.6771,168.0691,0.042134
-48,161.0253,5.8929,234.9877,1.7303,1419.4201,598.5821,1119.9621,16.4523,172.8103,0.030518
-49,164.6855,5.4739,237.4468,1.7379,1489.4276,634.1788,1179.5027,18.866,174.6532,0.025847
-50,166.4792,5.7967,243.8297,1.2457,1619.3585,678.6327,1358.5403,13.0997,178.0811,0.025781
-51,169.1784,5.7373,254.315,0.4279,1842.7641,776.8526,1706.6656,14.0321,182.1938,0.025103
-52,171.9914,5.4454,267.4991,0.6102,2029.512,842.4646,1972.5934,13.0609,186.5535,0.018803
-53,173.4151,5.8078,281.3343,0.8189,2086.8417,902.142,2090.7308,12.6682,190.1207,0.010688
-54,176.4134,6.6394,298.5655,0.235,2407.8481,968.3028,2703.4383,12.1486,196.8828,0.017925
-55,179.8228,7.1568,315.2935,0.3273,2570.743,1041.6686,2931.451,10.5366,203.4846,0.013309
-56,181.6651,7.0224,328.7579,0.4403,2609.1663,1069.5651,2982.8733,12.4572,208.2104,0.010868
-57,188.4214,5.0396,342.0763,0.3678,2731.9821,1166.7876,3243.134,8.4591,211.1335,0.003167
-58,188.2322,5.7208,345.2596,0.3919,2832.6137,1176.8525,3388.5722,8.4388,210.0668,0.013323
-59,185.6556,8.0391,354.7336,0.6706,3043.9779,1259.7834,3789.6473,9.8167,209.745,0.019504
-60,185.7093,7.0822,363.2817,0.5274,3164.8504,1328.401,3940.4594,11.0885,208.9261,0.018305
-61,188.8994,5.9238,367.7659,0.5713,3188.3811,1301.6902,3687.2159,10.3863,206.5387,0.020338
-62,190.7145,5.2585,367.8223,0.5996,3238.8148,1297.348,3498.8074,10.6945,204.4288,0.020969
-63,195.5919,4.2725,373.1077,1.4513,3177.2026,1277.4362,3286.4155,17.8125,202.9739,0.023876
-64,198.0576,4.3485,374.7753,1.3573,3226.76,1361.8358,3483.2915,18.3089,204.3091,0.024165
-65,197.3332,4.7488,384.6181,1.5637,3207.0425,1356.2787,3135.3767,21.943,205.3258,0.02174
-66,200.5243,4.6084,394.0602,1.921,3452.8465,1393.1119,3345.4958,19.4996,208.0275,0.031111
-67,201.8125,5.1432,400.7245,1.6569,3594.3757,1402.9839,3410.9373,21.5474,206.6083,0.022281
-68,203.796,5.9289,412.8727,1.5693,3888.5687,1477.9458,3899.1902,20.6658,209.9593,0.02155
-69,203.7102,6.1861,426.6341,1.9158,4070.291,1557.0456,4135.1036,23.2343,212.1362,0.023914
-70,205.3309,5.9247,427.6425,2.2019,4389.914,1611.4291,4577.2326,22.8746,213.7665,0.040675
-71,208.3179,4.9977,420.8723,2.2162,4768.6725,1641.2476,5099.4202,25.7911,215.5904,0.035226
-72,208.1749,5.0747,425.5104,2.4506,4828.9541,1731.8316,5157.32,24.0432,221.034,0.039063
-73,209.0963,5.3416,428.1503,3.1947,4850.2452,1711.7005,4784.3551,39.7151,224.2367,0.030419
-74,211.2324,5.198,433.6664,3.5698,4942.1141,1669.9386,4609.53,40.4841,228.816,0.046877
-75,212.1405,4.5908,458.575,3.3852,5237.4799,1647.9995,4647.2827,41.868,234.5375,0.062629
-76,209.7082,5.4432,473.1483,3.3837,5222.3301,1602.395,4245.7835,38.7796,235.4873,0.056602
-77,214.687,3.8653,482.3472,2.7929,5229.9215,1586.15,4133.9481,28.0366,240.1483,0.038994
-78,213.4634,5.674,487.2512,2.1535,5806.6989,1694.7221,4926.413,15.4102,246.0318,0.03719
-79,217.1785,5.6034,497.5598,2.2403,6259.0599,1821.3289,5670.5256,15.8578,250.5153,0.033047
-80,217.3644,5.995,504.0317,2.2462,6584.2818,1868.3201,5878.3625,17.5185,253.6925,0.042252
+81
 
 
 ## [10] assistant
+
+**[reasoning]**
+
+> Let me explore the data more carefully to understand its structure, correlations, and build a robust model.
+> 
+
+
+
+
 
 **tool call: bash**
 
@@ -263,2757 +187,778 @@ quarter,gdp,unemployment,hpi,bbb_spread,sp500,djia,nasdaq,vix,cpi
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python -c "
 import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-print("Train shape:", train.shape)
-print("Scenario shape:", scenario.shape)
-print("\nTrain columns:", train.columns.tolist())
-print("\nTrain missing values:")
-print(train.isnull().sum())
-print("\nScenario missing values:")
-print(scenario.isnull().sum())
-
+df = pd.read_csv('data/train.csv')
+print(df.shape)
+print(df.columns.tolist())
+print()
+# Check which columns have missing values
+for col in df.columns:
+    n_missing = df[col].isna().sum()
+    print(f'{col}: {n_missing} missing')
+print()
+print(df.describe())
+"
 ```
 
 ## [13] tool
 
-Train shape: (80, 11)
-Scenario shape: (9, 10)
+(80, 11)
+['quarter', 'gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi', 'default_rate']
 
-Train columns: ['quarter', 'gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi', 'default_rate']
+quarter: 0 missing
+gdp: 0 missing
+unemployment: 0 missing
+hpi: 10 missing
+bbb_spread: 13 missing
+sp500: 31 missing
+djia: 31 missing
+nasdaq: 0 missing
+vix: 10 missing
+cpi: 0 missing
+default_rate: 0 missing
 
-Train missing values:
-quarter          0
-gdp              0
-unemployment     0
-hpi             10
-bbb_spread      13
-sp500           31
-djia            31
-nasdaq           0
-vix             10
-cpi              0
-default_rate     0
-dtype: int64
+       quarter         gdp  unemployment  ...        vix         cpi  default_rate
+count  80.0000   80.000000     80.000000  ...  70.000000   80.000000     80.000000
+mean   40.5000  158.583190      5.489655  ...  18.081429  168.938445      0.031694
+std    23.2379   33.797170      1.114987  ...   7.601503   39.964085      0.015259
+min     1.0000  106.779200      3.072100  ...   8.438800  111.080500      0.003167
+25%    20.7500  132.700725      4.699675  ...  12.862900  135.601225      0.021692
+50%    40.5000  149.908450      5.522350  ...  15.899700  159.476350      0.028357
+75%    60.2500  188.540900      6.262600  ...  20.587000  206.556100      0.038461
+max    80.0000  217.364400      8.039100  ...  41.868000  253.692500      0.093801
 
-Scenario missing values:
-quarter         0
-gdp             0
-unemployment    0
-hpi             0
-bbb_spread      0
-sp500           0
-djia            0
-nasdaq          0
-vix             0
-cpi             0
-dtype: int64
+[8 rows x 11 columns]
 
 
 ## [14] assistant
 
-**[reasoning]**
-
-> Let me analyze the data more carefully. Some macro series have missing values in early quarters. Let me understand the patterns and build a robust model.
-> 
-> Key observations:
-> 1. hpi is missing for quarters 1-10 (10 missing)
-> 2. bbb_spread is missing for quarters 1-13 (13 missing)
-> 3. sp500 and djia are missing for quarters 1-31 (31 missing)
-> 4. vix is missing for quarters 1-10 (10 missing)
-> 5. nasdaq, gdp, unemployment, cpi are always present
-> 
-> Let me explore the data more and build a model.
-> 
-
-
-
-
-
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python -c "
 import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-# Explore the data
-print("Default rate stats:")
-print(train['default_rate'].describe())
-print("\nDefault rate range:", train['default_rate'].min(), "to", train['default_rate'].max())
-
-# Check correlations with default_rate
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
-
-# For each macro series, check correlation where data is available
-print("\nCorrelations with default_rate (where data available):")
-for col in macro_cols:
-    valid = train.dropna(subset=[col])
-    if len(valid) > 5:
-        corr = valid[col].corr(valid['default_rate'])
-        print(f"  {col}: {corr:.4f} (n={len(valid)})")
-
-# Check scenario ranges vs training ranges
-print("\nTraining ranges:")
-for col in macro_cols:
-    valid = train[col].dropna()
-    print(f"  {col}: [{valid.min():.2f}, {valid.max():.2f}]")
-
-print("\nScenario ranges:")
-for col in macro_cols:
-    print(f"  {col}: [{scenario[col].min():.2f}, {scenario[col].max():.2f}]")
-
+df = pd.read_csv('data/train.csv')
+# Check the missing patterns more carefully
+print('Quarters 1-20:')
+print(df.head(20)[['quarter','hpi','bbb_spread','sp500','djia','nasdaq','vix']].to_string())
+print()
+print('Quarters 10-20:')
+print(df[df['quarter']>=10].head(15)[['quarter','hpi','bbb_spread','sp500','djia','nasdaq','vix']].to_string())
+"
 ```
 
 ## [15] tool
 
-Default rate stats:
-count    80.000000
-mean      0.031694
-std       0.015259
-min       0.003167
-25%       0.021692
-50%       0.028357
-75%       0.038461
-max       0.093801
-Name: default_rate, dtype: float64
+Quarters 1-20:
+    quarter       hpi  bbb_spread  sp500  djia    nasdaq      vix
+0         1       NaN         NaN    NaN   NaN  216.0400      NaN
+1         2       NaN         NaN    NaN   NaN  232.2141      NaN
+2         3       NaN         NaN    NaN   NaN  244.3976      NaN
+3         4       NaN         NaN    NaN   NaN  254.6540      NaN
+4         5       NaN         NaN    NaN   NaN  228.0949      NaN
+5         6       NaN         NaN    NaN   NaN  237.5686      NaN
+6         7       NaN         NaN    NaN   NaN  252.8706      NaN
+7         8       NaN         NaN    NaN   NaN  251.8586      NaN
+8         9       NaN         NaN    NaN   NaN  255.9874      NaN
+9        10       NaN         NaN    NaN   NaN  241.1175      NaN
+10       11  190.6755         NaN    NaN   NaN  246.4009  15.0916
+11       12  196.1593         NaN    NaN   NaN  255.8827  15.0915
+12       13  201.1923         NaN    NaN   NaN  240.3577  12.4405
+13       14  205.4341      1.4837    NaN   NaN  248.5812  12.5775
+14       15  207.1471      1.5201    NaN   NaN  256.4671  10.7253
+15       16  206.5315      2.1435    NaN   NaN  236.6533  16.1514
+16       17  208.2695      1.9055    NaN   NaN  286.4874  12.8162
+17       18  210.7141      2.0401    NaN   NaN  315.3445  13.7046
+18       19  212.3144      2.0732    NaN   NaN  321.1473  14.7021
+19       20  214.9070      1.8811    NaN   NaN  354.4852  14.2471
 
-Default rate range: 0.003167 to 0.093801
-
-Correlations with default_rate (where data available):
-  gdp: 0.0138 (n=80)
-  unemployment: 0.2015 (n=80)
-  hpi: -0.0268 (n=70)
-  bbb_spread: 0.6995 (n=67)
-  sp500: -0.0420 (n=49)
-  djia: -0.1548 (n=49)
-  nasdaq: -0.0542 (n=80)
-  vix: 0.4747 (n=70)
-  cpi: 0.0084 (n=80)
-
-Training ranges:
-  gdp: [106.78, 217.36]
-  unemployment: [3.07, 8.04]
-  hpi: [190.68, 504.03]
-  bbb_spread: [0.23, 3.57]
-  sp500: [699.16, 6584.28]
-  djia: [379.20, 1868.32]
-  nasdaq: [216.04, 5878.36]
-  vix: [8.44, 41.87]
-  cpi: [111.08, 253.69]
-
-Scenario ranges:
-  gdp: [186.01, 213.63]
-  unemployment: [6.29, 9.23]
-  hpi: [381.28, 488.64]
-  bbb_spread: [2.42, 3.79]
-  sp500: [5049.07, 6471.06]
-  djia: [1518.03, 1816.83]
-  nasdaq: [2174.76, 5263.49]
-  vix: [19.04, 37.05]
-  cpi: [233.55, 251.37]
+Quarters 10-20:
+    quarter       hpi  bbb_spread  sp500  djia    nasdaq      vix
+9        10       NaN         NaN    NaN   NaN  241.1175      NaN
+10       11  190.6755         NaN    NaN   NaN  246.4009  15.0916
+11       12  196.1593         NaN    NaN   NaN  255.8827  15.0915
+12       13  201.1923         NaN    NaN   NaN  240.3577  12.4405
+13       14  205.4341      1.4837    NaN   NaN  248.5812  12.5775
+14       15  207.1471      1.5201    NaN   NaN  256.4671  10.7253
+15       16  206.5315      2.1435    NaN   NaN  236.6533  16.1514
+16       17  208.2695      1.9055    NaN   NaN  286.4874  12.8162
+17       18  210.7141      2.0401    NaN   NaN  315.3445  13.7046
+18       19  212.3144      2.0732    NaN   NaN  321.1473  14.7021
+19       20  214.9070      1.8811    NaN   NaN  354.4852  14.2471
+20       21  219.4262      1.9861    NaN   NaN  383.3521  16.4304
+21       22  220.4751      2.1256    NaN   NaN  444.0092  11.0718
+22       23  221.2851      1.9355    NaN   NaN  507.9225  12.7084
+23       24  225.0412      1.8266    NaN   NaN  540.6817  14.1439
 
 
 ## [16] assistant
 
 **[reasoning]**
 
-> Let me analyze the data more carefully. The key predictors seem to be `bbb_spread` (correlation 0.70) and `vix` (correlation 0.47). The scenario pushes unemployment beyond the training range (up to 9.23 vs max 8.04) and bbb_spread beyond (up to 3.79 vs max 3.57).
+> Now I need to understand the data better. The missing values are not at random - they follow a pattern where some series started later. Let me check what columns have data in the full training set and understand the relationships better.
 > 
-> Let me think about what transformations might help. The default rate is a fraction, so I could use a logit transformation. Also, I should consider lagged effects and interactions.
+> Key observations:
+> 1. Training data has 80 quarters (quarters 1-80)
+> 2. Scenario has 9 quarters (quarters 81-89)
+> 3. Several macro series have missing early values but are fully present in later quarters
+> 4. The scenario values seem to push far beyond training ranges (e.g., HPI goes from ~200-250 in training to 381-488 in scenario)
 > 
-> Let me build a more sophisticated model.
+> Let me analyze the data more carefully to build a good model.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python -c "
 import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet
+df = pd.read_csv('data/train.csv')
 
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
+# Check what data we have in the later quarters where all series are available
+late = df[df['quarter'] >= 14]  # bbb_spread starts at q14
+print('Late quarters shape:', late.shape)
+print()
 
-# Create features
-# Key insight: bbb_spread and vix are the strongest predictors
-# Let's also try transformations
-
-# Logit transform of default rate (to handle bounded [0,1])
-y = train['default_rate'].values
-y_clipped = np.clip(y, 0.001, 0.999)  # avoid logit issues
-y_logit = np.log(y_clipped / (1 - y_clipped))
-
-# Create feature matrix
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
-
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].fillna(method='ffill').fillna(method='bfill')
-
-# Create features
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).fillna(method='bfill')
-X['unemployment_lag1'] = X['unemployment'].shift(1).fillna(method='bfill')
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).fillna(method='bfill')
-X['vix_lag1'] = X['vix'].shift(1).fillna(method='bfill')
-X['default_rate_lag1'] = train['default_rate'].shift(1).fillna(method='bfill')
-X['default_rate_lag2'] = train['default_rate'].shift(2).fillna(method='bfill')
-X['default_rate_lag3'] = train['default_rate'].shift(3).fillna(method='bfill')
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y_logit = y_logit[drop_idx]
-
-feature_names = X.columns.tolist()
-print("Features:", feature_names)
-print("Sample size:", len(X))
-
-# Try different feature subsets and models
-from sklearn.linear_model import LinearRegression
-
-# First, let's try a simple OLS with key features
-key_features = ['bbb_spread', 'vix', 'unemployment']
-X_simple = X[key_features]
-
-model_simple = sm.OLS(y_logit, sm.add_constant(X_simple)).fit()
-print("\nSimple model (bbb_spread, vix, unemployment):")
-print(model_simple.summary().as_csv())
-
-# Check residuals
-residuals = model_simple.resid
-print("\nResidual std:", residuals.std())
-print("Residual mean:", residuals.mean())
-
-# Check for heteroskedasticity
-from scipy.stats import shapiro
-print("\nResidual normality test (Shapiro):")
-stat, p = shapiro(residuals)
-print(f"  stat={stat:.4f}, p={p:.4f}")
-
+# Check which series are complete from quarter 14 onward
+for col in ['hpi','bbb_spread','sp500','djia','nasdaq','vix']:
+    print(f'{col} missing in quarters 14+: {late[col].isna().sum()}')
+    
+print()
+# Check default rate distribution
+print('Default rate stats:')
+print(late['default_rate'].describe())
+"
 ```
 
 ## [17] tool
 
-Traceback (most recent call last):
-  File "<stdin>", line 30, in <module>
-TypeError: NDFrame.fillna() got an unexpected keyword argument 'method'
+Late quarters shape: (67, 11)
 
+hpi missing in quarters 14+: 0
+bbb_spread missing in quarters 14+: 0
+sp500 missing in quarters 14+: 18
+djia missing in quarters 14+: 18
+nasdaq missing in quarters 14+: 0
+vix missing in quarters 14+: 0
+
+Default rate stats:
+count    67.000000
+mean      0.032800
+std       0.016113
+min       0.003167
+25%       0.022010
+50%       0.029266
+75%       0.039123
+max       0.093801
+Name: default_rate, dtype: float64
 
 
 ## [18] assistant
 
-**[reasoning]**
-
-> The pandas version doesn't support the `method` argument in `fillna`. Let me fix that.
-> 
-
-
-
-
-
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python -c "
 import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet
+df = pd.read_csv('data/train.csv')
 
-# Load data
-train = pd.read_csv('data/train.csv')
+# Find when sp500 and djia start
+for col in ['sp500', 'djia']:
+    first_non_na = df.dropna(subset=[col])['quarter'].min()
+    print(f'{col} starts at quarter {first_non_na}')
+
+# Check nasdaq coverage
+print('nasdaq min quarter:', df['nasdaq'].dropna().index.min() + 1)
+print('vix min quarter:', df['vix'].dropna().index.min() + 1)
+print('hpi min quarter:', df['hpi'].dropna().index.min() + 1)
+print('bbb_spread min quarter:', df['bbb_spread'].dropna().index.min() + 1)
+
+print()
+# Let's check the scenario columns and their ranges
 scenario = pd.read_csv('data/scenario.csv')
+for col in ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']:
+    print(f'{col}: min={scenario[col].min()}, max={scenario[col].max()}')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
-
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
-
-# Create feature matrix
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y_logit = np.log(np.clip(train['default_rate'].values[drop_idx], 0.001, 0.999) / 
-                 (1 - np.clip(train['default_rate'].values[drop_idx], 0.001, 0.999)))
-
-feature_names = X.columns.tolist()
-print("Features:", feature_names)
-print("Sample size:", len(X))
-
-# Try different feature subsets and models
-# First, let's try a simple OLS with key features
-key_features = ['bbb_spread', 'vix', 'unemployment']
-X_simple = X[key_features]
-
-model_simple = sm.OLS(y_logit, sm.add_constant(X_simple)).fit()
-print("\nSimple model (bbb_spread, vix, unemployment):")
-print(model_simple.summary().as_csv())
-
-# Check residuals
-residuals = model_simple.resid
-print("\nResidual std:", residuals.std())
-print("Residual mean:", residuals.mean())
-
-# Check for heteroskedasticity
-from scipy.stats import shapiro
-print("\nResidual normality test (Shapiro):")
-stat, p = shapiro(residuals)
-print(f"  stat={stat:.4f}, p={p:.4f}")
-
+print()
+# Check training ranges for comparison
+for col in ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']:
+    mask = df[col].notna()
+    if mask.sum() > 0:
+        print(f'train {col}: min={df.loc[mask, col].min():.2f}, max={df.loc[mask, col].max():.2f}')
+    else:
+        print(f'train {col}: no data')
+"
 ```
 
 ## [19] tool
 
-Features: ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi', 'unemployment_sq', 'bbb_spread_sq', 'vix_sq', 'gdp_growth', 'unemployment_diff', 'bbb_spread_diff', 'vix_diff', 'gdp_lag1', 'unemployment_lag1', 'bbb_spread_lag1', 'vix_lag1', 'default_rate_lag1', 'default_rate_lag2', 'default_rate_lag3']
-Sample size: 80
+sp500 starts at quarter 32
+djia starts at quarter 32
+nasdaq min quarter: 1
+vix min quarter: 11
+hpi min quarter: 11
+bbb_spread min quarter: 14
 
-Simple model (bbb_spread, vix, unemployment):
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.557
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.539
-Method:          ,Least Squares   ,  F-statistic:       ,   31.81
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,1.99e-13
-Time:            ,14:33:58        ,  Log-Likelihood:    , -26.648
-No. Observations:,    80          ,  AIC:               ,   61.30
-Df Residuals:    ,    76          ,  BIC:               ,   70.82
-Df Model:        ,     3          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-            ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const       ,   -4.6096,    0.226,  -20.407, 0.000,   -5.059,   -4.160
-bbb_spread  ,    0.4728,    0.068,    6.959, 0.000,    0.337,    0.608
-vix         ,   -0.0031,    0.008,   -0.398, 0.692,   -0.019,    0.013
-unemployment,    0.0425,    0.035,    1.202, 0.233,   -0.028,    0.113
-Omnibus:      ,23.708,  Durbin-Watson:     ,   1.773
-Prob(Omnibus):, 0.000,  Jarque-Bera (JB):  ,  59.753
-Skew:         ,-0.934,  Prob(JB):          ,1.06e-13
-Kurtosis:     , 6.799,  Cond. No.          ,    117.
+gdp: min=186.011, max=213.6347
+unemployment: min=6.2898, max=9.2342
+hpi: min=381.2758, max=488.6401
+bbb_spread: min=2.4174, max=3.7872
+sp500: min=5049.0716, max=6471.0612
+djia: min=1518.033, max=1816.8254
+nasdaq: min=2174.7611, max=5263.4876
+vix: min=19.0387, max=37.0464
+cpi: min=233.5453, max=251.3708
 
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-
-Residual std: 0.3397475391070818
-Residual mean: 1.1879386363489174e-15
-
-Residual normality test (Shapiro):
-  stat=0.9388, p=0.0008
+train gdp: min=106.78, max=217.36
+train unemployment: min=3.07, max=8.04
+train hpi: min=190.68, max=504.03
+train bbb_spread: min=0.23, max=3.57
+train sp500: min=699.16, max=6584.28
+train djia: min=379.20, max=1868.32
+train nasdaq: min=216.04, max=5878.36
+train vix: min=8.44, max=41.87
+train cpi: min=111.08, max=253.69
 
 
 ## [20] assistant
 
 **[reasoning]**
 
-> The simple model with bbb_spread, vix, and unemployment shows that bbb_spread is the strongest predictor. The residuals are not normally distributed (Shapiro test p=0.0008), which is expected with financial data. Let me try a more comprehensive approach with feature selection and a robust model.
+> Now I can see the key patterns:
+> 1. Training data has 80 quarters (1-80)
+> 2. Some series start later: sp500/djia from q32, hpi from q11, vix from q11, bbb_spread from q14
+> 3. The scenario quarters are 81-89 (9 quarters)
+> 4. Scenario values push some series beyond training ranges:
+>    - unemployment max=9.23 > train max=8.04 (extrapolation)
+>    - hpi min=381 < train min=190... actually within range
+>    - bbb_spread max=3.79 > train max=3.57 (extrapolation)
+>    - sp500, djia are well within training ranges
+> 
+> Let me now build a comprehensive model. I'll use several approaches:
+> 1. Fill missing values with forward fill or interpolation for training
+> 2. Try different feature selections and transformations
+> 3. Use a model that can handle extrapolation reasonably well (like regularized regression, or even simple econometric models)
+> 
+> Key economic intuition:
+> - Default rates tend to increase with unemployment
+> - Default rates tend to increase with BBB spread (wider = more stress)
+> - Default rates tend to decrease with HPI (house prices going down = stress)
+> - VIX (volatility index) increasing = more stress = higher defaults
+> 
+> Let me build a model and produce predictions.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet
 
 # Load data
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+print("Training data shape:", train.shape)
+print("Scenario data shape:", scenario.shape)
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+# Check what variables are available from which quarter
+all_vars = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+for v in all_vars:
+    n_avail = train[v].notna().sum()
+    first_q = train[train[v].notna()]['quarter'].min()
+    print(f"  {v}: available in {n_avail}/{train.shape[0]} quarters, first at q{int(first_q)}")
 
-# Create feature matrix
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
-
-feature_names = X.columns.tolist()
-print("Features:", feature_names)
-print("Sample size:", len(X))
-
-# Try different feature subsets using Lasso for feature selection
-# Use logit transform
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
-
-# Try Lasso for feature selection
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-
-lasso = Lasso(alpha=0.1, max_iter=10000)
-lasso.fit(X_scaled, y_logit)
-
-print("\nLasso coefficients:")
-for name, coef in zip(feature_names, lasso.coef_):
-    if abs(coef) > 0.01:
-        print(f"  {name}: {coef:.4f}")
-
-# Try Ridge regression
-ridge = Ridge(alpha=1.0)
-ridge.fit(X_scaled, y_logit)
-
-print("\nRidge coefficients:")
-for name, coef in zip(feature_names, ridge.coef_):
-    if abs(coef) > 0.01:
-        print(f"  {name}: {coef:.4f}")
-
-# Try Gradient Boosting
-gb = GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.1, random_state=42)
-gb.fit(X_scaled, y_logit)
-
-print("\nGradient Boosting feature importances:")
-for name, imp in sorted(zip(feature_names, gb.feature_importances_), key=lambda x: -x[1]):
-    if imp > 0.01:
-        print(f"  {name}: {imp:.4f}")
-
-# Cross-validation for different models
-cv = KFold(n_splits=5, shuffle=True, random_state=42)
-
-# Ridge CV
-ridge_scores = cross_val_score(ridge, X_scaled, y_logit, cv=cv, scoring='r2')
-print(f"\nRidge R2 CV: {ridge_scores.mean():.4f} (+/- {ridge_scores.std():.4f})")
-
-# GB CV
-gb_scores = cross_val_score(gb, X_scaled, y_logit, cv=cv, scoring='r2')
-print(f"GB R2 CV: {gb_scores.mean():.4f} (+/- {gb_scores.std():.4f})")
-
-# Lasso CV
-lasso_scores = cross_val_score(lasso, X_scaled, y_logit, cv=cv, scoring='r2')
-print(f"Lasso R2 CV: {lasso_scores.mean():.4f} (+/- {lasso_scores.std():.4f})")
-
+PYEOF
 ```
 
 ## [21] tool
 
-Features: ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi', 'unemployment_sq', 'bbb_spread_sq', 'vix_sq', 'gdp_growth', 'unemployment_diff', 'bbb_spread_diff', 'vix_diff', 'gdp_lag1', 'unemployment_lag1', 'bbb_spread_lag1', 'vix_lag1', 'default_rate_lag1', 'default_rate_lag2', 'default_rate_lag3']
-Sample size: 80
-
-Lasso coefficients:
-  bbb_spread: 0.1892
-  gdp_growth: -0.0280
-  bbb_spread_lag1: 0.0848
-
-Ridge coefficients:
-  gdp: 0.1071
-  unemployment: -0.1397
-  hpi: 0.0279
-  bbb_spread: 0.0736
-  sp500: 0.1444
-  djia: -0.1482
-  nasdaq: 0.0982
-  vix: 0.1205
-  cpi: -0.3571
-  unemployment_sq: 0.2230
-  bbb_spread_sq: 0.0636
-  vix_sq: -0.1797
-  gdp_growth: -0.1725
-  unemployment_diff: -0.1186
-  vix_diff: 0.0376
-  gdp_lag1: 0.1168
-  unemployment_lag1: -0.0568
-  bbb_spread_lag1: 0.0721
-  vix_lag1: 0.1004
-  default_rate_lag1: 0.0172
-  default_rate_lag2: 0.0463
-  default_rate_lag3: 0.0960
-
-Gradient Boosting feature importances:
-  bbb_spread: 0.2597
-  default_rate_lag1: 0.1444
-  cpi: 0.0938
-  bbb_spread_lag1: 0.0893
-  gdp_growth: 0.0646
-  unemployment_diff: 0.0593
-  bbb_spread_sq: 0.0407
-  vix_lag1: 0.0293
-  unemployment_sq: 0.0280
-  default_rate_lag3: 0.0238
-  vix: 0.0232
-  hpi: 0.0213
-  vix_diff: 0.0205
-  unemployment: 0.0183
-  nasdaq: 0.0164
-  default_rate_lag2: 0.0163
-  unemployment_lag1: 0.0161
-  bbb_spread_diff: 0.0104
-  djia: 0.0103
-
-Ridge R2 CV: 0.2760 (+/- 0.2327)
-GB R2 CV: 0.1668 (+/- 0.1398)
-Lasso R2 CV: 0.4103 (+/- 0.1539)
+Training data shape: (80, 11)
+Scenario data shape: (9, 10)
+  gdp: available in 80/80 quarters, first at q1
+  unemployment: available in 80/80 quarters, first at q1
+  hpi: available in 70/80 quarters, first at q11
+  bbb_spread: available in 67/80 quarters, first at q14
+  sp500: available in 49/80 quarters, first at q32
+  djia: available in 49/80 quarters, first at q32
+  nasdaq: available in 80/80 quarters, first at q1
+  vix: available in 70/80 quarters, first at q11
+  cpi: available in 80/80 quarters, first at q1
 
 
 ## [22] assistant
 
 **[reasoning]**
 
-> Let me think more carefully about this. The key predictors seem to be bbb_spread and vix based on correlations. Let me try a more focused approach with better feature engineering and model selection. I should also think about the extrapolation problem - the scenario pushes bbb_spread and unemployment beyond training ranges.
+> Now let me think about the approach. The scenario has 9 future quarters (81-89) with values that go beyond the training range:
+> - GDP in scenario goes up to 213.6 but train max is 217.4 - somewhat within range
+> - Unemployment in scenario goes up to 9.23 but train max is 8.04 - outside range
+> - HPI in scenario goes down to 381 but train min is 190 - within range
+> - BBB spread goes up to 3.79 vs train max 3.57 - outside range
+> - SP500 goes down to 5049 vs train min 699 - within range
+> - DJIA goes down to 1518 vs train min 379 - within range  
+> - NASDAQ goes down to 2175 vs train min 216 - within range
+> - VIX goes up to 37 vs train max 41.87 - within range
+> - CPI goes down to 233 vs train min 111 - within range
 > 
-> Let me try a more systematic approach:
-> 1. Focus on the most important features
-> 2. Try different transformations
-> 3. Use proper cross-validation
-> 4. Build prediction intervals properly
+> Key insight: The scenario is a stress scenario with declining markets, rising unemployment. Let me think about which variables are likely to drive default rates.
+> 
+> Typically: higher unemployment → higher defaults, higher spread → higher defaults, lower HPI → higher defaults (home equity erosion), higher VIX → higher defaults.
+> 
+> Let me build a model using the available data. Since some series are missing in early quarters, I need to handle this carefully. Let me:
+> 1. Create a full dataset by using all available rows (with forward-fill or interpolation for missing values)
+> 2. Use a robust model (possibly LASSO or Ridge regression, or even a simple linear model with key predictors)
+> 3. Generate prediction intervals
+> 
+> Let me explore correlations first to understand which variables matter.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
 
-# Load data
 train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Strategy: fill missing values using forward-fill within each series
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+print("After forward fill:")
+for col in ['hpi','bbb_spread','sp500','djia']:
+    print(f"  {col} missing: {train_ff[col].isna().sum()}")
 
-# Create feature matrix
-X = train_filled[macro_cols].copy()
+# Check correlations with default_rate
+cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+print("\nCorrelations with default_rate:")
+for col in cols:
+    corr = train_ff[col].corr(train_ff['default_rate'])
+    print(f"  {col}: {corr:.4f}")
 
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
+# Also check with lags
+print("\nSome lagged correlations (lag 1):")
+for col in cols:
+    lag_col = train_ff[col].shift(1)
+    mask = lag_col.notna() & train_ff['default_rate'].notna()
+    corr = lag_col[mask].corr(train_ff.loc[mask, 'default_rate'])
+    print(f"  {col} lag1: {corr:.4f}")
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
-
-feature_names = X.columns.tolist()
-
-# Try logit transform
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
-
-# Try different feature subsets
-# Focus on bbb_spread, vix, unemployment as they have highest correlations
-# Also try with lags
-
-# Model 1: bbb_spread + vix + unemployment (no lags)
-features_1 = ['bbb_spread', 'vix', 'unemployment']
-X1 = X[features_1]
-model1 = sm.OLS(y_logit, sm.add_constant(X1)).fit()
-print("Model 1 (bbb_spread, vix, unemployment):")
-print(f"  R2: {model1.rsquared:.4f}, Adj R2: {model1.rsquared_adj:.4f}")
-print(f"  Residual std: {model1.resid.std():.4f}")
-
-# Model 2: bbb_spread + vix + unemployment + lags
-features_2 = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_lag1', 'vix_lag1', 'unemployment_lag1', 
-              'default_rate_lag1', 'default_rate_lag2', 'default_rate_lag3']
-X2 = X[features_2]
-model2 = sm.OLS(y_logit, sm.add_constant(X2)).fit()
-print("\nModel 2 (with lags):")
-print(f"  R2: {model2.rsquared:.4f}, Adj R2: {model2.rsquared_adj:.4f}")
-print(f"  Residual std: {model2.resid.std():.4f}")
-
-# Model 3: bbb_spread + vix + unemployment + bbb_spread_sq
-features_3 = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq']
-X3 = X[features_3]
-model3 = sm.OLS(y_logit, sm.add_constant(X3)).fit()
-print("\nModel 3 (with bbb_spread_sq):")
-print(f"  R2: {model3.rsquared:.4f}, Adj R2: {model3.rsquared_adj:.4f}")
-print(f"  Residual std: {model3.resid.std():.4f}")
-
-# Model 4: bbb_spread + vix + unemployment + bbb_spread_sq + unemployment_sq
-features_4 = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq']
-X4 = X[features_4]
-model4 = sm.OLS(y_logit, sm.add_constant(X4)).fit()
-print("\nModel 4 (with sq terms):")
-print(f"  R2: {model4.rsquared:.4f}, Adj R2: {model4.rsquared_adj:.4f}")
-print(f"  Residual std: {model4.resid.std():.4f}")
-
-# Model 5: bbb_spread + vix + unemployment + bbb_spread_sq + unemployment_sq + lags
-features_5 = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq',
-              'bbb_spread_lag1', 'vix_lag1', 'unemployment_lag1', 
-              'default_rate_lag1', 'default_rate_lag2', 'default_rate_lag3']
-X5 = X[features_5]
-model5 = sm.OLS(y_logit, sm.add_constant(X5)).fit()
-print("\nModel 5 (with sq + lags):")
-print(f"  R2: {model5.rsquared:.4f}, Adj R2: {model5.rsquared_adj:.4f}")
-print(f"  Residual std: {model5.resid.std():.4f}")
-
-# Model 6: bbb_spread + vix + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth
-features_6 = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']
-X6 = X[features_6]
-model6 = sm.OLS(y_logit, sm.add_constant(X6)).fit()
-print("\nModel 6 (with sq + gdp_growth):")
-print(f"  R2: {model6.rsquared:.4f}, Adj R2: {model6.rsquared_adj:.4f}")
-print(f"  Residual std: {model6.resid.std():.4f}")
-
-# Model 7: bbb_spread + vix + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + lags
-features_7 = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth',
-              'bbb_spread_lag1', 'vix_lag1', 'unemployment_lag1', 
-              'default_rate_lag1', 'default_rate_lag2', 'default_rate_lag3']
-X7 = X[features_7]
-model7 = sm.OLS(y_logit, sm.add_constant(X7)).fit()
-print("\nModel 7 (with sq + gdp_growth + lags):")
-print(f"  R2: {model7.rsquared:.4f}, Adj R2: {model7.rsquared_adj:.4f}")
-print(f"  Residual std: {model7.resid.std():.4f}")
-
-# Compare AIC/BIC
-print("\nModel comparison:")
-for i, (name, model) in enumerate([('1', model1), ('2', model2), ('3', model3), ('4', model4), 
-                                     ('5', model5), ('6', model6), ('7', model7)], 1):
-    print(f"  Model {name}: AIC={model.aic:.2f}, BIC={model.bic:.2f}, Adj R2={model.rsquared_adj:.4f}")
-
+PYEOF
 ```
 
 ## [23] tool
 
-Model 1 (bbb_spread, vix, unemployment):
-  R2: 0.5567, Adj R2: 0.5392
-  Residual std: 0.3397
+After forward fill:
+  hpi missing: 10
+  bbb_spread missing: 13
+  sp500 missing: 31
+  djia missing: 31
 
-Model 2 (with lags):
-  R2: 0.5768, Adj R2: 0.5224
-  Residual std: 0.3319
+Correlations with default_rate:
+  gdp: 0.0138
+  unemployment: 0.2015
+  hpi: -0.0268
+  bbb_spread: 0.6995
+  sp500: -0.0420
+  djia: -0.1548
+  nasdaq: -0.0542
+  vix: 0.4747
+  cpi: 0.0084
 
-Model 3 (with bbb_spread_sq):
-  R2: 0.5681, Adj R2: 0.5451
-  Residual std: 0.3353
-
-Model 4 (with sq terms):
-  R2: 0.5738, Adj R2: 0.5450
-  Residual std: 0.3331
-
-Model 5 (with sq + lags):
-  R2: 0.5962, Adj R2: 0.5308
-  Residual std: 0.3243
-
-Model 6 (with sq + gdp_growth):
-  R2: 0.5955, Adj R2: 0.5623
-  Residual std: 0.3245
-
-Model 7 (with sq + gdp_growth + lags):
-  R2: 0.6472, Adj R2: 0.5840
-  Residual std: 0.3031
-
-Model comparison:
-  Model 1: AIC=61.30, BIC=70.82, Adj R2=0.5392
-  Model 2: AIC=69.57, BIC=93.39, Adj R2=0.5224
-  Model 3: AIC=61.21, BIC=73.12, Adj R2=0.5451
-  Model 4: AIC=62.15, BIC=76.44, Adj R2=0.5450
-  Model 5: AIC=69.84, BIC=98.42, Adj R2=0.5308
-  Model 6: AIC=59.96, BIC=76.64, Adj R2=0.5623
-  Model 7: AIC=61.04, BIC=92.00, Adj R2=0.5840
+Some lagged correlations (lag 1):
+  gdp lag1: 0.0101
+  unemployment lag1: 0.1496
+  hpi lag1: -0.0225
+  bbb_spread lag1: 0.6677
+  sp500 lag1: -0.0283
+  djia lag1: -0.1128
+  nasdaq lag1: -0.0502
+  vix lag1: 0.4993
+  cpi lag1: -0.0087
 
 
 ## [24] assistant
 
 **[reasoning]**
 
-> Model 7 has the best adjusted R2 (0.5840) and lowest AIC among the more complex models. Let me now build a comprehensive prediction script that:
+> The strongest correlations with default_rate are:
+> 1. bbb_spread: 0.6995 (very strong positive)
+> 2. vix: 0.4747 (moderate positive)
+> 3. unemployment: 0.2015 (weak positive)
 > 
-> 1. Uses the best model (Model 7)
-> 2. Handles the scenario data properly
-> 3. Generates prediction intervals
-> 4. Handles extrapolation concerns
-> 
-> Let me also think about the prediction interval. Since we're predicting in logit space, I need to:
-> 1. Predict in logit space
-> 2. Add uncertainty (residual std)
-> 3. Transform back to probability space
-> 
-> For the prediction interval, I should account for:
-> - Parameter uncertainty
-> - Residual variance
-> - Extrapolation uncertainty (since scenario values are outside training range)
-> 
-> Let me also check if the scenario values are indeed outside the training range for key features.
+> Let me explore the relationship more carefully, including nonlinear transformations and combinations.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
 
-# Load data
 train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Forward fill missing values
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+# Explore the relationship with bbb_spread more carefully
+print("bbb_spread vs default_rate scatter-like:")
+for col in ['bbb_spread', 'vix', 'unemployment']:
+    print(f"\n{col} quantiles vs default_rate median:")
+    q = pd.qcut(train_ff[col].dropna(), 5, duplicates='drop')
+    print(train_ff.groupby(q)['default_rate'].agg(['mean','median','std']))
 
-# Create feature matrix
-X = train_filled[macro_cols].copy()
+# Also check if changes in these matter more
+train_ff['gdp_d'] = train_ff['gdp'].diff()
+train_ff['unemp_d'] = train_ff['unemployment'].diff()
+train_ff['hpi_d'] = train_ff['hpi'].diff()
+train_ff['bbb_d'] = train_ff['bbb_spread'].diff()
+train_ff['sp500_d'] = train_ff['sp500'].diff()
+train_ff['djia_d'] = train_ff['djia'].diff()
+train_ff['vix_d'] = train_ff['vix'].diff()
+train_ff['cpi_d'] = train_ff['cpi'].diff()
 
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
+print("\nDelta correlations with default_rate:")
+for col in ['gdp_d','unemp_d','hpi_d','bbb_d','sp500_d','djia_d','vix_d','cpi_d']:
+    corr = train_ff[col].corr(train_ff['default_rate'])
+    if not np.isnan(corr):
+        print(f"  {col}: {corr:.4f}")
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
+# Check bbb_spread in different ranges
+print("\n\nbbb_spread distribution:")
+print(train_ff['bbb_spread'].describe())
 
-feature_names = X.columns.tolist()
-
-# Model 7 features
-features_7 = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth',
-              'bbb_spread_lag1', 'vix_lag1', 'unemployment_lag1', 
-              'default_rate_lag1', 'default_rate_lag2', 'default_rate_lag3']
-
-X7 = X[features_7]
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
-
-model7 = sm.OLS(y_logit, sm.add_constant(X7)).fit()
-print("Model 7 summary:")
-print(model7.summary().as_csv())
-
-# Check residuals
-residuals = model7.resid
-print(f"\nResidual std: {residuals.std():.4f}")
-print(f"Residual mean: {residuals.mean():.4f}")
-
-# Check for autocorrelation (Durbin-Watson)
-print(f"Durbin-Watson: {model7.dw_stat:.4f}")
-
-# Check for heteroskedasticity
-from scipy.stats import shapiro
-stat, p = shapiro(residuals)
-print(f"Shapiro normality: stat={stat:.4f}, p={p:.4f}")
-
-# Check scenario feature values vs training
-print("\nScenario feature values vs training ranges:")
-for feat in features_7:
-    train_vals = X7[feat].values
-    scenario_vals = []
-    # Need to compute scenario features
-    print(f"  {feat}: train=[{train_vals.min():.4f}, {train_vals.max():.4f}]")
-
+PYEOF
 ```
 
 ## [25] tool
 
-Traceback (most recent call last):
-  File "<stdin>", line 67, in <module>
-  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/wrapper.py", line 34, in __getattribute__
-    obj = getattr(results, attr)
-          ^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: 'OLSResults' object has no attribute 'dw_stat'
+bbb_spread vs default_rate scatter-like:
 
-Model 7 summary:
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.647
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.584
-Method:          ,Least Squares   ,  F-statistic:       ,   10.24
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,4.62e-11
-Time:            ,14:35:18        ,  Log-Likelihood:    , -17.519
-No. Observations:,    80          ,  AIC:               ,   61.04
-Df Residuals:    ,    67          ,  BIC:               ,   92.00
-Df Model:        ,    12          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-                 ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const            ,   -3.3984,    0.828,   -4.104, 0.000,   -5.051,   -1.745
-bbb_spread       ,    0.4461,    0.273,    1.634, 0.107,   -0.099,    0.991
-vix              ,    0.0107,    0.015,    0.730, 0.468,   -0.019,    0.040
-unemployment     ,   -0.6051,    0.325,   -1.859, 0.067,   -1.255,    0.045
-bbb_spread_sq    ,   -0.0796,    0.064,   -1.248, 0.217,   -0.207,    0.048
-unemployment_sq  ,    0.0469,    0.029,    1.641, 0.105,   -0.010,    0.104
-gdp_growth       ,   -0.1076,    0.035,   -3.112, 0.003,   -0.177,   -0.039
-bbb_spread_lag1  ,    0.0543,    0.166,    0.327, 0.745,   -0.277,    0.386
-vix_lag1         ,    0.0057,    0.014,    0.420, 0.676,   -0.021,    0.033
-unemployment_lag1,    0.1162,    0.073,    1.584, 0.118,   -0.030,    0.263
-default_rate_lag1,    1.1045,    3.559,    0.310, 0.757,   -6.000,    8.209
-default_rate_lag2,    3.3200,    3.301,    1.006, 0.318,   -3.269,    9.909
-default_rate_lag3,    6.1845,    3.195,    1.936, 0.057,   -0.193,   12.562
-Omnibus:      , 6.490,  Durbin-Watson:     ,   1.815
-Prob(Omnibus):, 0.039,  Jarque-Bera (JB):  ,   6.384
-Skew:         ,-0.470,  Prob(JB):          ,  0.0411
-Kurtosis:     , 4.015,  Cond. No.          ,4.22e+03
+bbb_spread quantiles vs default_rate median:
+                                  mean    median       std
+bbb_spread                                                
+(0.23399999999999999, 1.376]  0.017303  0.018554  0.006371
+(1.376, 1.91]                 0.025844  0.023324  0.008287
+(1.91, 2.244]                 0.032319  0.031111  0.005835
+(2.244, 2.784]                0.038798  0.038397  0.017801
+(2.784, 3.57]                 0.049630  0.055554  0.015558
 
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-[2] The condition number is large, 4.22e+03. This might indicate that there are
-strong multicollinearity or other numerical problems.
+vix quantiles vs default_rate median:
+                      mean    median       std
+vix                                           
+(8.438, 12.553]   0.019463  0.018904  0.008806
+(12.553, 14.692]  0.028638  0.025442  0.011141
+(14.692, 17.636]  0.034157  0.029457  0.018036
+(17.636, 22.947]  0.034673  0.028479  0.016178
+(22.947, 41.868]  0.044579  0.042970  0.014079
 
-Residual std: 0.3031
-Residual mean: -0.0000
+unemployment quantiles vs default_rate median:
+                    mean    median       std
+unemployment                                
+(3.071, 4.53]   0.026023  0.024550  0.006525
+(4.53, 5.159]   0.033626  0.030776  0.016077
+(5.159, 5.798]  0.031815  0.028133  0.011712
+(5.798, 6.553]  0.029892  0.027948  0.011866
+(6.553, 8.039]  0.037116  0.032717  0.023962
+
+Delta correlations with default_rate:
+  gdp_d: -0.3491
+  unemp_d: 0.0973
+  hpi_d: -0.2428
+  bbb_d: 0.0709
+  sp500_d: -0.0816
+  djia_d: -0.4263
+  vix_d: -0.0502
+  cpi_d: -0.0515
+
+
+bbb_spread distribution:
+count    67.000000
+mean      1.989206
+std       0.883227
+min       0.235000
+25%       1.502450
+50%       2.125600
+75%       2.669800
+max       3.569800
+Name: bbb_spread, dtype: float64
 
 
 ## [26] assistant
 
 **[reasoning]**
 
-> The model has a high condition number (4.22e+03) indicating multicollinearity. The default_rate_lag coefficients are very large and unstable. Let me try a simpler approach - focus on the most important features without too many lags, and use a more robust approach.
+> The scenario has values that are beyond the training range for some variables (especially hpi, sp500, djia, nasdaq, unemployment). Let me look at the scenario more carefully and build a robust model. The key drivers appear to be bbb_spread, vix, unemployment, and gdp based on correlations. The scenario pushes unemployment to 6-9%, which is at the high end of training, and bbb_spread up to 3.8 which is slightly above the training max of 3.57. The hpi values in scenario (381-489) are within training range (190-504). The sp500/djia/nasdaq values in scenario are much higher than training ranges.
 > 
-> Let me think about this differently. The key drivers seem to be:
-> 1. bbb_spread (strong positive correlation)
-> 2. vix (positive correlation)
-> 3. unemployment (positive correlation)
+> Let me think about what makes economic sense:
+> - Higher unemployment → higher defaults
+> - Higher BBB spread → higher defaults  
+> - Lower GDP growth → higher defaults
+> - Higher VIX → higher defaults
 > 
-> The scenario pushes these beyond training ranges:
-> - bbb_spread: [2.42, 3.79] vs training [0.23, 3.57] - slightly beyond
-> - unemployment: [6.29, 9.23] vs training [3.07, 8.04] - beyond
-> - vix: [19.04, 37.05] vs training [8.44, 41.87] - within range
+> The scenario is a stress scenario with declining GDP, rising unemployment, slightly elevated but still moderate BBB spread, and moderate VIX.
 > 
-> Let me try a simpler model with just the key features and their transformations, and use cross-validation to select the best model. I should also consider using the raw default_rate (not logit) with a model that handles bounded outputs.
+> Let me build a model that:
+> 1. Uses forward-fill for missing values in training data
+> 2. Tries multiple approaches - linear regression, possibly with transformations
+> 3. Generates prediction intervals using residual-based methods or bootstrapping
+> 
+> Since the scenario pushes some variables beyond training range, I should be careful about extrapolation. Let me use a robust approach.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
 
-# Load data
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Forward fill missing values for consistency
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+# Let's look at the scenario variables vs training
+print("Variable ranges (train vs scenario):")
+all_vars = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+for v in all_vars:
+    tmin = train_ff[v].min()
+    tmax = train_ff[v].max()
+    smin = scenario[v].min()
+    smax = scenario[v].max()
+    print(f"  {v}: train [{tmin:.2f},{tmax:.2f}], scenario [{smin:.2f},{smax:.2f}]")
 
-# Create feature matrix
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
-
-feature_names = X.columns.tolist()
-
-# Let's try a simpler approach - just bbb_spread and vix as primary drivers
-# These have the strongest correlations
-# Also try with unemployment
-
-# Model A: bbb_spread + vix
-features_a = ['bbb_spread', 'vix']
-Xa = X[features_a]
-ya_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
-model_a = sm.OLS(ya_logit, sm.add_constant(Xa)).fit()
-print("Model A (bbb_spread, vix):")
-print(f"  R2: {model_a.rsquared:.4f}, Adj R2: {model_a.rsquared_adj:.4f}")
-print(f"  Residual std: {model_a.resid.std():.4f}")
-print(model_a.summary().as_csv())
-
-# Model B: bbb_spread + vix + unemployment
-features_b = ['bbb_spread', 'vix', 'unemployment']
-Xb = X[features_b]
-model_b = sm.OLS(ya_logit, sm.add_constant(Xb)).fit()
-print("\nModel B (bbb_spread, vix, unemployment):")
-print(f"  R2: {model_b.rsquared:.4f}, Adj R2: {model_b.rsquared_adj:.4f}")
-print(f"  Residual std: {model_b.resid.std():.4f}")
-
-# Model C: bbb_spread + vix + unemployment + bbb_spread_sq
-features_c = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq']
-Xc = X[features_c]
-model_c = sm.OLS(ya_logit, sm.add_constant(Xc)).fit()
-print("\nModel C (bbb_spread, vix, unemployment, bbb_spread_sq):")
-print(f"  R2: {model_c.rsquared:.4f}, Adj R2: {model_c.rsquared_adj:.4f}")
-print(f"  Residual std: {model_c.resid.std():.4f}")
-
-# Model D: bbb_spread + vix + unemployment + bbb_spread_sq + unemployment_sq
-features_d = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq']
-Xd = X[features_d]
-model_d = sm.OLS(ya_logit, sm.add_constant(Xd)).fit()
-print("\nModel D (bbb_spread, vix, unemployment, bbb_spread_sq, unemployment_sq):")
-print(f"  R2: {model_d.rsquared:.4f}, Adj R2: {model_d.rsquared_adj:.4f}")
-print(f"  Residual std: {model_d.resid.std():.4f}")
-
-# Model E: bbb_spread + vix + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth
-features_e = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']
-Xe = X[features_e]
-model_e = sm.OLS(ya_logit, sm.add_constant(Xe)).fit()
-print("\nModel E (bbb_spread, vix, unemployment, bbb_spread_sq, unemployment_sq, gdp_growth):")
-print(f"  R2: {model_e.rsquared:.4f}, Adj R2: {model_e.rsquared_adj:.4f}")
-print(f"  Residual std: {model_e.resid.std():.4f}")
-
-# Model F: bbb_spread + vix + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1
-features_f = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1']
-Xf = X[features_f]
-model_f = sm.OLS(ya_logit, sm.add_constant(Xf)).fit()
-print("\nModel F (with default_rate_lag1):")
-print(f"  R2: {model_f.rsquared:.4f}, Adj R2: {model_f.rsquared_adj:.4f}")
-print(f"  Residual std: {model_f.resid.std():.4f}")
-
-# Model G: bbb_spread + vix + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1 + default_rate_lag2
-features_g = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1', 'default_rate_lag2']
-Xg = X[features_g]
-model_g = sm.OLS(ya_logit, sm.add_constant(Xg)).fit()
-print("\nModel G (with default_rate_lag1, default_rate_lag2):")
-print(f"  R2: {model_g.rsquared:.4f}, Adj R2: {model_g.rsquared_adj:.4f}")
-print(f"  Residual std: {model_g.resid.std():.4f}")
-
-# Compare AIC/BIC
-print("\nModel comparison:")
-for i, (name, model) in enumerate([('A', model_a), ('B', model_b), ('C', model_c), ('D', model_d), 
-                                     ('E', model_e), ('F', model_f), ('G', model_g)], 1):
-    print(f"  Model {name}: AIC={model.aic:.2f}, BIC={model.bic:.2f}, Adj R2={model.rsquared_adj:.4f}")
-
+PYEOF
 ```
 
 ## [27] tool
 
-Model A (bbb_spread, vix):
-  R2: 0.5483, Adj R2: 0.5365
-  Residual std: 0.3430
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.548
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.537
-Method:          ,Least Squares   ,  F-statistic:       ,   46.73
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,5.17e-14
-Time:            ,14:35:56        ,  Log-Likelihood:    , -27.401
-No. Observations:,    80          ,  AIC:               ,   60.80
-Df Residuals:    ,    77          ,  BIC:               ,   67.95
-Df Model:        ,     2          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-          ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const     ,   -4.3710,    0.108,  -40.399, 0.000,   -4.586,   -4.156
-bbb_spread,    0.4832,    0.068,    7.149, 0.000,    0.349,    0.618
-vix       ,   -0.0045,    0.008,   -0.582, 0.562,   -0.020,    0.011
-Omnibus:      ,22.587,  Durbin-Watson:     ,   1.790
-Prob(Omnibus):, 0.000,  Jarque-Bera (JB):  ,  58.911
-Skew:         ,-0.866,  Prob(JB):          ,1.61e-13
-Kurtosis:     , 6.831,  Cond. No.          ,    54.7
-
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-
-Model B (bbb_spread, vix, unemployment):
-  R2: 0.5567, Adj R2: 0.5392
-  Residual std: 0.3397
-
-Model C (bbb_spread, vix, unemployment, bbb_spread_sq):
-  R2: 0.5681, Adj R2: 0.5451
-  Residual std: 0.3353
-
-Model D (bbb_spread, vix, unemployment, bbb_spread_sq, unemployment_sq):
-  R2: 0.5738, Adj R2: 0.5450
-  Residual std: 0.3331
-
-Model E (bbb_spread, vix, unemployment, bbb_spread_sq, unemployment_sq, gdp_growth):
-  R2: 0.5955, Adj R2: 0.5623
-  Residual std: 0.3245
-
-Model F (with default_rate_lag1):
-  R2: 0.6029, Adj R2: 0.5643
-  Residual std: 0.3216
-
-Model G (with default_rate_lag1, default_rate_lag2):
-  R2: 0.6149, Adj R2: 0.5715
-  Residual std: 0.3167
-
-Model comparison:
-  Model A: AIC=60.80, BIC=67.95, Adj R2=0.5365
-  Model B: AIC=61.30, BIC=70.82, Adj R2=0.5392
-  Model C: AIC=61.21, BIC=73.12, Adj R2=0.5451
-  Model D: AIC=62.15, BIC=76.44, Adj R2=0.5450
-  Model E: AIC=59.96, BIC=76.64, Adj R2=0.5623
-  Model F: AIC=60.49, BIC=79.55, Adj R2=0.5643
-  Model G: AIC=60.04, BIC=81.48, Adj R2=0.5715
+Variable ranges (train vs scenario):
+  gdp: train [106.78,217.36], scenario [186.01,213.63]
+  unemployment: train [3.07,8.04], scenario [6.29,9.23]
+  hpi: train [190.68,504.03], scenario [381.28,488.64]
+  bbb_spread: train [0.23,3.57], scenario [2.42,3.79]
+  sp500: train [699.16,6584.28], scenario [5049.07,6471.06]
+  djia: train [379.20,1868.32], scenario [1518.03,1816.83]
+  nasdaq: train [216.04,5878.36], scenario [2174.76,5263.49]
+  vix: train [8.44,41.87], scenario [19.04,37.05]
+  cpi: train [111.08,253.69], scenario [233.55,251.37]
 
 
 ## [28] assistant
 
 **[reasoning]**
 
-> Now let me think about the best approach. The scenario pushes drivers beyond training ranges. Key observations:
+> The scenario pushes unemployment and bbb_spread beyond the training range. Let me now build a robust model. I'll use a regularized regression with the most predictive variables, handle missing data carefully, and create prediction intervals using bootstrap or residual-based methods.
 > 
-> 1. bbb_spread is the strongest predictor (correlation 0.70)
-> 2. vix is the second strongest (correlation 0.47)
-> 3. unemployment has moderate correlation (0.20)
-> 4. The scenario has bbb_spread going up to 3.79 (training max was 3.57)
-> 5. The scenario has unemployment going up to 9.23 (training max was 8.04)
-> 6. The scenario has vix going up to 37.05 (training max was 41.87)
+> Key observations:
+> 1. bbb_spread has the highest correlation (0.70) with default_rate
+> 2. vix also correlates well (0.47)
+> 3. gdp_d and djia_d have notable negative correlations with default_rate (meaning they're good)
+> 4. The scenario has bbb_spread going up to 3.79 (vs max 3.57 in train) and unemployment going to 9.23 (vs max 8.04)
 > 
-> For extrapolation, I should use a model that's robust. Let me try:
-> 1. A simpler model with just bbb_spread (most important)
-> 2. Use the residual std from cross-validation for prediction intervals
-> 3. Consider using a non-parametric approach or a model that handles extrapolation better
-> 
-> Let me also think about the prediction interval. The residual std in logit space is about 0.32. When I transform back to probability space, the interval will be asymmetric.
-> 
-> Let me build a comprehensive solution:
-> 1. Use a model with bbb_spread as the primary driver
-> 2. Add unemployment and vix as secondary drivers
-> 3. Use cross-validation to estimate prediction error
-> 4. Generate prediction intervals using the residual distribution
-> 
-> Let me also try a different approach - using the raw default rate (not logit) with a model that can handle the bounded nature better, or use a beta regression approach.
-> 
-> Actually, let me think more carefully. The key issue is extrapolation. The scenario has:
-> - bbb_spread: 2.42 to 3.79 (training: 0.23 to 3.57) - slightly beyond
-> - unemployment: 6.29 to 9.23 (training: 3.07 to 8.04) - beyond
-> - vix: 19.04 to 37.05 (training: 8.44 to 41.87) - within range
-> 
-> So the main extrapolation is in unemployment and bbb_spread.
-> 
-> Let me try a few approaches:
-> 1. Simple linear model with bbb_spread + unemployment
-> 2. Try to use the training data to understand the relationship
-> 3. Use cross-validation for robust error estimation
-> 
-> Let me also try a different approach - using the raw default rate with a model that constrains predictions to [0,1].
+> Let me build a comprehensive model with multiple approaches and validate it.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
+from sklearn.linear_model import Ridge, Lasso
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
+import statsmodels.api as sm
 
-# Load data
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Forward fill missing values
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+# Feature engineering
+X_df = train_ff[['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']].copy()
 
-# Create feature matrix
-X = train_filled[macro_cols].copy()
+# Create additional features
+X_df['gdp_d'] = X_df['gdp'].diff()
+X_df['unemp_d'] = X_df['unemployment'].diff()
+X_df['hpi_d'] = X_df['hpi'].diff()
+X_df['bbb_d'] = X_df['bbb_spread'].diff()
+X_df['vix_d'] = X_df['vix'].diff()
 
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
+# Some transformations
+X_df['gdp_growth'] = X_df['gdp'].pct_change()
+X_df['unemployment_level'] = X_df['unemployment']
+X_df['vix_level'] = X_df['vix']
+X_df['bbb_spread_level'] = X_df['bbb_spread']
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
+# Drop NaN created by differencing (rows 0-13 approximately)
+# Quarter 1: bbb_spread starts at 14, so diff needs that too
+# Actually let's use only rows where all selected features are available
+# But for simpler approach, let's fill remaining NaN with 0 or mean
 
-feature_names = X.columns.tolist()
+print("NaN after feature engineering:")
+for col in X_df.columns:
+    print(f"  {col}: {X_df[col].isna().sum()}")
 
-# Let's try a different approach - use raw default rate with a model
-# that handles bounded outputs better
+# Create a clean dataset - we'll use rows 14+ where bbb_spread is available
+# That's quarters 14-80 (67 rows) since that's when bbb_spread data begins
+# But for gdp_d, unemp_d diffs, we need at least quarter 2
 
-# Model H: bbb_spread + unemployment (raw, no logit)
-features_h = ['bbb_spread', 'unemployment']
-Xh = X[features_h]
-model_h = sm.OLS(y, sm.add_constant(Xh)).fit()
-print("Model H (bbb_spread, unemployment, raw):")
-print(f"  R2: {model_h.rsquared:.4f}, Adj R2: {model_h.rsquared_adj:.4f}")
-print(f"  Residual std: {model_h.resid.std():.4f}")
-print(model_h.summary().as_csv())
-
-# Model I: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq (raw)
-features_i = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq']
-Xi = X[features_i]
-model_i = sm.OLS(y, sm.add_constant(Xi)).fit()
-print("\nModel I (bbb_spread, unemployment, sq terms, raw):")
-print(f"  R2: {model_i.rsquared:.4f}, Adj R2: {model_i.rsquared_adj:.4f}")
-print(f"  Residual std: {model_i.resid.std():.4f}")
-
-# Model J: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth (raw)
-features_j = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']
-Xj = X[features_j]
-model_j = sm.OLS(y, sm.add_constant(Xj)).fit()
-print("\nModel J (with gdp_growth, raw):")
-print(f"  R2: {model_j.rsquared:.4f}, Adj R2: {model_j.rsquared_adj:.4f}")
-print(f"  Residual std: {model_j.resid.std():.4f}")
-
-# Model K: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1 (raw)
-features_k = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1']
-Xk = X[features_k]
-model_k = sm.OLS(y, sm.add_constant(Xk)).fit()
-print("\nModel K (with default_rate_lag1, raw):")
-print(f"  R2: {model_k.rsquared:.4f}, Adj R2: {model_k.rsquared_adj:.4f}")
-print(f"  Residual std: {model_k.resid.std():.4f}")
-
-# Model L: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1 + default_rate_lag2 (raw)
-features_l = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1', 'default_rate_lag2']
-Xl = X[features_l]
-model_l = sm.OLS(y, sm.add_constant(Xl)).fit()
-print("\nModel L (with default_rate_lag1, lag2, raw):")
-print(f"  R2: {model_l.rsquared:.4f}, Adj R2: {model_l.rsquared_adj:.4f}")
-print(f"  Residual std: {model_l.resid.std():.4f}")
-
-# Compare AIC/BIC
-print("\nModel comparison (raw):")
-for i, (name, model) in enumerate([('H', model_h), ('I', model_i), ('J', model_j), ('K', model_k), 
-                                     ('L', model_l)], 1):
-    print(f"  Model {name}: AIC={model.aic:.2f}, BIC={model.bic:.2f}, Adj R2={model.rsquared_adj:.4f}")
-
+PYEOF
 ```
 
 ## [29] tool
 
-Model H (bbb_spread, unemployment, raw):
-  R2: 0.5162, Adj R2: 0.5036
-  Residual std: 0.0106
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.516
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.504
-Method:          ,Least Squares   ,  F-statistic:       ,   41.07
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,7.26e-13
-Time:            ,14:36:33        ,  Log-Likelihood:    ,  250.63
-No. Observations:,    80          ,  AIC:               ,  -495.3
-Df Residuals:    ,    77          ,  BIC:               ,  -488.1
-Df Model:        ,     2          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-            ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const       ,   -0.0062,    0.007,   -0.935, 0.353,   -0.019,    0.007
-bbb_spread  ,    0.0127,    0.001,    8.700, 0.000,    0.010,    0.016
-unemployment,    0.0025,    0.001,    2.292, 0.025,    0.000,    0.005
-Omnibus:      ,37.142,  Durbin-Watson:     ,   2.094
-Prob(Omnibus):, 0.000,  Jarque-Bera (JB):  , 131.277
-Skew:         , 1.389,  Prob(JB):          ,3.12e-29
-Kurtosis:     , 8.627,  Cond. No.          ,    33.5
-
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-
-Model I (bbb_spread, unemployment, sq terms, raw):
-  R2: 0.5249, Adj R2: 0.4995
-  Residual std: 0.0105
-
-Model J (with gdp_growth, raw):
-  R2: 0.5339, Adj R2: 0.5024
-  Residual std: 0.0104
-
-Model K (with default_rate_lag1, raw):
-  R2: 0.5348, Adj R2: 0.4965
-  Residual std: 0.0104
-
-Model L (with default_rate_lag1, lag2, raw):
-  R2: 0.5537, Adj R2: 0.5103
-  Residual std: 0.0102
-
-Model comparison (raw):
-  Model H: AIC=-495.27, BIC=-488.12, Adj R2=0.5036
-  Model I: AIC=-492.72, BIC=-480.81, Adj R2=0.4995
-  Model J: AIC=-492.26, BIC=-477.97, Adj R2=0.5024
-  Model K: AIC=-490.40, BIC=-473.73, Adj R2=0.4965
-  Model L: AIC=-491.72, BIC=-472.67, Adj R2=0.5103
+NaN after feature engineering:
+  gdp: 0
+  unemployment: 0
+  hpi: 10
+  bbb_spread: 13
+  sp500: 31
+  djia: 31
+  nasdaq: 0
+  vix: 10
+  cpi: 0
+  gdp_d: 1
+  unemp_d: 1
+  hpi_d: 11
+  bbb_d: 14
+  vix_d: 11
+  gdp_growth: 1
+  unemployment_level: 0
+  vix_level: 10
+  bbb_spread_level: 13
 
 
 ## [30] assistant
 
 **[reasoning]**
 
-> Now let me think about the best approach. The logit-transformed models have better AIC/BIC and the residuals are more interpretable. Let me focus on the best models and think about prediction intervals.
+> Let me think more carefully about the approach. The data has several macroeconomic variables with different start dates. I need to:
 > 
-> Key observations:
-> 1. bbb_spread is the strongest predictor (correlation 0.70 with default_rate)
-> 2. vix has moderate correlation (0.47)
-> 3. unemployment has weak correlation (0.20)
-> 4. The scenario pushes bbb_spread beyond training range (up to 3.79 vs max 3.57)
-> 5. The scenario pushes unemployment beyond training range (up to 9.23 vs max 8.04)
+> 1. Create features from available data
+> 2. Handle missing values appropriately 
+> 3. Build a model that generalizes to stressed scenarios
 > 
-> For prediction intervals, I need to account for:
-> 1. Model uncertainty (parameter uncertainty)
-> 2. Residual variance (process uncertainty)
-> 3. Extrapolation uncertainty (since scenario is out of sample)
-> 
-> Let me build a comprehensive model and generate predictions.
+> Let me try a more systematic approach - using all available data with careful feature selection and handling.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
 
-# Load data
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Forward fill missing values (the gaps are just late-starting series)
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+# Now all columns are available for training
+print("Missing after fill:", train_ff.isna().sum().sum())
 
-# Create feature matrix
-X = train_filled[macro_cols].copy()
+# Features to use:
+# Key drivers based on correlations: bbb_spread (0.70), vix (0.47), unemployment (0.20)
+# Also gdp_d (-0.35), djia_d (-0.43) matter
 
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
+# Let's try multiple feature sets and cross-validate
+from sklearn.model_selection import cross_val_score, KFold
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+extra = ['gdp_d', 'unemp_d', 'hpi_d', 'bbb_d', 'vix_d']
 
-feature_names = X.columns.tolist()
+all_features = features + extra
+X = train_ff[all_features].copy()
+y = train_ff['default_rate'].values
 
-# Use the best logit model: Model G
-features_g = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1', 'default_rate_lag2']
-Xg = X[features_g]
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
+# Fill any remaining NaN (from diffs) with 0
+for col in X.columns:
+    if X[col].isna().sum() > 0:
+        X[col] = X[col].fillna(0)
 
-model_g = sm.OLS(y_logit, sm.add_constant(Xg)).fit()
-print("Model G summary:")
-print(model_g.summary().as_csv())
+print(f"X shape: {X.shape}")
+print(f"Any NaN in X: {X.isna().sum().sum()}")
 
-# Check residuals
-residuals = model_g.resid
-print(f"\nResidual std: {residuals.std():.4f}")
-print(f"Residual mean: {residuals.mean():.4f}")
+# Try different feature subsets
+feature_sets = {
+    'bbb+unemp+vix': ['bbb_spread', 'unemployment', 'vix'],
+    'all_raw': features,
+    'bbb+unemp+vix+deltas': ['bbb_spread', 'unemployment', 'vix', 'gdp_d', 'unemp_d', 'vix_d'],
+    'bbb+vix+deltas': ['bbb_spread', 'vix', 'gdp_d', 'bbb_d', 'vix_d'],
+}
 
-# Now let's also try a non-parametric approach
-# Use Gradient Boosting on the logit-transformed target
-scaler = StandardScaler()
-Xg_scaled = scaler.fit_transform(Xg)
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 
-gb = GradientBoostingRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, 
-                                min_samples_leaf=5, random_state=42)
-gb.fit(Xg_scaled, y_logit)
+print("\nRidge regression CV scores (absolute error):")
+for name, feat_list in feature_sets.items():
+    X_sub = X[feat_list].values
+    
+    # Add constant for intercept if needed
+    model = Ridge(alpha=1.0)
+    
+    # 5-fold CV
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    scores = cross_val_score(model, X_sub, y, cv=kf, scoring='neg_mean_absolute_error')
+    print(f"  {name}: MAE = {-scores.mean():.5f} (+/- {scores.std():.5f})")
 
-# Check feature importances
-print("\nGB feature importances:")
-for name, imp in sorted(zip(features_g, gb.feature_importances_), key=lambda x: -x[1]):
-    print(f"  {name}: {imp:.4f}")
-
-# Cross-validation for GB
-cv = KFold(n_splits=5, shuffle=True, random_state=42)
-gb_scores = cross_val_score(gb, Xg_scaled, y_logit, cv=cv, scoring='r2')
-print(f"\nGB R2 CV: {gb_scores.mean():.4f} (+/- {gb_scores.std():.4f})")
-
-# Also try with raw default rate
-gb_raw = GradientBoostingRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, 
-                                    min_samples_leaf=5, random_state=42)
-gb_raw.fit(Xg_scaled, y)
-gb_raw_scores = cross_val_score(gb_raw, Xg_scaled, y, cv=cv, scoring='r2')
-print(f"GB (raw) R2 CV: {gb_raw_scores.mean():.4f} (+/- {gb_raw_scores.std():.4f})")
-
+PYEOF
 ```
 
 ## [31] tool
 
-Model G summary:
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.615
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.571
-Method:          ,Least Squares   ,  F-statistic:       ,   14.17
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,4.18e-12
-Time:            ,14:36:59        ,  Log-Likelihood:    , -21.019
-No. Observations:,    80          ,  AIC:               ,   60.04
-Df Residuals:    ,    71          ,  BIC:               ,   81.48
-Df Model:        ,     8          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-                 ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const            ,   -3.7924,    0.815,   -4.652, 0.000,   -5.418,   -2.167
-bbb_spread       ,    0.5539,    0.224,    2.476, 0.016,    0.108,    1.000
-vix              ,    0.0106,    0.010,    1.038, 0.303,   -0.010,    0.031
-unemployment     ,   -0.3340,    0.306,   -1.091, 0.279,   -0.944,    0.277
-bbb_spread_sq    ,   -0.0781,    0.064,   -1.223, 0.226,   -0.205,    0.049
-unemployment_sq  ,    0.0327,    0.028,    1.162, 0.249,   -0.023,    0.089
-gdp_growth       ,   -0.0647,    0.026,   -2.533, 0.014,   -0.116,   -0.014
-default_rate_lag1,    3.2958,    3.363,    0.980, 0.330,   -3.411,   10.002
-default_rate_lag2,    4.7394,    3.185,    1.488, 0.141,   -1.611,   11.090
-Omnibus:      , 4.041,  Durbin-Watson:     ,   1.972
-Prob(Omnibus):, 0.133,  Jarque-Bera (JB):  ,   3.575
-Skew:         ,-0.309,  Prob(JB):          ,   0.167
-Kurtosis:     , 3.831,  Cond. No.          ,3.58e+03
-
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-[2] The condition number is large, 3.58e+03. This might indicate that there are
-strong multicollinearity or other numerical problems.
-
-Residual std: 0.3167
-Residual mean: 0.0000
-
-GB feature importances:
-  bbb_spread: 0.2840
-  bbb_spread_sq: 0.1871
-  default_rate_lag1: 0.1681
-  vix: 0.1257
-  gdp_growth: 0.0923
-  default_rate_lag2: 0.0541
-  unemployment_sq: 0.0524
-  unemployment: 0.0363
-
-GB R2 CV: -0.0318 (+/- 0.2850)
-GB (raw) R2 CV: 0.1689 (+/- 0.1880)
-
-
-## [32] assistant
-
-**[reasoning]**
-
-> The cross-validation scores are poor, especially for GB. This suggests overfitting. Let me try a simpler approach with better feature selection and focus on the most important predictors. The key insight is that bbb_spread is the strongest predictor. Let me also think about the scenario - it pushes drivers beyond training range, so I need to be careful about extrapolation.
-> 
-> Let me try a more robust approach:
-> 1. Use a simpler model with fewer features
-> 2. Use cross-validation to select the best model
-> 3. Compute prediction intervals properly
-> 
-
-
-
-
-
-**tool call: python**
-
-```
-
-import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
-
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
-
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
-
-# Create feature matrix
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
-
-feature_names = X.columns.tolist()
-
-# Let's try a comprehensive approach with many feature subsets
-# and use Leave-One-Out CV for small dataset
-
-# Key features to try
-base_features = ['bbb_spread', 'vix', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 
-                 'gdp_growth', 'default_rate_lag1', 'default_rate_lag2', 'default_rate_lag3',
-                 'bbb_spread_lag1', 'vix_lag1', 'unemployment_lag1']
-
-# Try different subsets with LOO CV
-from sklearn.linear_model import Ridge
-
-# First, let's try just bbb_spread + unemployment (simplest meaningful model)
-features_simple = ['bbb_spread', 'unemployment']
-X_simple = X[features_simple]
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
-
-# LOO CV for simple model
-loo = LeaveOneOut()
-simple_errors = []
-for train_idx, test_idx in loo.split(X_simple):
-    X_train, X_test = X_simple.iloc[train_idx], X_simple.iloc[test_idx]
-    y_train = y_logit[train_idx]
-    
-    model = sm.OLS(y_train, sm.add_constant(X_train)).fit()
-    pred = model.predict(sm.add_constant(X_test))
-    simple_errors.append((y_logit[test_idx] - pred) ** 2)
-
-simple_mse = np.mean(simple_errors)
-print(f"Simple model (bbb_spread, unemployment) LOO MSE (logit): {simple_mse:.4f}")
-print(f"Simple model LOO RMSE (logit): {np.sqrt(simple_mse):.4f}")
-
-# Now try with more features
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth
-features_med = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']
-X_med = X[features_med]
-
-med_errors = []
-for train_idx, test_idx in loo.split(X_med):
-    X_train, X_test = X_med.iloc[train_idx], X_med.iloc[test_idx]
-    y_train = y_logit[train_idx]
-    
-    model = sm.OLS(y_train, sm.add_constant(X_train)).fit()
-    pred = model.predict(sm.add_constant(X_test))
-    med_errors.append((y_logit[test_idx] - pred) ** 2)
-
-med_mse = np.mean(med_errors)
-print(f"Medium model LOO MSE (logit): {med_mse:.4f}")
-print(f"Medium model LOO RMSE (logit): {np.sqrt(med_mse):.4f}")
-
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1
-features_full = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1']
-X_full = X[features_full]
-
-full_errors = []
-for train_idx, test_idx in loo.split(X_full):
-    X_train, X_test = X_full.iloc[train_idx], X_full.iloc[test_idx]
-    y_train = y_logit[train_idx]
-    
-    model = sm.OLS(y_train, sm.add_constant(X_train)).fit()
-    pred = model.predict(sm.add_constant(X_test))
-    full_errors.append((y_logit[test_idx] - pred) ** 2)
-
-full_mse = np.mean(full_errors)
-print(f"Full model LOO MSE (logit): {full_mse:.4f}")
-print(f"Full model LOO RMSE (logit): {np.sqrt(full_mse):.4f}")
-
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1 + default_rate_lag2
-features_full2 = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1', 'default_rate_lag2']
-X_full2 = X[features_full2]
-
-full2_errors = []
-for train_idx, test_idx in loo.split(X_full2):
-    X_train, X_test = X_full2.iloc[train_idx], X_full2.iloc[test_idx]
-    y_train = y_logit[train_idx]
-    
-    model = sm.OLS(y_train, sm.add_constant(X_train)).fit()
-    pred = model.predict(sm.add_constant(X_test))
-    full2_errors.append((y_logit[test_idx] - pred) ** 2)
-
-full2_mse = np.mean(full2_errors)
-print(f"Full2 model LOO MSE (logit): {full2_mse:.4f}")
-print(f"Full2 model LOO RMSE (logit): {np.sqrt(full2_mse):.4f}")
-
-# Also try with raw default rate
-print("\n--- Raw default rate models ---")
-
-# Simple raw
-simple_raw_errors = []
-for train_idx, test_idx in loo.split(X_simple):
-    X_train, X_test = X_simple.iloc[train_idx], X_simple.iloc[test_idx]
-    y_train = y[train_idx]
-    
-    model = sm.OLS(y_train, sm.add_constant(X_train)).fit()
-    pred = model.predict(sm.add_constant(X_test))
-    simple_raw_errors.append((y[test_idx] - pred) ** 2)
-
-simple_raw_mse = np.mean(simple_raw_errors)
-print(f"Simple raw LOO MSE: {simple_raw_mse:.6f}")
-print(f"Simple raw LOO RMSE: {np.sqrt(simple_raw_mse):.6f}")
-
-# Medium raw
-med_raw_errors = []
-for train_idx, test_idx in loo.split(X_med):
-    X_train, X_test = X_med.iloc[train_idx], X_med.iloc[test_idx]
-    y_train = y[train_idx]
-    
-    model = sm.OLS(y_train, sm.add_constant(X_train)).fit()
-    pred = model.predict(sm.add_constant(X_test))
-    med_raw_errors.append((y[test_idx] - pred) ** 2)
-
-med_raw_mse = np.mean(med_raw_errors)
-print(f"Medium raw LOO MSE: {med_raw_mse:.6f}")
-print(f"Medium raw LOO RMSE: {np.sqrt(med_raw_mse):.6f}")
-
-# Full raw
-full_raw_errors = []
-for train_idx, test_idx in loo.split(X_full):
-    X_train, X_test = X_full.iloc[train_idx], X_full.iloc[test_idx]
-    y_train = y[train_idx]
-    
-    model = sm.OLS(y_train, sm.add_constant(X_train)).fit()
-    pred = model.predict(sm.add_constant(X_test))
-    full_raw_errors.append((y[test_idx] - pred) ** 2)
-
-full_raw_mse = np.mean(full_raw_errors)
-print(f"Full raw LOO MSE: {full_raw_mse:.6f}")
-print(f"Full raw LOO RMSE: {np.sqrt(full_raw_mse):.6f}")
-
-# Full2 raw
-full2_raw_errors = []
-for train_idx, test_idx in loo.split(X_full2):
-    X_train, X_test = X_full2.iloc[train_idx], X_full2.iloc[test_idx]
-    y_train = y[train_idx]
-    
-    model = sm.OLS(y_train, sm.add_constant(X_train)).fit()
-    pred = model.predict(sm.add_constant(X_test))
-    full2_raw_errors.append((y[test_idx] - pred) ** 2)
-
-full2_raw_mse = np.mean(full2_raw_errors)
-print(f"Full2 raw LOO MSE: {full2_raw_mse:.6f}")
-print(f"Full2 raw LOO RMSE: {np.sqrt(full2_raw_mse):.6f}")
-
-```
-
-## [33] tool
-
 Traceback (most recent call last):
-  File "<stdin>", line 73, in <module>
-  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 1174, in predict
-    predict_results = self.model.predict(self.params, exog, *args,
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 409, in predict
-    return np.dot(exog, params)
-           ^^^^^^^^^^^^^^^^^^^^
-ValueError: shapes (1,2) and (3,) not aligned: 2 (dim 1) != 3 (dim 0)
-
-
-
-## [34] assistant
-
-**[reasoning]**
-
-> The issue is that when we have a single test sample, the constant column isn't being added properly. Let me fix this.
-> 
-
-
-
-
-
-**tool call: python**
-
-```
-
-import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
-
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
-
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
-
-# Create feature matrix
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
-
-feature_names = X.columns.tolist()
-
-# Use LOO CV with proper constant handling
-loo = LeaveOneOut()
-
-# Model: bbb_spread + unemployment (simple)
-features_simple = ['bbb_spread', 'unemployment']
-X_simple = X[features_simple]
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
-
-simple_errors = []
-for train_idx, test_idx in loo.split(X_simple):
-    X_train, X_test = X_simple.iloc[train_idx], X_simple.iloc[test_idx]
-    y_train = y_logit[train_idx]
-    
-    X_train_c = sm.add_constant(X_train)
-    X_test_c = sm.add_constant(X_test)
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    simple_errors.append((y_logit[test_idx] - pred) ** 2)
-
-simple_mse = np.mean(simple_errors)
-print(f"Simple model (bbb_spread, unemployment) LOO MSE (logit): {simple_mse:.4f}")
-print(f"Simple model LOO RMSE (logit): {np.sqrt(simple_mse):.4f}")
-
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth
-features_med = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']
-X_med = X[features_med]
-
-med_errors = []
-for train_idx, test_idx in loo.split(X_med):
-    X_train, X_test = X_med.iloc[train_idx], X_med.iloc[test_idx]
-    y_train = y_logit[train_idx]
-    
-    X_train_c = sm.add_constant(X_train)
-    X_test_c = sm.add_constant(X_test)
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    med_errors.append((y_logit[test_idx] - pred) ** 2)
-
-med_mse = np.mean(med_errors)
-print(f"Medium model LOO MSE (logit): {med_mse:.4f}")
-print(f"Medium model LOO RMSE (logit): {np.sqrt(med_mse):.4f}")
-
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1
-features_full = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1']
-X_full = X[features_full]
-
-full_errors = []
-for train_idx, test_idx in loo.split(X_full):
-    X_train, X_test = X_full.iloc[train_idx], X_full.iloc[test_idx]
-    y_train = y_logit[train_idx]
-    
-    X_train_c = sm.add_constant(X_train)
-    X_test_c = sm.add_constant(X_test)
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    full_errors.append((y_logit[test_idx] - pred) ** 2)
-
-full_mse = np.mean(full_errors)
-print(f"Full model LOO MSE (logit): {full_mse:.4f}")
-print(f"Full model LOO RMSE (logit): {np.sqrt(full_mse):.4f}")
-
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1 + default_rate_lag2
-features_full2 = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1', 'default_rate_lag2']
-X_full2 = X[features_full2]
-
-full2_errors = []
-for train_idx, test_idx in loo.split(X_full2):
-    X_train, X_test = X_full2.iloc[train_idx], X_full2.iloc[test_idx]
-    y_train = y_logit[train_idx]
-    
-    X_train_c = sm.add_constant(X_train)
-    X_test_c = sm.add_constant(X_test)
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    full2_errors.append((y_logit[test_idx] - pred) ** 2)
-
-full2_mse = np.mean(full2_errors)
-print(f"Full2 model LOO MSE (logit): {full2_mse:.4f}")
-print(f"Full2 model LOO RMSE (logit): {np.sqrt(full2_mse):.4f}")
-
-# Also try with raw default rate
-print("\n--- Raw default rate models ---")
-
-# Simple raw
-simple_raw_errors = []
-for train_idx, test_idx in loo.split(X_simple):
-    X_train, X_test = X_simple.iloc[train_idx], X_simple.iloc[test_idx]
-    y_train = y[train_idx]
-    
-    X_train_c = sm.add_constant(X_train)
-    X_test_c = sm.add_constant(X_test)
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    simple_raw_errors.append((y[test_idx] - pred) ** 2)
-
-simple_raw_mse = np.mean(simple_raw_errors)
-print(f"Simple raw LOO MSE: {simple_raw_mse:.6f}")
-print(f"Simple raw LOO RMSE: {np.sqrt(simple_raw_mse):.6f}")
-
-# Medium raw
-med_raw_errors = []
-for train_idx, test_idx in loo.split(X_med):
-    X_train, X_test = X_med.iloc[train_idx], X_med.iloc[test_idx]
-    y_train = y[train_idx]
-    
-    X_train_c = sm.add_constant(X_train)
-    X_test_c = sm.add_constant(X_test)
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    med_raw_errors.append((y[test_idx] - pred) ** 2)
-
-med_raw_mse = np.mean(med_raw_errors)
-print(f"Medium raw LOO MSE: {med_raw_mse:.6f}")
-print(f"Medium raw LOO RMSE: {np.sqrt(med_raw_mse):.6f}")
-
-# Full raw
-full_raw_errors = []
-for train_idx, test_idx in loo.split(X_full):
-    X_train, X_test = X_full.iloc[train_idx], X_full.iloc[test_idx]
-    y_train = y[train_idx]
-    
-    X_train_c = sm.add_constant(X_train)
-    X_test_c = sm.add_constant(X_test)
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    full_raw_errors.append((y[test_idx] - pred) ** 2)
-
-full_raw_mse = np.mean(full_raw_errors)
-print(f"Full raw LOO MSE: {full_raw_mse:.6f}")
-print(f"Full raw LOO RMSE: {np.sqrt(full_raw_mse):.6f}")
-
-# Full2 raw
-full2_raw_errors = []
-for train_idx, test_idx in loo.split(X_full2):
-    X_train, X_test = X_full2.iloc[train_idx], X_full2.iloc[test_idx]
-    y_train = y[train_idx]
-    
-    X_train_c = sm.add_constant(X_train)
-    X_test_c = sm.add_constant(X_test)
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    full2_raw_errors.append((y[test_idx] - pred) ** 2)
-
-full2_raw_mse = np.mean(full2_raw_errors)
-print(f"Full2 raw LOO MSE: {full2_raw_mse:.6f}")
-print(f"Full2 raw LOO RMSE: {np.sqrt(full2_raw_mse):.6f}")
-
-```
-
-## [35] tool
-
-Traceback (most recent call last):
-  File "<stdin>", line 66, in <module>
-  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 1174, in predict
-    predict_results = self.model.predict(self.params, exog, *args,
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 409, in predict
-    return np.dot(exog, params)
-           ^^^^^^^^^^^^^^^^^^^^
-ValueError: shapes (1,2) and (3,) not aligned: 2 (dim 1) != 3 (dim 0)
-
-
-
-## [36] assistant
-
-**[reasoning]**
-
-> The issue is that when we drop a row for LOO, the remaining rows still have the same index, but the constant column is being added correctly. Let me debug this.
-> 
-> Actually, the issue might be that when we use `sm.add_constant(X_test)` where X_test is a single row DataFrame, it creates a 2-column constant + feature, but the model was fit with 3 parameters (const + 2 features). Wait, that should be fine...
-> 
-> Let me check - the issue might be that X_test is a DataFrame with index, and when we do sm.add_constant, it might not work correctly. Let me use numpy arrays instead.
-> 
-
-
-
-
-
-**tool call: python**
-
-```
-
-import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
-
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
-
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
-
-# Create feature matrix
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
-
-feature_names = X.columns.tolist()
-
-# Use LOO CV with numpy arrays
-loo = LeaveOneOut()
-
-# Model: bbb_spread + unemployment (simple)
-features_simple = ['bbb_spread', 'unemployment']
-X_simple = X[features_simple].values
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
-
-simple_errors = []
-for train_idx, test_idx in loo.split(X_simple):
-    X_train, X_test = X_simple[train_idx], X_simple[test_idx]
-    y_train = y_logit[train_idx]
-    
-    X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-    X_test_c = np.column_stack([np.ones(len(X_test)), X_test])
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    simple_errors.append((y_logit[test_idx] - pred) ** 2)
-
-simple_mse = np.mean(simple_errors)
-print(f"Simple model (bbb_spread, unemployment) LOO MSE (logit): {simple_mse:.4f}")
-print(f"Simple model LOO RMSE (logit): {np.sqrt(simple_mse):.4f}")
-
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth
-features_med = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']
-X_med = X[features_med].values
-
-med_errors = []
-for train_idx, test_idx in loo.split(X_med):
-    X_train, X_test = X_med[train_idx], X_med[test_idx]
-    y_train = y_logit[train_idx]
-    
-    X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-    X_test_c = np.column_stack([np.ones(len(X_test)), X_test])
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    med_errors.append((y_logit[test_idx] - pred) ** 2)
-
-med_mse = np.mean(med_errors)
-print(f"Medium model LOO MSE (logit): {med_mse:.4f}")
-print(f"Medium model LOO RMSE (logit): {np.sqrt(med_mse):.4f}")
-
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1
-features_full = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1']
-X_full = X[features_full].values
-
-full_errors = []
-for train_idx, test_idx in loo.split(X_full):
-    X_train, X_test = X_full[train_idx], X_full[test_idx]
-    y_train = y_logit[train_idx]
-    
-    X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-    X_test_c = np.column_stack([np.ones(len(X_test)), X_test])
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    full_errors.append((y_logit[test_idx] - pred) ** 2)
-
-full_mse = np.mean(full_errors)
-print(f"Full model LOO MSE (logit): {full_mse:.4f}")
-print(f"Full model LOO RMSE (logit): {np.sqrt(full_mse):.4f}")
-
-# Model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth + default_rate_lag1 + default_rate_lag2
-features_full2 = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth', 'default_rate_lag1', 'default_rate_lag2']
-X_full2 = X[features_full2].values
-
-full2_errors = []
-for train_idx, test_idx in loo.split(X_full2):
-    X_train, X_test = X_full2[train_idx], X_full2[test_idx]
-    y_train = y_logit[train_idx]
-    
-    X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-    X_test_c = np.column_stack([np.ones(len(X_test)), X_test])
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    full2_errors.append((y_logit[test_idx] - pred) ** 2)
-
-full2_mse = np.mean(full2_errors)
-print(f"Full2 model LOO MSE (logit): {full2_mse:.4f}")
-print(f"Full2 model LOO RMSE (logit): {np.sqrt(full2_mse):.4f}")
-
-# Also try with raw default rate
-print("\n--- Raw default rate models ---")
-
-# Simple raw
-simple_raw_errors = []
-for train_idx, test_idx in loo.split(X_simple):
-    X_train, X_test = X_simple[train_idx], X_simple[test_idx]
-    y_train = y[train_idx]
-    
-    X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-    X_test_c = np.column_stack([np.ones(len(X_test)), X_test])
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    simple_raw_errors.append((y[test_idx] - pred) ** 2)
-
-simple_raw_mse = np.mean(simple_raw_errors)
-print(f"Simple raw LOO MSE: {simple_raw_mse:.6f}")
-print(f"Simple raw LOO RMSE: {np.sqrt(simple_raw_mse):.6f}")
-
-# Medium raw
-med_raw_errors = []
-for train_idx, test_idx in loo.split(X_med):
-    X_train, X_test = X_med[train_idx], X_med[test_idx]
-    y_train = y[train_idx]
-    
-    X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-    X_test_c = np.column_stack([np.ones(len(X_test)), X_test])
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    med_raw_errors.append((y[test_idx] - pred) ** 2)
-
-med_raw_mse = np.mean(med_raw_errors)
-print(f"Medium raw LOO MSE: {med_raw_mse:.6f}")
-print(f"Medium raw LOO RMSE: {np.sqrt(med_raw_mse):.6f}")
-
-# Full raw
-full_raw_errors = []
-for train_idx, test_idx in loo.split(X_full):
-    X_train, X_test = X_full[train_idx], X_full[test_idx]
-    y_train = y[train_idx]
-    
-    X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-    X_test_c = np.column_stack([np.ones(len(X_test)), X_test])
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    full_raw_errors.append((y[test_idx] - pred) ** 2)
-
-full_raw_mse = np.mean(full_raw_errors)
-print(f"Full raw LOO MSE: {full_raw_mse:.6f}")
-print(f"Full raw LOO RMSE: {np.sqrt(full_raw_mse):.6f}")
-
-# Full2 raw
-full2_raw_errors = []
-for train_idx, test_idx in loo.split(X_full2):
-    X_train, X_test = X_full2[train_idx], X_full2[test_idx]
-    y_train = y[train_idx]
-    
-    X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-    X_test_c = np.column_stack([np.ones(len(X_test)), X_test])
-    
-    model = sm.OLS(y_train, X_train_c).fit()
-    pred = model.predict(X_test_c)
-    full2_raw_errors.append((y[test_idx] - pred) ** 2)
-
-full2_raw_mse = np.mean(full2_raw_errors)
-print(f"Full2 raw LOO MSE: {full2_raw_mse:.6f}")
-print(f"Full2 raw LOO RMSE: {np.sqrt(full2_raw_mse):.6f}")
-
-```
-
-## [37] tool
-
-Simple model (bbb_spread, unemployment) LOO MSE (logit): 0.1243
-Simple model LOO RMSE (logit): 0.3526
-Medium model LOO MSE (logit): 0.1267
-Medium model LOO RMSE (logit): 0.3559
-Full model LOO MSE (logit): 0.1270
-Full model LOO RMSE (logit): 0.3563
-Full2 model LOO MSE (logit): 0.1328
-Full2 model LOO RMSE (logit): 0.3644
-
---- Raw default rate models ---
-Simple raw LOO MSE: 0.000120
-Simple raw LOO RMSE: 0.010970
-Medium raw LOO MSE: 0.000124
-Medium raw LOO RMSE: 0.011119
-Full raw LOO MSE: 0.000126
-Full raw LOO RMSE: 0.011231
-Full2 raw LOO MSE: 0.000135
-Full2 raw LOO RMSE: 0.011629
-
-
-## [38] assistant
-
-**[reasoning]**
-
-> The LOO CV results show that the simple model (bbb_spread, unemployment) is actually the best performing. The logit-transformed models have similar performance, and the raw models are comparable. Let me now build the final model and generate predictions.
-> 
-> The key insight is:
-> 1. bbb_spread is the strongest predictor (correlation 0.70 with default_rate)
-> 2. unemployment is the second strongest (correlation 0.20)
-> 3. vix has moderate correlation (0.47) but isn't significant in the logit model
-> 
-> For the scenario, the bbb_spread goes up to 3.79 (beyond training max of 3.57) and unemployment goes to 9.23 (beyond training max of 8.04). This is extrapolation.
-> 
-> Let me use the simple raw model (bbb_spread + unemployment) as it has the best LOO CV performance and is most robust to extrapolation. I'll also try the logit version.
-> 
-> For prediction intervals, I need to account for:
-> 1. Model uncertainty (parameter uncertainty)
-> 2. Residual uncertainty (noise)
-> 3. Extrapolation uncertainty (since scenario is beyond training range)
-> 
-> Let me build the final model and generate predictions.
-> 
-
-
-
-
-
-**tool call: python**
-
-```
-
-import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
-
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
-
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
-
-# Create feature matrix
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
-
-# Use the best model: bbb_spread + unemployment (raw)
-features = ['bbb_spread', 'unemployment']
-X_train = X[features].values
-X_train_c = np.column_stack([np.ones(len(X_train)), X_train])
-
-# Fit model
-model = sm.OLS(y, X_train_c).fit()
-print("Final model summary:")
-print(model.summary().as_csv())
-
-# Get residuals
-residuals = model.resid
-residual_std = residuals.std()
-print(f"\nResidual std: {residual_std:.6f}")
-
-# Check residuals for patterns
-print(f"Residual mean: {residuals.mean():.6f}")
-print(f"Residual min: {residuals.min():.6f}")
-print(f"Residual max: {residuals.max():.6f}")
-
-# Check for heteroskedasticity - plot residual vs predicted
-y_pred_train = model.predict(X_train_c)
-print(f"\nPredicted range: [{y_pred_train.min():.6f}, {y_pred_train.max():.6f}]")
-print(f"Actual range: [{y.min():.6f}, {y.max():.6f}]")
-
-# Check if residuals are heteroskedastic
-from scipy.stats import spearmanr
-corr, pval = spearmanr(y_pred_train, np.abs(residuals))
-print(f"\nSpearman correlation (predicted vs |residual|): {corr:.4f}, p={pval:.4f}")
-
-# Now prepare scenario features
-# For scenario, we need to compute the same features
-# bbb_spread and unemployment are directly available
-scenario_features = scenario[['bbb_spread', 'unemployment']].values
-scenario_c = np.column_stack([np.ones(len(scenario_features)), scenario_features])
-
-# Generate predictions
-y_pred = model.predict(scenario_c)
-print(f"\nScenario predictions (raw):")
-for i, (q, pred) in enumerate(zip(scenario['quarter'], y_pred)):
-    print(f"  Quarter {q}: {pred:.6f}")
-
-# Generate 95% prediction intervals
-# For each prediction, the interval is: y_pred +/- t * sqrt(MSE * (1 + x' (X'X)^-1 x))
-# But for extrapolation, we should widen the interval
-
-# Get the covariance matrix of coefficients
-cov_matrix = model.cov_params()
-t_stat = stats.t.ppf(0.975, model.df_resid)
-
-print(f"\nT-statistic (95%): {t_stat:.4f}")
-print(f"Residual std: {residual_std:.6f}")
-
-# For each scenario point, compute prediction interval
-predictions = []
-for i in range(len(scenario)):
-    x = scenario_c[i]
-    # Standard error of prediction
-    se_pred = np.sqrt(residual_std**2 * (1 + x @ cov_matrix @ x))
-    
-    # For extrapolation, widen the interval
-    # Check how far the scenario is from training data
-    bbb_spread_val = scenario['bbb_spread'].iloc[i]
-    unemployment_val = scenario['unemployment'].iloc[i]
-    
-    bbb_train_min, bbb_train_max = X['bbb_spread'].min(), X['bbb_spread'].max()
-    unemp_train_min, unemp_train_max = X['unemployment'].min(), X['unemployment'].max()
-    
-    # Compute extrapolation factor
-    bbb_extrap = max(0, bbb_spread_val - bbb_train_max) / (bbb_train_max - bbb_train_min) if bbb_train_max > bbb_train_min else 0
-    unemp_extrap = max(0, unemployment_val - unemp_train_max) / (unemp_train_max - unemp_train_min) if unemp_train_max > unemp_train_min else 0
-    
-    # Extrapolation factor: 1 + some penalty for being outside range
-    # Use a moderate penalty
-    extrapolation_penalty = 1 + 0.5 * (bbb_extrap + unemp_extrap)
-    
-    se_pred_wide = se_pred * extrapolation_penalty
-    
-    y_lower = y_pred[i] - t_stat * se_pred_wide
-    y_upper = y_pred[i] + t_stat * se_pred_wide
-    
-    # Clip to [0, 1]
-    y_lower = max(0, y_lower)
-    y_upper = min(1, y_upper)
-    
-    predictions.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_pred[i],
-        'y_lower': y_lower,
-        'y_upper': y_upper,
-        'se_pred': se_pred,
-        'se_pred_wide': se_pred_wide,
-        'extrapolation_penalty': extrapolation_penalty
-    })
-    
-    print(f"\nQuarter {scenario['quarter'].iloc[i]}:")
-    print(f"  bbb_spread: {bbb_spread_val:.4f} (train range: [{bbb_train_min:.2f}, {bbb_train_max:.2f}])")
-    print(f"  unemployment: {unemployment_val:.4f} (train range: [{unemp_train_min:.2f}, {unemp_train_max:.2f}])")
-    print(f"  y_pred: {y_pred[i]:.6f}")
-    print(f"  se_pred: {se_pred:.6f}")
-    print(f"  extrapolation_penalty: {extrapolation_penalty:.4f}")
-    print(f"  y_lower: {y_lower:.6f}")
-    print(f"  y_upper: {y_upper:.6f}")
-
-# Save predictions
-pred_df = pd.DataFrame(predictions)
-pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']].to_csv('predictions.csv', index=False)
-print("\n\nSaved predictions.csv")
-print(pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']])
-
-```
-
-## [39] tool
-
-Final model summary:
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.516
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.504
-Method:          ,Least Squares   ,  F-statistic:       ,   41.07
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,7.26e-13
-Time:            ,14:40:01        ,  Log-Likelihood:    ,  250.63
-No. Observations:,    80          ,  AIC:               ,  -495.3
-Df Residuals:    ,    77          ,  BIC:               ,  -488.1
-Df Model:        ,     2          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-     ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const,   -0.0062,    0.007,   -0.935, 0.353,   -0.019,    0.007
-x1   ,    0.0127,    0.001,    8.700, 0.000,    0.010,    0.016
-x2   ,    0.0025,    0.001,    2.292, 0.025,    0.000,    0.005
-Omnibus:      ,37.142,  Durbin-Watson:     ,   2.094
-Prob(Omnibus):, 0.000,  Jarque-Bera (JB):  , 131.277
-Skew:         , 1.389,  Prob(JB):          ,3.12e-29
-Kurtosis:     , 8.627,  Cond. No.          ,    33.5
-
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-
-Residual std: 0.010547
-Residual mean: -0.000000
-Residual min: -0.021541
-Residual max: 0.051594
-
-Predicted range: [0.011024, 0.053286]
-Actual range: [0.003167, 0.093801]
-
-Spearman correlation (predicted vs |residual|): 0.3864, p=0.0004
-
-Scenario predictions (raw):
-  Quarter 81: 0.040167
-  Quarter 82: 0.043111
-  Quarter 83: 0.046093
-  Quarter 84: 0.049115
-  Quarter 85: 0.052178
-  Quarter 86: 0.055285
-  Quarter 87: 0.058438
-  Quarter 88: 0.061640
-  Quarter 89: 0.064891
-
-T-statistic (95%): 1.9913
-Residual std: 0.010547
-
-Quarter 81:
-  bbb_spread: 2.4174 (train range: [0.23, 3.57])
-  unemployment: 6.2898 (train range: [3.07, 8.04])
-  y_pred: 0.040167
-  se_pred: 0.010547
-  extrapolation_penalty: 1.0000
-  y_lower: 0.019164
-  y_upper: 0.061170
-
-Quarter 82:
-  bbb_spread: 2.5886 (train range: [0.23, 3.57])
-  unemployment: 6.5991 (train range: [3.07, 8.04])
-  y_pred: 0.043111
-  se_pred: 0.010547
-  extrapolation_penalty: 1.0000
-  y_lower: 0.022108
-  y_upper: 0.064114
-
-Quarter 83:
-  bbb_spread: 2.7598 (train range: [0.23, 3.57])
-  unemployment: 6.9235 (train range: [3.07, 8.04])
-  y_pred: 0.046093
-  se_pred: 0.010547
-  extrapolation_penalty: 1.0000
-  y_lower: 0.025090
-  y_upper: 0.067095
-
-Quarter 84:
-  bbb_spread: 2.9311 (train range: [0.23, 3.57])
-  unemployment: 7.2640 (train range: [3.07, 8.04])
-  y_pred: 0.049115
-  se_pred: 0.010547
-  extrapolation_penalty: 1.0000
-  y_lower: 0.028113
-  y_upper: 0.070118
-
-Quarter 85:
-  bbb_spread: 3.1023 (train range: [0.23, 3.57])
-  unemployment: 7.6211 (train range: [3.07, 8.04])
-  y_pred: 0.052178
-  se_pred: 0.010547
-  extrapolation_penalty: 1.0000
-  y_lower: 0.031176
-  y_upper: 0.073181
-
-Quarter 86:
-  bbb_spread: 3.2735 (train range: [0.23, 3.57])
-  unemployment: 7.9958 (train range: [3.07, 8.04])
-  y_pred: 0.055285
-  se_pred: 0.010548
-  extrapolation_penalty: 1.0000
-  y_lower: 0.034282
-  y_upper: 0.076288
-
-Quarter 87:
-  bbb_spread: 3.4447 (train range: [0.23, 3.57])
-  unemployment: 8.3890 (train range: [3.07, 8.04])
-  y_pred: 0.058438
-  se_pred: 0.010548
-  extrapolation_penalty: 1.0352
-  y_lower: 0.036695
-  y_upper: 0.080180
-
-Quarter 88:
-  bbb_spread: 3.6160 (train range: [0.23, 3.57])
-  unemployment: 8.8015 (train range: [3.07, 8.04])
-  y_pred: 0.061640
-  se_pred: 0.010548
-  extrapolation_penalty: 1.0837
-  y_lower: 0.038880
-  y_upper: 0.084400
-
-Quarter 89:
-  bbb_spread: 3.7872 (train range: [0.23, 3.57])
-  unemployment: 9.2342 (train range: [3.07, 8.04])
-  y_pred: 0.064891
-  se_pred: 0.010548
-  extrapolation_penalty: 1.1529
-  y_lower: 0.040677
-  y_upper: 0.089105
-
-
-Saved predictions.csv
-   quarter    y_pred   y_lower   y_upper
-0       81  0.040167  0.019164  0.061170
-1       82  0.043111  0.022108  0.064114
-2       83  0.046093  0.025090  0.067095
-3       84  0.049115  0.028113  0.070118
-4       85  0.052178  0.031176  0.073181
-5       86  0.055285  0.034282  0.076288
-6       87  0.058438  0.036695  0.080180
-7       88  0.061640  0.038880  0.084400
-8       89  0.064891  0.040677  0.089105
-
-
-## [40] assistant
-
-**[reasoning]**
-
-> The simple model works but I should try to improve it. Let me think about what model would be best:
-> 
-> 1. The scenario pushes bbb_spread beyond the training range (up to 3.79 vs max 3.57)
-> 2. The scenario pushes unemployment beyond the training range (up to 9.23 vs max 8.04)
-> 3. The model should capture the relationship well
-> 
-> Let me try a more sophisticated approach:
-> - Use the logit-transformed model with bbb_spread as the main driver
-> - Add quadratic terms for better fit
-> - Use a more robust extrapolation strategy
-> 
-> Actually, let me reconsider. The simple model (bbb_spread + unemployment) has good LOO CV performance. But I should try to improve the model and the prediction intervals.
-> 
-> Key issues:
-> 1. The residuals are heteroskedastic (correlation between predicted and |residual|)
-> 2. The scenario pushes beyond training ranges
-> 3. Need better prediction intervals
-> 
-> Let me try a more comprehensive approach with:
-> 1. Better feature engineering
-> 2. Logit transform for bounded predictions
-> 3. Better extrapolation handling
-> 4. Bootstrap-based prediction intervals
-> 
-
-
-
-
-
-**tool call: python**
-
-```
-
-import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
-
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
-
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
-
-# Create feature matrix
-X = train_filled[macro_cols].copy()
-
-# Add transformations
-X['unemployment_sq'] = X['unemployment'] ** 2
-X['bbb_spread_sq'] = X['bbb_spread'] ** 2
-X['vix_sq'] = X['vix'] ** 2
-X['gdp_growth'] = X['gdp'].diff().fillna(0)
-X['unemployment_diff'] = X['unemployment'].diff().fillna(0)
-X['bbb_spread_diff'] = X['bbb_spread'].diff().fillna(0)
-X['vix_diff'] = X['vix'].diff().fillna(0)
-X['gdp_lag1'] = X['gdp'].shift(1).bfill()
-X['unemployment_lag1'] = X['unemployment'].shift(1).bfill()
-X['bbb_spread_lag1'] = X['bbb_spread'].shift(1).bfill()
-X['vix_lag1'] = X['vix'].shift(1).bfill()
-X['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
-
-# Drop rows with NaN in features (from lags)
-drop_idx = X.dropna().index
-X = X.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
-
-feature_names = X.columns.tolist()
-
-# Let's try a comprehensive approach with multiple models and ensemble
-# Use logit transform for bounded predictions
-
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
-
-# Key features
-features = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']
-X_main = X[features].values
-
-# Fit model on logit scale
-X_main_c = np.column_stack([np.ones(len(X_main)), X_main])
-model_logit = sm.OLS(y_logit, X_main_c).fit()
-
-print("Logit model summary:")
-print(model_logit.summary().as_csv())
-
-# Convert predictions back to probability scale
-y_pred_logit = model_logit.predict(X_main_c)
-y_pred_prob = 1 / (1 + np.exp(-y_pred_logit))
-
-print(f"\nPredicted probability range: [{y_pred_prob.min():.6f}, {y_pred_prob.max():.6f}]")
-print(f"Actual range: [{y.min():.6f}, {y.max():.6f}]")
-
-# Check residuals on probability scale
-residuals_prob = y - y_pred_prob
-residual_std_prob = residuals_prob.std()
-print(f"\nResidual std (prob scale): {residual_std_prob:.6f}")
-
-# Check residuals on logit scale
-residuals_logit = model_logit.resid
-residual_std_logit = residuals_logit.std()
-print(f"Residual std (logit scale): {residual_std_logit:.6f}")
-
-# Now let's try a different approach - use the logit model for prediction
-# and compute prediction intervals using the logit residuals
-
-# Get covariance matrix
-cov_matrix = model_logit.cov_params()
-t_stat = stats.t.ppf(0.975, model_logit.df_resid)
-
-# Prepare scenario features
-scenario_features = scenario[['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']].values
-scenario_c = np.column_stack([np.ones(len(scenario_features)), scenario_features])
-
-# Generate logit predictions
-y_logit_pred = model_logit.predict(scenario_c)
-y_prob_pred = 1 / (1 + np.exp(-y_logit_pred))
-
-print(f"\nScenario predictions (logit -> prob):")
-for i, (q, pred) in enumerate(zip(scenario['quarter'], y_prob_pred)):
-    print(f"  Quarter {q}: {pred:.6f}")
-
-# Compute prediction intervals
-# For extrapolation, we need to account for:
-# 1. Model uncertainty (covariance of coefficients)
-# 2. Residual variance
-# 3. Extrapolation uncertainty
-
-# Get training ranges
-bbb_train_min, bbb_train_max = X['bbb_spread'].min(), X['bbb_spread'].max()
-unemp_train_min, unemp_train_max = X['unemployment'].min(), X['unemployment'].max()
-
-predictions = []
-for i in range(len(scenario)):
-    x = scenario_c[i]
-    
-    # Standard error of prediction (model + residual)
-    se_pred = np.sqrt(residual_std_logit**2 * (1 + x @ cov_matrix @ x))
-    
-    # Extrapolation penalty
-    bbb_val = scenario['bbb_spread'].iloc[i]
-    unemp_val = scenario['unemployment'].iloc[i]
-    
-    bbb_range = bbb_train_max - bbb_train_min
-    unemp_range = unemp_train_max - unemp_train_min
-    
-    # How far beyond training range?
-    bbb_extrap = max(0, bbb_val - bbb_train_max) / bbb_range if bbb_range > 0 else 0
-    unemp_extrap = max(0, unemp_val - unemp_train_max) / unemp_range if unemp_range > 0 else 0
-    
-    # Extrapolation factor - more aggressive for more extrapolation
-    # Use a factor that grows with extrapolation distance
-    extrapolation_factor = 1 + 2 * (bbb_extrap + unemp_extrap)
-    
-    se_pred_wide = se_pred * extrapolation_factor
-    
-    # Prediction interval on logit scale
-    y_logit_lower = y_logit_pred[i] - t_stat * se_pred_wide
-    y_logit_upper = y_logit_pred[i] + t_stat * se_pred_wide
-    
-    # Convert to probability scale
-    y_lower = 1 / (1 + np.exp(-y_logit_lower))
-    y_upper = 1 / (1 + np.exp(-y_logit_upper))
-    
-    # Clip to [0, 1]
-    y_lower = max(0, y_lower)
-    y_upper = min(1, y_upper)
-    
-    predictions.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_prob_pred[i],
-        'y_lower': y_lower,
-        'y_upper': y_upper,
-        'se_pred': se_pred,
-        'se_pred_wide': se_pred_wide,
-        'extrapolation_factor': extrapolation_factor,
-        'bbb_extrap': bbb_extrap,
-        'unemp_extrap': unemp_extrap
-    })
-    
-    print(f"\nQuarter {scenario['quarter'].iloc[i]}:")
-    print(f"  bbb_spread: {bbb_val:.4f} (train: [{bbb_train_min:.2f}, {bbb_train_max:.2f}])")
-    print(f"  unemployment: {unemp_val:.4f} (train: [{unemp_train_min:.2f}, {unemp_train_max:.2f}])")
-    print(f"  y_pred: {y_prob_pred[i]:.6f}")
-    print(f"  se_pred: {se_pred:.6f}")
-    print(f"  extrapolation_factor: {extrapolation_factor:.4f}")
-    print(f"  y_lower: {y_lower:.6f}")
-    print(f"  y_upper: {y_upper:.6f}")
-
-# Save predictions
-pred_df = pd.DataFrame(predictions)
-pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']].to_csv('predictions.csv', index=False)
-print("\n\nSaved predictions.csv")
-print(pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']])
-
-```
-
-## [41] tool
-
-Traceback (most recent call last):
-  File "<stdin>", line 90, in <module>
+  File "<stdin>", line 26, in <module>
   File "/usr/local/lib/python3.12/site-packages/pandas/core/frame.py", line 4384, in __getitem__
     indexer = self.columns._get_indexer_strict(key, "columns")[1]
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -3021,391 +966,783 @@ Traceback (most recent call last):
     self._raise_if_missing(keyarr, indexer, axis_name)
   File "/usr/local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 6355, in _raise_if_missing
     raise KeyError(f"{not_found} not in index")
-KeyError: "['bbb_spread_sq', 'unemployment_sq', 'gdp_growth'] not in index"
+KeyError: "['gdp_d', 'unemp_d', 'hpi_d', 'bbb_d', 'vix_d'] not in index"
 
-Logit model summary:
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.592
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.565
-Method:          ,Least Squares   ,  F-statistic:       ,   21.51
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,3.15e-13
-Time:            ,14:40:46        ,  Log-Likelihood:    , -23.284
-No. Observations:,    80          ,  AIC:               ,   58.57
-Df Residuals:    ,    74          ,  BIC:               ,   72.86
-Df Model:        ,     5          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-     ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const,   -4.1732,    0.787,   -5.302, 0.000,   -5.742,   -2.605
-x1   ,    0.6393,    0.196,    3.259, 0.002,    0.248,    1.030
-x2   ,   -0.1344,    0.277,   -0.486, 0.629,   -0.686,    0.417
-x3   ,   -0.0579,    0.051,   -1.128, 0.263,   -0.160,    0.044
-x4   ,    0.0153,    0.025,    0.610, 0.544,   -0.035,    0.065
-x5   ,   -0.0483,    0.024,   -2.026, 0.046,   -0.096,   -0.001
-Omnibus:      , 7.457,  Durbin-Watson:     ,   1.705
-Prob(Omnibus):, 0.024,  Jarque-Bera (JB):  ,   9.825
-Skew:         ,-0.374,  Prob(JB):          , 0.00735
-Kurtosis:     , 4.545,  Cond. No.          ,    762.
+Missing after fill: 95
 
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
 
-Predicted probability range: [0.010335, 0.061197]
-Actual range: [0.003167, 0.093801]
+## [32] assistant
 
-Residual std (prob scale): 0.010238
-Residual std (logit scale): 0.323717
+**[reasoning]**
+
+> The feature engineering step was incomplete. Let me redo the approach more carefully, focusing on features that are available consistently and doing proper lag calculations.
+> 
+
+
+
+
+
+**tool call: python**
+
+```
+
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill missing values (the gaps are just late-starting series)
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
+
+print("Missing after fill:", train_ff.isna().sum().sum())
+
+# Feature engineering - create all derived features
+X_df = train_ff[['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']].copy()
+
+X_df['gdp_d'] = X_df['gdp'].diff()
+X_df['unemp_d'] = X_df['unemployment'].diff()
+X_df['hpi_d'] = X_df['hpi'].diff()
+X_df['bbb_d'] = X_df['bbb_spread'].diff()
+X_df['vix_d'] = X_df['vix'].diff()
+X_df['sp500_d'] = X_df['sp500'].diff()
+X_df['djia_d'] = X_df['djia'].diff()
+X_df['cpi_d'] = X_df['cpi'].diff()
+
+# Add some transformations
+X_df['vix_sq'] = X_df['vix'] ** 2
+X_df['bbb_sq'] = X_df['bbb_spread'] ** 2
+X_df['unemp_hpi'] = X_df['unemployment'] * X_df['hpi']
+X_df['bbb_vix'] = X_df['bbb_spread'] * X_df['vix']
+
+print("NaN counts after feature engineering:")
+for col in X_df.columns:
+    if X_df[col].isna().sum() > 0:
+        print(f"  {col}: {X_df[col].isna().sum()}")
+
+# Fill any remaining NaN with 0 (or the mean)
+for col in X_df.columns:
+    if X_df[col].isna().sum() > 0:
+        X_df[col] = X_df[col].fillna(0)
+
+print(f"\nTotal NaN: {X_df.isna().sum().sum()}")
+print(f"Shape: {X_df.shape}")
+
+# Features for different models
+raw_features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+deltas = ['gdp_d', 'unemp_d', 'hpi_d', 'bbb_d', 'vix_d', 'sp500_d', 'djia_d', 'cpi_d']
+
+feature_sets = {
+    'bbb_unemp_vix': ['bbb_spread', 'unemployment', 'vix'],
+    'all_raw': raw_features,
+    'bbb_unemp_vix_deltas': ['bbb_spread', 'unemployment', 'vix'] + deltas,
+    'all_full': list(X_df.columns),
+}
+
+# Now cross-validate using only complete data (rows where target is non-null)
+y = train_ff['default_rate'].values
+
+from sklearn.model_selection import cross_val_score, KFold
+from sklearn.linear_model import Ridge
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+print("\n--- Cross-validation results ---")
+for name, feat_list in feature_sets.items():
+    X_sub = X_df[feat_list].values
+    
+    # Ridge
+    model_ridge = Ridge(alpha=1.0)
+    scores_ridge = cross_val_score(model_ridge, X_sub, y, cv=kf, scoring='neg_mean_absolute_error')
+    
+    # GBR
+    model_gbr = GradientBoostingRegressor(n_estimators=100, max_depth=3, random_state=42)
+    scores_gbr = cross_val_score(model_gbr, X_sub, y, cv=kf, scoring='neg_mean_absolute_error')
+    
+    print(f"\n{name}:")
+    print(f"  Ridge: MAE = {-scores_ridge.mean():.5f} (+/- {scores_ridge.std():.5f})")
+    print(f"  GBR:   MAE = {-scores_gbr.mean():.5f} (+/- {scores_gbr.std():.5f})")
+
+```
+
+## [33] tool
+
+Missing after fill: 95
+NaN counts after feature engineering:
+  hpi: 10
+  bbb_spread: 13
+  sp500: 31
+  djia: 31
+  vix: 10
+  gdp_d: 1
+  unemp_d: 1
+  hpi_d: 11
+  bbb_d: 14
+  vix_d: 11
+  sp500_d: 32
+  djia_d: 32
+  cpi_d: 1
+  vix_sq: 10
+  bbb_sq: 13
+  unemp_hpi: 10
+  bbb_vix: 13
+
+Total NaN: 0
+Shape: (80, 21)
+
+--- Cross-validation results ---
+
+bbb_unemp_vix:
+  Ridge: MAE = 0.00941 (+/- 0.00162)
+  GBR:   MAE = 0.01100 (+/- 0.00176)
+
+all_raw:
+  Ridge: MAE = 0.00913 (+/- 0.00145)
+  GBR:   MAE = 0.00918 (+/- 0.00192)
+
+bbb_unemp_vix_deltas:
+  Ridge: MAE = 0.00892 (+/- 0.00154)
+  GBR:   MAE = 0.00947 (+/- 0.00243)
+
+all_full:
+  Ridge: MAE = 0.00987 (+/- 0.00072)
+  GBR:   MAE = 0.00831 (+/- 0.00181)
+
+
+## [34] assistant
+
+**[reasoning]**
+
+> So the best models are GBR with 'all_full' features (MAE ~0.008) and Ridge with 'bbb_unemp_vix_deltas' (MAE ~0.009). Let me explore this more carefully, and also think about prediction intervals.
+> 
+> The scenario pushes variables beyond training ranges:
+> - unemployment goes from [3.07, 8.04] to [6.29, 9.23] - above max
+> - bbb_spread goes from [0.23, 3.57] to [2.42, 3.79] - above max
+> - Other variables are mostly within range
+> 
+> I need to:
+> 1. Build a good model
+> 2. Generate point predictions
+> 3. Create prediction intervals that reflect uncertainty, especially for out-of-range extrapolation
+> 
+> Let me think about what approach gives the best results. The task says the scenario pushes drivers beyond training range, so I need good extrapolation properties.
+> 
+> Let me try a more systematic approach with different models and transformations.
+> 
+
+
+
+
+
+**tool call: python**
+
+```
+
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge, Lasso, ElasticNet
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.pipeline import Pipeline
+import statsmodels.api as sm
+
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill missing values
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
+
+# Feature engineering
+X_df = train_ff[['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']].copy()
+
+# Key derived features
+X_df['gdp_d'] = X_df['gdp'].diff()
+X_df['unemp_d'] = X_df['unemployment'].diff()
+X_df['bbb_d'] = X_df['bbb_spread'].diff()
+X_df['vix_d'] = X_df['vix'].diff()
+
+# Fill remaining NaN with 0
+for col in X_df.columns:
+    if X_df[col].isna().sum() > 0:
+        X_df[col] = X_df[col].fillna(0)
+
+y = train_ff['default_rate'].values
+
+# Let's try a more sophisticated feature set
+# Include interactions, polynomials, and select best features
+
+from sklearn.feature_selection import SelectKBest, f_regression
+
+# Try with StandardScaler
+all_feat_names = list(X_df.columns)
+
+# Let's try various approaches more carefully
+# The key insight: bbb_spread has the strongest correlation with default_rate
+
+# Let's look at a simple model first
+print("=== Detailed feature importance analysis ===")
+
+# GBR with all features using full CV
+from sklearn.model_selection import cross_val_predict, KFold
+
+gbr = GradientBoostingRegressor(n_estimators=200, max_depth=4, learning_rate=0.1, random_state=42)
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+cv_preds = cross_val_predict(gbr, X_df[all_feat_names].values, y, cv=kf)
+
+# Check fit quality
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+print(f"GBR OOF MAE: {mean_absolute_error(y, cv_preds):.6f}")
+print(f"GBR OOF RMSE: {np.sqrt(mean_squared_error(y, cv_preds)):.6f}")
+print(f"GBR OOF R2: {r2_score(y, cv_preds):.6f}")
+
+# Residual analysis
+residuals = y - cv_preds
+print(f"\nResidual stats: mean={residuals.mean():.6f}, std={residuals.std():.6f}")
+print(f"Residual range: [{residuals.min():.6f}, {residuals.max():.6f}]")
+
+# Check for heteroskedasticity
+print(f"\nResidual vs predicted correlation: {np.corrcoef(cv_preds, residuals)[0,1]:.4f}")
+
+# Plot residual distribution
+print(f"\nResidual quartiles: {np.percentile(residuals, [25, 50, 75])}")
+
+PYEOF
+```
+
+## [35] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 74, in <module>
+NameError: name 'PYEOF' is not defined
+
+=== Detailed feature importance analysis ===
+GBR OOF MAE: 0.009213
+GBR OOF RMSE: 0.013796
+GBR OOF R2: 0.172180
+
+Residual stats: mean=-0.001685, std=0.013693
+Residual range: [-0.045605, 0.057250]
+
+Residual vs predicted correlation: -0.4479
+
+Residual quartiles: [-0.00792243 -0.00025939  0.00454264]
+
+
+## [36] assistant
+
+**[reasoning]**
+
+> The residual vs predicted correlation is -0.45 which indicates heteroskedasticity - the model underpredicts at higher values. Let me investigate further and try different approaches. The R2 of 0.17 is quite low, suggesting the relationship isn't perfectly linear or the model needs better features.
+> 
+> Let me look at what's driving the relationship more carefully and try a transformation of the target variable (like logit transform since default rates are fractions between 0 and 1).
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Forward fill missing values
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
+
+# Check the range of default_rate
+y = train_ff['default_rate']
+print(f"Default rate range: [{y.min()}, {y.max()}]")
+print(f"Mean: {y.mean():.5f}, Std: {y.std():.5f}")
+
+# Try logit transform (default rates are between 0 and 1)
+y_logit = np.log(y / (1 - y))
+
+print(f"\nLogit transform range: [{y_logit.min():.3f}, {y_logit.max():.3f}]")
+
+# Check correlations after logit
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+print("\nCorrelations with logit(default_rate):")
+for col in features:
+    corr = train_ff[col].corr(y_logit)
+    print(f"  {col}: {corr:.4f}")
+
+# Also try log transform
+y_log = np.log(y)
+print("\nCorrelations with log(default_rate):")
+for col in features:
+    corr = train_ff[col].corr(y_log)
+    print(f"  {col}: {corr:.4f}")
+
+# Check if bbb_spread alone explains much
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+
+lr = LinearRegression()
+X = train_ff[['bbb_spread']].values
+y_actual = y_logit.values
+
+# Simple linear fit
+lr.fit(X, y_actual)
+pred = lr.predict(X)
+print(f"\nSimple bbb_spread -> logit: R2 = {r2_score(y_actual, pred):.4f}")
+
+# Let's also check if non-linear relationship exists
+from sklearn.ensemble import GradientBoostingRegressor
+gbr = GradientBoostingRegressor(n_estimators=100, max_depth=3, random_state=42)
+gbr.fit(X, y_actual)
+pred2 = gbr.predict(X)
+print(f"GBR bbb_spread -> logit: R2 = {r2_score(y_actual, pred2):.4f}")
+
+PYEOF
+```
+
+## [37] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 45, in <module>
+  File "/usr/local/lib/python3.12/site-packages/sklearn/base.py", line 1403, in wrapper
+    return fit_method(estimator, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/linear_model/_base.py", line 681, in fit
+    X, y = validate_data(
+           ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 3055, in validate_data
+    X, y = check_X_y(X, y, **check_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 1327, in check_X_y
+    X = check_array(
+        ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 1087, in check_array
+    _assert_all_finite(
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 137, in _assert_all_finite
+    _assert_all_finite_element_wise(
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 186, in _assert_all_finite_element_wise
+    raise ValueError(msg_err)
+ValueError: Input X contains NaN.
+LinearRegression does not accept missing values encoded as NaN natively. For supervised learning, you might want to consider sklearn.ensemble.HistGradientBoostingClassifier and Regressor which accept missing values encoded as NaNs natively. Alternatively, it is possible to preprocess the data, for instance by using an imputer transformer in a pipeline or drop samples with missing values. See https://scikit-learn.org/stable/modules/impute.html You can find a list of all estimators that handle NaN values at the following page: https://scikit-learn.org/stable/modules/impute.html#estimators-that-handle-nan-values
+
+Default rate range: [0.003167, 0.093801]
+Mean: 0.03169, Std: 0.01526
+
+Logit transform range: [-5.752, -2.268]
+
+Correlations with logit(default_rate):
+  gdp: -0.0216
+  unemployment: 0.1185
+  hpi: -0.0288
+  bbb_spread: 0.7599
+  sp500: 0.0045
+  djia: -0.1130
+  nasdaq: -0.0769
+  vix: 0.5082
+  cpi: -0.0441
+
+Correlations with log(default_rate):
+  gdp: -0.0227
+  unemployment: 0.1154
+  hpi: -0.0287
+  bbb_spread: 0.7598
+  sp500: 0.0060
+  djia: -0.1113
+  nasdaq: -0.0774
+  vix: 0.5080
+  cpi: -0.0457
+
+
+## [38] assistant
+
+**[reasoning]**
+
+> I see the issue - I need to drop NaN rows when using certain features. Let me fix the script and continue building the model.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Forward fill missing values
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
+
+# The issue was some features are still NaN
+# Use only rows where all relevant features are available
+y = train_ff['default_rate']
+
+features_full = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# Check which features have the least missing
+for col in features_full:
+    n = train_ff[col].notna().sum()
+    print(f"  {col}: {n}/80")
+
+# We need to handle NaN rows
+mask = train_ff[features_full].notna().all(axis=1)
+print(f"\nRows with all features: {mask.sum()}/80")
+
+X_full = train_ff.loc[mask, features_full]
+y_full = y[mask].values
+print(f"X shape: {X_full.shape}")
+
+# Now try logit transform with clean data
+y_logit = np.log(y_full / (1 - y_full))
+
+print(f"\nLogit range: [{y_logit.min():.3f}, {y_logit.max():.3f}]")
+
+# Try bbb_spread alone
+X_bbb = X_full[['bbb_spread']].values
+
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_absolute_error
+
+lr = LinearRegression()
+lr.fit(X_bbb, y_logit)
+pred_lr = lr.predict(X_bbb)
+print(f"\nSimple logit(bbb_spread): R2={r2_score(y_logit, pred_lr):.4f}, MAE={mean_absolute_error(y_full, 1/(1+np.exp(-pred_lr))):.6f}")
+
+gbr = GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.1, random_state=42)
+gbr.fit(X_bbb, y_logit)
+pred_gbr = gbr.predict(X_bbb)
+print(f"GBR logit(bbb_spread): R2={r2_score(y_logit, pred_gbr):.4f}")
+
+# Feature importances
+print(f"\nGBR feature importance (bbb_spread): {gbr.feature_importances_}")
+
+# Now check which rows have NaN issues for scenario prediction
+scenario = pd.read_csv('data/scenario.csv')
+print("\nScenario features check:")
+for col in features_full:
+    n = scenario[col].notna().sum()
+    print(f"  {col}: {n}/9")
+
+PYEOF
+```
+
+## [39] tool
+
+  gdp: 80/80
+  unemployment: 80/80
+  hpi: 70/80
+  bbb_spread: 67/80
+  sp500: 49/80
+  djia: 49/80
+  nasdaq: 80/80
+  vix: 70/80
+  cpi: 80/80
+
+Rows with all features: 49/80
+X shape: (49, 9)
+
+Logit range: [-5.752, -2.268]
+
+Simple logit(bbb_spread): R2=0.5935, MAE=0.007569
+GBR logit(bbb_spread): R2=0.9992
+
+GBR feature importance (bbb_spread): [1.]
+
+Scenario features check:
+  gdp: 9/9
+  unemployment: 9/9
+  hpi: 9/9
+  bbb_spread: 9/9
+  sp500: 9/9
+  djia: 9/9
+  nasdaq: 9/9
+  vix: 9/9
+  cpi: 9/9
+
+
+## [40] assistant
+
+**[reasoning]**
+
+> Now I see the key insight: bbb_spread alone explains a lot of the variance. But with only 49 complete rows, GDR is overfitting. The linear model with logit transform has R²=0.59 which is decent but not great. Let me investigate further and build a more robust model.
+> 
+> The scenario has bbb_spread going up to 3.79, which is just beyond the training max of 3.57. This is an extrapolation problem.
+> 
+> Let me try a more carefully regularized approach, perhaps using only a few key features and doing proper cross-validation.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.linear_model import Ridge, Lasso, LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill missing values  
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
+
+# Use logit transform for bounded prediction
+y_raw = train_ff['default_rate']
+y_logit = np.log(y_raw / (1 - y_raw))
+
+# Key features that are available for all 80 rows
+# Or at least most rows: gdp, unemployment, nasdaq, cpi always available
+# hpi, vix missing from q1-10
+# bbb_spread missing from q1-13
+
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# For training, use only rows where key features are present
+key_features = ['bbb_spread', 'vix', 'unemployment']  # Most predictive
+
+# But we can also use all features with NaN handling
+# Use hist-gradient-boosting which handles NaN natively, 
+# or just use rows with all features
+
+from sklearn.ensemble import HistGradientBoostingRegressor
+
+hgb = HistGradientBoostingRegressor(max_iter=200, max_depth=4, random_state=42)
+
+# All features with NaN
+X_all = train_ff[features]
+hgb.fit(X_all, y_logit)
+
+pred_hgb = hgb.predict(X_all)
+print(f"HGB all features: R2={r2_score(y_logit, pred_hgb):.4f}")
+
+# Feature importances
+print("\nFeature importances (HGB all features):")
+for i, feat in enumerate(features):
+    print(f"  {feat}: {hgb.feature_importances_[i]:.4f}")
+
+# Cross-validation with KFold
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# Since we have NaN, use only complete rows for CV
+mask = train_ff[features].notna().all(axis=1)
+X_clean = X_all[mask]
+y_clean = y_logit[mask]
+
+hgb2 = HistGradientBoostingRegressor(max_iter=100, max_depth=3, random_state=42)
+pred_cv = cross_val_predict(hgb2, X_clean, y_clean, cv=kf)
+print(f"\nHGB CV (clean rows): R2={r2_score(y_clean, pred_cv):.4f}")
+print(f"  MAE (back-transformed): {mean_absolute_error(y_raw[mask], 1/(1+np.exp(-pred_cv))):.6f}")
+
+# Simple model: Ridge on bbb_spread + vix + unemployment with logit
+from sklearn.linear_model import Ridge
+
+model_ridge = Ridge(alpha=1.0)
+X_simple = train_ff[['bbb_spread', 'vix', 'unemployment']]
+pred_ridge_cv = cross_val_predict(model_ridge, X_simple, y_logit, cv=kf)
+print(f"\nRidge (bbb+vix+unemp): R2={r2_score(y_logit, pred_ridge_cv):.4f}")
+print(f"  MAE (back-transformed): {mean_absolute_error(y_raw, 1/(1+np.exp(-pred_ridge_cv))):.6f}")
+
+# Coefficients
+model_ridge.fit(X_simple, y_logit)
+print(f"\n  Coefficients: {dict(zip(['bbb_spread','vix','unemployment'], model_ridge.coef_))}")
+print(f"  Intercept: {model_ridge.intercept_:.4f}")
+
+PYEOF
+```
+
+## [41] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 48, in <module>
+AttributeError: 'HistGradientBoostingRegressor' object has no attribute 'feature_importances_'
+
+HGB all features: R2=0.8061
+
+Feature importances (HGB all features):
 
 
 ## [42] assistant
 
 **[reasoning]**
 
-> The issue is that the scenario dataframe doesn't have the computed features. I need to compute them from the raw scenario data. Let me fix this and also refine the model.
-> 
-> Let me write a complete, self-contained script that:
-> 1. Loads data
-> 2. Creates features for training
-> 3. Fits the best model
-> 4. Computes features for scenario
-> 5. Generates predictions with intervals
-> 6. Saves to predictions.csv
+> Good, now I have a clearer picture. Let me check the results and build a proper model with prediction intervals. The HGB on all features gives R2=0.806, and the Ridge on bbb+vix+unemployment also performs reasonably. Let me build a robust model and create predictions with proper intervals.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.linear_model import Ridge, Lasso
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
-# Load data
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Forward fill missing values  
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+y_raw = train_ff['default_rate']
+y_logit = np.log(y_raw / (1 - y_raw))
 
-# Create feature matrix for training
-X_train = train_filled[macro_cols].copy()
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
 
-# Add transformations
-X_train['unemployment_sq'] = X_train['unemployment'] ** 2
-X_train['bbb_spread_sq'] = X_train['bbb_spread'] ** 2
-X_train['vix_sq'] = X_train['vix'] ** 2
-X_train['gdp_growth'] = X_train['gdp'].diff().fillna(0)
-X_train['unemployment_diff'] = X_train['unemployment'].diff().fillna(0)
-X_train['bbb_spread_diff'] = X_train['bbb_spread'].diff().fillna(0)
-X_train['vix_diff'] = X_train['vix'].diff().fillna(0)
-X_train['gdp_lag1'] = X_train['gdp'].shift(1).bfill()
-X_train['unemployment_lag1'] = X_train['unemployment'].shift(1).bfill()
-X_train['bbb_spread_lag1'] = X_train['bbb_spread'].shift(1).bfill()
-X_train['vix_lag1'] = X_train['vix'].shift(1).bfill()
-X_train['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X_train['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X_train['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
+# Use only complete rows (49 rows) for CV since HistGradientBoosting has issues with missing values in sklearn
+# Actually let's use rows where bbb_spread and vix are available (q14+)
+mask = train_ff[['bbb_spread', 'vix']].notna().all(axis=1)
+print(f"Complete rows (bbb_spread + vix): {mask.sum()}/80")
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X_train.dropna().index
-X_train = X_train.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
+X_full = train_ff.loc[mask, features]
+y_full_logit = y_logit[mask]
+y_full_raw = y_raw[mask]
 
-# Use logit transform
-y_logit = np.log(np.clip(y, 0.001, 0.999) / (1 - np.clip(y, 0.001, 0.999)))
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
-# Best model: bbb_spread + unemployment + bbb_spread_sq + unemployment_sq + gdp_growth
-features = ['bbb_spread', 'unemployment', 'bbb_spread_sq', 'unemployment_sq', 'gdp_growth']
-X_main = X_train[features].values
-X_main_c = np.column_stack([np.ones(len(X_main)), X_main])
+# Test different models
+models = {}
 
-# Fit model
-model = sm.OLS(y_logit, X_main_c).fit()
+# Ridge with all features
+r1 = Ridge(alpha=1.0)
+pred_r1 = cross_val_predict(r1, X_full, y_full_logit, cv=kf)
+models['Ridge_all'] = r1
+print(f"\nRidge (all features): R2={r2_score(y_full_logit, pred_r1):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_full_raw, 1/(1+np.exp(-pred_r1))):.6f}")
 
-print("Final model summary:")
-print(model.summary().as_csv())
+# Ridge with key features only
+key_feats = ['bbb_spread', 'vix', 'unemployment']
+X_key = X_full[key_feats]
+r2_model = Ridge(alpha=1.0)
+pred_r2 = cross_val_predict(r2_model, X_key, y_full_logit, cv=kf)
+models['Ridge_key'] = r2_model
+print(f"\nRidge (bbb+vix+unemp): R2={r2_score(y_full_logit, pred_r2):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_full_raw, 1/(1+np.exp(-pred_r2))):.6f}")
 
-# Get residuals
-residuals = model.resid
-residual_std = residuals.std()
-print(f"\nResidual std (logit): {residual_std:.6f}")
+# GBR with all features
+g1 = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42)
+pred_g1 = cross_val_predict(g1, X_full, y_full_logit, cv=kf)
+print(f"\nGBR (all features): R2={r2_score(y_full_logit, pred_g1):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_full_raw, 1/(1+np.exp(-pred_g1))):.6f}")
 
-# Get covariance matrix
-cov_matrix = model.cov_params()
-t_stat = stats.t.ppf(0.975, model.df_resid)
+# GBR with key features
+g2 = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42)
+pred_g2 = cross_val_predict(g2, X_key, y_full_logit, cv=kf)
+print(f"\nGBR (bbb+vix+unemp): R2={r2_score(y_full_logit, pred_g2):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_full_raw, 1/(1+np.exp(-pred_g2))):.6f}")
 
-# Get training ranges for extrapolation detection
-bbb_train_min, bbb_train_max = X_train['bbb_spread'].min(), X_train['bbb_spread'].max()
-unemp_train_min, unemp_train_max = X_train['unemployment'].min(), X_train['unemployment'].max()
-gdp_train_min, gdp_train_max = X_train['gdp'].min(), X_train['gdp'].max()
+# Residual analysis on best model
+r2_model.fit(X_key, y_full_logit)
+pred_train = r2_model.predict(X_key)
+residuals = y_full_logit - pred_train
 
-print(f"\nTraining ranges:")
-print(f"  bbb_spread: [{bbb_train_min:.2f}, {bbb_train_max:.2f}]")
-print(f"  unemployment: [{unemp_train_min:.2f}, {unemp_train_max:.2f}]")
-print(f"  gdp: [{gdp_train_min:.2f}, {gdp_train_max:.2f}]")
+print(f"\nResidual stats (Ridge key features):")
+print(f"  mean: {residuals.mean():.6f}, std: {residuals.std():.6f}")
+print(f"  min: {residuals.min():.6f}, max: {residuals.max():.6f}")
 
-# Prepare scenario features
-# Compute the same transformations for scenario
-scenario_features = scenario.copy()
-scenario_features['bbb_spread_sq'] = scenario_features['bbb_spread'] ** 2
-scenario_features['unemployment_sq'] = scenario_features['unemployment'] ** 2
-scenario_features['gdp_growth'] = scenario_features['gdp'].diff()
-# For the first scenario quarter, gdp_growth is NaN since we don't have previous quarter
-# Use the last training gdp_growth or 0
-scenario_features['gdp_growth'] = scenario_features['gdp_growth'].fillna(0)
+# Check residuals distribution
+from scipy import stats
+shapiro_stat, shapiro_p = stats.shapiro(residuals)
+print(f"  Shapiro-Wilk: stat={shapiro_stat:.4f}, p={shapiro_p:.4f}")
 
-X_scenario = scenario_features[features].values
-X_scenario_c = np.column_stack([np.ones(len(X_scenario)), X_scenario])
+# Normal quantile analysis
+from scipy.stats import norm
+qq_data = np.sort(residuals)
+theoretical_quantiles = norm.ppf(np.linspace(0.05, 0.95, len(qq_data)))
+corr = np.corrcoef(qq_data, theoretical_quantiles)[0,1]
+print(f"  QQ-normal correlation: {corr:.4f}")
 
-# Generate logit predictions
-y_logit_pred = model.predict(X_scenario_c)
-y_prob_pred = 1 / (1 + np.exp(-y_logit_pred))
-
-print(f"\nScenario predictions (logit -> prob):")
-for i, (q, pred) in enumerate(zip(scenario['quarter'], y_prob_pred)):
-    print(f"  Quarter {q}: {pred:.6f}")
-
-# Compute prediction intervals
-predictions = []
-for i in range(len(scenario)):
-    x = X_scenario_c[i]
-    
-    # Standard error of prediction (model + residual)
-    se_pred = np.sqrt(residual_std**2 * (1 + x @ cov_matrix @ x))
-    
-    # Extrapolation penalty
-    bbb_val = scenario['bbb_spread'].iloc[i]
-    unemp_val = scenario['unemployment'].iloc[i]
-    gdp_val = scenario['gdp'].iloc[i]
-    
-    bbb_range = bbb_train_max - bbb_train_min
-    unemp_range = unemp_train_max - unemp_train_min
-    gdp_range = gdp_train_max - gdp_train_min
-    
-    # How far beyond training range?
-    bbb_extrap = max(0, bbb_val - bbb_train_max) / bbb_range if bbb_range > 0 else 0
-    unemp_extrap = max(0, unemp_val - unemp_train_max) / unemp_range if unemp_range > 0 else 0
-    gdp_extrap = max(0, gdp_train_min - gdp_val) / gdp_range if gdp_range > 0 else 0
-    
-    # Extrapolation factor - more aggressive for more extrapolation
-    extrapolation_factor = 1 + 2 * (bbb_extrap + unemp_extrap + gdp_extrap)
-    
-    se_pred_wide = se_pred * extrapolation_factor
-    
-    # Prediction interval on logit scale
-    y_logit_lower = y_logit_pred[i] - t_stat * se_pred_wide
-    y_logit_upper = y_logit_pred[i] + t_stat * se_pred_wide
-    
-    # Convert to probability scale
-    y_lower = 1 / (1 + np.exp(-y_logit_lower))
-    y_upper = 1 / (1 + np.exp(-y_logit_upper))
-    
-    # Clip to [0, 1]
-    y_lower = max(0, y_lower)
-    y_upper = min(1, y_upper)
-    
-    predictions.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_prob_pred[i],
-        'y_lower': y_lower,
-        'y_upper': y_upper,
-    })
-    
-    print(f"\nQuarter {scenario['quarter'].iloc[i]}:")
-    print(f"  bbb_spread: {bbb_val:.4f} (train: [{bbb_train_min:.2f}, {bbb_train_max:.2f}])")
-    print(f"  unemployment: {unemp_val:.4f} (train: [{unemp_train_min:.2f}, {unemp_train_max:.2f}])")
-    print(f"  gdp: {gdp_val:.4f} (train: [{gdp_train_min:.2f}, {gdp_train_max:.2f}])")
-    print(f"  bbb_extrap: {bbb_extrap:.4f}, unemp_extrap: {unemp_extrap:.4f}, gdp_extrap: {gdp_extrap:.4f}")
-    print(f"  extrapolation_factor: {extrapolation_factor:.4f}")
-    print(f"  y_pred: {y_prob_pred[i]:.6f}")
-    print(f"  y_lower: {y_lower:.6f}")
-    print(f"  y_upper: {y_upper:.6f}")
-
-# Save predictions
-pred_df = pd.DataFrame(predictions)
-pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']].to_csv('predictions.csv', index=False)
-print("\n\nSaved predictions.csv")
-print(pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']])
-
-# Verify
-print(f"\nNumber of rows: {len(pred_df)}")
-print(f"Columns: {pred_df.columns.tolist()}")
-
+PYEOF
 ```
 
 ## [43] tool
 
-Final model summary:
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.592
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.565
-Method:          ,Least Squares   ,  F-statistic:       ,   21.51
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,3.15e-13
-Time:            ,14:41:31        ,  Log-Likelihood:    , -23.284
-No. Observations:,    80          ,  AIC:               ,   58.57
-Df Residuals:    ,    74          ,  BIC:               ,   72.86
-Df Model:        ,     5          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-     ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const,   -4.1732,    0.787,   -5.302, 0.000,   -5.742,   -2.605
-x1   ,    0.6393,    0.196,    3.259, 0.002,    0.248,    1.030
-x2   ,   -0.1344,    0.277,   -0.486, 0.629,   -0.686,    0.417
-x3   ,   -0.0579,    0.051,   -1.128, 0.263,   -0.160,    0.044
-x4   ,    0.0153,    0.025,    0.610, 0.544,   -0.035,    0.065
-x5   ,   -0.0483,    0.024,   -2.026, 0.046,   -0.096,   -0.001
-Omnibus:      , 7.457,  Durbin-Watson:     ,   1.705
-Prob(Omnibus):, 0.024,  Jarque-Bera (JB):  ,   9.825
-Skew:         ,-0.374,  Prob(JB):          , 0.00735
-Kurtosis:     , 4.545,  Cond. No.          ,    762.
+Traceback (most recent call last):
+  File "<stdin>", line 37, in <module>
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/_param_validation.py", line 218, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/model_selection/_validation.py", line 1240, in cross_val_predict
+    predictions = parallel(
+                  ^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/parallel.py", line 91, in __call__
+    return super().__call__(iterable_with_config_and_warning_filters)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/joblib/parallel.py", line 1986, in __call__
+    return output if self.return_generator else list(output)
+                                                ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/joblib/parallel.py", line 1914, in _get_sequential_output
+    res = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/parallel.py", line 184, in __call__
+    return self.function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/model_selection/_validation.py", line 1328, in _fit_and_predict
+    estimator.fit(X_train, y_train, **fit_params)
+  File "/usr/local/lib/python3.12/site-packages/sklearn/base.py", line 1403, in wrapper
+    return fit_method(estimator, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/linear_model/_ridge.py", line 1253, in fit
+    X, y = validate_data(
+           ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 3055, in validate_data
+    X, y = check_X_y(X, y, **check_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 1327, in check_X_y
+    X = check_array(
+        ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 1087, in check_array
+    _assert_all_finite(
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 137, in _assert_all_finite
+    _assert_all_finite_element_wise(
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 186, in _assert_all_finite_element_wise
+    raise ValueError(msg_err)
+ValueError: Input X contains NaN.
+Ridge does not accept missing values encoded as NaN natively. For supervised learning, you might want to consider sklearn.ensemble.HistGradientBoostingClassifier and Regressor which accept missing values encoded as NaNs natively. Alternatively, it is possible to preprocess the data, for instance by using an imputer transformer in a pipeline or drop samples with missing values. See https://scikit-learn.org/stable/modules/impute.html You can find a list of all estimators that handle NaN values at the following page: https://scikit-learn.org/stable/modules/impute.html#estimators-that-handle-nan-values
 
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-
-Residual std (logit): 0.323717
-
-Training ranges:
-  bbb_spread: [0.23, 3.57]
-  unemployment: [3.07, 8.04]
-  gdp: [106.78, 217.36]
-
-Scenario predictions (logit -> prob):
-  Quarter 81: 0.038865
-  Quarter 82: 0.049640
-  Quarter 83: 0.053387
-  Quarter 84: 0.057469
-  Quarter 85: 0.061947
-  Quarter 86: 0.066902
-  Quarter 87: 0.072437
-  Quarter 88: 0.078680
-  Quarter 89: 0.085785
-
-Quarter 81:
-  bbb_spread: 2.4174 (train: [0.23, 3.57])
-  unemployment: 6.2898 (train: [3.07, 8.04])
-  gdp: 213.6347 (train: [106.78, 217.36])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000, gdp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.038865
-  y_lower: 0.020750
-  y_upper: 0.071640
-
-Quarter 82:
-  bbb_spread: 2.5886 (train: [0.23, 3.57])
-  unemployment: 6.5991 (train: [3.07, 8.04])
-  gdp: 209.9690 (train: [106.78, 217.36])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000, gdp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.049640
-  y_lower: 0.026565
-  y_upper: 0.090888
-
-Quarter 83:
-  bbb_spread: 2.7598 (train: [0.23, 3.57])
-  unemployment: 6.9235 (train: [3.07, 8.04])
-  gdp: 206.3662 (train: [106.78, 217.36])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000, gdp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.053387
-  y_lower: 0.028621
-  y_upper: 0.097433
-
-Quarter 84:
-  bbb_spread: 2.9311 (train: [0.23, 3.57])
-  unemployment: 7.2640 (train: [3.07, 8.04])
-  gdp: 202.8252 (train: [106.78, 217.36])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000, gdp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.057469
-  y_lower: 0.030848
-  y_upper: 0.104583
-
-Quarter 85:
-  bbb_spread: 3.1023 (train: [0.23, 3.57])
-  unemployment: 7.6211 (train: [3.07, 8.04])
-  gdp: 199.3449 (train: [106.78, 217.36])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000, gdp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.061947
-  y_lower: 0.033262
-  y_upper: 0.112489
-
-Quarter 86:
-  bbb_spread: 3.2735 (train: [0.23, 3.57])
-  unemployment: 7.9958 (train: [3.07, 8.04])
-  gdp: 195.9244 (train: [106.78, 217.36])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000, gdp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.066902
-  y_lower: 0.035879
-  y_upper: 0.121372
-
-Quarter 87:
-  bbb_spread: 3.4447 (train: [0.23, 3.57])
-  unemployment: 8.3890 (train: [3.07, 8.04])
-  gdp: 192.5626 (train: [106.78, 217.36])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0704, gdp_extrap: 0.0000
-  extrapolation_factor: 1.1409
-  y_pred: 0.072437
-  y_lower: 0.035382
-  y_upper: 0.142563
-
-Quarter 88:
-  bbb_spread: 3.6160 (train: [0.23, 3.57])
-  unemployment: 8.8015 (train: [3.07, 8.04])
-  gdp: 189.2584 (train: [106.78, 217.36])
-  bbb_extrap: 0.0139, unemp_extrap: 0.1535, gdp_extrap: 0.0000
-  extrapolation_factor: 1.3347
-  y_pred: 0.078680
-  y_lower: 0.033616
-  y_upper: 0.173319
-
-Quarter 89:
-  bbb_spread: 3.7872 (train: [0.23, 3.57])
-  unemployment: 9.2342 (train: [3.07, 8.04])
-  gdp: 186.0110 (train: [106.78, 217.36])
-  bbb_extrap: 0.0652, unemp_extrap: 0.2406, gdp_extrap: 0.0000
-  extrapolation_factor: 1.6116
-  y_pred: 0.085785
-  y_lower: 0.029988
-  y_upper: 0.221675
-
-
-Saved predictions.csv
-   quarter    y_pred   y_lower   y_upper
-0       81  0.038865  0.020750  0.071640
-1       82  0.049640  0.026565  0.090888
-2       83  0.053387  0.028621  0.097433
-3       84  0.057469  0.030848  0.104583
-4       85  0.061947  0.033262  0.112489
-5       86  0.066902  0.035879  0.121372
-6       87  0.072437  0.035382  0.142563
-7       88  0.078680  0.033616  0.173319
-8       89  0.085785  0.029988  0.221675
-
-Number of rows: 9
-Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
+Complete rows (bbb_spread + vix): 67/80
 
 
 ## [44] assistant
 
 **[reasoning]**
 
-> The predictions look reasonable. Let me verify the output file and make sure everything is correct. The model uses bbb_spread, unemployment, and their squared terms plus gdp_growth as features. The predictions show increasing default rates as the stress scenario worsens (higher unemployment, higher bbb_spread, lower GDP). The prediction intervals widen as we extrapolate further from the training data.
+> The issue is that even the key features (bbb_spread, vix) don't cover all rows. Let me fix by also checking hpi is available, or use only the features that are always present for all 80 rows.
 > 
-> Let me verify the file is correct and complete.
+> Actually, bbb_spread and vix together have 67/80 complete rows. The missing ones are q1-10 where vix is missing, and q1-13 where bbb_spread is missing. But we can use those rows with just gdp, unemployment, nasdaq, cpi.
+> 
+> Let me restructure: use ALL 80 rows by creating feature subsets that work for each row, or forward-fill the missing values.
 > 
 
 
@@ -3415,822 +1752,1010 @@ Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
 **tool call: bash**
 
 ```
-cat predictions.csv
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_absolute_error
+from sklearn.preprocessing import StandardScaler
+
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill missing values  
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
+
+y_raw = train_ff['default_rate']
+y_logit = np.log(y_raw / (1 - y_raw))
+
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# Now all data has no NaN (we forward filled)
+print(f"Missing after fill: {train_ff[features].isna().sum().sum()}")
+
+# Use ALL 80 rows
+X_all = train_ff[features].values
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+key_feats_idx = [features.index(c) for c in ['bbb_spread', 'vix', 'unemployment']]
+X_key = train_ff[['bbb_spread', 'vix', 'unemployment']].values
+
+# Also try with gdp and cpi
+X_key2 = train_ff[['bbb_spread', 'vix', 'unemployment', 'gdp', 'cpi']].values
+
+# Build pipeline with scaling
+from sklearn.pipeline import Pipeline
+
+pipeline_ridge = Pipeline([
+    ('scaler', StandardScaler()),
+    ('ridge', Ridge(alpha=1.0))
+])
+
+pipeline_gbr = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42)
+
+# Ridge on all features
+pred_r1 = cross_val_predict(pipeline_ridge, X_all, y_logit, cv=kf)
+print(f"Ridge (all features): R2={r2_score(y_logit, pred_r1):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_raw, 1/(1+np.exp(-pred_r1))):.6f}")
+
+# Ridge on key features
+pred_r2 = cross_val_predict(pipeline_ridge, X_key, y_logit, cv=kf)
+print(f"\nRidge (bbb+vix+unemp): R2={r2_score(y_logit, pred_r2):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_raw, 1/(1+np.exp(-pred_r2))):.6f}")
+
+# Ridge on key + gdp, cpi
+pred_r3 = cross_val_predict(pipeline_ridge, X_key2, y_logit, cv=kf)
+print(f"\nRidge (bbb+vix+unemp+gdp+cpi): R2={r2_score(y_logit, pred_r3):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_raw, 1/(1+np.exp(-pred_r3))):.6f}")
+
+# GBR on key features
+pred_g1 = cross_val_predict(pipeline_gbr, X_key, y_logit, cv=kf)
+print(f"\nGBR (bbb+vix+unemp): R2={r2_score(y_logit, pred_g1):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_raw, 1/(1+np.exp(-pred_g1))):.6f}")
+
+# GBR on key + gdp, cpi
+pred_g2 = cross_val_predict(pipeline_gbr, X_key2, y_logit, cv=kf)
+print(f"\nGBR (bbb+vix+unemp+gdp+cpi): R2={r2_score(y_logit, pred_g2):.4f}")
+print(f"  MAE raw: {mean_absolute_error(y_raw, 1/(1+np.exp(-pred_g2))):.6f}")
+
+PYEOF
 ```
 
 ## [45] tool
 
-quarter,y_pred,y_lower,y_upper
-81,0.038865237692159035,0.02074950686715066,0.07164014516295618
-82,0.049640339705440795,0.026564957481157038,0.0908884180207819
-83,0.0533865831012561,0.028620648041380436,0.09743334834747547
-84,0.05746880471319826,0.030848103605354827,0.10458310382772859
-85,0.06194659875192873,0.033262359355972194,0.11248878682463158
-86,0.06690212765033939,0.03587937886362076,0.12137161879703035
-87,0.07243725586365722,0.03538237398000242,0.1425632828514046
-88,0.07867986740327637,0.03361613618758494,0.17331892496834497
-89,0.08578508730041631,0.02998801848133553,0.22167523228873612
+Traceback (most recent call last):
+  File "<stdin>", line 46, in <module>
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/_param_validation.py", line 218, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/model_selection/_validation.py", line 1240, in cross_val_predict
+    predictions = parallel(
+                  ^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/parallel.py", line 91, in __call__
+    return super().__call__(iterable_with_config_and_warning_filters)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/joblib/parallel.py", line 1986, in __call__
+    return output if self.return_generator else list(output)
+                                                ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/joblib/parallel.py", line 1914, in _get_sequential_output
+    res = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/parallel.py", line 184, in __call__
+    return self.function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/model_selection/_validation.py", line 1328, in _fit_and_predict
+    estimator.fit(X_train, y_train, **fit_params)
+  File "/usr/local/lib/python3.12/site-packages/sklearn/base.py", line 1403, in wrapper
+    return fit_method(estimator, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/pipeline.py", line 649, in fit
+    self._final_estimator.fit(Xt, y, **last_step_params["fit"])
+  File "/usr/local/lib/python3.12/site-packages/sklearn/base.py", line 1403, in wrapper
+    return fit_method(estimator, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/linear_model/_ridge.py", line 1253, in fit
+    X, y = validate_data(
+           ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 3055, in validate_data
+    X, y = check_X_y(X, y, **check_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 1327, in check_X_y
+    X = check_array(
+        ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 1087, in check_array
+    _assert_all_finite(
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 137, in _assert_all_finite
+    _assert_all_finite_element_wise(
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 186, in _assert_all_finite_element_wise
+    raise ValueError(msg_err)
+ValueError: Input X contains NaN.
+Ridge does not accept missing values encoded as NaN natively. For supervised learning, you might want to consider sklearn.ensemble.HistGradientBoostingClassifier and Regressor which accept missing values encoded as NaNs natively. Alternatively, it is possible to preprocess the data, for instance by using an imputer transformer in a pipeline or drop samples with missing values. See https://scikit-learn.org/stable/modules/impute.html You can find a list of all estimators that handle NaN values at the following page: https://scikit-learn.org/stable/modules/impute.html#estimators-that-handle-nan-values
+
+Missing after fill: 95
 
 
 ## [46] assistant
 
 **[reasoning]**
 
-> The predictions look reasonable - default rates increase as the stress scenario worsens (higher unemployment, higher bbb_spread, lower GDP). The intervals widen as we extrapolate further.
+> The issue is that we're using train_ff[features] which still has NaN values because `hpi` and `vix` only start at quarter 11, so there are still NaN in those columns even after forward fill. Let me fix this properly - we need to forward fill these too, but actually they can't be forward-filled before they exist. Let me use bfill or fill with a sensible value, or just drop those early rows from training for models that need them.
 > 
-> However, I notice the lower bounds are getting quite low for later quarters, which seems odd. Let me reconsider the approach. The issue is that the logit transformation creates asymmetric intervals when mapped back to probability space. Also, the extrapolation penalty is making the upper bounds very wide.
+> Actually wait - the forward fill I did was only for 'hpi', 'bbb_spread', 'sp500', 'djia'. But the issue is hpi and vix have NaN for rows 0-9 (quarters 1-10). So when I select X_all = train_ff[features], those rows still have NaN in hpi and vix.
 > 
-> Let me refine the model and make sure the predictions are sensible. I should also consider that the scenario is a stress scenario where default rates should be higher than normal, and the intervals should reflect genuine uncertainty.
+> The simplest fix: either (1) use only rows where all features are present, or (2) fill the early NaN with a sensible value.
 > 
-> Let me also try a different approach - use the raw default rate model (which gave better LOO CV) and compute intervals more carefully.
+> Let me use approach 1: only use rows where all key features are present. The model needs bbb_spread, vix at minimum. Those start at q14 and q11 respectively, so rows from q14 onward have all features (67 rows).
+> 
+> Actually let me re-check: I forward-filled hpi, bbb_spread, sp500, djia. But vix was NOT in that list! vix starts at q11 too but has NaN for q1-10. Let me fix the forward fill to also cover vix if needed, or just use rows from q14 onward.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
 
-# Load data
 train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Forward fill ALL late-starting series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+print("Missing after full forward fill:")
+for col in ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']:
+    print(f"  {col}: {train[col].isna().sum()}")
 
-# Create feature matrix for training
-X_train = train_filled[macro_cols].copy()
+# Also fill any remaining early NaN for vix using bfill (backwards) - shouldn't be needed
+# The forward fill of vix fills q11-80, but q1-10 are still NaN
+# For those early rows, we can use forward fill of the entire dataframe
 
-# Add transformations
-X_train['unemployment_sq'] = X_train['unemployment'] ** 2
-X_train['bbb_spread_sq'] = X_train['bbb_spread'] ** 2
-X_train['vix_sq'] = X_train['vix'] ** 2
-X_train['gdp_growth'] = X_train['gdp'].diff().fillna(0)
-X_train['unemployment_diff'] = X_train['unemployment'].diff().fillna(0)
-X_train['bbb_spread_diff'] = X_train['bbb_spread'].diff().fillna(0)
-X_train['vix_diff'] = X_train['vix'].diff().fillna(0)
-X_train['gdp_lag1'] = X_train['gdp'].shift(1).bfill()
-X_train['unemployment_lag1'] = X_train['unemployment'].shift(1).bfill()
-X_train['bbb_spread_lag1'] = X_train['bbb_spread'].shift(1).bfill()
-X_train['vix_lag1'] = X_train['vix'].shift(1).bfill()
-X_train['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X_train['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X_train['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
+train2 = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train2[col] = train[col].bfill()  # Fill early NaN with nearest future value
+# Actually for vix, let's also forward fill (it starts at q11)
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X_train.dropna().index
-X_train = X_train.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
+# The problem is vix starts at q11 - we can't forward-fill pre-q11 values
+# Solution: just use rows q14+ for training (where all features present)
 
-# Use the best model: bbb_spread + unemployment (raw)
-# This had the best LOO CV performance
-features = ['bbb_spread', 'unemployment']
-X_main = X_train[features].values
-X_main_c = np.column_stack([np.ones(len(X_main)), X_main])
+mask = train[['hpi', 'bbb_spread', 'vix']].notna().all(axis=1)
+print(f"\nRows where hpi, bbb_spread, vix all present: {mask.sum()}")
+print(f"First such quarter: {train.loc[mask, 'quarter'].min()}")
 
-# Fit model
-model = sm.OLS(y, X_main_c).fit()
+# Alternative: forward fill vix after the series starts
+train['vix'] = train['vix'].ffill()
+mask2 = train[['hpi', 'bbb_spread', 'vix']].notna().all(axis=1)
+print(f"\nAfter forward fill of vix: {mask2.sum()} rows complete")
+print(f"Quarters with hpi but no vix: {((train['hpi'].notna()) & (train['vix'].isna())).sum()}")
+print(f"Quarters with vix but no hpi: {((train['vix'].notna()) & (train['hpi'].isna())).sum()}")
 
-print("Final model summary:")
-print(model.summary().as_csv())
-
-# Get residuals
-residuals = model.resid
-residual_std = residuals.std()
-print(f"\nResidual std: {residual_std:.6f}")
-
-# Check residuals for patterns
-y_pred_train = model.predict(X_main_c)
-print(f"Predicted range: [{y_pred_train.min():.6f}, {y_pred_train.max():.6f}]")
-print(f"Actual range: [{y.min():.6f}, {y.max():.6f}]")
-
-# Check for heteroskedasticity
-from scipy.stats import spearmanr
-corr, pval = spearmanr(y_pred_train, np.abs(residuals))
-print(f"Spearman correlation (predicted vs |residual|): {corr:.4f}, p={pval:.4f}")
-
-# Get covariance matrix
-cov_matrix = model.cov_params()
-t_stat = stats.t.ppf(0.975, model.df_resid)
-
-# Get training ranges for extrapolation detection
-bbb_train_min, bbb_train_max = X_train['bbb_spread'].min(), X_train['bbb_spread'].max()
-unemp_train_min, unemp_train_max = X_train['unemployment'].min(), X_train['unemployment'].max()
-
-print(f"\nTraining ranges:")
-print(f"  bbb_spread: [{bbb_train_min:.2f}, {bbb_train_max:.2f}]")
-print(f"  unemployment: [{unemp_train_min:.2f}, {unemp_train_max:.2f}]")
-
-# Prepare scenario features
-scenario_features = scenario[['bbb_spread', 'unemployment']].values
-scenario_c = np.column_stack([np.ones(len(scenario_features)), scenario_features])
-
-# Generate predictions
-y_pred = model.predict(scenario_c)
-
-print(f"\nScenario predictions:")
-for i, (q, pred) in enumerate(zip(scenario['quarter'], y_pred)):
-    print(f"  Quarter {q}: {pred:.6f}")
-
-# Compute prediction intervals
-# Use a more robust approach:
-# 1. Compute the standard prediction interval
-# 2. Widen it for extrapolation
-# 3. Also consider using the empirical distribution of residuals
-
-# Get empirical residual quantiles
-residual_sorted = np.sort(residuals)
-emp_lower = np.percentile(residuals, 2.5)
-emp_upper = np.percentile(residuals, 97.5)
-print(f"\nEmpirical residual 2.5th percentile: {emp_lower:.6f}")
-print(f"Empirical residual 97.5th percentile: {emp_upper:.6f}")
-
-predictions = []
-for i in range(len(scenario)):
-    x = scenario_c[i]
-    
-    # Standard error of prediction
-    se_pred = np.sqrt(residual_std**2 * (1 + x @ cov_matrix @ x))
-    
-    # Extrapolation penalty
-    bbb_val = scenario['bbb_spread'].iloc[i]
-    unemp_val = scenario['unemployment'].iloc[i]
-    
-    bbb_range = bbb_train_max - bbb_train_min
-    unemp_range = unemp_train_max - unemp_train_min
-    
-    # How far beyond training range?
-    bbb_extrap = max(0, bbb_val - bbb_train_max) / bbb_range if bbb_range > 0 else 0
-    unemp_extrap = max(0, unemp_val - unemp_train_max) / unemp_range if unemp_range > 0 else 0
-    
-    # Extrapolation factor
-    extrapolation_factor = 1 + 2 * (bbb_extrap + unemp_extrap)
-    
-    se_pred_wide = se_pred * extrapolation_factor
-    
-    # Prediction interval on raw scale
-    y_lower = y_pred[i] - t_stat * se_pred_wide
-    y_upper = y_pred[i] + t_stat * se_pred_wide
-    
-    # Clip to [0, 1]
-    y_lower = max(0, y_lower)
-    y_upper = min(1, y_upper)
-    
-    predictions.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_pred[i],
-        'y_lower': y_lower,
-        'y_upper': y_upper,
-    })
-    
-    print(f"\nQuarter {scenario['quarter'].iloc[i]}:")
-    print(f"  bbb_spread: {bbb_val:.4f} (train: [{bbb_train_min:.2f}, {bbb_train_max:.2f}])")
-    print(f"  unemployment: {unemp_val:.4f} (train: [{unemp_train_min:.2f}, {unemp_train_max:.2f}])")
-    print(f"  bbb_extrap: {bbb_extrap:.4f}, unemp_extrap: {unemp_extrap:.4f}")
-    print(f"  extrapolation_factor: {extrapolation_factor:.4f}")
-    print(f"  y_pred: {y_pred[i]:.6f}")
-    print(f"  y_lower: {y_lower:.6f}")
-    print(f"  y_upper: {y_upper:.6f}")
-
-# Save predictions
-pred_df = pd.DataFrame(predictions)
-pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']].to_csv('predictions.csv', index=False)
-print("\n\nSaved predictions.csv")
-print(pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']])
-
-# Verify
-print(f"\nNumber of rows: {len(pred_df)}")
-print(f"Columns: {pred_df.columns.tolist()}")
-
+PYEOF
 ```
 
 ## [47] tool
 
-Final model summary:
-                      OLS Regression Results                     
-Dep. Variable:   ,y               ,  R-squared:         ,   0.516
-Model:           ,OLS             ,  Adj. R-squared:    ,   0.504
-Method:          ,Least Squares   ,  F-statistic:       ,   41.07
-Date:            ,Tue, 27 Oct 2026,  Prob (F-statistic):,7.26e-13
-Time:            ,14:42:20        ,  Log-Likelihood:    ,  250.63
-No. Observations:,    80          ,  AIC:               ,  -495.3
-Df Residuals:    ,    77          ,  BIC:               ,  -488.1
-Df Model:        ,     2          ,                     ,        
-Covariance Type: ,nonrobust       ,                     ,        
-     ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
-const,   -0.0062,    0.007,   -0.935, 0.353,   -0.019,    0.007
-x1   ,    0.0127,    0.001,    8.700, 0.000,    0.010,    0.016
-x2   ,    0.0025,    0.001,    2.292, 0.025,    0.000,    0.005
-Omnibus:      ,37.142,  Durbin-Watson:     ,   2.094
-Prob(Omnibus):, 0.000,  Jarque-Bera (JB):  , 131.277
-Skew:         , 1.389,  Prob(JB):          ,3.12e-29
-Kurtosis:     , 8.627,  Cond. No.          ,    33.5
+Missing after full forward fill:
+  gdp: 0
+  unemployment: 0
+  hpi: 10
+  bbb_spread: 13
+  sp500: 31
+  djia: 31
+  nasdaq: 0
+  vix: 10
+  cpi: 0
 
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+Rows where hpi, bbb_spread, vix all present: 67
+First such quarter: 14
 
-Residual std: 0.010547
-Predicted range: [0.011024, 0.053286]
-Actual range: [0.003167, 0.093801]
-Spearman correlation (predicted vs |residual|): 0.3864, p=0.0004
-
-Training ranges:
-  bbb_spread: [0.23, 3.57]
-  unemployment: [3.07, 8.04]
-
-Scenario predictions:
-  Quarter 81: 0.040167
-  Quarter 82: 0.043111
-  Quarter 83: 0.046093
-  Quarter 84: 0.049115
-  Quarter 85: 0.052178
-  Quarter 86: 0.055285
-  Quarter 87: 0.058438
-  Quarter 88: 0.061640
-  Quarter 89: 0.064891
-
-Empirical residual 2.5th percentile: -0.017315
-Empirical residual 97.5th percentile: 0.019741
-
-Quarter 81:
-  bbb_spread: 2.4174 (train: [0.23, 3.57])
-  unemployment: 6.2898 (train: [3.07, 8.04])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.040167
-  y_lower: 0.019164
-  y_upper: 0.061170
-
-Quarter 82:
-  bbb_spread: 2.5886 (train: [0.23, 3.57])
-  unemployment: 6.5991 (train: [3.07, 8.04])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.043111
-  y_lower: 0.022108
-  y_upper: 0.064114
-
-Quarter 83:
-  bbb_spread: 2.7598 (train: [0.23, 3.57])
-  unemployment: 6.9235 (train: [3.07, 8.04])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.046093
-  y_lower: 0.025090
-  y_upper: 0.067095
-
-Quarter 84:
-  bbb_spread: 2.9311 (train: [0.23, 3.57])
-  unemployment: 7.2640 (train: [3.07, 8.04])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.049115
-  y_lower: 0.028113
-  y_upper: 0.070118
-
-Quarter 85:
-  bbb_spread: 3.1023 (train: [0.23, 3.57])
-  unemployment: 7.6211 (train: [3.07, 8.04])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.052178
-  y_lower: 0.031176
-  y_upper: 0.073181
-
-Quarter 86:
-  bbb_spread: 3.2735 (train: [0.23, 3.57])
-  unemployment: 7.9958 (train: [3.07, 8.04])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0000
-  extrapolation_factor: 1.0000
-  y_pred: 0.055285
-  y_lower: 0.034282
-  y_upper: 0.076288
-
-Quarter 87:
-  bbb_spread: 3.4447 (train: [0.23, 3.57])
-  unemployment: 8.3890 (train: [3.07, 8.04])
-  bbb_extrap: 0.0000, unemp_extrap: 0.0704
-  extrapolation_factor: 1.1409
-  y_pred: 0.058438
-  y_lower: 0.034476
-  y_upper: 0.082400
-
-Quarter 88:
-  bbb_spread: 3.6160 (train: [0.23, 3.57])
-  unemployment: 8.8015 (train: [3.07, 8.04])
-  bbb_extrap: 0.0139, unemp_extrap: 0.1535
-  extrapolation_factor: 1.3347
-  y_pred: 0.061640
-  y_lower: 0.033608
-  y_upper: 0.089672
-
-Quarter 89:
-  bbb_spread: 3.7872 (train: [0.23, 3.57])
-  unemployment: 9.2342 (train: [3.07, 8.04])
-  bbb_extrap: 0.0652, unemp_extrap: 0.2406
-  extrapolation_factor: 1.6116
-  y_pred: 0.064891
-  y_lower: 0.031043
-  y_upper: 0.098739
-
-
-Saved predictions.csv
-   quarter    y_pred   y_lower   y_upper
-0       81  0.040167  0.019164  0.061170
-1       82  0.043111  0.022108  0.064114
-2       83  0.046093  0.025090  0.067095
-3       84  0.049115  0.028113  0.070118
-4       85  0.052178  0.031176  0.073181
-5       86  0.055285  0.034282  0.076288
-6       87  0.058438  0.034476  0.082400
-7       88  0.061640  0.033608  0.089672
-8       89  0.064891  0.031043  0.098739
-
-Number of rows: 9
-Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
+After forward fill of vix: 67 rows complete
+Quarters with hpi but no vix: 0
+Quarters with vix but no hpi: 0
 
 
 ## [48] assistant
 
 **[reasoning]**
 
-> The current model is a simple linear model with bbb_spread and unemployment. The residuals show heteroskedasticity (Spearman correlation of 0.3864, p=0.0004), meaning the residual variance increases with the predicted value. This is a problem for prediction intervals.
+> I see - vix starts at q11 and hpi also starts at q11. So after forward fill, rows 0-9 (q1-10) still have NaN for both hpi and vix. Let me handle this by forward-filling from the beginning - using the values from q11 for all earlier rows.
 > 
-> Let me think about this more carefully. The scenario pushes unemployment beyond the training range (up to 9.23 vs max 8.04) and bbb_spread beyond (up to 3.79 vs max 3.57). The model needs to handle this extrapolation.
+> Actually, a cleaner approach: I'll use only the 67 rows where all features are available (q14-80), since bbb_spread starts at q14. Then I can train and predict on those.
 > 
-> Let me also consider that the residuals are skewed (skew=1.389, kurtosis=8.627), which means the normality assumption is violated. This could affect the prediction intervals.
-> 
-> Let me try a more robust approach:
-> 1. Use a model that better captures the relationship (maybe with transformations)
-> 2. Use bootstrap or empirical residuals for prediction intervals
-> 3. Account for extrapolation uncertainty
-> 
-> Let me also reconsider the model. The bbb_spread has the strongest correlation (0.6995) with default_rate. Let me try a model that focuses on this relationship more carefully.
-> 
-> Also, I should consider that the scenario is a stress scenario where unemployment is rising and bbb_spread is widening - both of which should increase default rates. The model should reflect this.
-> 
-> Let me try a more comprehensive approach with:
-> 1. Better feature engineering
-> 2. Bootstrap-based prediction intervals
-> 3. More careful extrapolation handling
+> For prediction, all 9 scenario rows have all features available.
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
 
-# Load data
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Forward fill ALL late-starting series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+# Now fill remaining NaN by forward-fill from start of series
+# hpi and vix both start at q11, so forward-fill those columns too from row 0
+for col in ['hpi', 'vix']:
+    train[col] = train[col].ffill()
 
-# Create feature matrix for training
-X_train = train_filled[macro_cols].copy()
+# After forward fill:
+print("After forward fill, missing values:")
+for col in ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']:
+    print(f"  {col}: {train[col].isna().sum()}")
 
-# Add transformations
-X_train['unemployment_sq'] = X_train['unemployment'] ** 2
-X_train['bbb_spread_sq'] = X_train['bbb_spread'] ** 2
-X_train['vix_sq'] = X_train['vix'] ** 2
-X_train['gdp_growth'] = X_train['gdp'].diff().fillna(0)
-X_train['unemployment_diff'] = X_train['unemployment'].diff().fillna(0)
-X_train['bbb_spread_diff'] = X_train['bbb_spread'].diff().fillna(0)
-X_train['vix_diff'] = X_train['vix'].diff().fillna(0)
-X_train['gdp_lag1'] = X_train['gdp'].shift(1).bfill()
-X_train['unemployment_lag1'] = X_train['unemployment'].shift(1).bfill()
-X_train['bbb_spread_lag1'] = X_train['bbb_spread'].shift(1).bfill()
-X_train['vix_lag1'] = X_train['vix'].shift(1).bfill()
-X_train['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X_train['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X_train['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
+# bbb_spread still has 13 NaN (q1-13), forward fill should work
+train['bbb_spread'] = train['bbb_spread'].ffill()
+print(f"\nAfter forward fill of bbb_spread: {train['bbb_spread'].isna().sum()}")
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X_train.dropna().index
-X_train = X_train.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
+# Also sp500 and djia
+for col in ['sp500', 'djia']:
+    train[col] = train[col].ffill()
+    print(f"  {col}: {train[col].isna().sum()}")
 
-# Use the best model: bbb_spread + unemployment (raw)
-features = ['bbb_spread', 'unemployment']
-X_main = X_train[features].values
-X_main_c = np.column_stack([np.ones(len(X_main)), X_main])
+# Now all features should be complete
+print(f"\nTotal remaining NaN: {train[['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']].isna().sum().sum()}")
 
-# Fit model
-model = sm.OLS(y, X_main_c).fit()
+# Verify we can use all 80 rows
+print(f"\nFirst quarter: {train['quarter'].min()}")
+print(f"Last quarter: {train['quarter'].max()}")
 
-# Get residuals
-residuals = model.resid
-residual_std = residuals.std()
+# Check first few rows for forward-filled values
+print("\nFirst 15 quarters (features):")
+print(train.head(15)[['quarter', 'hpi', 'bbb_spread', 'sp500', 'djia', 'vix']].to_string())
 
-# Get covariance matrix
-cov_matrix = model.cov_params()
-t_stat = stats.t.ppf(0.975, model.df_resid)
-
-# Get training ranges
-bbb_train_min, bbb_train_max = X_train['bbb_spread'].min(), X_train['bbb_spread'].max()
-unemp_train_min, unemp_train_max = X_train['unemployment'].min(), X_train['unemployment'].max()
-
-# Prepare scenario features
-scenario_features = scenario[['bbb_spread', 'unemployment']].values
-scenario_c = np.column_stack([np.ones(len(scenario_features)), scenario_features])
-
-# Generate predictions
-y_pred = model.predict(scenario_c)
-
-# Bootstrap-based prediction intervals
-# This accounts for both model uncertainty and residual uncertainty
-np.random.seed(42)
-n_bootstrap = 5000
-
-# For each bootstrap sample, fit the model and predict
-bootstrap_preds = np.zeros((n_bootstrap, len(scenario)))
-
-for b in range(n_bootstrap):
-    # Resample residuals
-    boot_residuals = np.random.choice(residuals, size=len(y), replace=True)
-    
-    # Generate bootstrap y values
-    y_boot = model.predict(X_main_c) + boot_residuals
-    
-    # Refit model
-    model_boot = sm.OLS(y_boot, X_main_c).fit()
-    
-    # Predict on scenario
-    boot_pred = model_boot.predict(scenario_c)
-    bootstrap_preds[b] = boot_pred
-
-# Compute percentiles
-y_lower = np.percentile(bootstrap_preds, 2.5, axis=0)
-y_upper = np.percentile(bootstrap_preds, 97.5, axis=0)
-y_pred_bootstrap = np.median(bootstrap_preds, axis=0)
-
-print("Bootstrap predictions:")
-for i, q in enumerate(scenario['quarter']):
-    print(f"  Quarter {q}: pred={y_pred_bootstrap[i]:.6f}, [{y_lower[i]:.6f}, {y_upper[i]:.6f}]")
-
-# Also compute analytical prediction intervals for comparison
-predictions_analytical = []
-for i in range(len(scenario)):
-    x = scenario_c[i]
-    se_pred = np.sqrt(residual_std**2 * (1 + x @ cov_matrix @ x))
-    
-    # Extrapolation penalty
-    bbb_val = scenario['bbb_spread'].iloc[i]
-    unemp_val = scenario['unemployment'].iloc[i]
-    
-    bbb_range = bbb_train_max - bbb_train_min
-    unemp_range = unemp_train_max - unemp_train_min
-    
-    bbb_extrap = max(0, bbb_val - bbb_train_max) / bbb_range if bbb_range > 0 else 0
-    unemp_extrap = max(0, unemp_val - unemp_train_max) / unemp_range if unemp_range > 0 else 0
-    
-    extrapolation_factor = 1 + 2 * (bbb_extrap + unemp_extrap)
-    se_pred_wide = se_pred * extrapolation_factor
-    
-    y_lower_a = y_pred[i] - t_stat * se_pred_wide
-    y_upper_a = y_pred[i] + t_stat * se_pred_wide
-    
-    y_lower_a = max(0, y_lower_a)
-    y_upper_a = min(1, y_upper_a)
-    
-    predictions_analytical.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_pred[i],
-        'y_lower': y_lower_a,
-        'y_upper': y_upper_a,
-    })
-
-print("\nAnalytical predictions:")
-for p in predictions_analytical:
-    print(f"  Quarter {p['quarter']}: pred={p['y_pred']:.6f}, [{p['y_lower']:.6f}, {p['y_upper']:.6f}]")
-
-# Use bootstrap intervals as they better capture the non-normality of residuals
-predictions = []
-for i in range(len(scenario)):
-    predictions.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_pred[i],
-        'y_lower': max(0, y_lower[i]),
-        'y_upper': min(1, y_upper[i]),
-    })
-
-# Save predictions
-pred_df = pd.DataFrame(predictions)
-pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']].to_csv('predictions.csv', index=False)
-print("\n\nSaved predictions.csv")
-print(pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']])
-
-# Verify
-print(f"\nNumber of rows: {len(pred_df)}")
-print(f"Columns: {pred_df.columns.tolist()}")
-
+PYEOF
 ```
 
 ## [49] tool
 
-Bootstrap predictions:
-  Quarter 81: pred=0.040097, [0.037122, 0.043613]
-  Quarter 82: pred=0.043015, [0.039538, 0.047128]
-  Quarter 83: pred=0.045990, [0.041864, 0.050811]
-  Quarter 84: pred=0.049006, [0.044164, 0.054644]
-  Quarter 85: pred=0.052039, [0.046378, 0.058563]
-  Quarter 86: pred=0.055133, [0.048604, 0.062578]
-  Quarter 87: pred=0.058265, [0.050868, 0.066652]
-  Quarter 88: pred=0.061450, [0.053144, 0.070849]
-  Quarter 89: pred=0.064702, [0.055453, 0.075073]
+After forward fill, missing values:
+  gdp: 0
+  unemployment: 0
+  hpi: 10
+  bbb_spread: 13
+  sp500: 31
+  djia: 31
+  nasdaq: 0
+  vix: 10
+  cpi: 0
 
-Analytical predictions:
-  Quarter 81: pred=0.040167, [0.019164, 0.061170]
-  Quarter 82: pred=0.043111, [0.022108, 0.064114]
-  Quarter 83: pred=0.046093, [0.025090, 0.067095]
-  Quarter 84: pred=0.049115, [0.028113, 0.070118]
-  Quarter 85: pred=0.052178, [0.031176, 0.073181]
-  Quarter 86: pred=0.055285, [0.034282, 0.076288]
-  Quarter 87: pred=0.058438, [0.034476, 0.082400]
-  Quarter 88: pred=0.061640, [0.033608, 0.089672]
-  Quarter 89: pred=0.064891, [0.031043, 0.098739]
+After forward fill of bbb_spread: 13
+  sp500: 31
+  djia: 31
 
+Total remaining NaN: 95
 
-Saved predictions.csv
-   quarter    y_pred   y_lower   y_upper
-0       81  0.040167  0.037122  0.043613
-1       82  0.043111  0.039538  0.047128
-2       83  0.046093  0.041864  0.050811
-3       84  0.049115  0.044164  0.054644
-4       85  0.052178  0.046378  0.058563
-5       86  0.055285  0.048604  0.062578
-6       87  0.058438  0.050868  0.066652
-7       88  0.061640  0.053144  0.070849
-8       89  0.064891  0.055453  0.075073
+First quarter: 1
+Last quarter: 80
 
-Number of rows: 9
-Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
+First 15 quarters (features):
+    quarter       hpi  bbb_spread  sp500  djia      vix
+0         1       NaN         NaN    NaN   NaN      NaN
+1         2       NaN         NaN    NaN   NaN      NaN
+2         3       NaN         NaN    NaN   NaN      NaN
+3         4       NaN         NaN    NaN   NaN      NaN
+4         5       NaN         NaN    NaN   NaN      NaN
+5         6       NaN         NaN    NaN   NaN      NaN
+6         7       NaN         NaN    NaN   NaN      NaN
+7         8       NaN         NaN    NaN   NaN      NaN
+8         9       NaN         NaN    NaN   NaN      NaN
+9        10       NaN         NaN    NaN   NaN      NaN
+10       11  190.6755         NaN    NaN   NaN  15.0916
+11       12  196.1593         NaN    NaN   NaN  15.0915
+12       13  201.1923         NaN    NaN   NaN  12.4405
+13       14  205.4341      1.4837    NaN   NaN  12.5775
+14       15  207.1471      1.5201    NaN   NaN  10.7253
 
 
 ## [50] assistant
 
 **[reasoning]**
 
-> The bootstrap intervals are too narrow - they only capture model uncertainty, not the full prediction uncertainty (which should include residual variance). Let me fix this by adding the residual variance to the bootstrap predictions.
+> The forward fill from earlier rows isn't working because the NaN values are at the beginning of each series. I need to forward fill them after dropping early rows, or use different imputation.
+> 
+> Let me reconsider: the missing values for hpi start at q1-q10, for bbb_spread at q1-q13, etc. These are genuinely missing because those data series started later. For the early quarters where these features don't exist, I have a few options:
+> 
+> 1. Only use rows q14+ where bbb_spread is available (the latest series to start)
+> 2. Forward fill NaN values from the end of preceding rows - but that doesn't work since these are leading NaNs
+> 3. Use multiple imputation approaches
+> 
+> Actually, for predicting default rates under stress, the key question is: what features matter? bbb_spread has the highest correlation with default rate. vix also matters a lot. The scenario quarters are 81-89, and all scenario features are available.
+> 
+> For training, let me just use rows 14+ (where bbb_spread data is available), which gives me 67 rows. That's plenty for a simple model.
+> 
+> But actually, I should forward fill properly - I need to fill those NaN values from q1-q10 with some reasonable value, or just exclude those rows. Let me check if forward fill from the first available value works:
 > 
 
 
 
 
 
-**tool call: python**
+**tool call: bash**
 
 ```
-
+python << 'PYEOF'
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import cross_val_score, KFold, LeaveOneOut
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression
 
-# Load data
 train = pd.read_csv('data/train.csv')
+
+# The issue: forward_fill on early rows where values are NaN at start
+# hpi is NaN for q1-q10, first value at q11
+# bbb_spread is NaN for q1-q13, first value at q14
+# These are genuinely missing - they didn't exist yet
+
+# Best approach: just use rows 14+ where ALL features are available
+# That gives 67 training rows
+
+train_ff = train.copy()
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train_ff[col] = train_ff[col].ffill()
+
+# bbb_spread still has NaN from q1-13 - forward fill doesn't help because there's no value before
+# Just use q14+ 
+mask = train_ff['bbb_spread'].notna()
+print(f"Rows with bbb_spread: {mask.sum()}")
+
+# For the scenario, all features are available
 scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Let's use only rows 14+ for training
+train_train = train_ff[train_ff['quarter'] >= 14].copy()
+print(f"Training rows: {len(train_train)}")
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+# Check no NaN in training data
+for col in ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']:
+    print(f"  {col} missing: {train_train[col].isna().sum()}")
 
-# Create feature matrix for training
-X_train = train_filled[macro_cols].copy()
+# Now we can train properly
+y = train_train['default_rate']
+print(f"\nDefault rate range: [{y.min()}, {y.max()}], mean={y.mean():.5f}")
 
-# Add transformations
-X_train['unemployment_sq'] = X_train['unemployment'] ** 2
-X_train['bbb_spread_sq'] = X_train['bbb_spread'] ** 2
-X_train['vix_sq'] = X_train['vix'] ** 2
-X_train['gdp_growth'] = X_train['gdp'].diff().fillna(0)
-X_train['unemployment_diff'] = X_train['unemployment'].diff().fillna(0)
-X_train['bbb_spread_diff'] = X_train['bbb_spread'].diff().fillna(0)
-X_train['vix_diff'] = X_train['vix'].diff().fillna(0)
-X_train['gdp_lag1'] = X_train['gdp'].shift(1).bfill()
-X_train['unemployment_lag1'] = X_train['unemployment'].shift(1).bfill()
-X_train['bbb_spread_lag1'] = X_train['bbb_spread'].shift(1).bfill()
-X_train['vix_lag1'] = X_train['vix'].shift(1).bfill()
-X_train['default_rate_lag1'] = train['default_rate'].shift(1).bfill()
-X_train['default_rate_lag2'] = train['default_rate'].shift(2).bfill()
-X_train['default_rate_lag3'] = train['default_rate'].shift(3).bfill()
+# Feature engineering
+train_train['gdp_d'] = train_train['gdp'].diff()
+train_train['unemp_d'] = train_train['unemployment'].diff()  
+train_train['bbb_d'] = train_train['bbb_spread'].diff()
+train_train['vix_d'] = train_train['vix'].diff()
+train_train['gdp_growth'] = train_train['gdp'].pct_change()
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X_train.dropna().index
-X_train = X_train.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
+# Fill first row NaNs (from diffs) with 0
+for col in ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d', 'gdp_growth']:
+    train_train[col] = train_train[col].fillna(0)
 
-# Use the best model: bbb_spread + unemployment (raw)
-features = ['bbb_spread', 'unemployment']
-X_main = X_train[features].values
-X_main_c = np.column_stack([np.ones(len(X_main)), X_main])
+features_raw = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+features_derived = ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d', 'gdp_growth']
 
-# Fit model
-model = sm.OLS(y, X_main_c).fit()
+# Logit transform for bounded predictions
+y_logit = np.log(y / (1 - y))
 
-# Get residuals
-residuals = model.resid
-residual_std = residuals.std()
+from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error
 
-# Get covariance matrix
-cov_matrix = model.cov_params()
-t_stat = stats.t.ppf(0.975, model.df_resid)
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
-# Get training ranges
-bbb_train_min, bbb_train_max = X_train['bbb_spread'].min(), X_train['bbb_spread'].max()
-unemp_train_min, unemp_train_max = X_train['unemployment'].min(), X_train['unemployment'].max()
+# Model 1: Simple bbb_spread + vix + unemployment
+key_feats = ['bbb_spread', 'vix', 'unemployment']
+X_key = train_train[key_feats].values
 
-# Prepare scenario features
-scenario_features = scenario[['bbb_spread', 'unemployment']].values
-scenario_c = np.column_stack([np.ones(len(scenario_features)), scenario_features])
+r_key = Ridge(alpha=1.0)
+pred_r_key = cross_val_predict(r_key, X_key, y_logit, cv=kf)
+print(f"\nRidge (bbb+vix+unemp): R2={r2_score(y_logit, pred_r_key):.4f}")
+print(f"  MAE: {mean_absolute_error(y, 1/(1+np.exp(-pred_r_key))):.6f}")
 
-# Generate predictions
-y_pred = model.predict(scenario_c)
+# Model 2: All raw features
+X_all = train_train[features_raw].values
+r_all = Ridge(alpha=1.0)
+pred_r_all = cross_val_predict(r_all, X_all, y_logit, cv=kf)
+print(f"\nRidge (all raw): R2={r2_score(y_logit, pred_r_all):.4f}")
+print(f"  MAE: {mean_absolute_error(y, 1/(1+np.exp(-pred_r_all))):.6f}")
 
-# Bootstrap-based prediction intervals
-# This accounts for both model uncertainty and residual uncertainty
-np.random.seed(42)
-n_bootstrap = 5000
+# Model 3: All raw + deltas
+X_full = train_train[features_raw + features_derived].values
+r_full = Ridge(alpha=0.1)
+pred_r_full = cross_val_predict(r_full, X_full, y_logit, cv=kf)
+print(f"\nRidge (all + deltas): R2={r2_score(y_logit, pred_r_full):.4f}")
+print(f"  MAE: {mean_absolute_error(y, 1/(1+np.exp(-pred_r_full))):.6f}")
 
-# For each bootstrap sample, fit the model and predict
-bootstrap_preds = np.zeros((n_bootstrap, len(scenario)))
+# Model 4: GBR
+gbr = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42)
+pred_gbr = cross_val_predict(gbr, X_full, y_logit, cv=kf)
+print(f"\nGBR (all + deltas): R2={r2_score(y_logit, pred_gbr):.4f}")
+print(f"  MAE: {mean_absolute_error(y, 1/(1+np.exp(-pred_gbr))):.6f}")
 
-for b in range(n_bootstrap):
-    # Resample residuals
-    boot_residuals = np.random.choice(residuals, size=len(y), replace=True)
-    
-    # Generate bootstrap y values
-    y_boot = model.predict(X_main_c) + boot_residuals
-    
-    # Refit model
-    model_boot = sm.OLS(y_boot, X_main_c).fit()
-    
-    # Predict on scenario AND add a new residual for the prediction
-    boot_pred = model_boot.predict(scenario_c) + np.random.choice(residuals, size=len(scenario), replace=True)
-    bootstrap_preds[b] = boot_pred
-
-# Compute percentiles
-y_lower = np.percentile(bootstrap_preds, 2.5, axis=0)
-y_upper = np.percentile(bootstrap_preds, 97.5, axis=0)
-y_pred_bootstrap = np.median(bootstrap_preds, axis=0)
-
-print("Bootstrap predictions (with residual uncertainty):")
-for i, q in enumerate(scenario['quarter']):
-    print(f"  Quarter {q}: pred={y_pred_bootstrap[i]:.6f}, [{y_lower[i]:.6f}, {y_upper[i]:.6f}]")
-
-# Also compute analytical prediction intervals for comparison
-predictions_analytical = []
-for i in range(len(scenario)):
-    x = scenario_c[i]
-    se_pred = np.sqrt(residual_std**2 * (1 + x @ cov_matrix @ x))
-    
-    # Extrapolation penalty
-    bbb_val = scenario['bbb_spread'].iloc[i]
-    unemp_val = scenario['unemployment'].iloc[i]
-    
-    bbb_range = bbb_train_max - bbb_train_min
-    unemp_range = unemp_train_max - unemp_train_min
-    
-    bbb_extrap = max(0, bbb_val - bbb_train_max) / bbb_range if bbb_range > 0 else 0
-    unemp_extrap = max(0, unemp_val - unemp_train_max) / unemp_range if unemp_range > 0 else 0
-    
-    extrapolation_factor = 1 + 2 * (bbb_extrap + unemp_extrap)
-    se_pred_wide = se_pred * extrapolation_factor
-    
-    y_lower_a = y_pred[i] - t_stat * se_pred_wide
-    y_upper_a = y_pred[i] + t_stat * se_pred_wide
-    
-    y_lower_a = max(0, y_lower_a)
-    y_upper_a = min(1, y_upper_a)
-    
-    predictions_analytical.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_pred[i],
-        'y_lower': y_lower_a,
-        'y_upper': y_upper_a,
-    })
-
-print("\nAnalytical predictions:")
-for p in predictions_analytical:
-    print(f"  Quarter {p['quarter']}: pred={p['y_pred']:.6f}, [{p['y_lower']:.6f}, {p['y_upper']:.6f}]")
-
-# Use bootstrap intervals
-predictions = []
-for i in range(len(scenario)):
-    predictions.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_pred[i],
-        'y_lower': max(0, y_lower[i]),
-        'y_upper': min(1, y_upper[i]),
-    })
-
-# Save predictions
-pred_df = pd.DataFrame(predictions)
-pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']].to_csv('predictions.csv', index=False)
-print("\n\nSaved predictions.csv")
-print(pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']])
-
-# Verify
-print(f"\nNumber of rows: {len(pred_df)}")
-print(f"Columns: {pred_df.columns.tolist()}")
-
+PYEOF
 ```
 
 ## [51] tool
 
-Bootstrap predictions (with residual uncertainty):
-  Quarter 81: pred=0.039577, [0.021980, 0.060532]
-  Quarter 82: pred=0.042407, [0.024228, 0.063814]
-  Quarter 83: pred=0.045418, [0.027207, 0.066606]
-  Quarter 84: pred=0.048565, [0.030096, 0.070035]
-  Quarter 85: pred=0.051424, [0.032870, 0.072712]
-  Quarter 86: pred=0.054414, [0.036109, 0.075563]
-  Quarter 87: pred=0.057512, [0.038686, 0.079775]
-  Quarter 88: pred=0.060977, [0.041984, 0.083614]
-  Quarter 89: pred=0.064490, [0.044048, 0.087528]
+Traceback (most recent call last):
+  File "<stdin>", line 74, in <module>
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/_param_validation.py", line 218, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/model_selection/_validation.py", line 1240, in cross_val_predict
+    predictions = parallel(
+                  ^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/parallel.py", line 91, in __call__
+    return super().__call__(iterable_with_config_and_warning_filters)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/joblib/parallel.py", line 1986, in __call__
+    return output if self.return_generator else list(output)
+                                                ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/joblib/parallel.py", line 1914, in _get_sequential_output
+    res = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/parallel.py", line 184, in __call__
+    return self.function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/model_selection/_validation.py", line 1328, in _fit_and_predict
+    estimator.fit(X_train, y_train, **fit_params)
+  File "/usr/local/lib/python3.12/site-packages/sklearn/base.py", line 1403, in wrapper
+    return fit_method(estimator, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/linear_model/_ridge.py", line 1253, in fit
+    X, y = validate_data(
+           ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 3055, in validate_data
+    X, y = check_X_y(X, y, **check_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 1327, in check_X_y
+    X = check_array(
+        ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 1087, in check_array
+    _assert_all_finite(
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 137, in _assert_all_finite
+    _assert_all_finite_element_wise(
+  File "/usr/local/lib/python3.12/site-packages/sklearn/utils/validation.py", line 186, in _assert_all_finite_element_wise
+    raise ValueError(msg_err)
+ValueError: Input X contains NaN.
+Ridge does not accept missing values encoded as NaN natively. For supervised learning, you might want to consider sklearn.ensemble.HistGradientBoostingClassifier and Regressor which accept missing values encoded as NaNs natively. Alternatively, it is possible to preprocess the data, for instance by using an imputer transformer in a pipeline or drop samples with missing values. See https://scikit-learn.org/stable/modules/impute.html You can find a list of all estimators that handle NaN values at the following page: https://scikit-learn.org/stable/modules/impute.html#estimators-that-handle-nan-values
 
-Analytical predictions:
-  Quarter 81: pred=0.040167, [0.019164, 0.061170]
-  Quarter 82: pred=0.043111, [0.022108, 0.064114]
-  Quarter 83: pred=0.046093, [0.025090, 0.067095]
-  Quarter 84: pred=0.049115, [0.028113, 0.070118]
-  Quarter 85: pred=0.052178, [0.031176, 0.073181]
-  Quarter 86: pred=0.055285, [0.034282, 0.076288]
-  Quarter 87: pred=0.058438, [0.034476, 0.082400]
-  Quarter 88: pred=0.061640, [0.033608, 0.089672]
-  Quarter 89: pred=0.064891, [0.031043, 0.098739]
+Rows with bbb_spread: 67
+Training rows: 67
+  gdp missing: 0
+  unemployment missing: 0
+  hpi missing: 0
+  bbb_spread missing: 0
+  sp500 missing: 18
+  djia missing: 18
+  nasdaq missing: 0
+  vix missing: 0
+  cpi missing: 0
 
+Default rate range: [0.003167, 0.093801], mean=0.03280
 
-Saved predictions.csv
-   quarter    y_pred   y_lower   y_upper
-0       81  0.040167  0.021980  0.060532
-1       82  0.043111  0.024228  0.063814
-2       83  0.046093  0.027207  0.066606
-3       84  0.049115  0.030096  0.070035
-4       85  0.052178  0.032870  0.072712
-5       86  0.055285  0.036109  0.075563
-6       87  0.058438  0.038686  0.079775
-7       88  0.061640  0.041984  0.083614
-8       89  0.064891  0.044048  0.087528
-
-Number of rows: 9
-Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
+Ridge (bbb+vix+unemp): R2=0.5557
+  MAE: 0.007900
 
 
 ## [52] assistant
 
 **[reasoning]**
 
-> The bootstrap intervals are reasonable but a bit narrow. Let me also consider using the analytical approach with extrapolation penalty, which gives wider intervals for the more extreme scenario quarters. Let me combine both approaches - use the analytical intervals with extrapolation penalty since the scenario pushes beyond training ranges.
+> The issue is sp500 and djia still have NaN for quarters 14-31. Let me handle this properly by either dropping those features or filling them.
 > 
-> Actually, looking at the results more carefully:
-> - The bootstrap intervals (with residual uncertainty) are reasonable
-> - The analytical intervals with extrapolation penalty are wider for extreme quarters
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Forward fill all series to handle gaps
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train[col] = train[col].ffill()
+
+# sp500 and djia start at q32, so q1-q31 still have NaN
+# We need to forward-fill them starting from the first non-NaN value
+for col in ['sp500', 'djia']:
+    train[col] = train[col].ffill()
+
+print("After forward fill:")
+for col in ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']:
+    print(f"  {col}: {train[col].isna().sum()}")
+
+PYEOF
+```
+
+## [53] tool
+
+After forward fill:
+  gdp: 0
+  unemployment: 0
+  hpi: 10
+  bbb_spread: 13
+  sp500: 31
+  djia: 31
+  nasdaq: 0
+  vix: 10
+  cpi: 0
+
+
+## [54] assistant
+
+**[reasoning]**
+
+> The forward fill isn't working as expected because the NaN values are at the START of the columns, not in the middle. The `ffill()` only propagates values forward, so if the first 31 rows of sp500 are NaN, there's nothing to forward-fill.
 > 
-> Let me use the analytical approach with extrapolation penalty since it better accounts for the fact that the scenario pushes beyond training ranges. The bootstrap approach doesn't account for extrapolation uncertainty.
+> I need to use `bfill()` (backward fill) for the columns where NaN values are at the beginning of the data.
 > 
-> Let me finalize with the analytical approach with extrapolation penalty.
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Forward fill for middle gaps
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train[col] = train[col].ffill()
+
+# Now use bfill for leading NaNs (backward fill from the first available value)
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia']:
+    train[col] = train[col].bfill()
+
+# Also handle vix - it starts at q11
+train['vix'] = train['vix'].bfill()
+
+print("After forward fill + backward fill:")
+for col in ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']:
+    print(f"  {col}: {train[col].isna().sum()}")
+
+# Check first few rows now
+print("\nFirst 5 quarters after fill:")
+print(train.head(5)[['quarter', 'hpi', 'bbb_spread', 'sp500', 'djia', 'vix']].to_string())
+print("\nLast few of first block (q10-14):")
+print(train.loc[train['quarter'].isin([10, 11, 12, 13, 14]), ['quarter', 'hpi', 'bbb_spread', 'sp500', 'djia', 'vix']].to_string())
+
+PYEOF
+```
+
+## [55] tool
+
+After forward fill + backward fill:
+  gdp: 0
+  unemployment: 0
+  hpi: 0
+  bbb_spread: 0
+  sp500: 0
+  djia: 0
+  nasdaq: 0
+  vix: 0
+  cpi: 0
+
+First 5 quarters after fill:
+   quarter       hpi  bbb_spread     sp500      djia      vix
+0        1  190.6755      1.4837  699.1576  379.2005  15.0916
+1        2  190.6755      1.4837  699.1576  379.2005  15.0916
+2        3  190.6755      1.4837  699.1576  379.2005  15.0916
+3        4  190.6755      1.4837  699.1576  379.2005  15.0916
+4        5  190.6755      1.4837  699.1576  379.2005  15.0916
+
+Last few of first block (q10-14):
+    quarter       hpi  bbb_spread     sp500      djia      vix
+9        10  190.6755      1.4837  699.1576  379.2005  15.0916
+10       11  190.6755      1.4837  699.1576  379.2005  15.0916
+11       12  196.1593      1.4837  699.1576  379.2005  15.0915
+12       13  201.1923      1.4837  699.1576  379.2005  12.4405
+13       14  205.4341      1.4837  699.1576  379.2005  12.5775
+
+
+## [56] assistant
+
+**[reasoning]**
+
+> Great, now we have no missing values! But the backward fill for early quarters is problematic - it fills with the first available value from later, which may not be accurate. However, for training purposes we need complete data. Let's use all 80 rows now and build the model properly.
+> 
+> Actually, the backfill is fine for bbb_spread, sp500, djia - they get their first available values. For hpi and vix that start at q11, early quarters get filled with q11 values.
+> 
+> But there's a question: is this the right approach? The scenario quarters (81-89) don't have any missing values, so we'll be predicting on clean data. For training, the backfilled early rows have some duplicated feature values which might bias the model.
+> 
+> Let me think about this more carefully. Actually, using rows 14+ (where all features are originally present) is better because it avoids the extrapolation from backfilled values. But with only 67 training rows, we need a relatively simple model.
+> 
+> Let me try both approaches and see which gives better results.
+> 
+
+
+
+Now all data is complete. Let me build the model properly:
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Now all features are complete
+print("All features present:", train[['gdp', 'unemployment', 'hpi', 'bbb_spread', 
+                                     'sp500', 'djia', 'nasdaq', 'vix', 'cpi']].isna().sum().sum() == 0)
+print(f"Training rows: {len(train)}")
+
+# Logit transform for bounded predictions (default rates are 0-1)
+y = train['default_rate'].values
+y_logit = np.log(y / (1 - y))
+
+# Features
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+
+# Feature engineering - create derived features  
+df = train.copy()
+df['gdp_d'] = df['gdp'].diff()
+df['unemp_d'] = df['unemployment'].diff()
+df['bbb_d'] = df['bbb_spread'].diff()
+df['vix_d'] = df['vix'].diff()
+df['sp500_d'] = df['sp500'].diff()
+df['djia_d'] = df['djia'].diff()
+df['nasdaq_d'] = df['nasdaq'].diff()
+
+# Fill first row diffs with 0
+for col in df.columns:
+    if '_d' in col or 'growth' in col:
+        df[col] = df[col].fillna(0)
+
+print("\nNaN check after feature engineering:", df.isna().sum().sum())
+
+# Cross-validation
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+X_all = df[features].values
+X_deriv = df[features + ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d']].values
+
+print("\n=== Model Comparison ===")
+
+# Test different feature sets
+configs = [
+    ('Ridge all raw', Ridge(alpha=1.0), X_all),
+    ('Ridge all + deltas', Ridge(alpha=0.1), X_deriv),
+    ('GBR all raw', GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42), X_all),
+    ('GBR all + deltas', GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42), X_deriv),
+]
+
+for name, model, X in configs:
+    pred_cv = cross_val_predict(model, X, y_logit, cv=kf)
+    r2 = r2_score(y_logit, pred_cv)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y, y_pred_raw)
+    rmse = np.sqrt(mean_squared_error(y, y_pred_raw))
+    residuals = y - y_pred_raw
+    
+    # Check residual distribution
+    res_std = np.std(residuals)
+    
+    print(f"\n{name}:")
+    print(f"  R2 (logit): {r2:.4f}, MAE: {mae:.6f}, RMSE: {rmse:.6f}")
+    print(f"  Residual std: {res_std:.6f}, mean: {residuals.mean():.6f}")
+
+PYEOF
+```
+
+## [57] tool
+
+All features present: True
+Training rows: 80
+
+NaN check after feature engineering: 0
+
+=== Model Comparison ===
+
+Ridge all raw:
+  R2 (logit): 0.4698, MAE: 0.008163, RMSE: 0.011465
+  Residual std: 0.011414, mean: 0.001074
+
+Ridge all + deltas:
+  R2 (logit): 0.5142, MAE: 0.007911, RMSE: 0.011428
+  Residual std: 0.011409, mean: 0.000657
+
+GBR all raw:
+  R2 (logit): 0.3442, MAE: 0.009251, RMSE: 0.013653
+  Residual std: 0.013648, mean: -0.000389
+
+GBR all + deltas:
+  R2 (logit): 0.4083, MAE: 0.008268, RMSE: 0.012038
+  Residual std: 0.012037, mean: -0.000182
+
+
+## [58] assistant
+
+**[reasoning]**
+
+> The Ridge model with all raw features and deltas gives the best results. Let me now focus on building a robust model with proper prediction intervals. I need to:
+> 
+> 1. Train the best model on all training data
+> 2. Generate predictions for the scenario quarters
+> 3. Create 95% prediction intervals that account for both model uncertainty and extrapolation risk
+> 
+> Let me also explore more feature combinations and think about whether the scenario pushes beyond training ranges (which it does - especially bbb_spread max is 3.79 vs training max of ~3.57, unemployment max is 9.23 vs training max of ~8.04).
+> 
+> I should use the Ridge model with all + deltas features since it performed best. For prediction intervals, I'll use:
+> 1. Residual-based intervals from cross-validation
+> 2. Possibly widen for extrapolation beyond training ranges
+> 
+> Let me finalize the model and generate predictions.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Features and target
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+y = train['default_rate'].values
+
+# Feature engineering
+df = train.copy()
+df['gdp_d'] = df['gdp'].diff().fillna(0)
+df['unemp_d'] = df['unemployment'].diff().fillna(0)
+df['bbb_d'] = df['bbb_spread'].diff().fillna(0)
+df['vix_d'] = df['vix'].diff().fillna(0)
+
+y_logit = np.log(y / (1 - y))
+X_all_deriv = df[features + ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d']].values
+
+# Scenario features - these are all available
+scenario_df = scenario[features].copy()
+scenario_df['gdp_d'] = 0  # First row of scenario - no prior to diff from
+scenario_df['unemp_d'] = 0
+scenario_df['bbb_d'] = 0
+scenario_df['vix_d'] = 0
+
+# Compute diffs from scenario data itself (use previous quarter values)
+# But the scenario has consecutive quarters, so we can compute diffs
+for i in range(1, len(scenario)):
+    prev = scenario_df.iloc[i-1]
+    curr = scenario_df.iloc[i]
+    scenario_df.loc[i, 'gdp_d'] = curr['gdp'] - prev['gdp']
+    scenario_df.loc[i, 'unemp_d'] = curr['unemployment'] - prev['unemployment']
+    scenario_df.loc[i, 'bbb_d'] = curr['bbb_spread'] - prev['bbb_spread']
+    scenario_df.loc[i, 'vix_d'] = curr['vix'] - prev['vix']
+
+X_scenario = scenario_df[features + ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d']].values
+
+print("Scenario feature values:")
+print(scenario_df.to_string())
+
+# Check extrapolation - compare scenario ranges to training ranges
+print("\n=== Extrapolation Analysis ===")
+for col in features + ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d']:
+    tmin = df[col].min()
+    tmax = df[col].max()
+    smin = scenario_df[col].min()
+    smax = scenario_df[col].max()
+    in_range = smin >= tmin and smax <= tmax
+    print(f"  {col}: train [{tmin:.4f},{tmax:.4f}], scenario [{smin:.4f},{smax:.4f}], in_range={in_range}")
+
+PYEOF
+```
+
+## [59] tool
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/internals/blocks.py", line 1115, in setitem
+    casted = np_can_hold_element(values.dtype, value)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/dtypes/cast.py", line 1725, in np_can_hold_element
+    raise LossySetitemError
+pandas.errors.LossySetitemError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<stdin>", line 37, in <module>
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexing.py", line 938, in __setitem__
+    iloc._setitem_with_indexer(indexer, value, self.name)
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexing.py", line 1953, in _setitem_with_indexer
+    self._setitem_with_indexer_split_path(indexer, value, name)
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexing.py", line 2044, in _setitem_with_indexer_split_path
+    self._setitem_single_column(loc, value, pi)
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexing.py", line 2181, in _setitem_single_column
+    self.obj._mgr.column_setitem(loc, plane_indexer, value)
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/internals/managers.py", line 1528, in column_setitem
+    new_mgr = col_mgr.setitem((idx,), value)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/internals/managers.py", line 607, in setitem
+    return self.apply("setitem", indexer=indexer, value=value)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/internals/managers.py", line 445, in apply
+    applied = getattr(b, f)(**kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/internals/blocks.py", line 1118, in setitem
+    nb = self.coerce_to_target_dtype(value, raise_on_upcast=True)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/internals/blocks.py", line 468, in coerce_to_target_dtype
+    raise TypeError(f"Invalid value '{other}' for dtype '{self.values.dtype}'")
+TypeError: Invalid value '-3.6657000000000153' for dtype 'int64'
+
+
+
+## [60] assistant
+
+**[reasoning]**
+
+> The issue is with setting float values into integer columns. Let me fix that and also think about this more carefully.
+> 
+> 
+
+
+
+**tool call: bash**
+
+```
+
+import pandas as pd
+import numpy as np
+
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Features and target
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+y = train['default_rate'].values
+
+# Feature engineering for training data
+df_train = train.copy()
+df_train['gdp_d'] = df_train['gdp'].diff().fillna(0).astype(float)
+df_train['unemp_d'] = df_train['unemployment'].diff().fillna(0).astype(float)
+df_train['bbb_d'] = df_train['bbb_spread'].diff().fillna(0).astype(float)
+df_train['vix_d'] = df_train['vix'].diff().fillna(0).astype(float)
+
+y_logit = np.log(y / (1 - y))
+X_train = df_train[features + ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d']].values
+
+# For scenario: compute deltas from consecutive scenario quarters
+scenario_arr = scenario[features].values  # numpy array
+
+X_scenario = np.zeros((len(scenario), len(features) + 4))
+X_scenario[:, :9] = scenario_arr
+
+# First row deltas are 0 (no prior)
+X_scenario[0, 9] = 0
+X_scenario[0, 10] = 0
+X_scenario[0, 11] = 0
+X_scenario[0, 12] = 0
+
+for i in range(1, len(scenario)):
+    X_scenario[i, 9] = scenario_arr[i, 0] - scenario_arr[i-1, 0]  # gdp_d
+    X_scenario[i, 10] = scenario_arr[i, 1] - scenario_arr[i-1, 1]  # unemp_d
+    X_scenario[i, 11] = scenario_arr[i, 3] - scenario_arr[i-1, 3]  # bbb_d
+    X_scenario[i, 12] = scenario_arr[i, 7] - scenario_arr[i-1, 7]  # vix_d
+
+feature_names = features + ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d']
+
+print("=== Model Training & Prediction ===")
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.linear_model import Ridge
+from sklearn.metrics import r2_score, mean_absolute_error
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# Best model so far: Ridge with all + deltas
+model = Ridge(alpha=0.1)
+
+# Cross-validation on training data
+pred_cv = cross_val_predict(model, X_train, y_logit, cv=kf)
+r2 = r2_score(y_logit, pred_cv)
+y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+mae = mean_absolute_error(y, y_pred_raw)
+
+print(f"CV: R2={r2:.4f}, MAE={mae:.6f}")
+
+# Compute residual std for prediction intervals
+residuals = y - y_pred_raw
+res_std = np.std(residuals)
+print(f"Residual std: {res_std:.6f}")
+
+# Train final model on ALL training data
+model.fit(X_train, y_logit)
+
+# Predict on scenario
+y_scenario_logit = model.predict(X_scenario)
+y_scenario_raw = 1 / (1 + np.exp(-y_scenario_logit))
+
+# 95% prediction interval
+# Using the residual std from CV as uncertainty estimate
+z_975 = 1.96
+
+# For prediction intervals, we need to account for both model uncertainty and irreducible error
+# With only ~80 training points, the model is somewhat uncertain about extrapolation
+
+# Base prediction interval on residual std
+y_lower = y_scenario_raw - z_975 * res_std
+y_upper = y_scenario_raw + z_975 * res_std
+
+# Clip to [0, 1]
+y_lower = np.clip(y_lower, 0.0001, 0.9999)
+y_upper = np.clip(y_upper, 0.0001, 0.9999)
+
+# Print results
+print("\n=== Scenario Predictions ===")
+for i, row in scenario.iterrows():
+    print(f"  Q{row['quarter']}: pred={y_scenario_raw[i]:.6f}, [{y_lower[i]:.6f}, {y_upper[i]:.6f}]")
+
+# Save predictions
+predictions = pd.DataFrame({
+    'quarter': scenario['quarter'].values,
+    'y_pred': y_scenario_raw,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+predictions.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+print(predictions)
+
+PYEOF
+```
+
+## [61] tool
+
+## [62] assistant
+
+**[reasoning]**
+
+> Let me fix the function call.
 > 
 
 
@@ -4243,361 +2768,2502 @@ Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
 
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
+
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Features and target
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+y = train['default_rate'].values
+
+# Feature engineering for training data
+df_train = train.copy()
+df_train['gdp_d'] = df_train['gdp'].diff().fillna(0).astype(float)
+df_train['unemp_d'] = df_train['unemployment'].diff().fillna(0).astype(float)
+df_train['bbb_d'] = df_train['bbb_spread'].diff().fillna(0).astype(float)
+df_train['vix_d'] = df_train['vix'].diff().fillna(0).astype(float)
+
+y_logit = np.log(y / (1 - y))
+X_train = df_train[features + ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d']].values
+
+# For scenario: compute deltas from consecutive scenario quarters
+scenario_arr = scenario[features].values  # numpy array
+
+X_scenario = np.zeros((len(scenario), len(features) + 4))
+X_scenario[:, :9] = scenario_arr
+
+# First row deltas are 0 (no prior)
+X_scenario[0, 9] = 0
+X_scenario[0, 10] = 0
+X_scenario[0, 11] = 0
+X_scenario[0, 12] = 0
+
+for i in range(1, len(scenario)):
+    X_scenario[i, 9] = scenario_arr[i, 0] - scenario_arr[i-1, 0]
+    X_scenario[i, 10] = scenario_arr[i, 1] - scenario_arr[i-1, 1]
+    X_scenario[i, 11] = scenario_arr[i, 3] - scenario_arr[i-1, 3]
+    X_scenario[i, 12] = scenario_arr[i, 7] - scenario_arr[i-1, 7]
+
+feature_names = features + ['gdp_d', 'unemp_d', 'bbb_d', 'vix_d']
+
+print("=== Model Training & Prediction ===")
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.linear_model import Ridge
+from sklearn.metrics import r2_score, mean_absolute_error
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# Ridge with all + deltas
+model = Ridge(alpha=0.1)
+
+# Cross-validation on training data
+pred_cv = cross_val_predict(model, X_train, y_logit, cv=kf)
+r2 = r2_score(y_logit, pred_cv)
+y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+mae = mean_absolute_error(y, y_pred_raw)
+
+print(f"CV: R2={r2:.4f}, MAE={mae:.6f}")
+
+# Compute residual std for prediction intervals
+residuals = y - y_pred_raw
+res_std = np.std(residuals)
+print(f"Residual std: {res_std:.6f}")
+
+# Train final model on ALL training data
+model.fit(X_train, y_logit)
+
+# Predict on scenario
+y_scenario_logit = model.predict(X_scenario)
+y_scenario_raw = 1 / (1 + np.exp(-y_scenario_logit))
+
+# 95% prediction interval
+z_975 = 1.96
+y_lower = y_scenario_raw - z_975 * res_std
+y_upper = y_scenario_raw + z_975 * res_std
+
+# Clip to [0, 1]
+y_lower = np.clip(y_lower, 0.0001, 0.9999)
+y_upper = np.clip(y_upper, 0.0001, 0.9999)
+
+# Print results
+print("\n=== Scenario Predictions ===")
+for i, row in scenario.iterrows():
+    print(f"  Q{row['quarter']}: pred={y_scenario_raw[i]:.6f}, [{y_lower[i]:.6f}, {y_upper[i]:.6f}]")
+
+# Save predictions
+predictions = pd.DataFrame({
+    'quarter': scenario['quarter'].values,
+    'y_pred': y_scenario_raw,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+predictions.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+print(predictions)
+
+```
+
+## [63] tool
+
+=== Model Training & Prediction ===
+CV: R2=0.5142, MAE=0.007911
+Residual std: 0.011409
+
+=== Scenario Predictions ===
+  Q81.0: pred=0.049379, [0.027018, 0.071740]
+  Q82.0: pred=0.060301, [0.037940, 0.082662]
+  Q83.0: pred=0.043684, [0.021323, 0.066045]
+  Q84.0: pred=0.050371, [0.028010, 0.072732]
+  Q85.0: pred=0.053727, [0.031366, 0.076088]
+  Q86.0: pred=0.056292, [0.033931, 0.078653]
+  Q87.0: pred=0.052127, [0.029766, 0.074488]
+  Q88.0: pred=0.045742, [0.023381, 0.068103]
+  Q89.0: pred=0.041352, [0.018991, 0.063713]
+
+Saved predictions.csv
+   quarter    y_pred   y_lower   y_upper
+0       81  0.049379  0.027018  0.071740
+1       82  0.060301  0.037940  0.082662
+2       83  0.043684  0.021323  0.066045
+3       84  0.050371  0.028010  0.072732
+4       85  0.053727  0.031366  0.076088
+5       86  0.056292  0.033931  0.078653
+6       87  0.052127  0.029766  0.074488
+7       88  0.045742  0.023381  0.068103
+8       89  0.041352  0.018991  0.063713
+
+
+## [64] assistant
+
+**[reasoning]**
+
+> Let me analyze this more carefully. The scenario has drivers beyond training range (especially unemployment, hpi, bbb_spread extending higher). Let me check the model quality more carefully and consider if there's a better approach.
+> 
+> Key observations:
+> 1. bbb_spread is the strongest predictor (corr ~0.70)
+> 2. vix is the second strongest (corr ~0.47) 
+> 3. The scenario pushes unemployment up to 9.2 (max in training was ~8.0)
+> 4. bbb_spread reaches 3.79 (max in training was ~3.57)
+> 5. vix reaches 37 (within range of training max ~42)
+> 
+> The extrapolation concern is valid. Let me try a more principled approach - maybe using statsmodels for proper inference, or better feature selection to reduce overfitting.
+> 
+> Also, the intervals might be too narrow since we're extrapolating beyond training range.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
 from scipy import stats
+
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Let me understand the relationship between bbb_spread and default_rate more carefully
+y = train['default_rate'].values
+
+# Scatter-like analysis: default rate vs bbb_spread
+train_ff = train.copy()
+print("Default rate quantiles by bbb_spread bins:")
+bins = np.linspace(train_ff['bbb_spread'].min(), train_ff['bbb_spread'].max(), 6)
+train_ff['bbb_bin'] = pd.cut(train_ff['bbb_spread'], bins=bins)
+print(train_ff.groupby('bbb_bin')['default_rate'].agg(['mean','median','count']))
+
+# Also check vix
+print("\nDefault rate quantiles by vix bins:")
+bins_v = np.linspace(train_ff['vix'].min(), train_ff['vix'].max(), 6)
+train_ff['vix_bin'] = pd.cut(train_ff['vix'], bins=bins_v)
+print(train_ff.groupby('vix_bin')['default_rate'].agg(['mean','median','count']))
+
+# Check unemployment
+print("\nDefault rate quantiles by unemployment bins:")
+bins_u = np.linspace(train_ff['unemployment'].min(), train_ff['unemployment'].max(), 6)
+train_ff['unemp_bin'] = pd.cut(train_ff['unemployment'], bins=bins_u)
+print(train_ff.groupby('unemp_bin')['default_rate'].agg(['mean','median','count']))
+
+# Check for non-linearity with bbb_spread
+print("\n\nNon-linear patterns:")
+# GBR feature importances
+from sklearn.ensemble import GradientBoostingRegressor
+
+features = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+X = train[features].values
+
+gbr = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42)
+gbr.fit(X, y)
+
+print("GBR feature importances:")
+for f, imp in zip(features, gbr.feature_importances_):
+    print(f"  {f}: {imp:.4f}")
+
+# Check residual autocorrelation
+from statsmodels.tsa.stattools import acf, pacf
+residuals_gbr = y - gbr.predict(X)
+acf_vals = acf(residuals_gbr, nlags=4, fft=False)
+print(f"\nResidual ACF (lags 0-4): {acf_vals}")
+
+PYEOF
+```
+
+## [65] tool
+
+Default rate quantiles by bbb_spread bins:
+                    mean    median  count
+bbb_bin                                  
+(0.235, 0.902]  0.015852  0.018305     11
+(0.902, 1.569]  0.024903  0.024021     20
+(1.569, 2.236]  0.030647  0.030480     20
+(2.236, 2.903]  0.038556  0.036615     18
+(2.903, 3.57]   0.053823  0.056175     10
+
+Default rate quantiles by vix bins:
+                      mean    median  count
+vix_bin                                    
+(8.439, 15.125]   0.026742  0.023605     42
+(15.125, 21.81]   0.033930  0.030518     21
+(21.81, 28.496]   0.040537  0.039029     10
+(28.496, 35.182]  0.042314  0.042314      2
+(35.182, 41.868]  0.049132  0.051740      4
+
+Default rate quantiles by unemployment bins:
+                    mean    median  count
+unemp_bin                                
+(3.072, 4.066]  0.028583  0.029105      7
+(4.066, 5.059]  0.028849  0.026587     21
+(5.059, 6.052]  0.031361  0.028208     27
+(6.052, 7.046]  0.035052  0.032003     18
+(7.046, 8.039]  0.038103  0.028951      6
+
+
+Non-linear patterns:
+GBR feature importances:
+  gdp: 0.0213
+  unemployment: 0.1761
+  hpi: 0.0220
+  bbb_spread: 0.5190
+  sp500: 0.0049
+  djia: 0.0252
+  nasdaq: 0.0445
+  vix: 0.1374
+  cpi: 0.0496
+
+Residual ACF (lags 0-4): [ 1.         -0.20834669 -0.180851   -0.00613429  0.09604991]
+
+
+## [66] assistant
+
+**[reasoning]**
+
+> Now let me refine the model. The key insights are:
+> 1. `bbb_spread` is the strongest predictor (importance ~0.52)
+> 2. `vix` and `unemployment` are also meaningful predictors
+> 3. The scenario pushes bbb_spread beyond the training range (up to 3.79 vs max 3.57)
+> 4. Unemployment in the scenario goes up to 9.23 vs training max of ~8.04
+> 
+> I need to:
+> 1. Use a robust model (preferably with logit transform for bounded predictions)
+> 2. Create proper prediction intervals that account for extrapolation uncertainty
+> 3. Make sure the intervals are reasonable
+> 
+> Let me build a comprehensive final model.
+> 
+
+
+
+
+
+**tool call: python**
+
+```
+
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge, Lasso, LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from scipy import stats
+import statsmodels.api as sm
 
 # Load data
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-# Create features
-macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
 
-# Fill missing values with forward fill then backward fill
-train_filled = train.copy()
-for col in macro_cols:
-    train_filled[col] = train_filled[col].ffill().bfill()
+# Target variable
+y = train['default_rate'].values
+y_logit = np.log(y / (1 - y))
 
-# Create feature matrix for training
-X_train = train_filled[macro_cols].copy()
+# Key features: bbb_spread, vix, unemployment (strongest predictors)
+features = ['bbb_spread', 'vix', 'unemployment']
 
-# Drop rows with NaN in features (from lags)
-drop_idx = X_train.dropna().index
-X_train = X_train.loc[drop_idx]
-y = train['default_rate'].values[drop_idx]
+# Also try with additional features
+features_extended = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
 
-# Use the best model: bbb_spread + unemployment (raw)
-features = ['bbb_spread', 'unemployment']
-X_main = X_train[features].values
-X_main_c = np.column_stack([np.ones(len(X_main)), X_main])
+# Build training matrix
+X = train[features].values
+X_extended = train[features_extended].values
 
-# Fit model
-model = sm.OLS(y, X_main_c).fit()
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
-# Get residuals
-residuals = model.resid
-residual_std = residuals.std()
+print("=== Model Comparison (logit target) ===")
 
-# Get covariance matrix
-cov_matrix = model.cov_params()
-t_stat = stats.t.ppf(0.975, model.df_resid)
+# Ridge models
+model_ridge = Ridge(alpha=1.0)
+pred_ridge_cv = cross_val_predict(model_ridge, X, y_logit, cv=kf)
+y_pred_ridge = 1 / (1 + np.exp(-pred_ridge_cv))
+resid_std = np.std(y - y_pred_ridge)
 
-# Get training ranges
-bbb_train_min, bbb_train_max = X_train['bbb_spread'].min(), X_train['bbb_spread'].max()
-unemp_train_min, unemp_train_max = X_train['unemployment'].min(), X_train['unemployment'].max()
+print(f"\nRidge (bbb+vix+unemp):")
+print(f"  R2={r2_score(y_logit, pred_ridge_cv):.4f}")
+print(f"  MAE={mean_absolute_error(y, y_pred_ridge):.6f}")
+print(f"  Residual std={resid_std:.6f}")
 
-# Prepare scenario features
-scenario_features = scenario[['bbb_spread', 'unemployment']].values
-scenario_c = np.column_stack([np.ones(len(scenario_features)), scenario_features])
+# GBR model
+model_gbr = GradientBoostingRegressor(n_estimators=150, max_depth=3, 
+                                       learning_rate=0.1, random_state=42)
+pred_gbr_cv = cross_val_predict(model_gbr, X, y_logit, cv=kf)
+y_pred_gbr = 1 / (1 + np.exp(-pred_gbr_cv))
+resid_std_gbr = np.std(y - y_pred_gbr)
 
-# Generate predictions
-y_pred = model.predict(scenario_c)
+print(f"\nGBR (bbb+vix+unemp):")
+print(f"  R2={r2_score(y_logit, pred_gbr_cv):.4f}")
+print(f"  MAE={mean_absolute_error(y, y_pred_gbr):.6f}")
+print(f"  Residual std={resid_std_gbr:.6f}")
 
-# Compute prediction intervals with extrapolation penalty
-predictions = []
+# GBR extended features
+model_gbr_ext = GradientBoostingRegressor(n_estimators=150, max_depth=4, 
+                                           learning_rate=0.1, random_state=42)
+pred_gbr_ext_cv = cross_val_predict(model_gbr_ext, X_extended, y_logit, cv=kf)
+y_pred_gbr_ext = 1 / (1 + np.exp(-pred_gbr_ext_cv))
+resid_std_gbr_ext = np.std(y - y_pred_gbr_ext)
+
+print(f"\nGBR (all features):")
+print(f"  R2={r2_score(y_logit, pred_gbr_ext_cv):.4f}")
+print(f"  MAE={mean_absolute_error(y, y_pred_gbr_ext):.6f}")
+print(f"  Residual std={resid_std_gbr_ext:.6f}")
+
+# Compare residuals distribution
+print("\n=== Residual Analysis ===")
+for name, y_pred in [("Ridge", y_pred_ridge), ("GBR", y_pred_gbr), ("GBR-ext", y_pred_gbr_ext)]:
+    resid = y - y_pred
+    print(f"\n{name}:")
+    print(f"  Mean: {resid.mean():.6f}, Std: {np.std(resid):.6f}")
+    print(f"  Min: {resid.min():.6f}, Max: {resid.max():.6f}")
+    print(f"  Q25: {np.percentile(resid, 25):.6f}, Q75: {np.percentile(resid, 75):.6f}")
+    
+    # Shapiro-Wilk test
+    if len(resid) > 3:
+        shapiro_stat, shapiro_p = stats.shapiro(resid)
+        print(f"  Shapiro-Wilk: stat={shapiro_stat:.4f}, p={shapiro_p:.4f}")
+
+PYEOF
+```
+
+## [67] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 86, in <module>
+NameError: name 'PYEOF' is not defined
+
+=== Model Comparison (logit target) ===
+
+Ridge (bbb+vix+unemp):
+  R2=0.4900
+  MAE=0.007689
+  Residual std=0.011153
+
+GBR (bbb+vix+unemp):
+  R2=0.2062
+  MAE=0.010560
+  Residual std=0.015372
+
+GBR (all features):
+  R2=0.3883
+  MAE=0.008779
+  Residual std=0.012872
+
+=== Residual Analysis ===
+
+Ridge:
+  Mean: 0.001335, Std: 0.011153
+  Min: -0.022684, Max: 0.058228
+  Q25: -0.004681, Q75: 0.005533
+  Shapiro-Wilk: stat=0.8978, p=0.0000
+
+GBR:
+  Mean: -0.000156, Std: 0.015372
+  Min: -0.050342, Max: 0.059449
+  Q25: -0.006160, Q75: 0.008155
+  Shapiro-Wilk: stat=0.9314, p=0.0003
+
+GBR-ext:
+  Mean: -0.000030, Std: 0.012872
+  Min: -0.036497, Max: 0.055544
+  Q25: -0.005477, Q75: 0.006050
+  Shapiro-Wilk: stat=0.9204, p=0.0001
+
+
+## [68] assistant
+
+**[reasoning]**
+
+> The Ridge model with key features (bbb_spread, vix, unemployment) has the best performance. The residuals are not perfectly normal but that's expected with only 80 data points. Let me now build a more robust model, possibly using statsmodels for better statistical inference and prediction intervals.
+> 
+> The key insight is:
+> 1. bbb_spread is the strongest predictor (correlation 0.70 with default rate)
+> 2. vix is the second strongest (correlation 0.47)
+> 3. unemployment has moderate correlation
+> 
+> Let me refine the approach:
+> 1. Use Ridge regression with logit transform (best CV performance)
+> 2. For prediction intervals, use residual-based approach but also account for extrapolation uncertainty
+> 3. Consider that the scenario pushes bbb_spread to 2.4-3.8 (slightly beyond training range of 0.2-3.6)
+> 4. Consider that vix in scenario is 19-37 (within training range)
+> 5. Consider that unemployment in scenario is 6.3-9.2 (higher than training max of 8.0)
+> 
+> For the prediction interval, I should:
+> - Use the residual standard deviation from CV as a baseline
+> - Inflate for extrapolation risk since some scenario values are outside training ranges
+> 
+> Let me also try a Bayesian/credibility approach using statsmodels for proper standard error computation.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge, Lasso, LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.model_selection import cross_val_predict, KFold, LeaveOneOut
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from scipy import stats
+import statsmodels.api as sm
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y = train['default_rate'].values
+y_logit = np.log(y / (1 - y))
+
+features = ['bbb_spread', 'vix', 'unemployment']
+X = train[features].values
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# Use statsmodels for proper statistical inference
+X_sm = sm.add_constant(X)
+model_sm = sm.OLS(y_logit, X_sm).fit()
+
+print("=== Statsmodels OLS (logit target) ===")
+print(model_sm.summary())
+
+# Check residuals
+resid = model_sm.resid
+print(f"\nResidual stats:")
+print(f"  Mean: {resid.mean():.6f}, Std: {resid.std():.6f}")
+print(f"  Q1: {np.percentile(resid, 25):.6f}, Median: {np.median(resid):.6f}, Q3: {np.percentile(resid, 75):.6f}")
+
+# Residual vs fitted plot
+fitted = model_sm.fittedvalues
+print(f"\nResidual vs Fitted:")
+for p in [0, 10, 25, 50, 75, 90, 100]:
+    idx = np.argsort(fitted)[len(fitted)*p//100]
+    print(f"  fitted={fitted[idx]:.4f}, resid={resid[idx]:.6f}, actual_y={y[idx]:.6f}")
+
+# Check leverage/influence
+influence = model_sm.get_influence()
+leverage = influence.lev
+print(f"\nLeverage stats: mean={leverage.mean():.4f}, max={leverage.max():.4f}")
+
+# Cook's distance (outliers/influential points)
+cook = influence.cooks_distance[0]
+print(f"Cook's D: mean={cook.mean():.6f}, max={cook.max():.4f}")
+
+# Find influential points (Cook's D > 4/n)
+n = len(y)
+threshold = 4 / n
+influential = np.where(cook > threshold)[0]
+print(f"Influential points (Cook's D > {threshold:.4f}): {len(influential)}")
+if len(influential) > 0:
+    for idx in influential[:5]:
+        print(f"  q{train.iloc[idx]['quarter']}: y={y[idx]:.6f}, bbb={X[idx,0]:.4f}, vix={X[idx,1]:.4f}, unemp={X[idx,2]:.4f}")
+
+PYEOF
+```
+
+## [69] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 44, in <module>
+IndexError: index 80 is out of bounds for axis 0 with size 80
+
+=== Statsmodels OLS (logit target) ===
+                            OLS Regression Results                            
+==============================================================================
+Dep. Variable:                      y   R-squared:                       0.557
+Model:                            OLS   Adj. R-squared:                  0.539
+Method:                 Least Squares   F-statistic:                     31.81
+Date:                Tue, 10 Nov 2026   Prob (F-statistic):           1.99e-13
+Time:                        10:26:01   Log-Likelihood:                -26.648
+No. Observations:                  80   AIC:                             61.30
+Df Residuals:                      76   BIC:                             70.82
+Df Model:                           3                                         
+Covariance Type:            nonrobust                                         
+==============================================================================
+                 coef    std err          t      P>|t|      [0.025      0.975]
+------------------------------------------------------------------------------
+const         -4.6096      0.226    -20.407      0.000      -5.059      -4.160
+x1             0.4728      0.068      6.959      0.000       0.337       0.608
+x2            -0.0031      0.008     -0.398      0.692      -0.019       0.013
+x3             0.0425      0.035      1.202      0.233      -0.028       0.113
+==============================================================================
+Omnibus:                       23.708   Durbin-Watson:                   1.773
+Prob(Omnibus):                  0.000   Jarque-Bera (JB):               59.753
+Skew:                          -0.934   Prob(JB):                     1.06e-13
+Kurtosis:                       6.799   Cond. No.                         117.
+==============================================================================
+
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+
+Residual stats:
+  Mean: 0.000000, Std: 0.337617
+  Q1: -0.147659, Median: 0.011691, Q3: 0.214844
+
+Residual vs Fitted:
+  fitted=-4.2543, resid=0.250814, actual_y=0.017925
+  fitted=-4.1202, resid=0.245454, actual_y=0.020338
+  fitted=-3.7696, resid=0.471289, actual_y=0.035630
+  fitted=-3.5665, resid=0.127873, actual_y=0.031111
+  fitted=-3.1962, resid=0.928148, actual_y=0.093801
+  fitted=-3.0107, resid=0.181088, actual_y=0.055747
+
+
+## [70] assistant
+
+**[reasoning]**
+
+> I see the issue - the VIX coefficient is not significant (p=0.692). Let me refine the model and think about this more carefully. The bbb_spread coefficient is highly significant (p=0.000). Let me also check if the regression assumptions hold and build better predictions.
+> 
+> 
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge, Lasso, LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error
+import statsmodels.api as sm
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y = train['default_rate'].values
+y_logit = np.log(y / (1 - y))
+
+# Key features based on statsmodels:
+# bbb_spread is the strongest predictor (coef=0.473, p<0.001)
+# vix and unemployment are less significant
+# Let's try different model specifications
+
+# Model 1: Just bbb_spread
+features_1 = ['bbb_spread']
+
+# Model 2: bbb_spread + unemployment (since unemployment had some effect)
+features_2 = ['bbb_spread', 'unemployment']
+
+# Model 3: bbb_spread + vix (vix captures market stress)
+features_3 = ['bbb_spread', 'vix']
+
+# Model 4: all three
+features_4 = ['bbb_spread', 'vix', 'unemployment']
+
+# Model 5: bbb_spread + vix + unemployment + interaction
+features_5 = ['bbb_spread', 'vix', 'unemployment']
+
+for i, feats in enumerate([features_1, features_2, features_3, features_4], 1):
+    X = train[feats].values
+    
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    
+    # Ridge regression on logit target
+    model = Ridge(alpha=1.0)
+    pred_cv = cross_val_predict(model, X, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    
+    r2 = r2_score(y_logit, pred_cv)
+    mae = mean_absolute_error(y, y_pred_raw)
+    resid_std = np.std(y - y_pred_raw)
+    
+    print(f"Model {i} ({feats}): R2={r2:.4f}, MAE={mae:.6f}, Resid std={resid_std:.6f}")
+    
+    # Also fit with statsmodels for significance
+    X_sm = sm.add_constant(X)
+    ols = sm.OLS(y_logit, X_sm).fit()
+    print(f"  Adj R2={ols.rsquared_adj:.4f}, AIC={ols.aic:.2f}")
+    for name, coef, p in zip(feats, ols.params[1:], ols.pvalues[1:]):
+        print(f"    {name}: coef={coef:.4f}, p={p:.4f}")
+    
+    # Check if residuals are reasonable
+    resid = ols.resid
+    print(f"  Residual: mean={resid.mean():.6f}, std={resid.std():.4f}")
+    print()
+
+# Feature engineering with log transforms
+print("\n=== Feature Engineering ===")
+
+# Try log-transformed features
+train_log = train.copy()
+for col in ['bbb_spread', 'vix', 'unemployment']:
+    train_log[f'{col}_log'] = np.log1p(train[col])
+
+features_eng = ['bbb_spread_log', 'vix_log', 'unemployment_log']
+X_eng = train[features_eng].values
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+model_eng = Ridge(alpha=1.0)
+pred_eng_cv = cross_val_predict(model_eng, X_eng, y_logit, cv=kf)
+y_pred_raw_eng = 1 / (1 + np.exp(-pred_eng_cv))
+
+r2_eng = r2_score(y_logit, pred_eng_cv)
+mae_eng = mean_absolute_error(y, y_pred_raw_eng)
+
+print(f"Log-transformed features: R2={r2_eng:.4f}, MAE={mae_eng:.6f}")
+
+# Try polynomial features
+from sklearn.preprocessing import PolynomialFeatures
+
+poly = PolynomialFeatures(degree=2, include_bias=False)
+X_poly = poly.fit_transform(train[['bbb_spread', 'vix']].values)
+features_poly = ['bbb_spread', 'vix'] + [f'poly_{i}' for i in range(4)]
+
+model_poly = Ridge(alpha=10.0)  # Higher regularization for more features
+pred_poly_cv = cross_val_predict(model_poly, X_poly, y_logit, cv=kf)
+y_pred_raw_poly = 1 / (1 + np.exp(-pred_poly_cv))
+
+r2_poly = r2_score(y_logit, pred_poly_cv)
+mae_poly = mean_absolute_error(y, y_pred_raw_poly)
+
+print(f"Polynomial (degree=2): R2={r2_poly:.4f}, MAE={mae_poly:.6f}")
+
+# Check which model is best
+print("\n=== Summary ===")
+models = [
+    ("bbb_spread only", r2_score(y_logit, cross_val_predict(Ridge(1.0), train[['bbb_spread']].values, y_logit, cv=kf))),
+    ("bbb+vix+unemp", r2),
+    ("log-transformed", r2_eng),
+    ("polynomial", r2_poly)
+]
+
+# Recompute model 1 (bbb_spread only) for comparison
+pred_bbb = cross_val_predict(Ridge(1.0), train[['bbb_spread']].values, y_logit, cv=kf)
+r2_bbb = r2_score(y_logit, pred_bbb)
+print(f"bbb_spread only: R2={r2_bbb:.4f}")
+
+PYEOF
+```
+
+## [71] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 78, in <module>
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/frame.py", line 4384, in __getitem__
+    indexer = self.columns._get_indexer_strict(key, "columns")[1]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 6302, in _get_indexer_strict
+    self._raise_if_missing(keyarr, indexer, axis_name)
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 6352, in _raise_if_missing
+    raise KeyError(f"None of [{key}] are in the [{axis_name}]")
+KeyError: "None of [Index(['bbb_spread_log', 'vix_log', 'unemployment_log'], dtype='str')] are in the [columns]"
+
+Model 1 (['bbb_spread']): R2=0.5046, MAE=0.007655, Resid std=0.011055
+  Adj R2=0.5405, AIC=59.15
+    bbb_spread: coef=0.4550, p=0.0000
+  Residual: mean=-0.000000, std=0.3416
+
+Model 2 (['bbb_spread', 'unemployment']): R2=0.5089, MAE=0.007501, Resid std=0.010857
+  Adj R2=0.5442, AIC=59.46
+    bbb_spread: coef=0.4533, p=0.0000
+    unemployment: coef=0.0446, p=0.2034
+  Residual: mean=0.000000, std=0.3380
+
+Model 3 (['bbb_spread', 'vix']): R2=0.4851, MAE=0.007808, Resid std=0.011304
+  Adj R2=0.5365, AIC=60.80
+    bbb_spread: coef=0.4832, p=0.0000
+    vix: coef=-0.0045, p=0.5622
+  Residual: mean=-0.000000, std=0.3408
+
+Model 4 (['bbb_spread', 'vix', 'unemployment']): R2=0.4900, MAE=0.007689, Resid std=0.011153
+  Adj R2=0.5392, AIC=61.30
+    bbb_spread: coef=0.4728, p=0.0000
+    vix: coef=-0.0031, p=0.6918
+    unemployment: coef=0.0425, p=0.2330
+  Residual: mean=0.000000, std=0.3376
+
+
+=== Feature Engineering ===
+
+
+## [72] assistant
+
+**[reasoning]**
+
+> Looking at the results, I can see:
+> 1. The best model by R2 is bbb_spread only (R2=0.5046)
+> 2. Adding unemployment slightly improves MAE to 0.007501
+> 3. The statsmodels showed bbb_spread is the dominant predictor (p<0.001)
+> 
+> But wait - the residuals from statsmodels have std=0.34 in logit space, which seems large. Let me reconsider.
+> 
+> Actually, looking more carefully at the data and the relationships, I think a simpler approach might work better. The bbb_spread is clearly the key driver - it has very high correlation with default_rate.
+> 
+> Let me think about this differently:
+> - The scenario pushes bbb_spread from 2.42 to 3.79 (beyond the training max of 3.57)
+> - This is extrapolation territory
+> 
+> For prediction intervals, I need to account for:
+> 1. Parameter uncertainty (standard error of coefficients)
+> 2. Residual variance (irreducible error)
+> 
+> Let me build a clean, well-thought-out model and produce final predictions.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error
+import statsmodels.api as sm
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y = train['default_rate'].values
+y_logit = np.log(y / (1 - y))
+
+# Key insight: bbb_spread is the dominant predictor
+# Let's also try log(bbb_spread) and other transformations
+train_ff = train.copy()
+
+# Check various transformations of bbb_spread
+transforms = {
+    'bbb_raw': 'bbb_spread',
+    'log(bbb)': lambda x: np.log(x),
+    'sqrt(bbb)': lambda x: np.sqrt(x),
+}
+
+for name, feat in transforms.items():
+    if isinstance(feat, str):
+        X = train_ff[feat].values.reshape(-1, 1)
+    else:
+        X = feat(train_ff['bbb_spread']).values.reshape(-1, 1)
+    
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    
+    # Statsmodels OLS
+    X_sm = sm.add_constant(X)
+    ols = sm.OLS(y_logit, X_sm).fit()
+    
+    r2_raw = r2_score(y, 1/(1+np.exp(ols.fittedvalues)))
+    print(f"Transform {name}: OLS R2={ols.rsquared:.4f}, Adj R2={ols.rsquared_adj:.4f}")
+    print(f"  Coef: {ols.params[1]:.6f} (p={ols.pvalues[1]:.4f})")
+    print(f"  Resid std: {ols.resid.std():.6f}")
+    print()
+
+# Try bbb_spread as the key feature with more sophisticated approaches
+print("\n=== Testing non-linear models on bbb_spread ===")
+
+# Split data chronologically to avoid look-ahead bias
+# Use last 20% as "test" and train on first 80%
+n_train = int(len(train) * 0.75)
+train_q = train.iloc[:n_train]
+test_q = train.iloc[n_train:]
+
+X_train_full = sm.add_constant(train_q[['bbb_spread']].values)
+y_train_logit = train_q['default_rate'].values
+y_train_logit = np.log(y_train_logit / (1 - y_train_logit))
+
+ols_train = sm.OLS(y_train_logit, X_train_full).fit()
+pred_test = 1 / (1 + np.exp(ols_train.predict(sm.add_constant(test_q[['bbb_spread']].values))))
+y_test = test_q['default_rate'].values
+
+print(f"\nTrain on first 60, test last 20:")
+print(f"  MAE: {mean_absolute_error(y_test, pred_test):.6f}")
+print(f"  RMSE: {np.sqrt(mean_squared_error(y_test, pred_test)):.6f}")
+
+# Check residuals on train
+pred_train = 1 / (1 + np.exp(ols_train.fittedvalues))
+resid_train = y - pred_train  # residuals using full sample model
+
+# Get prediction intervals using statsmodels
+X_all = sm.add_constant(train[['bbb_spread']].values)
+ols_full = sm.OLS(y_logit, X_all).fit()
+
+print(f"\nFull sample OLS (bbb_spread -> logit):")
+print(f"  Coef: {ols_full.params['bbb_spread']:.6f}")
+print(f"  Intercept: {ols_full.params['const']:.6f}")
+print(f"  Residual std (sigma): {ols_full.scale**0.5:.6f}")
+
+# Prediction on scenario
+scenario_bbb = scenario['bbb_spread'].values
+X_scen = sm.add_constant(scenario_bbb.reshape(-1, 1))
+pred_logit = ols_full.predict(X_scen)
+pred_rate = 1 / (1 + np.exp(-pred_logit))
+
+# Prediction intervals (using prediction variance)
+# For OLS: var(pred(x*)) = sigma^2 * x*'(X'X)^(-1)*x* + sigma^2
+# The second term is the irreducible error
+
+try:
+    # Get prediction intervals via get_prediction
+    pred_intervals = ols_full.get_prediction(X_scen)
+    se = pred_intervals.se_mean
+    
+    # 95% prediction interval (using t-distribution with df = n-p)
+    from scipy.stats import t
+    alpha = 0.05
+    df_resid = ols_full.df_resid
+    t_crit = t.ppf(1 - alpha/2, df_resid)
+    
+    y_lower_logit = pred_logit - t_crit * se
+    y_upper_logit = pred_logit + t_crit * se
+    
+    # Back-transform to probability
+    y_lower_rate = 1 / (1 + np.exp(-y_lower_logit))
+    y_upper_rate = 1 / (1 + np.exp(-y_upper_logit))
+    
+    print(f"\nPrediction intervals:")
+    for i in range(len(scenario)):
+        print(f"  Q{scenario['quarter'].iloc[i]}: pred={pred_rate[i]:.6f}, "
+              f"[{y_lower_rate[i]:.6f}, {y_upper_rate[i]:.6f}]")
+except Exception as e:
+    print(f"\nError getting prediction intervals: {e}")
+
+PYEOF
+```
+
+## [73] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 67, in <module>
+NameError: name 'mean_squared_error' is not defined
+
+Transform bbb_raw: OLS R2=0.5463, Adj R2=0.5405
+  Coef: 0.455039 (p=0.0000)
+  Resid std: 0.341562
+
+Transform log(bbb): OLS R2=0.5175, Adj R2=0.5113
+  Coef: 0.605357 (p=0.0000)
+  Resid std: 0.352235
+
+Transform sqrt(bbb): OLS R2=0.5481, Adj R2=0.5423
+  Coef: 1.123803 (p=0.0000)
+  Resid std: 0.340861
+
+
+=== Testing non-linear models on bbb_spread ===
+
+Train on first 60, test last 20:
+  MAE: 0.932596
+
+
+## [74] assistant
+
+**[reasoning]**
+
+> The sqrt(bbb) transform was actually the best so far. Let me now focus on building a proper model with prediction intervals.
+> 
+> 
+
+
+
+**tool call: bash**
+
+```
+python << 'PYEOF'
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error
+import statsmodels.api as sm
+from scipy.stats import t
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y_raw = train['default_rate'].values
+y_logit = np.log(y_raw / (1 - y_raw))
+
+# Find the best model specification using CV
+print("=== Model Comparison with CV ===")
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+best_mae = float('inf')
+best_name = ""
+best_model = None
+best_preds_cv = None
+
+# Model 1: sqrt(bbb_spread) - best OLS so far
+model_ols = sm.OLS(y_logit, sm.add_constant(train[['bbb_spread']].values)).fit()
+pred_cv = cross_val_predict(LinearRegression().set_fit, train[['bbb_spread']].values, y_logit, cv=kf)
+
+# Actually let's use Ridge for CV
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.preprocessing import StandardScaler
+
+models_to_test = []
+
+# bbb_spread raw
+X1 = train[['bbb_spread']].values
+models_to_test.append(("Ridge bbb", Ridge(alpha=1.0), X1))
+
+# sqrt(bbb_spread)
+X2 = np.sqrt(train[['bbb_spread']].values)
+models_to_test.append(("Ridge sqrt(bbb)", Ridge(alpha=1.0), X2))
+
+# bbb + unemp
+X3 = train[['bbb_spread', 'unemployment']].values
+models_to_test.append(("Ridge bbb+unemp", Ridge(alpha=1.0), X3))
+
+# bbb + vix
+X4 = train[['bbb_spread', 'vix']].values  
+models_to_test.append(("Ridge bbb+vix", Ridge(alpha=1.0), X4))
+
+# bbb + vix + unemp
+X5 = train[['bbb_spread', 'vix', 'unemployment']].values
+models_to_test.append(("Ridge bbb+vix+unemp", Ridge(alpha=1.0), X5))
+
+# Log + sqrt
+X6 = np.array([np.log(train['bbb_spread']), np.sqrt(train['vix']), train['unemployment']]).T
+models_to_test.append(("Ridge log_bbb+sqrt_vix+unemp", Ridge(alpha=1.0), X6))
+
+for name, model, X in models_to_test:
+    pred_cv = cross_val_predict(model, X, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y_raw, y_pred_raw)
+    r2 = r2_score(y_logit, pred_cv)
+    
+    print(f"{name}: R2={r2:.4f}, MAE={mae:.6f}")
+    
+    if mae < best_mae:
+        best_mae = mae
+        best_name = name
+        best_model = (name, model, X)
+        best_preds_cv = pred_cv
+
+print(f"\nBest: {best_name} with MAE={best_mae:.6f}")
+
+PYEOF
+```
+
+## [75] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 31, in <module>
+NameError: name 'LinearRegression' is not defined
+
+=== Model Comparison with CV ===
+
+
+## [76] assistant
+
+**[reasoning]**
+
+> I keep making import errors. Let me be more careful and write a clean script.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'ENDSCRIPT'
+import pandas as pd
+import numpy as np
+
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+import statsmodels.api as sm
+from scipy.stats import t
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y_raw = train['default_rate'].values
+y_logit = np.log(y_raw / (1 - y_raw))
+
+# Feature sets to test
+feature_sets = {
+    'bbb': train[['bbb_spread']].values,
+    'sqrt_bbb': np.sqrt(train['bbb_spread']).reshape(-1, 1),
+    'bbb+unemp': train[['bbb_spread', 'unemployment']].values,
+    'bbb+vix': train[['bbb_spread', 'vix']].values,
+    'bbb+vix+unemp': train[['bbb_spread', 'vix', 'unemployment']].values,
+    'log_bbb+sqrt_vix': np.column_stack([np.log(train['bbb_spread']), np.sqrt(train['vix'])]),
+    'log_bbb+sqrt_vix+unemp': np.column_stack([np.log(train['bbb_spread']), np.sqrt(train['vix']), train['unemployment']]),
+}
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+print("=== Ridge Regression CV (logit target) ===")
+best_mae = float('inf')
+best_name = ''
+
+for name, X in feature_sets.items():
+    model = Ridge(alpha=1.0)
+    pred_cv = cross_val_predict(model, X, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y_raw, y_pred_raw)
+    r2 = r2_score(y_logit, pred_cv)
+    
+    marker = " <-- BEST" if mae < best_mae else ""
+    print(f"  {name}: R2={r2:.4f}, MAE={mae:.6f}{marker}")
+    
+    if mae < best_mae:
+        best_mae = mae
+        best_name = name
+
+# Best model: Ridge on sqrt_bbb or bbb alone
+print(f"\nBest feature set: {best_name}")
+
+# Now find the optimal alpha using CV
+print("\n=== Ridge Alpha Tuning ===")
+best_X = feature_sets[best_name]
+alphas = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+alpha_results = []
+
+for alpha in alphas:
+    model = Ridge(alpha=alpha)
+    pred_cv = cross_val_predict(model, best_X, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y_raw, y_pred_raw)
+    r2 = r2_score(y_logit, pred_cv)
+    alpha_results.append((alpha, mae, r2))
+    print(f"  alpha={alpha:5.1f}: R2={r2:.4f}, MAE={mae:.6f}")
+
+best_alpha = min(alpha_results, key=lambda x: x[1])[0]
+print(f"  Best alpha: {best_alpha}")
+
+# Now train final model and generate predictions
+print("\n=== Final Model ===")
+final_model = Ridge(alpha=best_alpha)
+final_model.fit(best_X, y_logit)
+
+# Full-sample predictions for residual analysis
+pred_train_logit = final_model.predict(best_X)
+y_pred_train_raw = 1 / (1 + np.exp(-pred_train_logit))
+
+# Residual analysis
+residuals = y_raw - y_pred_train_raw
+resid_logit = y_logit - pred_train_logit
+
+print(f"Train R2 (logit): {r2_score(y_logit, pred_train_logit):.4f}")
+print(f"Train MAE: {mean_absolute_error(y_raw, y_pred_train_raw):.6f}")
+print(f"Residual std: {np.std(residuals):.6f}")
+print(f"Residual mean: {residuals.mean():.6f}")
+
+# Statsmodels for proper SE
+ols_final = sm.OLS(y_logit, sm.add_constant(best_X)).fit()
+sigma = ols_final.scale ** 0.5
+print(f"OLS sigma (residual std): {sigma:.6f}")
+
+# Scenario predictions
+X_scen = feature_sets[best_name]  # same features for scenario
+
+# Need to apply same transformations to scenario data
+if best_name == 'bbb':
+    X_scen_final = scenario[['bbb_spread']].values
+elif best_name == 'sqrt_bbb':
+    X_scen_final = np.sqrt(scenario['bbb_spread']).reshape(-1, 1)
+elif best_name == 'bbb+unemp':
+    X_scen_final = scenario[['bbb_spread', 'unemployment']].values
+elif best_name == 'bbb+vix':
+    X_scen_final = scenario[['bbb_spread', 'vix']].values
+elif best_name == 'bbb+vix+unemp':
+    X_scen_final = scenario[['bbb_spread', 'vix', 'unemployment']].values
+elif best_name == 'log_bbb+sqrt_vix':
+    X_scen_final = np.column_stack([np.log(scenario['bbb_spread']), np.sqrt(scenario['vix'])])
+elif best_name == 'log_bbb+sqrt_vix+unemp':
+    X_scen_final = np.column_stack([np.log(scenario['bbb_spread']), np.sqrt(scenario['vix']), scenario['unemployment']])
+
+y_scen_logit = final_model.predict(X_scen_final)
+y_scen_raw = 1 / (1 + np.exp(-y_scen_logit))
+
+# Prediction intervals using OLS prediction variance
+ols_s = sm.OLS(y_logit, sm.add_constant(X_scen_final)).fit()
+pred_interval = ols_s.get_prediction(sm.add_constant(X_scen_final))
+
+# Use t-distribution for prediction intervals
+df_resid = ols_s.df_resid
+t_crit = t.ppf(0.975, df_resid)
+
+y_lower_logit = pred_interval.predicted_mean - t_crit * pred_interval.se_mean
+y_upper_logit = pred_interval.predicted_mean + t_crit * pred_interval.se_mean
+
+# For prediction intervals, we also need the irreducible error
+# The get_prediction gives confidence interval for mean, not prediction interval
+# For prediction interval: add sigma^2 to the variance
+
+se_pred = np.sqrt(pred_interval.se_mean**2 + sigma**2)
+y_lower_logit_pi = pred_interval.predicted_mean - t_crit * se_pred
+y_upper_logit_pi = pred_interval.predicted_mean + t_crit * se_pred
+
+# Back-transform
+y_lower_raw = 1 / (1 + np.exp(-y_lower_logit_pi))
+y_upper_raw = 1 / (1 + np.exp(-y_upper_logit_pi))
+
+# Clip
+y_lower_raw = np.clip(y_lower_raw, 0.0001, 0.9999)
+y_upper_raw = np.clip(y_upper_raw, 0.0001, 0.9999)
+
+print("\n=== Scenario Predictions ===")
 for i in range(len(scenario)):
-    x = scenario_c[i]
-    se_pred = np.sqrt(residual_std**2 * (1 + x @ cov_matrix @ x))
-    
-    # Extrapolation penalty
-    bbb_val = scenario['bbb_spread'].iloc[i]
-    unemp_val = scenario['unemployment'].iloc[i]
-    
-    bbb_range = bbb_train_max - bbb_train_min
-    unemp_range = unemp_train_max - unemp_train_min
-    
-    bbb_extrap = max(0, bbb_val - bbb_train_max) / bbb_range if bbb_range > 0 else 0
-    unemp_extrap = max(0, unemp_val - unemp_train_max) / unemp_range if unemp_range > 0 else 0
-    
-    # Extrapolation factor - moderate penalty
-    extrapolation_factor = 1 + 2 * (bbb_extrap + unemp_extrap)
-    se_pred_wide = se_pred * extrapolation_factor
-    
-    y_lower = y_pred[i] - t_stat * se_pred_wide
-    y_upper = y_pred[i] + t_stat * se_pred_wide
-    
-    # Clip to [0, 1]
-    y_lower = max(0, y_lower)
-    y_upper = min(1, y_upper)
-    
-    predictions.append({
-        'quarter': scenario['quarter'].iloc[i],
-        'y_pred': y_pred[i],
-        'y_lower': y_lower,
-        'y_upper': y_upper,
-    })
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_scen_raw[i]:.6f}, "
+          f"[{y_lower_raw[i]:.6f}, {y_upper_raw[i]:.6f}]")
 
 # Save predictions
-pred_df = pd.DataFrame(predictions)
-pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']].to_csv('predictions.csv', index=False)
+predictions = pd.DataFrame({
+    'quarter': scenario['quarter'].values,
+    'y_pred': y_scen_raw,
+    'y_lower': y_lower_raw,
+    'y_upper': y_upper_raw
+})
+predictions.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+ENDSCRIPT
+```
 
-# Verify
-print("Final predictions.csv:")
-print(pred_df[['quarter', 'y_pred', 'y_lower', 'y_upper']])
-print(f"\nNumber of rows: {len(pred_df)}")
-print(f"Columns: {pred_df.columns.tolist()}")
+## [77] tool
 
-# Verify all values are valid fractions
-assert all(pred_df['y_pred'] >= 0) and all(pred_df['y_pred'] <= 1), "y_pred out of range"
-assert all(pred_df['y_lower'] >= 0) and all(pred_df['y_lower'] <= 1), "y_lower out of range"
-assert all(pred_df['y_upper'] >= 0) and all(pred_df['y_upper'] <= 1), "y_upper out of range"
-assert all(pred_df['y_lower'] <= pred_df['y_pred']), "y_lower > y_pred"
-assert all(pred_df['y_pred'] <= pred_df['y_upper']), "y_pred > y_upper"
-assert len(pred_df) == 9, "Wrong number of rows"
+Traceback (most recent call last):
+  File "<stdin>", line 26, in <module>
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/generic.py", line 6206, in __getattr__
+    return object.__getattribute__(self, name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Series' object has no attribute 'reshape'. Did you mean: 'shape'?
 
-print("\nAll validations passed!")
+
+
+## [78] assistant
+
+**[reasoning]**
+
+> Let me fix the script and run it.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'ENDSCRIPT'
+import pandas as pd
+import numpy as np
+
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+import statsmodels.api as sm
+from scipy.stats import t
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y_raw = train['default_rate'].values
+y_logit = np.log(y_raw / (1 - y_raw))
+
+# Feature sets to test
+feature_sets = {}
+feature_sets['bbb'] = train[['bbb_spread']].values
+feature_sets['sqrt_bbb'] = np.sqrt(train['bbb_spread']).values.reshape(-1, 1)
+feature_sets['bbb+unemp'] = train[['bbb_spread', 'unemployment']].values
+feature_sets['bbb+vix'] = train[['bbb_spread', 'vix']].values
+feature_sets['bbb+vix+unemp'] = train[['bbb_spread', 'vix', 'unemployment']].values
+feature_sets['log_bbb+sqrt_vix'] = np.column_stack([np.log(train['bbb_spread']), np.sqrt(train['vix'])])
+feature_sets['log_bbb+sqrt_vix+unemp'] = np.column_stack([np.log(train['bbb_spread']), np.sqrt(train['vix']), train['unemployment']])
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+print("=== Ridge Regression CV (logit target) ===")
+best_mae = float('inf')
+best_name = ''
+
+for name, X in feature_sets.items():
+    model = Ridge(alpha=1.0)
+    pred_cv = cross_val_predict(model, X, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y_raw, y_pred_raw)
+    r2 = r2_score(y_logit, pred_cv)
+    
+    marker = " <-- BEST" if mae < best_mae else ""
+    print(f"  {name}: R2={r2:.4f}, MAE={mae:.6f}{marker}")
+    
+    if mae < best_mae:
+        best_mae = mae
+        best_name = name
+
+print(f"\nBest feature set: {best_name}")
+
+# Find optimal alpha
+print("\n=== Ridge Alpha Tuning ===")
+best_X = feature_sets[best_name]
+alphas = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+
+for alpha in alphas:
+    model = Ridge(alpha=alpha)
+    pred_cv = cross_val_predict(model, best_X, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y_raw, y_pred_raw)
+    r2 = r2_score(y_logit, pred_cv)
+    print(f"  alpha={alpha:5.1f}: R2={r2:.4f}, MAE={mae:.6f}")
+
+best_alpha = min([(alpha,) for alpha in alphas], key=lambda x: 
+    mean_absolute_error(y_raw, 1/(1+np.exp(-cross_val_predict(Ridge(x[0]), best_X, y_logit, cv=kf)))))
+best_alpha = 1.0  # Use alpha=1.0 as default (reasonable regularization)
+
+print(f"  Best alpha: {best_alpha}")
+
+# Train final model
+print("\n=== Final Model ===")
+final_model = Ridge(alpha=best_alpha)
+final_model.fit(best_X, y_logit)
+
+# Full-sample predictions for residual analysis
+pred_train_logit = final_model.predict(best_X)
+y_pred_train_raw = 1 / (1 + np.exp(-pred_train_logit))
+
+residuals = y_raw - y_pred_train_raw
+print(f"Train R2 (logit): {r2_score(y_logit, pred_train_logit):.4f}")
+print(f"Train MAE: {mean_absolute_error(y_raw, y_pred_train_raw):.6f}")
+print(f"Residual std: {np.std(residuals):.6f}")
+
+# OLS for SE estimation
+ols_final = sm.OLS(y_logit, sm.add_constant(best_X)).fit()
+sigma = ols_final.scale ** 0.5
+print(f"OLS sigma: {sigma:.6f}")
+
+# Scenario predictions - apply same transformations
+if best_name == 'bbb':
+    X_scen_final = scenario[['bbb_spread']].values
+elif best_name == 'sqrt_bbb':
+    X_scen_final = np.sqrt(scenario['bbb_spread']).values.reshape(-1, 1)
+elif best_name == 'bbb+unemp':
+    X_scen_final = scenario[['bbb_spread', 'unemployment']].values
+elif best_name == 'bbb+vix':
+    X_scen_final = scenario[['bbb_spread', 'vix']].values
+elif best_name == 'bbb+vix+unemp':
+    X_scen_final = scenario[['bbb_spread', 'vix', 'unemployment']].values
+elif best_name == 'log_bbb+sqrt_vix':
+    X_scen_final = np.column_stack([np.log(scenario['bbb_spread']), np.sqrt(scenario['vix'])])
+elif best_name == 'log_bbb+sqrt_vix+unemp':
+    X_scen_final = np.column_stack([np.log(scenario['bbb_spread']), np.sqrt(scenario['vix']), scenario['unemployment']])
+
+y_scen_logit = final_model.predict(X_scen_final)
+y_scen_raw = 1 / (1 + np.exp(-y_scen_logit))
+
+# Prediction intervals using OLS
+ols_s = sm.OLS(y_logit, sm.add_constant(X_scen_final)).fit()
+pred_interval = ols_s.get_prediction(sm.add_constant(X_scen_final))
+
+# Use t-distribution for prediction intervals (add irreducible error)
+df_resid = ols_s.df_resid
+t_crit = t.ppf(0.975, df_resid)
+
+# Prediction interval standard error (including irreducible error sigma^2)
+se_pred = np.sqrt(pred_interval.se_mean**2 + sigma**2)
+y_lower_logit_pi = pred_interval.predicted_mean - t_crit * se_pred
+y_upper_logit_pi = pred_interval.predicted_mean + t_crit * se_pred
+
+# Back-transform
+y_lower_raw = 1 / (1 + np.exp(-y_lower_logit_pi))
+y_upper_raw = 1 / (1 + np.exp(-y_upper_logit_pi))
+
+# Clip to valid probability range
+y_lower_raw = np.clip(y_lower_raw, 0.0001, 0.9999)
+y_upper_raw = np.clip(y_upper_raw, 0.0001, 0.9999)
+
+print("\n=== Scenario Predictions ===")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_scen_raw[i]:.6f}, "
+          f"[{y_lower_raw[i]:.6f}, {y_upper_raw[i]:.6f}]")
+
+# Save predictions
+predictions = pd.DataFrame({
+    'quarter': scenario['quarter'].values,
+    'y_pred': y_scen_raw,
+    'y_lower': y_lower_raw,
+    'y_upper': y_upper_raw
+})
+predictions.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+ENDSCRIPT
+```
+
+## [79] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 112, in <module>
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 921, in __init__
+    super().__init__(endog, exog, missing=missing,
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 746, in __init__
+    super().__init__(endog, exog, missing=missing,
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 200, in __init__
+    super().__init__(endog, exog, **kwargs)
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 270, in __init__
+    super().__init__(endog, exog, **kwargs)
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 95, in __init__
+    self.data = self._handle_data(endog, exog, missing, hasconst,
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 135, in _handle_data
+    data = handle_data(endog, exog, missing, hasconst, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 694, in handle_data
+    return klass(endog, exog=exog, missing=missing, hasconst=hasconst, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 91, in __init__
+    self._check_integrity()
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 450, in _check_integrity
+    raise ValueError("endog and exog matrices are different sizes")
+ValueError: endog and exog matrices are different sizes
+
+=== Ridge Regression CV (logit target) ===
+  bbb: R2=0.5046, MAE=0.007655 <-- BEST
+  sqrt_bbb: R2=0.4882, MAE=0.007792
+  bbb+unemp: R2=0.5089, MAE=0.007501 <-- BEST
+  bbb+vix: R2=0.4851, MAE=0.007808
+  bbb+vix+unemp: R2=0.4900, MAE=0.007689
+  log_bbb+sqrt_vix: R2=0.4409, MAE=0.008212
+  log_bbb+sqrt_vix+unemp: R2=0.4790, MAE=0.007889
+
+Best feature set: bbb+unemp
+
+=== Ridge Alpha Tuning ===
+  alpha=  0.0: R2=0.5096, MAE=0.007490
+  alpha=  0.1: R2=0.5096, MAE=0.007491
+  alpha=  0.5: R2=0.5094, MAE=0.007496
+  alpha=  1.0: R2=0.5089, MAE=0.007501
+  alpha=  2.0: R2=0.5077, MAE=0.007513
+  alpha=  5.0: R2=0.5016, MAE=0.007561
+  alpha= 10.0: R2=0.4862, MAE=0.007640
+  alpha= 20.0: R2=0.4475, MAE=0.007887
+  alpha= 50.0: R2=0.3399, MAE=0.008679
+  alpha=100.0: R2=0.2281, MAE=0.009424
+  Best alpha: 1.0
+
+=== Final Model ===
+Train R2 (logit): 0.5556
+Train MAE: 0.007268
+Residual std: 0.010541
+OLS sigma: 0.344490
+
+
+## [80] assistant
+
+**[reasoning]**
+
+> The issue is with the scenario data - `scenario['bbb_spread']` and `scenario['unemployment']` need to be extracted correctly. Let me fix the script:
+> 
+> The error was "endog and exog matrices are different sizes" - this means the X_scen_final is wrong. Let me check. The issue might be that `sm.add_constant(X_scen_final)` is creating a different-sized array than expected, or X_scen_final itself has wrong dimensions.
+> 
+> Let me debug this.
+> 
+
+
+
+
+
+**tool call: python**
 
 ```
 
-## [53] tool
+import pandas as pd
+import numpy as np
 
-Final predictions.csv:
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+import statsmodels.api as sm
+from scipy.stats import t
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y_raw = train['default_rate'].values
+y_logit = np.log(y_raw / (1 - y_raw))
+
+# Feature sets to test
+feature_sets = {}
+feature_sets['bbb'] = train[['bbb_spread']].values
+feature_sets['sqrt_bbb'] = np.sqrt(train['bbb_spread']).values.reshape(-1, 1)
+feature_sets['bbb+unemp'] = train[['bbb_spread', 'unemployment']].values
+feature_sets['bbb+vix'] = train[['bbb_spread', 'vix']].values
+feature_sets['bbb+vix+unemp'] = train[['bbb_spread', 'vix', 'unemployment']].values
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+print("=== Ridge Regression CV (logit target) ===")
+best_mae = float('inf')
+best_name = ''
+
+for name, X in feature_sets.items():
+    model = Ridge(alpha=1.0)
+    pred_cv = cross_val_predict(model, X, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y_raw, y_pred_raw)
+    r2 = r2_score(y_logit, pred_cv)
+    
+    marker = " <-- BEST" if mae < best_mae else ""
+    print(f"  {name}: R2={r2:.4f}, MAE={mae:.6f}{marker}")
+    
+    if mae < best_mae:
+        best_mae = mae
+        best_name = name
+
+print(f"\nBest feature set: {best_name}")
+
+# Find optimal alpha using cv for best features
+print("\n=== Ridge Alpha Tuning ===")
+best_X = feature_sets[best_name]
+alphas = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+alpha_results = []
+
+for alpha in alphas:
+    model = Ridge(alpha=alpha)
+    pred_cv = cross_val_predict(model, best_X, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y_raw, y_pred_raw)
+    r2 = r2_score(y_logit, pred_cv)
+    alpha_results.append((alpha, mae))
+    print(f"  alpha={alpha:5.1f}: R2={r2:.4f}, MAE={mae:.6f}")
+
+best_alpha = min(alpha_results, key=lambda x: x[1])[0]
+print(f"  Best alpha: {best_alpha}")
+
+# Train final model on all data
+print("\n=== Final Model ===")
+final_model = Ridge(alpha=best_alpha)
+final_model.fit(best_X, y_logit)
+
+# Full-sample predictions for residual analysis
+pred_train_logit = final_model.predict(best_X)
+y_pred_train_raw = 1 / (1 + np.exp(-pred_train_logit))
+
+residuals = y_raw - y_pred_train_raw
+print(f"Train R2 (logit): {r2_score(y_logit, pred_train_logit):.4f}")
+print(f"Train MAE: {mean_absolute_error(y_raw, y_pred_train_raw):.6f}")
+print(f"Residual std: {np.std(residuals):.6f}")
+
+# OLS for SE estimation and prediction intervals
+ols_final = sm.OLS(y_logit, sm.add_constant(best_X)).fit()
+sigma = ols_final.scale ** 0.5
+print(f"OLS sigma: {sigma:.6f}")
+
+# Scenario predictions - apply same transformations
+print(f"\nBest name: {best_name}")
+print(f"Feature set shape for training: {best_X.shape}")
+
+if best_name == 'bbb':
+    X_scen_final = scenario[['bbb_spread']].values
+elif best_name == 'sqrt_bbb':
+    X_scen_final = np.sqrt(scenario['bbb_spread']).values.reshape(-1, 1)
+elif best_name == 'bbb+unemp':
+    X_scen_final = scenario[['bbb_spread', 'unemployment']].values
+elif best_name == 'bbb+vix':
+    X_scen_final = scenario[['bbb_spread', 'vix']].values
+elif best_name == 'bbb+vix+unemp':
+    X_scen_final = scenario[['bbb_spread', 'vix', 'unemployment']].values
+
+print(f"X_scen shape: {X_scen_final.shape}")
+
+y_scen_logit = final_model.predict(X_scen_final)
+y_scen_raw = 1 / (1 + np.exp(-y_scen_logit))
+
+# Prediction intervals using OLS
+print(f"ols_final params: nobs={len(y_logit)}, k_params={len(ols_final.params)}")
+
+# Use OLS with same features
+X_scen_with_const = sm.add_constant(X_scen_final)
+print(f"X_scen_with_const shape: {X_scen_with_const.shape}")
+
+ols_s = sm.OLS(y_logit, X_scen_with_const).fit()
+pred_interval = ols_s.get_prediction(X_scen_with_const)
+
+# Use t-distribution for prediction intervals
+df_resid = ols_s.df_resid
+t_crit = t.ppf(0.975, df_resid)
+
+# Prediction interval standard error (including irreducible error sigma^2)
+se_pred = np.sqrt(pred_interval.se_mean**2 + sigma**2)
+y_lower_logit_pi = pred_interval.predicted_mean - t_crit * se_pred
+y_upper_logit_pi = pred_interval.predicted_mean + t_crit * se_pred
+
+# Back-transform
+y_lower_raw = 1 / (1 + np.exp(-y_lower_logit_pi))
+y_upper_raw = 1 / (1 + np.exp(-y_upper_logit_pi))
+
+# Clip to valid probability range
+y_lower_raw = np.clip(y_lower_raw, 0.0001, 0.9999)
+y_upper_raw = np.clip(y_upper_raw, 0.0001, 0.9999)
+
+print("\n=== Scenario Predictions ===")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_scen_raw[i]:.6f}, "
+          f"[{y_lower_raw[i]:.6f}, {y_upper_raw[i]:.6f}]")
+
+# Save predictions
+predictions = pd.DataFrame({
+    'quarter': scenario['quarter'].values,
+    'y_pred': y_scen_raw,
+    'y_lower': y_lower_raw,
+    'y_upper': y_upper_raw
+})
+predictions.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+
+# Verify
+result = pd.read_csv('predictions.csv')
+print(result)
+print(f"\nRows: {len(result)}, expected: 9")
+ENDSCRIPT
+```
+
+## [81] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 117, in <module>
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 921, in __init__
+    super().__init__(endog, exog, missing=missing,
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 746, in __init__
+    super().__init__(endog, exog, missing=missing,
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/regression/linear_model.py", line 200, in __init__
+    super().__init__(endog, exog, **kwargs)
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 270, in __init__
+    super().__init__(endog, exog, **kwargs)
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 95, in __init__
+    self.data = self._handle_data(endog, exog, missing, hasconst,
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/model.py", line 135, in _handle_data
+    data = handle_data(endog, exog, missing, hasconst, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 694, in handle_data
+    return klass(endog, exog=exog, missing=missing, hasconst=hasconst, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 91, in __init__
+    self._check_integrity()
+  File "/usr/local/lib/python3.12/site-packages/statsmodels/base/data.py", line 450, in _check_integrity
+    raise ValueError("endog and exog matrices are different sizes")
+ValueError: endog and exog matrices are different sizes
+
+=== Ridge Regression CV (logit target) ===
+  bbb: R2=0.5046, MAE=0.007655 <-- BEST
+  sqrt_bbb: R2=0.4882, MAE=0.007792
+  bbb+unemp: R2=0.5089, MAE=0.007501 <-- BEST
+  bbb+vix: R2=0.4851, MAE=0.007808
+  bbb+vix+unemp: R2=0.4900, MAE=0.007689
+
+Best feature set: bbb+unemp
+
+=== Ridge Alpha Tuning ===
+  alpha=  0.0: R2=0.5096, MAE=0.007490
+  alpha=  0.1: R2=0.5096, MAE=0.007491
+  alpha=  0.5: R2=0.5094, MAE=0.007496
+  alpha=  1.0: R2=0.5089, MAE=0.007501
+  alpha=  2.0: R2=0.5077, MAE=0.007513
+  alpha=  5.0: R2=0.5016, MAE=0.007561
+  alpha= 10.0: R2=0.4862, MAE=0.007640
+  Best alpha: 0.01
+
+=== Final Model ===
+Train R2 (logit): 0.5558
+Train MAE: 0.007267
+Residual std: 0.010546
+OLS sigma: 0.344490
+
+Best name: bbb+unemp
+Feature set shape for training: (80, 2)
+X_scen shape: (9, 2)
+ols_final params: nobs=80, k_params=3
+X_scen_with_const shape: (9, 3)
+
+
+## [82] assistant
+
+**[reasoning]**
+
+> I see the issue - `sm.add_constant` was already added to the feature matrix during the OLS fit, but I'm calling it again. Let me fix this.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'ENDSCRIPT'
+import pandas as pd
+import numpy as np
+
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+import statsmodels.api as sm
+from scipy.stats import t
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y_raw = train['default_rate'].values
+y_logit = np.log(y_raw / (1 - y_raw))
+
+# Best model from CV: Ridge on bbb_spread + unemployment, alpha ~ 0
+# Use alpha=0.01 (close to OLS with minimal regularization)
+best_alpha = 0.01
+
+X_train = train[['bbb_spread', 'unemployment']].values
+final_model = Ridge(alpha=best_alpha)
+final_model.fit(X_train, y_logit)
+
+# Full-sample predictions for residual analysis
+pred_train_logit = final_model.predict(X_train)
+y_pred_train_raw = 1 / (1 + np.exp(-pred_train_logit))
+
+residuals = y_raw - y_pred_train_raw
+print(f"Train R2 (logit): {r2_score(y_logit, pred_train_logit):.4f}")
+print(f"Train MAE: {mean_absolute_error(y_raw, y_pred_train_raw):.6f}")
+print(f"Residual std: {np.std(residuals):.6f}")
+
+# OLS for proper SE estimation (for prediction intervals)
+X_train_sm = sm.add_constant(X_train)
+ols_final = sm.OLS(y_logit, X_train_sm).fit()
+sigma = ols_final.scale ** 0.5
+print(f"\nOLS sigma (residual std): {sigma:.6f}")
+print(f"Residual df: {ols_final.df_resid}")
+
+# Scenario predictions
+X_scen = scenario[['bbb_spread', 'unemployment']].values
+X_scen_sm = sm.add_constant(X_scen)
+
+y_scen_logit = final_model.predict(X_scen)
+y_scen_raw = 1 / (1 + np.exp(-y_scen_logit))
+
+# Prediction intervals using OLS prediction variance
+# For 95% prediction interval on a new observation:
+#   pred +/- t_{n-p, 0.975} * sqrt(sigma^2 + var_fitted_value)
+# where sigma^2 is the irreducible error and var_fitted_value is the estimation uncertainty
+
+pred_interval = ols_final.get_prediction(X_scen_sm)
+y_lower_logit_pi = pred_interval.predicted_mean - t.ppf(0.975, ols_final.df_resid) * pred_interval.se_mean
+y_upper_logit_pi = pred_interval.predicted_mean + t.ppf(0.975, ols_final.df_resid) * pred_interval.se_mean
+
+# These are confidence intervals for the mean. For prediction intervals,
+# add the irreducible error term
+se_pi = np.sqrt(pred_interval.se_mean**2 + sigma**2)
+y_lower_logit_pi2 = pred_interval.predicted_mean - t.ppf(0.975, ols_final.df_resid) * se_pi
+y_upper_logit_pi2 = pred_interval.predicted_mean + t.ppf(0.975, ols_final.df_resid) * se_pi
+
+# Back-transform
+y_lower_raw = 1 / (1 + np.exp(-y_lower_logit_pi2))
+y_upper_raw = 1 / (1 + np.exp(-y_upper_logit_pi2))
+
+# Clip to valid probability range
+y_lower_raw = np.clip(y_lower_raw, 0.0001, 0.9999)
+y_upper_raw = np.clip(y_upper_raw, 0.0001, 0.9999)
+
+print("\n=== Scenario Predictions ===")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_scen_raw[i]:.6f}, "
+          f"[{y_lower_raw[i]:.6f}, {y_upper_raw[i]:.6f}]")
+
+# Save predictions
+predictions = pd.DataFrame({
+    'quarter': scenario['quarter'].values,
+    'y_pred': y_scen_raw,
+    'y_lower': y_lower_raw,
+    'y_upper': y_upper_raw
+})
+predictions.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+
+# Verify
+result = pd.read_csv('predictions.csv')
+print(result)
+print(f"\nRows: {len(result)}, expected: 9")
+print(f"Columns: {result.columns.tolist()}")
+
+# Check column types
+print(f"\nData types:")
+for col in result.columns:
+    print(f"  {col}: {result[col].dtype}")
+
+ENDSCRIPT
+```
+
+## [83] tool
+
+Train R2 (logit): 0.5558
+Train MAE: 0.007267
+Residual std: 0.010546
+
+OLS sigma (residual std): 0.344490
+Residual df: 77.0
+
+=== Scenario Predictions ===
+  Q81: pred=0.036863, [0.018763, 0.071164]
+  Q82: pred=0.040249, [0.020458, 0.077678]
+  Q83: pred=0.043960, [0.022292, 0.084873]
+  Q84: pred=0.048031, [0.024276, 0.092834]
+  Q85: pred=0.052493, [0.026417, 0.101639]
+  Q86: pred=0.057386, [0.028724, 0.111393]
+  Q87: pred=0.062754, [0.031206, 0.122204]
+  Q88: pred=0.068646, [0.033873, 0.134195]
+  Q89: pred=0.075106, [0.036730, 0.147484]
+
+Saved predictions.csv
    quarter    y_pred   y_lower   y_upper
-0       81  0.040167  0.019164  0.061170
-1       82  0.043111  0.022108  0.064114
-2       83  0.046093  0.025090  0.067095
-3       84  0.049115  0.028113  0.070118
-4       85  0.052178  0.031176  0.073181
-5       86  0.055285  0.034282  0.076288
-6       87  0.058438  0.034476  0.082400
-7       88  0.061640  0.033608  0.089672
-8       89  0.064891  0.031043  0.098739
+0       81  0.036863  0.018763  0.071164
+1       82  0.040249  0.020458  0.077678
+2       83  0.043960  0.022292  0.084873
+3       84  0.048031  0.024276  0.092834
+4       85  0.052493  0.026417  0.101639
+5       86  0.057386  0.028724  0.111393
+6       87  0.062754  0.031206  0.122204
+7       88  0.068646  0.033873  0.134195
+8       89  0.075106  0.036730  0.147484
 
-Number of rows: 9
+Rows: 9, expected: 9
+Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
+
+Data types:
+  quarter: int64
+  y_pred: float64
+  y_lower: float64
+  y_upper: float64
+
+
+## [84] assistant
+
+**[reasoning]**
+
+> The current model gives reasonable predictions but the prediction intervals are quite wide due to extrapolation concerns. Let me review and refine:
+> 
+> 1. The bbb_spread values in the scenario (2.4-3.8) extend beyond training range (0.2-3.6), so extrapolation is occurring
+> 2. The unemployment in the scenario (6.3-9.2) also extends beyond training range (3.1-8.0)
+> 3. The intervals should reflect this uncertainty
+> 
+> Let me also check if a better feature set or model would improve things. The key insight from the data is that bbb_spread is the dominant predictor (coef=0.47, p<0.001) with unemployment as a secondary contributor.
+> 
+> The current predictions show increasing default rates as the stress scenario worsens (unemployment increases, bbb_spread widens), which makes sense.
+> 
+> Let me also try using statsmodels get_prediction directly for cleaner intervals, and potentially try some bootstrap approach for more robust uncertainty estimation.
+> 
+
+
+
+The predictions look reasonable - default rates increase as the stress scenario worsens (unemployment rises, bbb_spread widens). Let me refine with better extrapolation handling and bootstrap-based prediction intervals:
+
+
+
+**tool call: bash**
+
+```
+python << 'ENDSCRIPT'
+import pandas as pd
+import numpy as np
+
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+import statsmodels.api as sm
+from scipy.stats import t, norm
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y_raw = train['default_rate'].values
+y_logit = np.log(y_raw / (1 - y_raw))
+
+# Best model from CV: Ridge on bbb_spread + unemployment, alpha ~ 0
+# This gives the best CV performance
+best_features = ['bbb_spread', 'unemployment']
+
+# Try multiple alpha values to find the best one via CV
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+best_alpha_cv = 0.01
+best_mae_cv = float('inf')
+
+for alpha in [0.0, 0.01, 0.1, 0.5, 1.0]:
+    model = Ridge(alpha=alpha)
+    X_train = train[best_features].values
+    pred_cv = cross_val_predict(model, X_train, y_logit, cv=kf)
+    y_pred_raw = 1 / (1 + np.exp(-pred_cv))
+    mae = mean_absolute_error(y_raw, y_pred_raw)
+    print(f"  alpha={alpha:.2f}: MAE={mae:.6f}, R2={r2_score(y_logit, pred_cv):.4f}")
+    if mae < best_mae_cv:
+        best_mae_cv = mae
+        best_alpha_cv = alpha
+
+print(f"\nBest alpha from CV: {best_alpha_cv}")
+
+# Use OLS (alpha=0) for clean statistical inference, or Ridge alpha=0.01
+# Since R2 is essentially unchanged, let's use OLS for the final model
+final_model = LinearRegression()  # Equivalent to Ridge(alpha=0)
+X_train = train[best_features].values
+final_model.fit(X_train, y_logit)
+
+# Full-sample predictions for residual analysis  
+pred_train_logit = final_model.predict(X_train)
+y_pred_train_raw = 1 / (1 + np.exp(-pred_train_logit))
+
+residuals = y_raw - y_pred_train_raw
+print(f"\n=== Final Model Diagnostics ===")
+print(f"Train R2 (logit): {r2_score(y_logit, pred_train_logit):.4f}")
+print(f"Train MAE: {mean_absolute_error(y_raw, y_pred_train_raw):.6f}")
+print(f"Residual std: {np.std(residuals):.6f}")
+
+# OLS for proper SE estimation
+X_train_sm = sm.add_constant(X_train)
+ols_final = sm.OLS(y_logit, X_train_sm).fit()
+sigma = ols_final.scale ** 0.5
+print(f"\nOLS sigma (residual std): {sigma:.6f}")
+print(f"Residual df: {ols_final.df_resid}")
+
+# Coefficients
+for name, coef, p in zip(['const', 'bbb_spread', 'unemployment'], ols_final.params, ols_final.pvalues):
+    print(f"  {name}: coef={coef:.6f}, p={p:.4f}")
+
+# Scenario predictions
+X_scen = scenario[best_features].values
+
+# Check extrapolation
+print("\n=== Extrapolation Analysis ===")
+for i, feat in enumerate(best_features):
+    print(f"\n{feat}:")
+    print(f"  Training: [{train[feat].min():.2f}, {train[feat].max():.2f}]")
+    print(f"  Scenario: [{X_scen[:,i].min():.2f}, {X_scen[:,i].max():.2f}]")
+    print(f"  Over trained max: {(X_scen[:,i].max() > train[feat].max())}")
+    print(f"  Under trained min: {(X_scen[:,i].min() < train[feat].min())}")
+
+# Predict on scenario
+y_scen_logit = final_model.predict(X_scen)
+y_scen_raw = 1 / (1 + np.exp(-y_scen_logit))
+
+# Bootstrap-based prediction intervals to handle extrapolation uncertainty better
+print("\n=== Bootstrap Prediction Intervals ===")
+
+np.random.seed(42)
+n_bootstrap = 5000
+bootstrap_preds = np.zeros((len(scenario), n_bootstrap))
+
+for b in range(n_bootstrap):
+    # Resample residuals (residual bootstrap)
+    boot_resid = np.random.choice(residuals, size=len(y_raw), replace=True)
+    # Create bootstrap response on logit scale
+    y_boot = pred_train_logit + boot_resid
+    
+    # Fit model on bootstrap sample
+    boot_model = LinearRegression()
+    boot_model.fit(X_train, y_boot)
+    
+    # Predict on scenario
+    bootstrap_preds[:, b] = boot_model.predict(X_scen)
+
+# Convert to probability scale
+bootstrap_preds_prob = 1 / (1 + np.exp(-bootstrap_preds))
+
+# 95% prediction intervals from bootstrap
+y_lower_boot = np.percentile(bootstrap_preds_prob, 2.5, axis=1)
+y_upper_boot = np.percentile(bootstrap_preds_prob, 97.5, axis=1)
+
+print("\n=== Scenario Predictions (Bootstrap) ===")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_scen_raw[i]:.6f}, "
+          f"CI=[{y_lower_boot[i]:.6f}, {y_upper_boot[i]:.6f}]")
+
+# Alternative: OLS-based prediction intervals
+print("\n=== Scenario Predictions (OLS-based) ===")
+X_scen_sm = sm.add_constant(X_scen)
+
+pred_interval_ols = ols_final.get_prediction(X_scen_sm)
+t_crit = t.ppf(0.975, ols_final.df_resid)
+
+# For prediction interval (not confidence interval):
+se_pred = np.sqrt(pred_interval_ols.se_mean**2 + sigma**2)
+y_lower_logit = pred_interval_ols.predicted_mean - t_crit * se_pred
+y_upper_logit = pred_interval_ols.predicted_mean + t_crit * se_pred
+
+y_lower_ols = 1 / (1 + np.exp(-y_lower_logit))
+y_upper_ols = 1 / (1 + np.exp(-y_upper_logit))
+
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_scen_raw[i]:.6f}, "
+          f"PI=[{y_lower_ols[i]:.6f}, {y_upper_ols[i]:.6f}]")
+
+# For extrapolation, the OLS SE will be larger (higher leverage)
+print("\nLeverage values:")
+leverage = ols_final.get_influence().lev
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: leverage={leverage[i]:.4f}")
+
+# Save with OLS-based intervals (they account for extrapolation via leverage)
+predictions = pd.DataFrame({
+    'quarter': scenario['quarter'].values,
+    'y_pred': y_scen_raw,
+    'y_lower': y_lower_ols,
+    'y_upper': y_upper_ols
+})
+
+# Ensure valid ranges
+predictions['y_lower'] = predictions['y_lower'].clip(0.0001, 0.9999)
+predictions['y_upper'] = predictions['y_upper'].clip(0.0001, 0.9999)
+
+predictions.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+
+result = pd.read_csv('predictions.csv')
+print(result)
+print(f"\nRows: {len(result)}, expected: 9")
+
+# Verify all intervals are valid (lower < pred < upper)
+valid = (result['y_lower'] < result['y_pred']) & (result['y_pred'] < result['y_upper'])
+print(f"All intervals valid: {valid.all()}")
+
+ENDSCRIPT
+```
+
+## [85] tool
+
+Traceback (most recent call last):
+  File "<stdin>", line 140, in <module>
+AttributeError: 'OLSInfluence' object has no attribute 'lev'
+
+  alpha=0.00: MAE=0.007489, R2=0.5096
+  alpha=0.01: MAE=0.007490, R2=0.5096
+  alpha=0.10: MAE=0.007491, R2=0.5096
+  alpha=0.50: MAE=0.007496, R2=0.5094
+  alpha=1.00: MAE=0.007501, R2=0.5089
+
+Best alpha from CV: 0.0
+
+=== Final Model Diagnostics ===
+Train R2 (logit): 0.5558
+Train MAE: 0.007267
+Residual std: 0.010546
+
+OLS sigma (residual std): 0.344490
+Residual df: 77.0
+  const: coef=-4.639396, p=0.0000
+  bbb_spread: coef=0.453325, p=0.0000
+  unemployment: coef=0.044612, p=0.2034
+
+=== Extrapolation Analysis ===
+
+bbb_spread:
+  Training: [0.23, 3.57]
+  Scenario: [2.42, 3.79]
+  Over trained max: True
+  Under trained min: False
+
+unemployment:
+  Training: [3.07, 8.04]
+  Scenario: [6.29, 9.23]
+  Over trained max: True
+  Under trained min: False
+
+=== Bootstrap Prediction Intervals ===
+
+=== Scenario Predictions (Bootstrap) ===
+  Q81: pred=0.036865, CI=[0.036805, 0.037033]
+  Q82: pred=0.040252, CI=[0.040168, 0.040457]
+  Q83: pred=0.043963, CI=[0.043845, 0.044218]
+  Q84: pred=0.048035, CI=[0.047872, 0.048352]
+  Q85: pred=0.052498, CI=[0.052282, 0.052887]
+  Q86: pred=0.057393, CI=[0.057115, 0.057868]
+  Q87: pred=0.062762, CI=[0.062412, 0.063334]
+  Q88: pred=0.068656, CI=[0.068211, 0.069339]
+  Q89: pred=0.075118, CI=[0.074568, 0.075933]
+
+=== Scenario Predictions (OLS-based) ===
+  Q81: pred=0.036865, PI=[0.018763, 0.071164]
+  Q82: pred=0.040252, PI=[0.020458, 0.077678]
+  Q83: pred=0.043963, PI=[0.022292, 0.084873]
+  Q84: pred=0.048035, PI=[0.024276, 0.092834]
+  Q85: pred=0.052498, PI=[0.026417, 0.101639]
+  Q86: pred=0.057393, PI=[0.028724, 0.111393]
+  Q87: pred=0.062762, PI=[0.031206, 0.122204]
+  Q88: pred=0.068656, PI=[0.033873, 0.134195]
+  Q89: pred=0.075118, PI=[0.036730, 0.147484]
+
+Leverage values:
+
+
+## [86] assistant
+
+**[reasoning]**
+
+> The bootstrap intervals are way too narrow because I'm using residual bootstrap without accounting for parameter uncertainty properly in the extrapolation regime. The OLS-based prediction intervals are better but might not account enough for extrapolation uncertainty.
+> 
+> Let me think about this more carefully:
+> 
+> 1. The scenario pushes both `bbb_spread` and `unemployment` beyond their training ranges
+> 2. The model's prediction intervals need to account for this extrapolation risk
+> 
+> The OLS-based intervals do account for some extrapolation via leverage, but the real issue is that with extrapolation, our model may be systematically biased. A better approach would be to:
+> 
+> 1. Use the OLS-based intervals as a base (they already widen with leverage)
+> 2. Add an additional uncertainty component for extrapolation
+> 
+> But actually, the OLS intervals seem reasonable - they widen as we go further into the stress scenario. Let me check if the bootstrap can be improved, or if I should stick with OLS.
+> 
+> The issue with my bootstrap was that I was only bootstrapping the residuals but not accounting for the fact that in extrapolation, parameter uncertainty dominates. Let me use a proper parametric bootstrap instead.
+> 
+> Actually, the OLS-based intervals seem reasonable and properly account for:
+> - Parameter estimation uncertainty (through the leverage)
+> - Irreducible error (sigma^2)
+> 
+> Let me verify and save the OLS-based intervals, but also add a multiplier for extrapolation uncertainty.
+> 
+
+
+
+The bootstrap was too narrow because it didn't properly account for parameter uncertainty in extrapolation. The OLS-based intervals are better but I need to add extra width for the extrapolation risk since both `bbb_spread` and `unemployment` exceed training ranges. Let me refine:
+
+
+
+**tool call: bash**
+
+```
+python << 'ENDSCRIPT'
+import pandas as pd
+import numpy as np
+
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.model_selection import cross_val_predict, KFold
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+import statsmodels.api as sm
+from scipy.stats import t
+
+# Load data
+train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
+
+# Forward fill + backward fill to complete all series
+for col in ['hpi', 'bbb_spread', 'sp500', 'djia', 'vix']:
+    train[col] = train[col].ffill().bfill()
+
+# Target variable with logit transform
+y_raw = train['default_rate'].values
+y_logit = np.log(y_raw / (1 - y_raw))
+
+# Best features: bbb_spread + unemployment
+best_features = ['bbb_spread', 'unemployment']
+
+# Fit OLS model (alpha=0 is best from CV)
+X_train = train[best_features].values
+
+# Use statsmodels OLS for proper inference
+ols_final = sm.OLS(y_logit, sm.add_constant(X_train)).fit()
+sigma = ols_final.scale ** 0.5
+
+print("=== Model Coefficients ===")
+for name, coef, p in zip(['const', 'bbb_spread', 'unemployment'], ols_final.params, ols_final.pvalues):
+    print(f"  {name}: coef={coef:.6f}, p={p:.4f}")
+
+# Predictions
+pred_train_logit = ols_final.fittedvalues
+y_pred_train_raw = 1 / (1 + np.exp(-pred_train_logit))
+
+residuals = y_raw - y_pred_train_raw
+print(f"\nTrain R2: {r2_score(y_logit, pred_train_logit):.4f}")
+print(f"Train MAE: {mean_absolute_error(y_raw, y_pred_train_raw):.6f}")
+print(f"Residual std: {np.std(residuals):.6f}")
+
+# Scenario predictions
+X_scen = scenario[best_features].values
+
+y_scen_logit = ols_final.predict(sm.add_constant(X_scen))
+y_scen_raw = 1 / (1 + np.exp(-y_scen_logit))
+
+# Check extrapolation - compute Mahalanobis distance of scenario points
+# from training mean to measure how far outside we are
+X_train_arr = np.column_stack([np.ones(len(X_train)), X_train])  # with constant
+
+# Training mean and covariance of features (without constant)
+X_mean = X_train.mean(axis=0)
+X_cov_inv = np.linalg.inv(np.cov(X_train.T))
+
+# Compute Mahalanobis distance for each scenario point
+mahal_dists = []
+for i in range(len(X_scen)):
+    diff = (X_scen[i] - X_mean).reshape(1, -1) @ X_cov_inv
+    mahal = diff @ (X_scen[i] - X_mean).reshape(-1, 1)
+    mahal_dists.append(np.sqrt(mahal[0,0]))
+
+print(f"\n=== Extrapolation Distance (Mahalanobis) ===")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: mahal={mahal_dists[i]:.2f}")
+
+# For training points
+train_mahal = []
+for i in range(len(X_train)):
+    diff = (X_train[i] - X_mean).reshape(1, -1) @ X_cov_inv
+    mahal = diff @ (X_train[i] - X_mean).reshape(-1, 1)
+    train_mahal.append(np.sqrt(mahal[0,0]))
+
+print(f"\nTraining Mahalanobis: mean={np.mean(train_mahal):.2f}, max={max(train_mahal):.2f}")
+print(f"Scenario Mahalanobis: mean={np.mean(mahal_dists):.2f}, max={max(mahal_dists):.2f}")
+
+# Leverage values (hat matrix diagonal)
+leverage = ols_final.get_influence().hat_matrix_diag
+
+print(f"\nTraining leverage: mean={leverage.mean():.4f}, max={leverage.max():.4f}")
+
+scen_leverage = np.zeros(len(X_scen))
+for i in range(len(X_scen)):
+    # Leverage for new point: x'(X'X)^-1 x
+    x = np.array([1] + list(X_scen[i]))  # with intercept
+    leverage_val = x @ np.linalg.inv(ols_final.model.exog.T @ ols_final.model.exog) @ x
+    scen_leverage[i] = leverage_val
+
+print(f"Scenario leverage: {scen_leverage}")
+
+# Prediction intervals using OLS
+t_crit = t.ppf(0.975, ols_final.df_resid)
+
+# Base prediction intervals (standard OLS)
+pred_interval = ols_final.get_prediction(sm.add_constant(X_scen))
+se_pred_base = pred_interval.se_mean
+
+# Prediction interval (with irreducible error)
+se_pi = np.sqrt(se_pred_base**2 + sigma**2)
+y_lower_logit_base = pred_interval.predicted_mean - t_crit * se_pi
+y_upper_logit_base = pred_interval.predicted_mean + t_crit * se_pi
+
+# But these don't fully account for extrapolation uncertainty
+# Add a multiplier based on how far outside training range we are
+print(f"\n=== Extrapolation Factors ===")
+
+# For each feature, compute ratio of scenario extreme to training range
+for feat in best_features:
+    t_min = train[feat].min()
+    t_max = train[feat].max()
+    s_min = X_scen[:, best_features.index(feat)].min()
+    s_max = X_scen[:, best_features.index(feat)].max()
+    
+    # How far beyond training range?
+    over_train_max = max(0, s_max - t_max) / (t_max - t_min + 1e-10)
+    under_train_min = max(0, t_min - s_min) / (t_max - t_min + 1e-10)
+    print(f"  {feat}: over_max={over_train_max:.2f}, under_min={under_train_min:.2f}")
+
+# Use a conservative extrapolation factor
+# If outside training range, multiply prediction SE by a factor that grows with distance
+extrapolation_factor = 1.0
+
+# Check max feature extrapolation
+for feat, idx in [('bbb_spread', 0), ('unemployment', 1)]:
+    t_min = train[feat].min()
+    t_max = train[feat].max()
+    s_min = X_scen[:, idx].min()
+    s_max = X_scen[:, idx].max()
+    
+    over = max(0, s_max - t_max) / (t_max - t_min)
+    under = max(0, t_min - s_min) / (t_max - t_min)
+    extrapolation_factor = max(extrapolation_factor, 1.0 + over + under)
+    print(f"  {feat}: extrapolation factor contribution: {1.0 + over:.2f}")
+
+print(f"\nOverall extrapolation factor: {extrapolation_factor:.2f}")
+
+# Apply extrapolation factor to widen intervals
+se_pi_wide = se_pi * np.sqrt(extrapolation_factor)  # variance scales with factor
+y_lower_logit_wide = pred_interval.predicted_mean - t_crit * se_pi_wide
+y_upper_logit_wide = pred_interval.predicted_mean + t_crit * se_pi_wide
+
+# Back-transform
+y_lower_raw = 1 / (1 + np.exp(-y_lower_logit_wide))
+y_upper_raw = 1 / (1 + np.exp(-y_upper_logit_wide))
+
+# Clip
+y_lower_raw = np.clip(y_lower_raw, 0.0001, 0.9999)
+y_upper_raw = np.clip(y_upper_raw, 0.0001, 0.9999)
+
+print("\n=== Final Scenario Predictions ===")
+for i in range(len(scenario)):
+    print(f"  Q{scenario['quarter'].iloc[i]}: pred={y_scen_raw[i]:.6f}, "
+          f"[{y_lower_raw[i]:.6f}, {y_upper_raw[i]:.6f}]")
+    print(f"    leverage={scen_leverage[i]:.4f}, se_logit={se_pi_wide[i]:.6f}")
+
+# Save predictions
+predictions = pd.DataFrame({
+    'quarter': scenario['quarter'].values,
+    'y_pred': y_scen_raw,
+    'y_lower': y_lower_raw,
+    'y_upper': y_upper_raw
+})
+
+predictions.to_csv('predictions.csv', index=False)
+print("\nSaved predictions.csv")
+
+# Verify
+result = pd.read_csv('predictions.csv')
+print(result)
+print(f"\nRows: {len(result)}, expected: 9")
+valid = (result['y_lower'] < result['y_pred']) & (result['y_pred'] < result['y_upper'])
+print(f"All intervals valid (lower < pred < upper): {valid.all()}")
+
+ENDSCRIPT
+```
+
+## [87] tool
+
+=== Model Coefficients ===
+  const: coef=-4.639396, p=0.0000
+  bbb_spread: coef=0.453325, p=0.0000
+  unemployment: coef=0.044612, p=0.2034
+
+Train R2: 0.5558
+Train MAE: 0.007267
+Residual std: 0.010546
+
+=== Extrapolation Distance (Mahalanobis) ===
+  Q81: mahal=0.93
+  Q82: mahal=1.27
+  Q83: mahal=1.62
+  Q84: mahal=1.99
+  Q85: mahal=2.36
+  Q86: mahal=2.75
+  Q87: mahal=3.15
+  Q88: mahal=3.57
+  Q89: mahal=4.00
+
+Training Mahalanobis: mean=1.27, max=2.77
+Scenario Mahalanobis: mean=2.41, max=4.00
+
+Training leverage: mean=0.0375, max=0.1094
+Scenario leverage: [0.02350742 0.03301682 0.0459029  0.06249808 0.08314562 0.10825434
+ 0.13827244 0.1736962  0.21506049]
+
+=== Extrapolation Factors ===
+  bbb_spread: over_max=0.07, under_min=0.00
+  unemployment: over_max=0.24, under_min=0.00
+  bbb_spread: extrapolation factor contribution: 1.07
+  unemployment: extrapolation factor contribution: 1.24
+
+Overall extrapolation factor: 1.24
+
+=== Final Scenario Predictions ===
+  Q81: pred=0.036865, [0.017363, 0.076566]
+    leverage=0.0235, se_logit=0.388185
+  Q82: pred=0.040252, [0.018927, 0.083558]
+    leverage=0.0330, se_logit=0.389984
+  Q83: pred=0.043963, [0.020617, 0.091284]
+    leverage=0.0459, se_logit=0.392409
+  Q84: pred=0.048035, [0.022441, 0.099837]
+    leverage=0.0625, se_logit=0.395510
+  Q85: pred=0.052498, [0.024406, 0.109303]
+    leverage=0.0831, se_logit=0.399335
+  Q86: pred=0.057393, [0.026518, 0.119793]
+    leverage=0.1083, se_logit=0.403937
+  Q87: pred=0.062762, [0.028784, 0.131425]
+    leverage=0.1383, se_logit=0.409371
+  Q88: pred=0.068656, [0.031211, 0.144331]
+    leverage=0.1737, se_logit=0.415692
+  Q89: pred=0.075118, [0.033803, 0.158637]
+    leverage=0.2151, se_logit=0.422953
+
+Saved predictions.csv
+   quarter    y_pred   y_lower   y_upper
+0       81  0.036865  0.017363  0.076566
+1       82  0.040252  0.018927  0.083558
+2       83  0.043963  0.020617  0.091284
+3       84  0.048035  0.022441  0.099837
+4       85  0.052498  0.024406  0.109303
+5       86  0.057393  0.026518  0.119793
+6       87  0.062762  0.028784  0.131425
+7       88  0.068656  0.031211  0.144331
+8       89  0.075118  0.033803  0.158637
+
+Rows: 9, expected: 9
+All intervals valid (lower < pred < upper): True
+
+
+## [88] assistant
+
+**[reasoning]**
+
+> The results look reasonable. The default rates increase from ~3.7% to ~7.5% as the stress scenario worsens (higher unemployment, wider BBB spreads). The prediction intervals widen progressively, reflecting both increasing uncertainty at higher leverage points and the extrapolation beyond training ranges.
+> 
+> Let me verify the final file is correct and complete, then submit.
+> 
+
+
+
+
+
+**tool call: bash**
+
+```
+python << 'ENDSCRIPT'
+import pandas as pd
+
+# Verify the final predictions.csv
+result = pd.read_csv('predictions.csv')
+print(result)
+print(f"\nShape: {result.shape}")
+print(f"Columns: {result.columns.tolist()}")
+
+# Verify format requirements
+assert len(result) == 9, f"Expected 9 rows, got {len(result)}"
+assert list(result.columns) == ['quarter', 'y_pred', 'y_lower', 'y_upper'], f"Wrong columns: {result.columns.tolist()}"
+
+# Verify quarter values match scenario
+scenario = pd.read_csv('data/scenario.csv')
+expected_quarters = scenario['quarter'].tolist()
+actual_quarters = result['quarter'].tolist()
+assert expected_quarters == actual_quarters, f"Quarters don't match: {actual_quarters}"
+
+# Verify y_lower < y_pred < y_upper
+assert (result['y_lower'] < result['y_pred']).all(), "y_lower must be < y_pred"
+assert (result['y_pred'] < result['y_upper']).all(), "y_pred must be < y_upper"
+
+# Verify all values are in valid probability range
+assert (result['y_lower'] >= 0).all(), "y_lower must be >= 0"
+assert (result['y_upper'] <= 1).all(), "y_upper must be <= 1"
+assert (result['y_pred'] >= 0).all(), "y_pred must be >= 0"
+assert (result['y_pred'] <= 1).all(), "y_pred must be <= 1"
+
+print("\nAll validations passed!")
+ENDSCRIPT
+```
+
+## [89] tool
+
+   quarter    y_pred   y_lower   y_upper
+0       81  0.036865  0.017363  0.076566
+1       82  0.040252  0.018927  0.083558
+2       83  0.043963  0.020617  0.091284
+3       84  0.048035  0.022441  0.099837
+4       85  0.052498  0.024406  0.109303
+5       86  0.057393  0.026518  0.119793
+6       87  0.062762  0.028784  0.131425
+7       88  0.068656  0.031211  0.144331
+8       89  0.075118  0.033803  0.158637
+
+Shape: (9, 4)
 Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
 
 All validations passed!
 
 
-## [54] assistant
+## [90] assistant
 
 **[reasoning]**
 
-> The predictions look reasonable. Let me verify the file one more time and make sure everything is correct.
+> The predictions look good. Let me verify the final state of `predictions.csv` once more and make sure everything is solid. The model:
 > 
-> The model uses bbb_spread and unemployment as predictors, which makes economic sense:
-> - bbb_spread (BBB bond spread) is a strong indicator of credit risk
-> - unemployment is a classic macroeconomic indicator of economic stress
+> 1. Uses `bbb_spread` (dominant predictor) and `unemployment` as features
+> 2. Fits OLS on logit-transformed default rates (best CV performance)
+> 3. Computes 95% prediction intervals using OLS prediction variance + irreducible error, with an extrapolation factor
+> 4. The scenario pushes both predictors beyond training ranges (especially unemployment going from max 8.04 to 9.23)
+> 5. Prediction intervals widen as extrapolation distance increases
 > 
-> The predictions show increasing default rates as the scenario worsens (higher unemployment, higher bbb_spread), which is economically sensible.
-> 
-> The prediction intervals widen as we extrapolate further beyond the training data range, which is appropriate.
-> 
-> Let me verify the file is correct.
+> Let me make one final check to ensure the output file is correct.
 > 
 
 
 
+The model and predictions are complete and validated. Let me provide a final summary:
 
+**Model:** OLS regression on logit(default_rate) ~ bbb_spread + unemployment
+- `bbb_spread` coefficient: 0.453 (p<0.001) - strongest predictor
+- `unemployment` coefficient: 0.045 (p=0.203) - added for marginal improvement
+- Training R²: 0.556, CV MAE: 0.0075
 
-**tool call: bash**
+**Key findings:**
+- `bbb_spread` dominates as the default rate predictor (consistent with credit risk theory)
+- The stress scenario pushes both `bbb_spread` and `unemployment` beyond training ranges (~7% and ~24% extrapolation respectively)
+- Prediction intervals account for both parameter uncertainty (via OLS leverage/SE) and irreducible error (sigma²), with an extrapolation widening factor
 
-```
-cat predictions.csv
-```
-
-## [55] tool
-
-quarter,y_pred,y_lower,y_upper
-81,0.04016697486666247,0.019164310017220982,0.061169639716103966
-82,0.04311098747165082,0.02210831107998038,0.06411366386332126
-83,0.04609256871206838,0.025089876679664735,0.06709526074447202
-84,0.04911547671578742,0.02811276454068452,0.07011818889089032
-85,0.0521784151998166,0.031175677963397253,0.07318115243623595
-86,0.055285142292028175,0.03428237457951726,0.07628791000453909
-87,0.05843789718261329,0.03447601062283506,0.08239978374239151
-88,0.06163994040162399,0.033607568082208925,0.08967231272103905
-89,0.06489097086170936,0.031042729691252352,0.09873921203216637
-
-
-## [56] assistant
-
-**[reasoning]**
-
-> The predictions look reasonable. Let me verify the file is correct and complete.
-> 
-> The model uses:
-> - bbb_spread and unemployment as predictors (the two strongest correlates with default rate)
-> - OLS regression on raw default rate
-> - 95% prediction intervals with extrapolation penalty for values outside training range
-> - The scenario pushes unemployment beyond the training range (up to 9.23 vs max 8.04) and bbb_spread slightly beyond (3.79 vs max 3.57)
-> 
-> The predictions show:
-> - Increasing default rate as the stress scenario worsens (higher unemployment, higher bbb_spread)
-> - Wider intervals for later quarters where extrapolation is more severe
-> - All values are valid fractions in [0, 1]
-> - 9 rows, one per scenario quarter
-> 
-> This looks good. Let me submit.
-> 
-
-
-
-The predictions are complete and valid. Let me verify the final output:
-
-
-
-**tool call: bash**
-
-```
-python3 -c "
-import pandas as pd
-df = pd.read_csv('predictions.csv')
-print('Shape:', df.shape)
-print('Columns:', df.columns.tolist())
-print()
-print(df.to_string(index=False))
-print()
-print('All y_pred in [0,1]:', df['y_pred'].between(0,1).all())
-print('All y_lower in [0,1]:', df['y_lower'].between(0,1).all())
-print('All y_upper in [0,1]:', df['y_upper'].between(0,1).all())
-print('y_lower <= y_pred:', (df['y_lower'] <= df['y_pred']).all())
-print('y_pred <= y_upper:', (df['y_pred'] <= df['y_upper']).all())
-print('Rows match scenario:', len(df) == 9)
-"
-
-```
-
-## [57] tool
-
-Shape: (9, 4)
-Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
-
- quarter   y_pred  y_lower  y_upper
-      81 0.040167 0.019164 0.061170
-      82 0.043111 0.022108 0.064114
-      83 0.046093 0.025090 0.067095
-      84 0.049115 0.028113 0.070118
-      85 0.052178 0.031176 0.073181
-      86 0.055285 0.034282 0.076288
-      87 0.058438 0.034476 0.082400
-      88 0.061640 0.033608 0.089672
-      89 0.064891 0.031043 0.098739
-
-All y_pred in [0,1]: True
-All y_lower in [0,1]: True
-All y_upper in [0,1]: True
-y_lower <= y_pred: True
-y_pred <= y_upper: True
-Rows match scenario: True
-
-
-## [58] assistant
-
-**[reasoning]**
-
-> The predictions are complete and valid. Let me summarize what was done:
-> 
-> 1. **Data exploration**: Found that `bbb_spread` and `unemployment` are the strongest predictors of default rate (correlations of 0.70 and 0.20 respectively). Some macro series have missing values in early quarters.
-> 
-> 2. **Model selection**: After trying many feature combinations and models, the best simple model was `default_rate ~ bbb_spread + unemployment` using raw (non-logit) OLS. This model:
->    - Has R² = 0.516
->    - Both coefficients are statistically significant
->    - Had the best Leave-One-Out CV performance
->    - Is simple and interpretable
-> 
-> 3. **Prediction intervals**: Used analytical prediction intervals with:
->    - Standard error accounting for both model uncertainty (covariance matrix) and residual variance
->    - Extrapolation penalty factor that widens intervals when scenario values exceed training ranges
->    - The scenario pushes unemployment and bbb_spread beyond training ranges, so intervals widen accordingly
-> 
-> 4. **Output**: 9 rows with quarter, y_pred, y_lower, y_upper - all valid fractions in [0,1] with proper ordering.
-> 
-> The model predicts increasing default rates from ~4% to ~6.5% over the stress scenario quarters, reflecting the worsening macroeconomic conditions (rising unemployment, widening bbb spreads).
-> 
-
-
-
-The predictions have been successfully generated and saved to `predictions.csv`. Here's a summary of the approach:
-
-**Model**: Linear regression of default rate on `bbb_spread` and `unemployment` (the two strongest predictors with correlations of 0.70 and 0.20 respectively).
-
-**Key findings**:
-- `bbb_spread` has a strong positive relationship with default rates (coefficient: 0.0127)
-- `unemployment` also positively affects defaults (coefficient: 0.0025)
-- The model explains ~52% of variance (R² = 0.516)
-
-**Prediction intervals**:
-- Computed using analytical formula: `y_pred ± t × SE_pred`
-- SE accounts for both model parameter uncertainty (via covariance matrix) and residual variance
-- Extrapolation penalty widens intervals when scenario values exceed training ranges (quarters 87-89 show unemployment and bbb_spread beyond training ranges)
-
-**Results**: Default rates are predicted to increase from ~4.0% in quarter 81 to ~6.5% in quarter 89, reflecting the deteriorating macroeconomic conditions in the stress scenario (rising unemployment, widening credit spreads).
-
-## [59] user
-
-Please proceed to the next step using your best judgement.
-
-## [60] assistant
-
-**[reasoning]**
-
-> The user wants me to proceed to the next step. Looking at the conversation, I have already:
-> 1. Explored the data
-> 2. Built a model (linear regression with bbb_spread and unemployment)
-> 3. Generated predictions with 95% prediction intervals
-> 4. Saved predictions.csv
-> 
-> The predictions.csv file has been created with the correct format:
-> - quarter, y_pred, y_lower, y_upper
-> - 9 rows (one per scenario quarter)
-> - All values are valid fractions in [0, 1]
-> - y_lower <= y_pred <= y_upper
-> 
-> The task is complete. The user said "Please proceed to the next step using your best judgement." Since the predictions.csv has been created and verified, I should submit the answer.
-> 
-> Let me verify once more that the file is correct and complete.
-> 
-
-
-
-
-
-**tool call: bash**
-
-```
-cat predictions.csv
-```
-
-## [61] tool
-
-quarter,y_pred,y_lower,y_upper
-81,0.04016697486666247,0.019164310017220982,0.061169639716103966
-82,0.04311098747165082,0.02210831107998038,0.06411366386332126
-83,0.04609256871206838,0.025089876679664735,0.06709526074447202
-84,0.04911547671578742,0.02811276454068452,0.07011818889089032
-85,0.0521784151998166,0.031175677963397253,0.07318115243623595
-86,0.055285142292028175,0.03428237457951726,0.07628791000453909
-87,0.05843789718261329,0.03447601062283506,0.08239978374239151
-88,0.06163994040162399,0.033607568082208925,0.08967231272103905
-89,0.06489097086170936,0.031042729691252352,0.09873921203216637
-
-
-## [62] assistant
-
-**[reasoning]**
-
-> The predictions.csv file is already saved and valid. Let me verify it one more time and then submit.
-> 
-
-
-
-The `predictions.csv` file is already complete and valid with:
-- 9 rows (one per scenario quarter)
-- Columns: `quarter`, `y_pred`, `y_lower`, `y_upper`
-- All values are valid fractions in [0, 1]
-- Prediction intervals are properly ordered (lower ≤ pred ≤ upper)
-- Extrapolation uncertainty is accounted for in the widening intervals for quarters 87-89
+**Predictions:** Default rates rise from ~3.7% to ~7.5% across the 9 stress quarters, reflecting worsening credit conditions (rising BBB spreads and unemployment).
 
 
 
 **tool call: submit**
 
 ```
-predictions.csv has been generated with 9 rows (one per scenario quarter), containing point estimates and 95% prediction intervals for the default rate. The model uses bbb_spread and unemployment as predictors (the two strongest macroeconomic drivers of defaults), with prediction intervals that widen for quarters where scenario values exceed training ranges (quarters 87-89).
+Complete. The model uses OLS regression on logit(default_rate) ~ bbb_spread + unemployment, trained on all 80 training quarters. Both predictors are forward/backward filled to handle missing early data for late-starting series (hpi, bbb_spread, sp500, djia, vix). 
+
+The bbb_spread coefficient (0.453, p<0.001) is the dominant predictor of default rates, consistent with credit risk economics. The unemployment term adds marginal explanatory power (reduces CV MAE from 0.00766 to 0.00749).
+
+95% prediction intervals are computed from OLS prediction variance plus irreducible error (sigma² = 0.344), with additional widening for extrapolation beyond training ranges. Both bbb_spread and unemployment exceed their training maximums in the scenario (up to 24% extrapolation on unemployment).
+
+predictions.csv contains 9 rows (one per scenario quarter) with columns: quarter, y_pred, y_lower, y_upper.
 ```
 
-## [63] tool
+## [91] tool
 
-predictions.csv has been generated with 9 rows (one per scenario quarter), containing point estimates and 95% prediction intervals for the default rate. The model uses bbb_spread and unemployment as predictors (the two strongest macroeconomic drivers of defaults), with prediction intervals that widen for quarters where scenario values exceed training ranges (quarters 87-89).
+Complete. The model uses OLS regression on logit(default_rate) ~ bbb_spread + unemployment, trained on all 80 training quarters. Both predictors are forward/backward filled to handle missing early data for late-starting series (hpi, bbb_spread, sp500, djia, vix). 
+
+The bbb_spread coefficient (0.453, p<0.001) is the dominant predictor of default rates, consistent with credit risk economics. The unemployment term adds marginal explanatory power (reduces CV MAE from 0.00766 to 0.00749).
+
+95% prediction intervals are computed from OLS prediction variance plus irreducible error (sigma² = 0.344), with additional widening for extrapolation beyond training ranges. Both bbb_spread and unemployment exceed their training maximums in the scenario (up to 24% extrapolation on unemployment).
+
+predictions.csv contains 9 rows (one per scenario quarter) with columns: quarter, y_pred, y_lower, y_upper.
 
