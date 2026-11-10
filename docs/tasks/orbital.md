@@ -108,3 +108,15 @@ On the flyby only Kimi K3 (26.4) clears the degenerate answer as a cell. deepsee
 The baselines behave as designed: the OD and Kepler references reach the oracle, and the naive polynomial flyby fit is astronomically bad (9571 ± 18872, its ± 2 SD exceeding its own mean in the heavy-tailed-regret pattern), confirming a flyby is nothing like a polynomial.
 
 Haiku's two-body failure has a specific signature: coverage 1.00 at a worst case of 105 means it hedges with enormously wide intervals that always contain the truth but are crushed by the width penalty, rather than fitting the orbit, the fast-model reflex of buying coverage with sharpness. That row is one of the archived ones, so the signature is recorded here but not reproducible from the logs.
+
+## Notes On The Published Column
+
+This section holds what the README's score table needs to say about these columns specifically. Row-level provenance is in [models.md](../models.md).
+
+**Three-body was re-measured under the corrected circular scorer**, and re-running moved cells hard and in both directions on identical instances, so the column inherits run-to-run instability along with the fix ([detail](../limitations.md#re-measuring-three-body)).
+
+**Three-body now has a ceiling rather than headroom.** Claude Opus 5.5's 0.0393 sits on the oracle's 0.039 against a next-best of Kimi K3's 3.3, and nine of the thirteen ranked models are still worse than the naive harmonic fit.
+
+**The flyby is the column where leading it is not the same as solving it.** Opus leads at 24 against gpt-6-luna's 45 and Kimi K3's 50, and eleven of the fourteen ranked rows remain worse than the degenerate answer. But the lead rests on three draws of 0.52, 70 and 0.44, so the column is led by a model that fails it outright one pass in three. gpt-6-luna reaches a comparable cell by the opposite route, buying coverage with interval width rather than accuracy ([detail](../models.md#gpt-6-luna)).
+
+**Two-body, by contrast, is solved by most of the cast**, which is the difficulty gradient working as designed.

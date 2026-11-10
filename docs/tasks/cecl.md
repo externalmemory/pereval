@@ -424,3 +424,15 @@ The hidden work is estimating segment response laws and their coefficients from 
 The [interagency policy statement on allowances for credit losses](https://www.federalreserve.gov/frrs/guidance/interagency-policy-statement-on-allowances-for-credit-losses.htm) describes expected losses over contractual terms with expected prepayments and reversion to historical information beyond reasonable and supportable forecasts. Those concepts motivate this task. The supplied path, reversion policy and loan conventions are benchmark assumptions, not prescribed choices for an institution.
 
 The first version covers funded term-loan principal only. It excludes revolving commitments, renewals and extensions, purchased credit-deteriorated assets, collateral-dependent measurement, accrued interest, qualitative overlays, discounted cash flow methods, scenario mixtures, and management's selection and documentation of reasonable and supportable forecasts. It does not validate financial reporting controls or certify an allowance under ASC 326. Parameters vary but the logistic response family is fixed; broader families and real portfolio validation remain future work.
+
+## Notes On The Published Column
+
+This section holds what the README's score table needs to say about this column specifically. Row-level provenance is in [models.md](../models.md).
+
+CECL is reported as `ecl_regret`, balance-weighted squared error in pool lifetime loss rates, which is its headline metric. The simulated prediction intervals are diagnostics rather than a ranking axis, because the shock law is disclosed to the agent.
+
+**The column is two groups and a gap, not a gradient.** Six models land between 0.0000065 and 0.000059 with interval coverage 0.93 to 0.96, then nothing until nemotron-3-super at 0.00056, gpt-6-luna at 0.00057, ling at 0.0087 and Claude Haiku at 0.0099, whose coverage falls to 0.84, 0.69, 0.67 and 0.48. No model is worse than the degenerate answer in this column: only the naive baseline is, at 0.071 against the degenerate 0.019. An earlier version of this note said Claude Haiku was, which was wrong, since its 0.0099 is comfortably inside the degenerate. Within the leading six the spread is a factor of nine on three instances, which this suite cannot resolve, so read the column as whether a model built the simulation and calibrated to it rather than as an ordering.
+
+Two rows come from a different serving path than their other cells: mimo-v2.5 and ling-3.0-flash no longer have free endpoints, and nemotron-3-ultra's free endpoint returned HTTP 503 on five consecutive attempts while the paid one completed in three minutes.
+
+The two local rows sit between the groups, at 0.001945 and 0.001948. Their ordering is not meaningful: the two cells differ by 0.15%, far below anything this suite resolves, and only the mean-rank column distinguishes them ([detail](../local-models.md)).
