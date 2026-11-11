@@ -32,7 +32,7 @@ Change control does engage in one case: an agent invoked inside a production pro
 
 ## Claims Not Supported
 
-- **A ranking of models.** The aggregate mean rank is reproduced by independently permuting each column at p = 0.25, so it describes the table rather than separating the models.
+- **A ranking of models.** The aggregate mean rank is a Borda count over eight columns whose cells are three-run worst cases. It separates the top of the field from the rest; it does not order the rest, and the gaps inside the mid-field are smaller than the run-to-run spread of the cells behind them.
 - **A claim about conceptual soundness.** Only the numeric prediction is scored, never the reasoning. An agent that reaches a well-calibrated answer for a bad reason is not penalized except where the flaw surfaces out of sample.
 - **A transfer claim to deployment.** Whether a perEval score predicts the quality of a model that the agent builds on a real portfolio is **unmeasured**. No such study exists here.
 

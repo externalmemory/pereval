@@ -209,59 +209,13 @@ The cost of the attempt is not small. The eval spent **122.6M total tokens**, of
 
 The suite is not consistent about this, though: the flyby runs recorded above were **discarded** as budget-limited when they hit the wall clock, while these were scored, because that task's wall-clock failure left nothing to read and this one's did not. Whether a time-limited run is reportable currently depends on whether the task happens to leave a readable artifact behind, which is not a decision anyone made.
 
-## Effect of Completing One Row
+## Mean Rank Is Computed From the Cells
 
-Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. Completing K3 took it to p = 0.037, and adding a complete deepseek-v4-flash-0731 row took it to p = 0.004 on the spread and p = 0.007 on the range, measured over the six columns the table then had. Adding the CECL column took the spread to p = 0.001 and the range to p = 0.016, and completing a minimax-m3.1-flash:free row took them to p < 0.0001 on the spread and p = 0.002 on the range over ten ranked rows and seven columns. Adding the migration column as the eighth takes them to **p < 0.00001 on the spread and p = 0.001 on the range**.
+**One of the table's displayed ties is not a real one.** The ballistic column shows Kimi K3 and deepseek-v4-flash-0731 both at 14, but the cells behind them are 13.991 and 14.135, so Kimi takes rank 4 and deepseek rank 5 rather than 4.5 each. GLM-5.1 and mimo-v2.5 both show 12 and are a genuine tie at 2.5. A reader recomputing the column from the displayed figures will therefore not reproduce the published mean ranks, which are computed from the cells. Ties are given the average of the ranks they span.
 
-That is not the aggregate becoming trustworthy. Dropping rows one at a time shows where the signal lives:
+**A gap in mean rank says how often a row placed first, not by how far.** Claude Opus 5.5 leads minimax-m3.1-flash by 1.12, and that number is not a measure of how much better the model is, nor can it be: a rank is a placement, so beating the field by 73x on three-body and by 1.2x on CECL each contribute exactly one rank point. The gap would read the same if every margin were a hundredth of what it is.
 
-| Rows tested | p (spread), seven columns | p (spread), eight columns |
-| --- | ---: | ---: |
-| all ten | < 0.0001 | < 0.00001 |
-| without minimax-m3.1-flash | 0.0015 | 0.00011 |
-| without deepseek-0731 | 0.0001 | 0.00002 |
-| without Kimi K3 | 0.0003 | 0.00006 |
-| without minimax and K3 | 0.052 | 0.011 |
-| without all three of the top rows | 0.558 | 0.266 |
-
-Dropping any single row leaves a detectable signal, which is a change from the six-column table where K3 carried it almost alone. **The eighth column moved the boundary by one row.** Dropping the top two used to take the spread to the edge of significance at 0.052 and now leaves it at 0.011, so deepseek-v4-flash-0731 carries detectable signal of its own rather than only the two rows above it; dropping the top three still returns the remaining seven rows to noise, though at 0.266 rather than 0.558. So the column detects that the top three models are genuinely different, not that anything below them is ranked. Read as a ranking of the seven rows beneath them, it is still noise.
-
-Migration is also the column that most compresses the top. minimax-m3.1-flash goes from 1.71 to 2.13 and Kimi K3 from 2.71 to 2.50, cutting the gap between first and second from 1.00 to 0.38, because migration is the one column where the frontier model wins outright and minimax lands mid-field at rank 5 of 10. The aggregate's leader did not change, and the margin that made it look settled did.
-
-Ranks are recomputed from the cells for each subset rather than deleted from a fixed rank matrix, since dropping a row re-ranks the rows beneath it. Ties are given the average of the ranks they span, which is the rule the published mean-rank column was computed with.
-
-**One of the table's displayed ties is not a real one, and the mean ranks use the underlying cells.** The ballistic column shows Kimi K3 and deepseek-v4-flash-0731 both at 14, but the cells behind them are 13.991 and 14.135, so Kimi takes rank 4 and deepseek rank 5 rather than 4.5 each. GLM-5.1 and mimo-v2.5 both show 12 and are ranked as a genuine tie at 2.5. A reader recomputing the column from the displayed figures alone will therefore get 2.79 and 3.64 for those two rows against the published 2.71 and 3.71 on seven columns, or 2.56 and 3.69 against 2.50 and 3.75 on eight. The published numbers are the ones computed from the cells.
-
-Mean ranks over eight columns are multiples of one eighth, or of one sixteenth where a column tie splits a rank, so eight of the eleven land exactly on a two-decimal rounding boundary: 23/8, 27/8, 37/8, 61/8, 63/8, 67/8, 69/8 and 73/8. They are rounded half up. Round half to even, the other common convention, would print four of those eight differently, giving 4.62, 7.62, 8.62 and 9.12 in place of 4.63, 7.63, 8.63 and 9.13.
-
-The positive finding is that the suite has resolving power at the top of the range, which was not previously demonstrable. Every model measured before this clustered within a factor of a few on the orbital tasks and none beat the degenerate answer on flyby. K3 is 3.3 on three-body against a next-best of 164, and 50 on flyby against 292, beating the degenerate answer on all three of its flyby runs. Those are gaps this suite can resolve, and until now nothing had produced one.
-
-That the same model is unremarkable on CCAR and quantile is not a limitation and not news. CCAR was built tractable on purpose, "included deliberately as a contrast to three-body", and the per-task doc has recorded since the first cast that "CCAR is tractable even for cheap models". A frontier model failing to separate on a task designed to be solvable by cheap ones is the difficulty gradient working as intended. The genuine caveat about the aggregate leaning on the physics tasks is a property of the task mix, and is covered under [The Overall Rank Depends on the Task Mix](#the-overall-rank-depends-on-the-task-mix).
-
-## Effect of the Twelfth Row
-
-Adding Claude Opus 5.5 as the eleventh ranked row moves the range of mean ranks from p = 0.001 to **p = 0.00005**. The spread cannot move, because it was already below what a million permutations can resolve at ten rows and still is, so the range is the only place an eleventh row can register, and there it moved by a factor of twenty.
-
-The boundary between signal and noise moved by one row, which is what the eighth column had done. The table below is recomputed on the current twelve-row field; the eleven-row figures it replaces were 0.00005 on the full range, 0.012 and 0.025 without the top three, and 0.267 and 0.219 without the top four.
-
-| Rows tested | p (spread) | p (range) |
-| --- | ---: | ---: |
-| all twelve | < 0.00001 | 0.00003 |
-| without Claude Opus 5.5 | < 0.00001 | 0.00068 |
-| without minimax-m3.1-flash | < 0.00001 | 0.00003 |
-| without Kimi K3 | < 0.00001 | 0.00006 |
-| without Opus and minimax | 0.00017 | 0.00239 |
-| without the top three | 0.010 | 0.040 |
-| without the top four | 0.138 | 0.198 |
-| without the top five | 0.282 | 0.263 |
-
-One million permutations for each subset, with ranks recomputed from the cells rather than deleted from a fixed rank matrix, since dropping a row re-ranks those beneath it. **No single row carries the result**: dropping any one of the top three leaves the range detectable, and it takes three deletions to reach the edge and five to return to noise.
-
-**The twelfth row left the boundary where the eleventh put it and made it less clean.** gpt-6-luna enters sixth of twelve at a mean rank of 6.25, so it does not touch the top four, and the four deletions that return the field to noise are the same four as before. What changed is how firmly: the eight rows below the top four now give p = 0.138 on the spread where the seven rows below it gave p = 0.267, and it takes a fifth deletion to reach p = 0.282. A mid-field row therefore makes the residual field look slightly less like noise without making any of it ordered, which is the expected behaviour of a dispersion statistic under a larger sample and not evidence that the field beneath the top four has structure. Read the two together: the top four separate from the field on either count, and nothing beneath them is ranked at either row count.
-
-It also reopened the margin at the top that migration had closed. Adding the migration column cut the gap between first and second from 1.00 to 0.38; Opus puts it at 1.13, and the twelfth row widens it to 1.25, 1.75 against minimax-m3.1-flash's 3.00. That number is not a measure of how much better the model is, and cannot be: a rank is a placement, so beating the field by 73x on three-body and by 1.2x on CECL each contribute exactly one rank point. The gap says how often Opus placed first, not by how far, and it would read the same if every margin were a hundredth of what it is.
-
-### The Row's Own Variance Is Larger Than the Gaps It Wins By
+## The Row's Own Variance Is Larger Than the Gaps It Wins By
 
 Three passes over the same instances, 87 samples, every one completing with no limit hit. The per-instance draws:
 
@@ -324,18 +278,11 @@ The table therefore names models rather than endpoints. This loses nothing that 
 
 **Free tiers are a scheduling constraint as well as a provenance one.** The same probe found every tokenrouter model, including the ids that advertise themselves as free, returning 403 `insufficient_user_quota` against an account at $0.00. A free model id does not imply a servable model id, so the practical consequence is that a model can be listed, be free, and still be unusable for a row, and the surviving path has to be found by a live call rather than from a price list.
 
-## Dropping a Row Costs Aggregate Power
+## Dropping a Row Changes the Aggregate
 
 laguna-m.1 was removed from the summary table when CECL was added as a seventh column. The reason is mechanical rather than editorial: the mean-rank column is a Borda count, which needs a value in every ranked row, and `poolside/laguna-m.1` is no longer listed by any provider, so its CECL cell can never be measured. The choice was between dropping the row and leaving a permanently unranked one, which removes it from the aggregate anyway.
 
-The removal is not free, and the direction is worth stating because it is the opposite of what tidying usually implies. laguna was the bottom anchor on five of six columns, so deleting it compresses the spread of mean ranks and weakens the permutation test:
-
-| Rows | p (spread) | p (range) |
-| --- | ---: | ---: |
-| ten, with laguna | 0.004 | 0.007 |
-| nine, without laguna | 0.014 | 0.055 |
-
-p on the range crosses from 0.007 to 0.055, so on that statistic the column is no longer distinguishable from chance at a conventional bar. The leave-one-out structure also shifts: on nine rows, dropping Kimi K3 gives p = 0.202 and dropping deepseek-0731 gives p = 0.079, against 0.090 and 0.037 before, so each of the top two now carries more of the remaining signal than it did.
+The removal is not free, and the direction is worth stating because it is the opposite of what tidying usually implies. laguna was the bottom anchor on five of six columns, so deleting it compressed the spread of mean ranks: the aggregate looked more like noise after the cleanup than before it, and every row beneath the top two absorbed a share of the range that the removed row had been holding open.
 
 None of this is evidence about any model. It is a property of the estimator: a rank statistic computed over a hand-assembled roster is sensitive to which rows exist, and removing a row for an availability reason changes a number that reads like a result. That is the same weakness recorded under The Overall Rank Depends on the Task Mix, appearing on the row axis rather than the column axis, and it is the strongest argument for treating the aggregate as a detector of outliers rather than a ranking.
 
@@ -387,7 +334,7 @@ Three draws per instance are enough to measure the size of it, because the old c
 
 The size of the correction is not uniform and is not predictable from the column: it runs from 1.08 on quantile, where the three draws of an instance sit within a few percent of each other, to 5.24 on the flyby, where one instance returned 1891 on its second draw against 367 and 271 on its other two, and a second instance spread 648, 88 and 101 across its three.
 
-Two columns would have been ranked wrongly. On two-body the raw maximum of 0.102 sits fourth in the column, behind Claude Opus 5.5, GLM-5.1 and Kimi K3, where the matched 0.069 is second and ahead of the last two. On the flyby the raw 1891 would have placed eleventh of twelve ranked rows, worse than every model but the naive baseline, where the matched 361 places fifth. A rank inversion caused by sample count alone is not a caveat, it is a wrong answer, and it lands in the mean rank because the Borda count is within-column.
+Two columns would have been ranked wrongly. On two-body the raw maximum of 0.102 sits fourth in the column, behind Claude Opus 5.5, GLM-5.1 and Kimi K3, where the matched 0.069 is second and ahead of the last two. On the flyby the raw 1891 would have placed thirteenth of fourteen ranked rows, worse than every model but the naive baseline, where the matched 361 places fifth. A rank inversion caused by sample count alone is not a caveat, it is a wrong answer, and it lands in the mean rank because the Borda count is within-column.
 
 **So the cells are published on the three-sample convention, matched to the rows they sit beside, with the raw count and the full-sample maximum recorded in [models.md](models.md).** The alternative, publishing the fifteen-sample maximum because the stated rule technically permits it, would have been a measurement artifact dressed as a result. The repeated draws are not wasted: they are what makes the correction possible and what the `regret_spread` column reports.
 
@@ -417,7 +364,7 @@ The quantile task is the exception and needs its own argument, because its data 
 
 ## Sample Size
 
-Every score table reports at least three runs per model as median (worst), after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The distance from the median to the worst is routinely larger than the distance between adjacent rows (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p < 0.00001 on the spread of mean ranks over eight columns), but only because the top four rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What the Eleventh Row Did to the Aggregate](#effect-of-the-twelfth-row) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
+Every score table reports at least three runs per model as median (worst), after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The distance from the median to the worst is routinely larger than the distance between adjacent rows (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3, and the mean-rank column separates the top of the field from the rest rather than ordering it. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
 
 ### Three Runs Cannot Support a Two SD Band
 
@@ -486,17 +433,13 @@ The quantile task makes this explicit: four defensible criteria (point accuracy,
 
 The README's mean-rank column is a Borda count over the suite's eight columns: four physics and mechanism columns (ballistic, two-body, three-body, flyby) and four statistical-modelling columns (CCAR, CECL, migration, quantile). With migration added the portfolio is balanced by column count for the first time, four against four, where it was four against two before CECL and four against three before migration. That removes the tilt this section was originally written to warn about: weighting the two axes equally is now arithmetically identical to weighting by column count, so the aggregate no longer favours physics-capable models by construction.
 
-Balanced is not the same as independent. The eight columns are not eight axes: the Spearman rank-correlation matrix across them has a participation ratio of 2.54 effective dimensions, lower than the 3.5 measured over six columns, so the two added columns agreed with the existing ones more than they diversified them. Eight correlated votes over twelve rows is still a thin aggregate, and the fix for a weak aggregate is more tasks rather than more interpretation of this one.
-
-Permuting the ranks within each column independently, the null of no cross-task skill, reproduces the observed dispersion at p < 0.00001 on the spread and p = 0.00004 on the range over twelve ranked rows and eight columns. Both figures clear a conventional bar comfortably, and both establish only that the top of the column is real: dropping the top three rows still leaves the spread at p = 0.009, dropping the top four leaves p = 0.13, and dropping the top five returns it to noise at p = 0.28.
-
-**The column count and the row count both move this statistic materially, and they have moved it in opposite directions at different times.** This is worth recording because the changes landed close together and could otherwise be confused. On six columns the nine rows then in the table gave p = 0.014 on the spread and p = 0.055 on the range; on seven columns the same rows gave p = 0.001 and p = 0.016, so adding CECL recovered significance that dropping a row had cost. Adding the eleventh row then pushed the detectable boundary from the top three to the top four, and adding gpt-6-luna as the twelfth left that boundary where it was while weakening it, from p = 0.25 to p = 0.13 on the field below the top four. The number responds to the shape of the roster at least as much as to the models in it.
+Balanced is not the same as independent. The eight columns are not eight axes: the Spearman rank-correlation matrix across them has a participation ratio of 2.41 effective dimensions over the fourteen ranked rows, lower than the 3.5 measured over six columns, so the columns added since have agreed with the existing ones more than they diversified them. Eight correlated votes over fourteen rows is a thin aggregate, and the fix for a weak aggregate is more tasks rather than more interpretation of this one.
 
 **The mix no longer changes who leads.** Claude Opus 5.5 is first on the statistical axis and first on the physics axis, so its position does not depend on the weighting. It is not first on every individual column, placing second on CCAR and ballistic and fifth on quantile, which is the distinction between leading an aggregate and leading a task. Below it the mix reorders the field substantially, and the per-axis split is the more informative reading:
 
-- **nemotron-3-ultra is 6th of twelve on the statistical axis and 10th on the physics axis**, the widest split in the table. ling-3.0-flash shows the same shape, 8th against 11th, and deepseek-v4-flash-0731 a milder version, 4th against 7th.
-- **gpt-6-luna and mimo-v2.5 run the other way**, 4th on physics against 7th on statistical and 6th against 9th respectively. For gpt-6-luna this is almost entirely the flyby cell, where it places 2nd.
-- The *naive baseline* has the largest split of any row, 8th on physics against 12th on statistical, which is a statement about the baseline rather than about the models: a harmonic or parabolic fit is a far better answer to a mechanism-reconstruction task than a historical-average rule is to a forecasting one.
+- **nemotron-3-ultra is 6th of fourteen on the statistical axis and 11th on the physics axis**, the widest split of any model. ling-3.0-flash shows the same shape, 8th against 12th, gemma-4-26B-A4B a milder version, 11th against 14th, and deepseek-v4-flash-0731 milder still, 4th against 6th.
+- **gpt-6-luna and mimo-v2.5 run the other way**, 4th on physics against 7th on statistical and 7th against 9th respectively. For gpt-6-luna this is almost entirely the flyby cell, where it places 2nd.
+- The *naive baseline* has the largest split of any row, 8th on physics against 14th on statistical, which is a statement about the baseline rather than about the models: a harmonic or parabolic fit is a far better answer to a mechanism-reconstruction task than a historical-average rule is to a forecasting one.
 
-So the overall rank is a property of the task portfolio, not of the models in isolation. It is meaningful only relative to the stated task set, and this suite makes no claim that its mix is canonical; it is simply the columns that exist so far. A different or larger mix would reorder the field, and the honest reading of the matrix remains the per-axis story rather than the single aggregate. The aggregate's own best demonstration of that is at the bottom: it now ranks exactly one model below the naive baseline, Claude Haiku 4.5 at 10.00 against the baseline's 9.38, where it ranked two models below it on seven columns.
+So the overall rank is a property of the task portfolio, not of the models in isolation. It is meaningful only relative to the stated task set, and this suite makes no claim that its mix is canonical; it is simply the columns that exist so far. A different or larger mix would reorder the field, and the honest reading of the matrix remains the per-axis story rather than the single aggregate. The aggregate's own best demonstration of that is at the bottom, where it ranks three models below the naive baseline: Qwen3.6-35B-A3B at 10.50, Claude Haiku 4.5 at 11.12 and gemma-4-26B-A4B at 11.25, against the baseline's 10.38.
 
