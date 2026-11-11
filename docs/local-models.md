@@ -6,7 +6,7 @@ The short answer, after two models and three context sweeps: **all eight tasks r
 
 An earlier version of this document concluded the opposite: that the binding constraint was context rather than capability, that the limit was set by RAM, and that four of the tasks could not run at all. Every part of that was wrong. The sections below keep the measurements that refuted it rather than quietly replacing the conclusion.
 
-## Why Local Serving Is the Point
+## Rationale
 
 The reason to care about a local model is not this suite. It is the work the suite stands in for. A bank building its own CCAR or CECL models has to hand the agent loan-level history, current portfolio composition, internal rating definitions and scenario overlays, and much of that is material non-public information about the institution's own balance sheet. Sending it to a hosted endpoint means sending it to a third party's infrastructure under that party's retention and training terms, and for a lot of institutions that ends the conversation regardless of what the model can do.
 
@@ -58,7 +58,7 @@ Inspect reaches any OpenAI-compatible endpoint through `openai-api/<service>/<mo
 
 Everything in the plumbing worked on the first try: tool calling through the Inspect agent loop, the Docker sandbox, reasoning returned as a proper content block, and the transcript archive. Nothing in the harness needed changing to point it at a machine on the LAN.
 
-## What Ran, and What It Scored
+## Results
 
 Both local rows now complete all eight columns on the archived convention: one draw per instance over the same instances every hosted row uses, three instances per task and eight for CCAR, with quantile as three paired single-instance runs on the archived seeds. Their cells are therefore plain maxima and need no matched-convention adjustment.
 
@@ -117,7 +117,7 @@ Verified rather than assumed: four identical prompts at `temperature 1.0, top_p 
 
 **The gemma row is a maximum over two different decoder settings, which no other row in the table is.** Ten of the twenty one successful runs behind it were greedy and eleven were sampled at `temperature 1.0`, `top_p 0.95`, `top_k 64`, and the cells are maxima across both. Three cells are set by a greedy run (CCAR, quantile and two-body) and five by a sampled one (ballistic, CECL, flyby, migration and three-body). It is recorded rather than hidden because restricting the cells to the sampled runs alone moves only three of them: CCAR to 0.42, quantile to 0.074 and two-body to 3177. This is a provenance defect in that row rather than a property of local serving.
 
-### What Sampling Bought, and What the Presence Penalty Did Not
+### Sampling and the Presence Penalty
 
 Three migration runs on identical weights separate the two changes:
 
@@ -167,7 +167,7 @@ All three rows are Gemma 4 26B A4B on the same machine, measured by growing one 
 
 A second default matters for the eval rather than for the probe. `--prompt-cache-size` retains 10 distinct KV caches, so under sequential sampling a finished sample's cache stays resident while the next one grows. At Gemma's 40 KiB per token a single 100k conversation is 4 GiB of retained cache, and ten of them is more than the machine has. `--prompt-cache-size 1` keeps the live conversation's prefix cache, measured at 96 to 97% hit rate throughout the sweep, and drops only the finished ones.
 
-### Why the Memory Arithmetic Did Not Predict It
+### Memory Arithmetic
 
 Weights plus KV cache at each model's failure point, computed from each `config.json`:
 
@@ -193,7 +193,7 @@ The failure mode is abrupt and it lies. The worker thread exits, every subsequen
 
 `vmmap <pid> | grep -i "physical footprint"` is the way to read memory on macOS, since Activity Monitor has no peak column and `phys_footprint` counts Metal buffers in unified memory where plain RSS does not. Observed during a heavy 35B run: `Physical footprint: 29.2G`, `Physical footprint (peak): 38.5G`.
 
-### How the Ceiling Was Measured, and Why the First Two Answers Were Wrong
+### Measuring the Ceiling
 
 Three times for the 35B, all at the default prefill step, and the method rather than the number is what the later sweeps reused.
 
@@ -226,7 +226,7 @@ Peak context is behaviour, not requirement, and the 10x to 100x within-task spre
 
 That cuts both ways. A 49k median does not prove ballistic needs 49k, and a model with a different working style might need triple it. It also means a local model's context demand cannot be predicted from the hosted column at all, in either direction.
 
-## What Makes the Endpoint Fast Enough
+## Throughput
 
 **Prefix caching is the reason the agent loop is viable.** Extending a conversation by a new turn pair costs almost nothing:
 
@@ -328,7 +328,7 @@ The no-submit loop makes this worse rather than better, because thrashing turns 
 | Stop reasons | 733 `stop`, 12 `tool_calls`, 4 `max_tokens` |
 | Output tokens | median 1,692 per call, 630,313 in total |
 
-**It is not truncation and it is not the server.** Four of 248 calls hit `max_tokens`; the rest stopped normally at a median of 1,692 tokens. Every POST returned `HTTP/1.0 200 OK`. The model produces fluent, normal-length prose, `basic_agent` re-prompts it because there is no tool call to execute, and the cycle repeats at two to twenty-six minutes a turn until the message limit ends the sample. This is the same family as the repetition loop under [Every Local Run Was Greedy and No Hosted Run Was](#every-local-run-was-greedy-and-no-hosted-run-was), and greedy decoding is the obvious suspect, but that is inferred rather than tested. Low confidence on the cause, high confidence on the shape.
+**It is not truncation and it is not the server.** Four of 248 calls hit `max_tokens`; the rest stopped normally at a median of 1,692 tokens. Every POST returned `HTTP/1.0 200 OK`. The model produces fluent, normal-length prose, `basic_agent` re-prompts it because there is no tool call to execute, and the cycle repeats at two to twenty-six minutes a turn until the message limit ends the sample. This is the same family as the repetition loop under [The Decoder Settings](#the-decoder-settings-and-where-they-differ-between-the-two-rows), and greedy decoding is the obvious suspect, but that is inferred rather than tested. Low confidence on the cause, high confidence on the shape.
 
 **It is intermittent, which is why it went unnoticed.** Per-sample message counts, same tasks, same instance counts:
 
@@ -356,11 +356,11 @@ The signals that do work, in order of cost:
 
 Two Gemma runs were killed on the strength of the `.eval` mtime, at 13 and 17 hours. Both were working. The first had completed 324 generate calls and was on its second instance when it was killed, and its trace log ends with a successful response seconds before the kill.
 
-## What Would Close the Gap
+## Remaining Levers
 
 The gap is no longer context, and the fix was never a better model. One server flag moved the measured ceiling from 89,601 tokens to past 298,658, which settles six of the eight tasks outright, so for those the levers that remain are all about the scores. CCAR and migration are not settled: they reached 216,198 and 231,531 tokens, 72% and 78% of a ceiling that is itself optimistic, and migration crashed the server at that figure and again at 199,374.
 
-**Sampling is the first lever, and it was set wrong by default.** See [Every Local Run Was Greedy and No Hosted Run Was](#every-local-run-was-greedy-and-no-hosted-run-was). Greedy decoding is what put the migration agent into a repetition loop, and it is also the reason the local rows are not strictly comparable with the hosted ones.
+**Sampling is the first lever, and it was set wrong by default.** See [The Decoder Settings](#the-decoder-settings-and-where-they-differ-between-the-two-rows). Greedy decoding is what put the migration agent into a repetition loop, and it is also the reason the local rows are not strictly comparable with the hosted ones.
 
 **Calibration is the second, and nothing here says it is cheap.** Coverage is the component that collapses, on every task where an interval is scored, on both local models tested. The point estimates stay in a credible range while the intervals are narrow and misplaced, which is a prompting and scoring-feedback problem as much as a model one. Nothing in the serving setup touches it.
 

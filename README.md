@@ -56,7 +56,7 @@ Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks a
 
 <!-- scores:end -->
 
-### What The Table Says
+### Findings
 
 **Claude Opus 5.5 takes five of eight columns and the aggregate, but judged on its worst pass only three of those leads survive.** Three-body at 0.0432 against 3.3 is a 76x margin; CECL and migration are closer to 1.5x, measured on three instances. The columns are not one distribution: three-body is the most stable cell the suite has measured, while its flyby spans 434x on a single instance.
 

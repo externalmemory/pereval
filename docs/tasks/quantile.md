@@ -1,179 +1,115 @@
 # Small-Sample Tail Quantile Estimation
 
-The suite's second realistic domain task, and the only one whose ground truth is empirical rather than generated from a known DGP.
+The suite's second realistic domain task, and the only one whose ground truth is empirical rather than generated from a known data-generating process.
 
 ```
 inspect eval pereval/tasks/quantile/task.py --model <provider/model>            # needs Docker
 inspect eval pereval/tasks/quantile/task.py -T baseline=wei8 --model mockllm/model
 ```
 
-## The Task
+## Task
 
-Each instance presents 100 independent problems (the single-instance baseline illustration further down still uses 40). Each is 10 values drawn uniformly without replacement from a population of m year-over-year percent changes of one undisclosed macroeconomic series over an undisclosed window (m >= 250). The agent estimates that population's 90th, 95th and 99th percentiles, plus a 95% interval for the 95th.
+Each instance presents 100 independent problems. Each problem is 10 values drawn uniformly without replacement from a population of at least 250 year-over-year percent changes of one undisclosed macroeconomic series over an undisclosed window. The agent estimates that population's 90th, 95th and 99th percentiles, plus a 95% interval for the 95th.
 
-The estimand is stated explicitly in the prompt, because leaving "the 95th percentile" ambiguous would make this a reading-comprehension test whose result flips on a paraphrase. Naming the target costs nothing: knowing that the population quantile is wanted does not tell you how to extrapolate a tail from ten points.
+The estimand is stated explicitly in the prompt. Leaving "the 95th percentile" ambiguous would make this a reading-comprehension test whose result flips on a paraphrase, and naming the target costs nothing: knowing that the population quantile is wanted does not tell you how to extrapolate a tail from ten points.
 
-The failure mode this task exists to expose is quiet and plausible-looking. `np.percentile(x, 95)` on ten observations is Hyndman-Fan type 7, which can never exceed the sample maximum and puts the true p95 above its own estimate roughly three times in four. It is the natural thing to reach for and it is wrong.
+The failure mode the task exists to expose is quiet and plausible-looking. `np.percentile(x, 95)` is Hyndman-Fan type 7, which can never exceed the sample maximum and puts the true p95 above its own estimate roughly three times in four. It is the natural thing to reach for and it is wrong.
 
-## Scoring: Pinball Regret
+## Data
+
+1,503 monthly not-seasonally-adjusted FRED series, lag-12 simple percent change, frozen as a snapshot in `pereval/tasks/quantile/data/`. FRED revises, so the snapshot must not be refetched without rerunning every published result.
+
+They were selected from 28,263 metadata-passing candidates, capped at five per title prefix before fetching, because five prefixes (HICP, All Employees, PPI by Industry and by Commodity, Consumer Price Indices) account for more than half the pool, and forty blocks drawn from forty PPI commodity codes would not be forty independent problems.
+
+A numeric screen rejects interior gaps, non-positive levels, persistent definitional breaks and upper-tail ties. Two of those rules are not obvious:
+
+- **Persistence, not magnitude, separates artifacts from data.** M1NS jumped 4.5x on a 2020 savings reclassification and never reverted, and is rejected; LNU03000000 jumped 3.6x on COVID and returned to baseline, and is kept.
+- **Ties are real and are screened, not jittered.** 43 of 3,275 fetched series carry tie rates of 0.33 to 1.00 among their top order statistics, from quantisation of the source levels rather than any ceiling on growth. A tie in the top two collapses the reference estimator's tail extrapolation to the sample maximum. Jittering is not the fix, because the jitter magnitude would then set the tail scale the reference extrapolates from.
+
+Shape coverage across the snapshot runs from skew -2.03 to +26.26 and excess kurtosis -0.86 to +690.
+
+Three disguises are applied per block, each doing a different job. A **random window**, which is the one that matters: even perfect recognition of a series does not give you the p95 of a span whose endpoints you do not know. A **random scale**, log-uniform in [0.1, 10] and independent per block, which removes absolute magnitude; a positive factor maps zero to zero, so the sign structure survives and the legitimate prior that macro growth rates have fat right tails is still usable. No location shift is applied, because every estimator here is location-scale equivariant and a shift would be invisible to the score. And **rounding to four significant figures**, which defeats exact matching against a memorised table and is weak on its own. Blocks come from distinct series and are independently scaled, so they cannot be pooled.
+
+## Scoring
 
 ```
 regret(tau) = E_pop[rho_tau(X - qhat)] - min_q E_pop[rho_tau(X - q)]
 rho_tau(d)  = d * (tau - 1[d < 0])
 ```
 
-Summed over tau in {0.90, 0.95, 0.99} and normalised by the population interquartile range. `E_pop` is a plain average over all m population values, the ten shown and the m - 10 not shown.
+Summed over tau in {0.90, 0.95, 0.99} and normalised by the population interquartile range. `E_pop` is a plain average over all population values, the ten shown and the rest not shown.
 
-Until this was corrected the scored population excluded the ten drawn values, so the scorer measured a different estimand from the one the prompt states and the exactly correct answer to the question as asked carried a small penalty. Immaterial in size but wrong in kind: switching to the full population moves every baseline down by 0.0017 to 0.0028, which is ten to seventeen times below the +-0.03 block-sampling floor, so the scores below remain comparable. The population holds unrounded values; the rounding to four significant figures is a disguise on the observation, not on the population.
+**This task has no oracle row, and does not need one.** The minimiser of the pinball loss is exactly the population tau-quantile, so the population supplies the truth and the achievable floor at once. Regret is non-negative and zero only for a perfect answer, with no Harrell-Davis target, no oracle tuning and no Monte Carlo. That is what replaces the generated-DGP oracle the other tasks have.
 
-The minimiser of the pinball loss is exactly the population tau-quantile, so the population supplies both the truth and the achievable floor. Regret is non-negative and zero only for a perfect answer, with no Harrell-Davis target, no oracle tuning, and no Monte-Carlo simulation. This is what replaces the generated-DGP oracle the other tasks have.
+Two properties of the metric matter:
 
-Two properties matter:
+- **Asymmetry.** `dL/dq = F(q) - tau`, so the slope tends to `-tau` far below the support and `1 - tau` far above it, a 19:1 ratio at tau = 0.95. Underestimating a tail quantile is expensive, which is the pressure type 7 fails under. At finite displacement on a heavy right tail the ratio is much smaller, because F barely moves above q95.
+- **Robustness.** Regret is exactly invariant to the values of observations below the estimate, since each contributes `(1-tau)(qhat - q_tau)/m`, which depends on their count and not their magnitude. Replacing a population's minimum with -1e6 leaves it bit-for-bit unchanged. Normalising by standard deviation would throw that away, which is why the normaliser is the IQR.
 
-- **Asymmetry.** `dL/dq = F(q) - tau`, so the slope tends to `-tau` far below the support and `1 - tau` far above it: a 19:1 ratio at tau = 0.95. Underestimating a tail quantile is expensive, which is the pressure type 7 fails under. The ratio at finite displacement is much smaller on a heavy right tail, because F barely moves above q95.
-- **Robustness.** The regret is exactly invariant to the values of observations lying below the estimate, since each contributes `(1-tau)(qhat - q_tau)/m`, which depends on their count and not their magnitude. Replacing a population's minimum with -1e6 leaves the regret bit-for-bit unchanged. Normalising by standard deviation would throw this away (sd explodes, the score collapses toward zero, and the block is silently deleted from the average), which is why the normaliser is the IQR.
+**Winkler regret is reported as a diagnostic and is deliberately not the headline.** Grafting one fixed interval shape onto every candidate rule's point estimate collapses the whole Winkler spread from 3.44-20.62 to 3.07-4.02, so it ranks almost purely on interval width. Sliding a point estimate from type-7 behaviour (hit rate 0.239) to median-unbiasedness (0.494) moves Winkler by 4% and its optimum sits at hit rate 0.370, meaning it actively prefers an underestimator. Pinball moves 37% over the same range and bottoms out at 0.494.
 
-## Target Metric
+Three tau levels are summed because getting all three right requires getting the tail *shape* right, and the `spread_ratio` diagnostic makes a submission's behaviour legible directly: 0.0 means type 8 or a degenerate q99 = q95, 0.36 means a bare `np.percentile` call, a constant 1.6 means one of the two extrapolating rules, and a spread that varies block to block means the rule is reading shape out of the sample.
 
-The rest of the suite scores Winkler interval regret. It is the wrong headline here, and the pilot measured why.
+## Results
 
-Grafting one fixed interval shape onto every candidate rule's own point estimate collapses the entire Winkler spread from 3.44-20.62 down to 3.07-4.02. Winkler ranks almost purely on interval width. Sliding a point estimate across the range that spans type-7 behaviour (hit rate 0.239) to median-unbiasedness (hit rate 0.494) moves Winkler by 4%, and its optimum sits at hit rate 0.370, so it actively prefers an underestimator. Pinball moves 37% over the same range and bottoms out at 0.494. Adding tau = 0.99 makes Winkler flatter still, because the optimal interval widens from 3.75 to 6.50 sample sd and absorbs even more centring error.
+Worst-case regret over three instances. Lower is better.
 
-Winkler is still reported as a diagnostic, because interval calibration is worth measuring. It is just not what this task is about.
+<!-- scores:begin (generated by scripts/render_scores.py; do not edit by hand) -->
 
-## Quantile Levels
+| Model | Quantile |
+| --- | --- |
+| deepseek-v4-flash-0731 | **0.067** |
+| minimax-m3.1-flash | 0.070 |
+| ling-3.0-flash | 0.076 |
+| Kimi K3 | 0.077 |
+| gemma-4-26B-A4B (local) | 0.078 |
+| Claude Opus 5.5 | 0.083 |
+| nemotron-3-ultra | 0.099 |
+| Claude Haiku 4.5 | 0.10 |
+| nemotron-3-super | 0.12 |
+| *Degenerate answer* | *0.12* |
+| gpt-6-luna | 0.128 |
+| *Naive baseline* | *0.14* |
+| mimo-v2.5 | 0.15 |
+| GLM-5.1 | 0.25 |
+| Qwen3.6-35B-A3B (local) | 3.8e12 |
+| *Oracle (true model)* | *none* |
 
-At tau = 0.90 the reference estimators are indistinguishable. At tau = 0.99 the bounded ones are structurally stuck. In units of the sample top gap `x_(10) - x_(9)`, the p99 - p95 spread is an exact constant for type7 (0.360), type8 (0.000, both levels clip to the sample maximum at n = 10) and both extrapolators (1.609). Harrell-Davis alone among the bounded rules is not a fixed constant: its ratio is typically low (median 0.16) but has a long right tail (up to ~3). The truth varies 1.25 to 4.15 across series.
+<!-- scores:end -->
 
-"Adapting to tail shape" is really two separate abilities, and the reference rules split differently on each.
+The reference estimators are the thing to read this column against, because on this task they are strong. One instance, 40 blocks, seed 1:
 
-First, can a rule place the tail quantile *above the sample maximum*? type7, type8 and Harrell-Davis cannot: each is a weighted average of order statistics with non-negative weights, so it is structurally bounded by the observed maximum and systematically undershoots a tail that runs past the data (q99 exceeds the sample max in 0% of blocks for all three). wei8, t6 and the normal fit can and do exceed it (100%, 100% and ~87% of blocks).
-
-Second, does the p99 − p95 spread *vary with the sample*? Measured by rank correlation between a rule's per-block spread ratio and the truth's, the normal scores 0.637 and Harrell-Davis 0.504, while type7, type8, wei8 and t6 are exact constants. wei8 and t6 are the instructive case: they extrapolate, and their absolute tail width scales with the top gap x_(10) − x_(9), so they *do* adapt tail scale, but they pin the ratio (q99 − q95) / gap at exactly log 5 = 1.609 regardless of shape, so they cannot match the shape variation the truth shows (ratio 1.25 to 4.15). Harrell-Davis is the mirror image: its ratio varies with the sample, but being bounded by the maximum it cannot extrapolate at all.
-
-Only the normal does both (extrapolate and vary its ratio), which is part of why it wins on this data.
-
-Summing over three tau captures shape in a single scalar, because getting all three levels right requires getting the shape right. The reported `spread_ratio` diagnostic makes behaviour legible directly: 0.0 means type 8 or a degenerate q99 = q95, 0.36 means a bare `np.percentile` call, a constant 1.6 means one of the two extrapolating rules, and a spread that varies block to block means the rule is reading shape out of the sample.
-
-## Data
-
-1,503 monthly not-seasonally-adjusted FRED series, lag-12 simple percent change, frozen as a snapshot in `pereval/tasks/quantile/data/`. FRED revises, so the snapshot must not be refetched without rerunning every published result.
-
-Selected from 28,263 metadata-passing candidates, capped to 5 per title prefix before fetching because five prefixes (HICP, All Employees, PPI by Industry and by Commodity, Consumer Price Indices) account for more than half the pool and forty blocks drawn from forty PPI commodity codes would not be forty independent problems.
-
-The numeric screen rejects interior gaps, non-positive levels, persistent definitional breaks, and upper-tail ties. Two rules are not obvious:
-
-- **Persistence, not magnitude, separates artifacts from data.** M1NS jumped 4.5x on a 2020 savings reclassification and never reverted (rejected); LNU03000000 jumped 3.6x on COVID and returned to baseline (kept).
-- **Ties are real.** 43 of 3,275 fetched series carry tie rates of 0.33 to 1.00 among their top order statistics, from quantisation of the source levels rather than any ceiling on growth. A tie in the top two collapses the reference estimator's tail extrapolation to the sample maximum. They are screened out, not jittered: jitter magnitude would set the tail scale the reference extrapolates from.
-
-Shape coverage: skew -2.03 to +26.26, excess kurtosis -0.86 to +690.
-
-## Disguises
-
-Three, each doing a different job:
-
-- **Random window** (the one that matters). Even perfect recognition of a series does not give you the p95 of a span whose endpoints you do not know.
-- **Random scale**, log-uniform in [0.1, 10], independent per block. Removes absolute magnitude. A positive factor maps 0 to 0, so the sign structure and the meaning of zero survive and a model may still use the legitimate prior that macro growth rates have fat right tails. No location shift is applied: every estimator here is location-scale equivariant so a shift would be invisible to the score, but it would close that channel.
-- **Four significant figures.** Defeats exact matching against a memorised table. Weak on its own.
-
-Blocks come from distinct series and are independently scaled, so they cannot be pooled.
-
-## Baselines
-
-`-T baseline=type7|type8|hd|t6|wei8|normal|logistic`.
-
-The `logistic` baseline is the moment-matched normal's heavier-tailed sibling: same construction, `mu + (sd sqrt(3)/pi) * logit(tau)`, but a family with excess kurtosis 1.2 against the normal's 0. It edges out the normal to lead the baselines (0.076 ± 0.027 vs 0.078 ± 0.027 over the three 100-block seeds), and the win is located exactly where the heavier tail should help: at tau = 0.99 it scores 0.026 against the normal's 0.029, while at tau = 0.90 it is marginally worse (it over-reaches for a mild quantile).
-
-`t6` is the literature construction: the tail extrapolation of Wei, Wang and Hutson (Commun. Stat. Theory Methods, DOI 10.1080/03610926.2013.775304) around the interior their paper uses, whose Q^L is exactly Hyndman-Fan type 6. `wei8` is the same extrapolation around a type-8 interior, a substitution the paper did not test. What matters for this task is the property they share: both extrapolate past the sample maximum, and none of the other rules can. Intervals are the paper's smoothed bootstrap with a BCa correction.
-
-None of these is "the best" estimator, and the comparison below should not be read as crowning one. The paper evaluated on 95% confidence-interval coverage, not on point accuracy and not on pinball regret, so it is being judged here on a criterion it was not designed for.
-
-Lower regret is better. One generated instance, 40 blocks, seed 1.
-
-| Baseline | Pinball regret | p90 | p95 | p99 | Hit rate | MAE | Coverage | Spread |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| PERFECT (population quantile) | 0.0000 | | | | | | | |
-| logistic (moment-matched) | 0.0661 | 0.0239 | 0.0219 | 0.0203 | 0.450 | 0.526 | 0.850 | 3.318 |
-| normal (moment-matched) | 0.0677 | 0.0233 | 0.0216 | 0.0228 | 0.450 | 0.527 | 0.850 | 2.485 |
-| wei8 (type-8 variant) | 0.0891 | 0.0343 | 0.0279 | 0.0269 | 0.525 | 0.714 | 0.875 | 1.609 |
-| t6 (literature construction) | 0.0931 | 0.0367 | 0.0299 | 0.0265 | 0.550 | 0.789 | 0.900 | 1.609 |
-| type8 | 0.1121 | 0.0343 | 0.0289 | 0.0489 | 0.475 | 0.640 | 0.425 | 0.000 |
-| hd (Harrell-Davis) | 0.1130 | 0.0322 | 0.0310 | 0.0498 | 0.350 | 0.616 | 0.225 | 0.197 |
-| type7 (`np.percentile` default) | 0.1339 | 0.0434 | 0.0384 | 0.0521 | 0.275 | 0.652 | 0.250 | 0.360 |
-
-The p99 column does the work: bounded rules 0.049-0.052, extrapolating rules 0.027. The naive moment-matched normal leading the table is a real result, not a bug. It is exactly the kind of criterion-dependent inversion this task is meant to surface, and a caution against reading any single column as a verdict.
-
-## Stability Across Seeds (100 blocks, metric disclosed)
-
-The primary result. Free models, three seeds each (base seeds 1, 2, 3, so a near-disjoint 100-series draw per seed), 100 blocks per instance, scoring metric disclosed in the prompt. Reported as **mean ± 2 SD** over the runs (2× the sample standard deviation, not a confidence interval), ordered by the upper end mean + 2 SD, so the ranking rewards consistency rather than a lucky low mean. Lower is better. Every reported number has at least three valid runs behind it; a model that could not reach three is excluded with its failure rate noted rather than reported on thin data.
-
-> **Estimand generations.** Every row below except ling was measured before the estimand
-> was corrected to the full population, which moves scores down by roughly 0.002. That is
-> far inside the bands shown and does not affect any ordering here, but it does mean
-> differences finer than about 0.005 cannot be read across rows of different generations.
-> The like-for-like recomputation of the baselines against ling is in the paragraph above,
-> and it reverses the apparent ordering between them.
-
-The four reference estimators are deterministic given the blocks, so their spread is **pure block-sampling noise**: the irreducible floor at 100 blocks (about ± 0.03). A model tighter than that floor has negligible run-to-run method variance; a model wider than it is switching methods between runs, which no increase in block count can fix.
-
-| Row | runs | per-run regret | mean ± 2 SD |
+| Baseline | Pinball regret | p99 | Spread ratio |
 | --- | --- | --- | --- |
-| deepseek-v4-flash-0731 | 3 | 0.0658, 0.0670, 0.0612 | 0.065 ± 0.006 |
-| `[logistic]` | 3 | 0.0775, 0.0881, 0.0617 | 0.076 ± 0.027 |
-| `[normal]` | 3 | 0.0796, 0.0907, 0.0638 | 0.078 ± 0.027 |
-| **ling-3.0-flash (free)** | 3 | 0.0756, 0.0699, 0.0632 | **0.070 ± 0.012** |
-| Kimi K3 | 3 | 0.0773, 0.0604, 0.0568 | 0.065 ± 0.022 |
-| **nemotron-3-ultra-550b** | 3 | 0.0767, 0.0987, 0.0875 | **0.088 ± 0.022** |
-| Claude Haiku 4.5 | 3 | 0.0808, 0.0784, 0.1021 | 0.087 ± 0.026 |
-| nemotron-3-super-120b | 3 | 0.1024, 0.1182, 0.0983 | 0.106 ± 0.021 |
-| `[wei8]` | 3 | 0.0975, 0.1242, 0.1001 | 0.107 ± 0.029 |
-| `[t6]` | 3 | 0.1089, 0.1389, 0.1157 | 0.121 ± 0.032 |
-| `[type7]` | 3 | 0.1168, 0.1375, 0.1040 | 0.119 ± 0.034 |
-| deepseek-v4-flash (free) | 3 | 0.1668, 0.0704, 0.1140 | 0.117 ± 0.097 |
-| mimo-v2.5-free | 3 | 0.1218, 0.0945, 0.1507 | 0.122 ± 0.056 |
-| laguna-m.1 | 3 | 0.1568, 0.1209, 0.0641 | 0.114 ± 0.093 |
-| GLM-5.1 | 3 | 0.2456, 0.1486, 0.0760 | 0.157 ± 0.170 |
+| logistic (moment-matched) | 0.0661 | 0.0203 | 3.318 |
+| normal (moment-matched) | 0.0677 | 0.0228 | 2.485 |
+| wei8 (type-8 variant) | 0.0891 | 0.0269 | 1.609 |
+| t6 (literature construction) | 0.0931 | 0.0265 | 1.609 |
+| type8 | 0.1121 | 0.0489 | 0.000 |
+| hd (Harrell-Davis) | 0.1130 | 0.0498 | 0.197 |
+| type7 (`np.percentile` default) | 0.1339 | 0.0521 | 0.360 |
 
-**gpt-oss-20b is excluded, and the exclusion is the finding.** It produced valid output on only 2 of 6 attempts (seeds 1 and 2 succeeded at 0.122 and 0.118; seed 3 failed twice and seeds 4 and 5 once each, every failure running the full agent loop for 84 to 296 messages and then emitting no parseable predictions.csv). A ~67% rate of answering nothing is worse than an unstable answer, and it cannot meet the three-run bar, so no regret number is reported for it.
+The p99 column does the work: bounded rules score 0.049 to 0.052 there, extrapolating rules 0.027. "Adapting to tail shape" is two separate abilities and the rules split differently on each. **Placing a quantile above the sample maximum:** type7, type8 and Harrell-Davis are weighted averages of order statistics with non-negative weights, so they are structurally bounded by the observed maximum and exceed it in 0% of blocks; wei8, t6 and the normal fit do so in 100%, 100% and about 87%. **Varying the p99 - p95 spread with the sample:** by rank correlation against the truth, the normal scores 0.637 and Harrell-Davis 0.504, while type7, type8, wei8 and t6 are exact constants. wei8 and t6 are the instructive case, since they do adapt tail *scale* to the top gap but pin the ratio at exactly log 5 = 1.609 regardless of shape, against a truth that runs from 1.25 to 4.15. Only the normal does both, which is most of why it wins here.
 
-**ling-3.0-flash posts the best model score on this task, and it does so by reproducing a reference estimator rather than beating one.** Recomputed on the current estimand over the same three seeds, it ties the moment-matched normal to four decimal places on two of them and loses to the moment-matched logistic on all three:
+That a naive moment-matched normal leads the reference set is a real result rather than a bug, and the reason to be careful with any single column.
 
-| Seed | ling | `normal` | `logistic` |
-| --- | --- | --- | --- |
-| 1 | 0.0756 | 0.0765 | **0.0726** |
-| 2 | 0.0699 | 0.0699 | **0.0672** |
-| 3 | 0.0632 | 0.0632 | **0.0602** |
+Note on resolution: the block-sampling floor at 100 blocks is about ±0.03, and differences finer than roughly 0.005 cannot be read across rows at all.
 
-The transcripts confirm what the scores imply. On seeds 2 and 3 it fits a moment-matched normal; on seed 1 it uses a t distribution, which is why that seed is the only one where it differs from `normal` at all. It reaches those by search rather than by assumption, trying GPD, KDE, lognormal and bootstrap along the way, but the answer it submits is the naive construction the baselines already implement.
+## Solutions
 
-So the result belongs to the task, not the model. This task's standing finding is that moment-matched families beat every literature construction on it, by margins of 0.03 to 0.05, and a model that lands on one of them inherits that. Its ± 0.012 band, tighter than the deterministic baselines' own block-sampling spread, has the same explanation: this is the deterministic-method collapse described under [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility), and quantile is the one task where collapsing to the naive method is the right move rather than the failure the other tasks are built to expose.
+**The standing finding is that moment-matched families are hard to beat here, and the rows at the top of the column are the two ways of arriving at that.**
 
-The claim first published here, that ling beat every reference estimator, was wrong. It compared ling's scores against baseline figures computed under the superseded estimand instead of recomputing them, and the ~0.002 correction it ignored ran the wrong way against a gap of ~0.003.
+The first way is to land on one. The best-scoring open model fits a moment-matched normal on two of its three seeds and a t distribution on the third, reaching that by search rather than assumption, having tried GPD, KDE, lognormal and bootstrap along the way. It ties the `normal` baseline to four decimal places on two seeds and loses to `logistic` on all three, so the score belongs to the task rather than to the model.
 
-**deepseek-v4-flash-0731 posts the lowest mean in the table, and unlike ling it did not get there by reproducing a baseline.** Recomputed on its own three instances, it matches the best reference rather than beating it:
+The second way is to construct something better by argument, and it lands in the same place. deepseek-v4-flash-0731, which sets the column's best cell, runs its own Monte Carlo study over candidate truth families (t2 through t5, normal, Johnson SU skew, a GPD upper tail) scored by simulated pinball loss, tests and rejects a skew-t fit, and submits a **predictive t with df = 5**. That is not in the reference set, and the plug-in `t6` row scores 0.119, so the predictive shift rather than the t family is what puts it level with `logistic`. Recomputed on its own three instances it wins one by 0.0068, ties one to 0.0002 and loses one by 0.0010, a mean edge of 0.0020, which is inside the sampling floor. The honest reading is a tie with the best baseline, not a win over it.
 
-| Instance | 0731 | `logistic` | `normal` |
-| --- | --- | --- | --- |
-| 1835504127 | **0.0658** | 0.0726 | 0.0765 |
-| 2834126987 | 0.0670 | 0.0672 | 0.0699 |
-| 1576890651 | 0.0612 | **0.0602** | 0.0632 |
-| mean | 0.0647 | 0.0667 | 0.0699 |
+A model that searches carefully arrives back at the naive construction's performance level by a different route. That is what a genuine frontier looks like rather than a scoring artefact.
 
-It wins one instance by 0.0068, ties one to 0.0002 and loses one by 0.0010, for a mean edge of 0.0020. That is inside the block-sampling floor and inside the ~0.005 resolution this page already warns about, so the correct reading is a tie with `logistic`, not a win over it.
+**Quantile is also the one task where collapsing to the naive method is the right move** rather than the failure the rest of the suite is built to expose, which is worth remembering before reading a tight run-to-run band here as a virtue.
 
-**Kimi K3 ties it on the mean and separates on the spread**, which is the clearest illustration in the suite of why the summary table reports a worst case. Both average 0.065 over the same three instances, so the comparison is paired, but K3's band is ± 0.022 against 0731's ± 0.006. The summary cells therefore read 0.077 against 0.067 while the means are indistinguishable. Neither number is wrong: the mean says the two methods are equally good on average, the worst case says one of them is far more sensitive to which instance it draws, and it is the second question this suite is built to answer. Its budget history is worth reading alongside the number. The seed-3 run first hit the 300-message cap and was discarded; re-run under a 600 ceiling it finished in 39 messages and scored 0.0568, its best. The run that actually sets its cell, seed 1 at 0.0773, used 250 of the 300 messages then available, so the cell-setting run came close to being invalidated as well.
+## Limitations
 
-What is different about 0731 is the construction. The transcripts show it running its own Monte Carlo study over candidate truth families (t2 through t5, normal, Johnson SU skew, a GPD upper tail) scored by simulated pinball loss, and submitting a **predictive t with df = 5**, having tested and rejected a skew-t fit. That is not any of the estimators in the reference set: the plug-in `t6` row scores 0.119, so the predictive shift rather than the t family is what puts it level with `logistic`. So the task's standing finding survives in a sharper form. The naive moment-matched families are not merely hard to beat by search; a model that searches carefully arrives back at their performance level by a different route, which is what a genuine frontier looks like rather than a scoring artefact.
-
-Two models sit at or below the block-sampling floor: **nemotron-3-ultra (± 0.022) and nemotron-3-super (± 0.021) score as consistently as the deterministic baselines**, and nemotron-ultra beats the extrapolating rules on the conservative bound (upper 0.110 against wei8's 0.149 recomputed), but is edged by both moment-matched rules, whose upper bounds are 0.083 for `normal` and 0.079 for `logistic`.
-
-A tight band means the *score* is stable, not that the *method* is. The transcripts show nemotron-3-ultra using materially different approaches across the three seeds (GPD-plus-t with bootstrap on one, a kitchen sink of logistic, gennorm, skew-normal, Weibull, gamma and KDE on another) that all happen to land in a similar score range. So its trustworthiness is empirical (its varying methods all scored well here) rather than structural (one fixed method), and a single run is trustworthy only in the weak sense that any one of its methods would have scored similarly. A same-seed repeat experiment settled which it is: rerunning on byte-identical data still moved the score. nemotron-3-ultra's best run (0.077) reran to 0.142, so the method variation is **sampling temperature, not a response to the data**. See [Run-to-Run Reproducibility](../limitations.md#run-to-run-reproducibility).
-
-Two models sit far above the floor: **mimo at ± 0.056 (about 2× the floor) and laguna at ± 0.093 (about 3×)**. Roughly two-thirds of laguna's variance is method-switching, not block-sampling. Its per-run values run 0.157, 0.121, 0.064: worst in the table on seed 1, best on seed 3. A single run of laguna is a coin flip, and more blocks would not change that. This is the empirical case for the suite's repeated-run standard: for method-switching models no single number means anything, and the *stability itself* is a reported property.
-
-## Criterion Disagreement
-
-Four defensible criteria rank the same estimators in incompatible orders:
+**Four defensible criteria rank the same estimators in incompatible orders.**
 
 | Criterion | Winner | wei8's position |
 | --- | --- | --- |
@@ -183,4 +119,10 @@ Four defensible criteria rank the same estimators in incompatible orders:
 | interval Winkler | normal | fourth of five |
 | pinball regret (this task's metric) | normal | second of six |
 
-This is not a defect to be resolved before shipping. It is the most interesting thing the task produces, and it is the model-risk point in miniature: whoever picks the criterion picks the winner.
+This is not a defect to be resolved. It is the most interesting thing the task produces, and it is the model-risk point in miniature: whoever picks the criterion picks the winner.
+
+**A tight band means the score is stable, not that the method is.** Transcripts show models using materially different approaches across seeds that all land in a similar score range, and a same-seed repeat settled which it is: rerunning on byte-identical data still moved the score, so the method variation is sampling temperature rather than a response to the data ([detail](../limitations.md#run-to-run-reproducibility)).
+
+**The reference estimators are being judged on a criterion they were not designed for.** `t6` is the construction of Wei, Wang and Hutson (Commun. Stat. Theory Methods, DOI 10.1080/03610926.2013.775304), whose Q^L is exactly Hyndman-Fan type 6; `wei8` is the same extrapolation around a type-8 interior, a substitution the paper did not test. The paper evaluated 95% confidence-interval coverage, not point accuracy and not pinball regret. None of these rules is "the best" estimator and the table above should not be read as crowning one.
+
+**Cells of different estimand generations are not finely comparable.** Scores measured before the estimand was corrected to include the ten drawn values sit about 0.002 high. That is far inside the sampling floor and changes no ordering, but it is why differences finer than about 0.005 cannot be read across rows. An earlier claim on this page that one model beat every reference estimator was wrong for exactly this reason: it compared corrected model scores against uncorrected baselines.

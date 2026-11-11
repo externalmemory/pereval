@@ -1,438 +1,152 @@
 # CECL Lifetime Expected Credit Losses
 
-This task tests whether an agent can estimate the lifetime allowance for a synthetic portfolio of amortizing term loans with equal quarterly principal repayments. Unlike CCAR's nine-quarter default-rate projection, the default output is expected net principal loss and a central 95% prediction interval for lifetime loss in dollars over each pool's remaining contractual life. It is a modelling benchmark, not a complete accounting compliance assessment. No agent results have been measured for this task yet; it is not part of the README's existing ranking.
-
-The separate [CECL Gemini Pilot, September 2026](https://github.com/raji-ramachandran-tampa/pereval/blob/codex/cecl-gemini-pilot-september-2026/pilots/cecl-gemini-september-2026/REPORT.md) is maintained in the contributor fork. It uses hosted Python and inline inputs, so it is not evidence for the Inspect/Docker isolation protocol and is excluded from this repository's run archive and rankings.
-
-## Run
+Lifetime expected credit loss for a synthetic portfolio of amortizing term loans. Unlike CCAR's nine-quarter default-rate projection, the output is expected net principal loss in dollars over each pool's remaining contractual life, with a central 95% prediction interval. It is a modelling benchmark, not an accounting compliance assessment.
 
 ```bash
-inspect eval pereval/tasks/cecl/task.py --model <provider/model>
+inspect eval pereval/tasks/cecl/task.py --model <provider/model>                 # needs Docker
 inspect eval pereval/tasks/cecl/task.py -T baseline=cohort --model mockllm/model
-inspect eval pereval/tasks/cecl/task.py -T baseline=naive --model mockllm/model
+inspect eval pereval/tasks/cecl/task.py -T baseline=naive  --model mockllm/model
 inspect eval pereval/tasks/cecl/task.py -T n_instances=9 -T seed=123 -T repeats=3 --model <provider/model>
-inspect eval pereval/tasks/cecl/task.py -T scenario=adverse -T forecast_quarters=4 -T reversion_quarters=0 --model <provider/model>
+inspect eval pereval/tasks/cecl/task.py -T scenario=adverse -T forecast_quarters=4 -T reversion_quarters=0
 ```
 
-Docker is required for Inspect runs, including reference solvers. Pure generator, reference and scoring functions can run locally without Docker or model access. `n_instances=3` rotates baseline, adverse and benign paths. Other options are `n_history` (80), `forecast_quarters` (8), `reversion_quarters` (4), `repeats` (1) and `message_limit` (500). Pin `scenario` for paired sensitivity comparisons.
+`n_instances=3` rotates the baseline, adverse and benign paths. Other options are `n_history` (80), `forecast_quarters` (8), `reversion_quarters` (4), `repeats` (1), `message_limit` (500) and `oracle_n` (10,000 paths, minimum 100). Pin `scenario` for paired sensitivity comparisons.
 
-## The Task
+## Task
 
-- `history.csv`: 80 noisy quarterly observations per segment of default probability (PD), loss given default (LGD), conditional prepayment probability, unemployment and house-price growth.
-- `forecast.csv`: one macroeconomic path over the forecast period.
-- `pools.csv`: 12 pools across three risk segments, with randomized balances and remaining terms of 4, 12, 24 and 40 quarters.
-- `policy.json`: forecast and reversion lengths.
+The agent receives four files and submits `predictions.csv` with `pool_id,ecl,ecl_lower,ecl_upper` in dollars.
 
-### Portfolio Description
-
-The **portfolio** is the full collection of exposures being evaluated. A **loan pool** is a group of loans represented together by an aggregate principal balance and shared modeling assumptions. A **segment** identifies the PD, LGD and prepayment behavior assigned to its pools.
-
-This benchmark contains one portfolio, divided into three segments, with four pools in each segment:
-
-```text
-Portfolio: all 12 pools
-|-- Segment A: shared segment A rate models
-|   |-- Pool A1: 1-year remaining term
-|   |-- Pool A2: 3-year remaining term
-|   |-- Pool A3: 6-year remaining term
-|   `-- Pool A4: 10-year remaining term
-|-- Segment B: shared segment B rate models
-|   |-- Pool B1: 1-year remaining term
-|   |-- Pool B2: 3-year remaining term
-|   |-- Pool B3: 6-year remaining term
-|   `-- Pool B4: 10-year remaining term
-`-- Segment C: shared segment C rate models
-    |-- Pool C1: 1-year remaining term
-    |-- Pool C2: 3-year remaining term
-    |-- Pool C3: 6-year remaining term
-    `-- Pool C4: 10-year remaining term
-```
-
-| Level | Meaning in this benchmark |
+| File | Contents |
 | --- | --- |
-| Individual loan | An underlying borrower exposure. Individual loan records are not generated. |
-| Pool | Aggregate exposure sharing a segment and a remaining term. Each pool has its own generated balance. |
-| Segment | Four pools sharing the same PD, LGD and prepayment rate models, but with different remaining terms. |
-| Portfolio | All 12 pools across segments A, B and C. |
+| `history.csv` | 80 noisy quarterly observations per segment of PD, LGD, conditional prepayment, unemployment and house-price growth |
+| `forecast.csv` | one macroeconomic path over the forecast period |
+| `pools.csv` | 12 pools across three segments, with randomised balances and remaining terms of 4, 12, 24 and 40 quarters |
+| `policy.json` | forecast and reversion lengths, `rho`, `persistence` |
 
-For example, **Pool A2 with a $5 million balance** represents $5 million of aggregate loan principal in segment A with three years remaining. It does not mean one $5 million loan. It could represent many smaller loans, but the generator does not assign a borrower count or individual loan sizes. The $5 million amount is illustrative; the actual balance is randomized for each generated instance.
+The interval is for **that pool's own** future lifetime loss under the supplied scenario, not a confidence interval for the estimated allowance and not a share of a portfolio band. Each is scored separately, and endpoints must satisfy `0 <= lower <= upper <= B`. Expected dollar losses add across pools; loss rates and interval endpoints do not.
 
-Pools in the same segment can have different lifetime loss amounts and loss rates because their balances and remaining terms differ, even though they share the same quarterly rate models. For example, A2 has a longer exposure horizon than A1. Segments A, B and C are synthetic labels, not ordered credit ratings.
+A pool is an aggregate exposure, not one loan: a segment fixes the PD, LGD and prepayment laws, and its four pools differ only in balance and remaining term, so a short pool matures before reversion while a long one is exposed to the tail assumptions. Segments A, B and C are labels, not ordered ratings.
 
-Calculate expected lifetime loss separately for each pool, then add the dollar estimates to obtain the portfolio allowance:
+The task tests lifetime versus annual horizons, amortization, competing exits, segment differences, net recovery severity, forecast sensitivity and reversion.
 
-```math
-\mathrm{ECL}_{\mathrm{portfolio}}=\sum_{i=1}^{12}\mathrm{ECL}_i.
-```
+## Data
 
-where:
+The generator produces aggregate pools of funded amortizing term loans with equal quarterly principal repayment, no drawdowns, renewals or extensions. Balances are drawn uniformly from $1M to $10M. There are no loan counts, borrower records, credit scores, collateral, interest rates or seasoning: the benchmark is a generic term-loan book rather than a retail, mortgage or commercial one. The binomial parameter 10,000 used for measurement noise is not a loan count, and `oracle_n` counts simulated futures, not borrowers.
 
-- $i=1,\ldots,12$ indexes the 12 pools, corresponding to pool IDs A1 through C4; it is not a borrower or quarter index.
-- $\mathrm{ECL}_i$ is pool $i$'s expected lifetime net principal loss, in dollars.
-- $\mathrm{ECL}_{\mathrm{portfolio}}$ is the portfolio's total expected lifetime net principal loss, in dollars.
-- $\sum_{i=1}^{12}$ means add the expected-loss amounts for all pools. Expectations add even when pool losses are dependent.
-
-This aggregation applies to expected dollar losses. Do not add pool loss-rate percentages or prediction-interval endpoints to obtain their portfolio equivalents. In simulation mode, same-segment pools share default shocks; portfolio loss intervals would need to be calculated from joint portfolio loss paths and are not requested by the current task.
-
-The implementation therefore starts at the **pool level**: it models the combined exposure of underlying loans without constructing a loan-by-loan portfolio.
-
-### Synthetic Portfolio Characteristics
-
-The generator creates aggregate pools of term loans, not individual borrower records. Each pool represents homogeneous exposure sharing its segment's PD, LGD and prepayment rates and its own remaining term. The generated pool fields are `pool_id`, `segment`, `balance` and `remaining_quarters`.
-
-| Characteristic | Current implementation |
-| --- | --- |
-| Loan structure | Funded amortizing term loans with equal quarterly principal repayments over the remaining term. No new drawdowns, renewals or extensions. |
-| Number of pools | 12: four pools in each of segments A, B and C. |
-| Segment meaning | Three synthetic groups with separately randomized rate-model coefficients. A, B and C are labels, not ordered credit ratings or named loan products. |
-| Pool balance | Each pool's current aggregate principal is drawn uniformly in whole dollars from $1 million through $10 million. This is not an individual loan amount. |
-| Remaining maturity | Each segment has one pool at each of 4, 12, 24 and 40 quarters, corresponding to 1, 3, 6 and 10 years. These are remaining, not original, terms. |
-| Repayment convention | Equal principal amortization; not an equal-total-payment mortgage schedule, interest-only structure or balloon repayment. |
-| Default and prepayment | Default is applied first to beginning principal. Surviving loans may then prepay fully; remaining loans make their scheduled principal payment. Exited exposure never returns. |
-| PD | Quarterly default probability driven by segment-specific economic sensitivities. Higher unemployment raises mean PD; stronger house-price growth lowers it. |
-| LGD | Net principal loss fraction after recoveries, modeled at segment level. No separate collateral values, recovery cash-flow timing or borrower-specific recovery records are generated. |
-| EAD | Derived from each pool's current balance, remaining amortization and prior default/prepayment exits; no independent EAD regression or credit conversion factor. |
-| Economic inputs | Synthetic unemployment and year-over-year house-price growth. House-price sensitivity does not establish that the loans are mortgages or property-secured. |
-| Historical observations | By default, 80 quarterly aggregate rate observations per segment. These are synthetic noisy rate measurements, not actual borrower performance records. |
-| Future assumptions | By default, eight forecast quarters followed by four quarters of linear reversion to historical mean rates. |
-| Simulation dependence | Default shocks persist over time; same-segment pools share shocks and different segments have independent shocks. LGD and prepayment are deterministic conditional rates within future simulations. |
-
-There is no generated loan count, loan-size distribution, borrower identifier, credit score, internal rating, income, industry, geography, collateral type, loan-to-value ratio, interest rate, origination date, delinquency status or seasoning profile. All remaining terms within a segment use the same rate laws; no loan-age effect is modeled. The benchmark therefore represents a generic term-loan portfolio rather than a specified retail, mortgage or commercial lending book.
-
-The value 10,000 used when generating noisy historical PD and prepayment observations is a binomial measurement-noise parameter. It is not the number of loans in a pool. Likewise, `oracle_n` counts simulated futures, not borrowers. The future simulator uses a large homogeneous pool approximation and does not add finite-borrower default-count noise.
-
-### Rate Models And Lifetime Accounting
-
-The agent estimates three conditional rate models per segment and builds a lifetime loss calculation. Rates depend on the macro variables through logistic relationships with coefficients redrawn per instance. This is a synthetic mechanism; it does not inherit CCAR's FRED calibration or claim empirical fidelity. Historical rate observations are noisy, while ground truth uses their underlying expectations. Only the four input files enter the sandbox.
-
-For each rate, a linear economic risk score is mapped into a probability by the logistic function:
+Each rate is logistic in two macro drivers, with coefficients redrawn per instance and per segment:
 
 ```math
-\eta_q = \beta_0 + \beta_u x_{u,q} + \beta_h x_{h,q},
-\qquad m_q = \frac{1}{1+\exp(-\eta_q)}.
+\eta_q = \beta_0 + \beta_u x_{u,q} + \beta_h x_{h,q}, \qquad m_q = \frac{1}{1+\exp(-\eta_q)},
+\qquad x_{u,q}=u_q-5, \qquad x_{h,q}=\frac{h_q-0.03}{0.04}.
 ```
 
-where:
+Unemployment enters in percentage points displaced from 5%, house-price growth as a fraction displaced from 3% and scaled by four points. For PD the unemployment coefficient is positive and the house-price coefficient negative. Historical observations are noisy measurements of these conditional means; ground truth uses the latent expectations. This is a synthetic mechanism and does not inherit CCAR's FRED calibration.
 
-- $q$ identifies a quarter; the same mean-rate model is used for historical and forecast quarters.
-- $\eta_q$ is the dimensionless linear economic score for the rate being modeled in quarter $q$.
-- $m_q$ is that rate's conditional mean, expressed as a fraction between zero and one. Separate models are fitted for PD, LGD and prepayment; in the default simulation below, $m_q$ specifically denotes mean PD.
-- $\beta_0$ is the intercept. $\beta_u$ and $\beta_h$ are the coefficients for unemployment and house-price growth, respectively.
-- $x_{u,q}$ and $x_{h,q}$ are the scaled economic inputs defined in the next equation. In their subscripts, $u$ and $h$ identify variables, while $q$ identifies time; $u$ and $h$ are not additional time indices.
-- $\exp$ is the exponential function. Coefficients differ by segment and by rate; those indices are omitted here to keep the equation readable.
+Mean rates follow the forecast path, then revert linearly to the segment's historical mean over `R` quarters, then hold. The oracle's historical target is the mean of the latent rates over the supplied history; the agent must estimate it from the noisy ones.
 
-The generator scales the two economic inputs as follows:
+**Accounting.** Default is applied to beginning-of-quarter principal, survivors may then prepay in full, and the remainder makes its scheduled principal payment. Exited exposure never returns and nothing is discounted.
 
 ```math
-x_{u,q}=u_q-5,\qquad x_{h,q}=\frac{h_q-0.03}{0.04}.
+\mathrm{EAD}_q=B\left(1-\frac{q-1}{T}\right)S_{q-1},
+\qquad S_0=1,\quad S_q=S_{q-1}(1-d_q)(1-p_q).
 ```
 
-where:
-
-- $q$ is the quarter to which the economic observation relates.
-- $u_q$ is the unemployment rate in percent, so 5% unemployment is entered as $5$.
-- $h_q$ is year-over-year house-price growth as a fraction, so 3% growth is entered as $0.03$.
-- $x_{u,q}$ is unemployment's displacement from 5%, measured in percentage points.
-- $x_{h,q}$ is house-price growth's displacement from 3%, divided by four percentage points. It is dimensionless; 7% growth gives $x_{h,q}=1$.
-- The constants $5$, $0.03$ and $0.04$ are the generator's scaling choices.
-
-Each rate has its own coefficients. For PD, the unemployment coefficient is positive and the house-price coefficient is negative. The probit shock transformation below adds future variation around this logistic mean; it does not replace the mean model.
-
-The benchmark prescribes a linear transition of PD, LGD and prepayment from the last forecast quarter to segment historical mean rates. The first subsequent quarter has historical weight `1/R`, reaching full reversion in quarter `R`. `R=0` means immediate reversion. After that the historical rates remain fixed. The oracle's historical target is the mean of the latent conditional rates over the supplied history; the agent estimates it from noisy observations. This policy is part of the exercise, not a claim that CECL mandates this particular method.
-
-The calculation follows the familiar expected-loss relationship for each quarter:
+**Simulation.** The default fraction on a path is CCAR's bounded probit shock around the logistic mean, with a stationary AR(1) systemic shock:
 
 ```math
-\mathrm{EL}_q=\mathrm{PD}_q\times\mathrm{EAD}_q\times\mathrm{LGD}_q.
+d_q=\Phi\!\left(\frac{\Phi^{-1}(m_q)+\sqrt{\rho}\,z_q}{\sqrt{1-\rho}}\right),
+\qquad z_1\sim\mathcal{N}(0,1),\quad z_{q+1}=\phi z_q+\sqrt{1-\phi^2}\,\epsilon_{q+1}.
 ```
 
-where:
+The scaling preserves the marginal mean, so `E[d_q] = m_q` and `Corr(z_q, z_{q+k}) = phi^k`. The public policy supplies `rho = 0.02` and `persistence = 0.6`; both are disclosed, so this version tests propagation of a known stochastic process rather than inference of it. Pools in the same segment share shocks across all remaining terms, and segments are independent. LGD and prepayment stay deterministic conditional rates. This is a large-homogeneous-pool approximation with no finite-borrower sampling noise.
 
-- $q$ is a future quarter, counted from the measurement date, with $q=1$ denoting the first quarter.
-- $\mathrm{EL}_q$ is expected net principal loss in quarter $q$, in dollars.
-- $\mathrm{PD}_q$ is the quarterly default probability conditional on survival to the beginning of quarter $q$, expressed as a fraction.
-- $\mathrm{EAD}_q$ is the beginning-of-quarter principal exposed to default in quarter $q$, in dollars.
-- $\mathrm{LGD}_q$ is net loss after recoveries per dollar of defaulted principal in quarter $q$, expressed as a fraction.
-
-This equation describes the original deterministic mode. The path-specific simulation counterpart is defined below.
-
-**PD** is the quarterly default probability conditional on surviving to that quarter. **EAD (exposure at default)** is the aggregate beginning-of-quarter principal still exposed to default, before applying that quarter's PD. **LGD** is the fraction of defaulted principal lost after recoveries. EAD is not already-defaulted principal; multiplying it by PD gives the principal expected to default in that quarter.
-
-For a pool with initial balance $B$, remaining term $T$, and quarter $q=1,\ldots,T$, EAD is calculated from amortization and survival:
+Lifetime loss is computed **along each path and then averaged**, not by running the recursion once at mean PDs:
 
 ```math
-\mathrm{EAD}_q=B\left(1-\frac{q-1}{T}\right)S_{q-1}.
+L^{(n)}=\sum_{q=1}^{T}d_q^{(n)}\,\mathrm{EAD}_q^{(n)}\,\mathrm{LGD}_q,
+\qquad \widehat{\mathrm{ECL}}=\frac{1}{N}\sum_n L^{(n)},
+\qquad \mathrm{PI}_{95\%}=\left[Q_{0.025}(L),\,Q_{0.975}(L)\right].
 ```
 
-where:
-
-- $\mathrm{EAD}_q$ is principal exposed to default at the start of quarter $q$, in dollars.
-- $B$ is the pool's initial principal balance at the measurement date, in dollars.
-- $T$ is its remaining contractual term, in quarters; $q$ ranges from $1$ through $T$.
-- $q-1$ counts completed quarters. The factor $1-(q-1)/T$ is the principal fraction remaining after scheduled equal-principal amortization alone.
-- $S_{q-1}$ is the fraction surviving defaults and full prepayments through the end of quarter $q-1$. It excludes scheduled amortization, which is already accounted for by the preceding factor.
-
-The middle term represents scheduled equal-principal amortization. Survival $S_{q-1}$ accounts for defaults and full prepayments in earlier quarters. Survival starts at one and updates after default followed by conditional prepayment $p_q$:
-
-```math
-S_0=1,\qquad S_q=S_{q-1}(1-d_q)(1-p_q).
-```
-
-where:
-
-- $q$ is the current quarter; $q-1$ is the preceding quarter.
-- $S_q$ is the fraction surviving default and full prepayment through the end of quarter $q$; $S_0=1$ means the entire starting pool is initially present.
-- $d_q$ is the default fraction applied in quarter $q$: mean PD in deterministic mode or the realized aggregate fraction on a simulated path.
-- $p_q$ is the probability of full prepayment during quarter $q$, conditional on no default in that quarter.
-- Both $d_q$ and $p_q$ are fractions. Multiplying the two exit complements implements default first, followed by prepayment.
-
-In the original deterministic mode, $d_q=\mathrm{PD}_q$. Lifetime expected credit loss sums the quarterly expected losses through contractual maturity:
-
-```math
-\mathrm{ECL}=\sum_{q=1}^{T}\mathrm{EL}_q
-=\sum_{q=1}^{T}\mathrm{PD}_q\times\mathrm{EAD}_q\times\mathrm{LGD}_q.
-```
-
-where:
-
-- $\mathrm{ECL}$ is the pool's expected lifetime net principal loss, in dollars.
-- $q=1,\ldots,T$ indexes the future quarters through the remaining contractual term $T$.
-- $\sum_{q=1}^{T}$ means add the quarterly amounts over that entire term.
-- $\mathrm{EL}_q$, $\mathrm{PD}_q$, $\mathrm{EAD}_q$ and $\mathrm{LGD}_q$ have the quarterly meanings and units defined above. The product is a dollar amount, not a rate.
-
-In simulation mode, $d_q^{(n)}$ is the aggregate default fraction on simulated path $n$. Each path has its own surviving balance and therefore its own EAD. Compute lifetime loss separately on every path, then average:
-
-```math
-L^{(n)}=\sum_{q=1}^{T}d_q^{(n)}\times\mathrm{EAD}_q^{(n)}\times\mathrm{LGD}_q,
-\qquad \widehat{\mathrm{ECL}}=\frac{1}{N}\sum_{n=1}^{N}L^{(n)}.
-```
-
-where:
-
-- $q=1,\ldots,T$ indexes quarters, and $n=1,\ldots,N$ indexes complete simulated futures.
-- The parenthesized superscript $(n)$ identifies a simulation path; it is not an exponent.
-- $L^{(n)}$ is total lifetime net principal loss on path $n$, in dollars.
-- $d_q^{(n)}$ is the aggregate default fraction in quarter $q$ on path $n$.
-- $\mathrm{EAD}_q^{(n)}$ is the dollar exposure surviving into quarter $q$ on that same path, including scheduled amortization.
-- $\mathrm{LGD}_q$ is quarter $q$'s loss severity fraction. It has no path superscript because severity is deterministic conditional on the supplied scenario in this version.
-- $N$ is the number of simulated paths. $\widehat{\mathrm{ECL}}$ is their average lifetime loss; the hat denotes an estimate of the expectation.
-
-This distinction matters when default shocks persist: future default fractions and surviving EAD are dependent, so multiplying their separate averages generally does not recover expected loss. The PD-times-EAD-times-LGD structure is applied within each simulated path before averaging losses.
-
-**EAD is included, but it is not a separately fitted model in this version.** For these funded term-loan pools, the supplied amortization schedule and default/prepayment exits determine exposure. EAD varies across simulated paths because prior defaults change surviving principal. The task does not model revolving utilization, additional drawdowns, undrawn commitments or credit conversion factors.
-
-Default occurs before that quarter's prepayment and scheduled principal payment, so EAD uses beginning-of-quarter principal. Recoveries are included in LGD. No discounting is applied to this net-principal-loss method; it is not a discounted-cash-flow implementation.
-
-This tests lifetime versus annual horizons, amortization, competing exits, segment differences, net recovery severity, forecast sensitivity and reversion. Short pools mature before reversion; long pools expose incorrect tail assumptions.
-
-## Legacy Point-Only Scoring And References
-
-This section applies only when `-T simulation=false` is explicitly selected. The default task requires intervals and uses the simulation scoring described below.
-
-Submit `predictions.csv` containing `pool_id,ecl`, in dollars. Each estimate must be finite and between zero and current principal. The portfolio allowance is the sum of the pool estimates. No prediction interval is requested: the target is the conditional mean lifetime loss, not a percentile of realized losses.
-
-Primary `ecl_regret` is the balance-weighted squared error of pool loss rates:
-
-```math
-R_{\mathrm{ECL}}=\sum_i \frac{B_i}{\sum_j B_j}
-\left(\frac{\widehat{\mathrm{ECL}}_i-\mathrm{ECL}_i}{B_i}\right)^2.
-```
-
-where:
-
-- $i$ identifies the pool whose error is being scored; $j$ is a separate summation index running over all pools in the portfolio. Neither index denotes time.
-- $B_i$ is pool $i$'s initial dollar balance, and $\sum_j B_j$ is total portfolio principal.
-- $\widehat{\mathrm{ECL}}_i$ is the submitted lifetime-loss estimate for pool $i$, in dollars; $\mathrm{ECL}_i$ is its oracle reference value.
-- $B_i/\sum_j B_j$ is the pool's balance weight. Dividing its dollar error by $B_i$ converts the error into a loss-rate error.
-- $R_{\mathrm{ECL}}$ is the resulting dimensionless weighted squared-error score. Here $R_{\mathrm{ECL}}$ denotes regret, not the reversion length $R$ mentioned earlier.
-
-In the original point-only mode, the exact conditional-mean oracle scores zero, so this is excess squared loss over the oracle. Lower is better; it is not comparable to CCAR's Winkler regret. Opposite errors in different pools cannot cancel. Also reported: loss-rate MAE in basis points, completion, and, for complete outputs only, portfolio dollars and signed portfolio bias.
-
-Missing, malformed, duplicate, nonfinite or out-of-bounds pool estimates follow the suite convention for each pool:
-
-```math
-\mathrm{Penalty}_i=\max\left(\mathrm{Score}_{\mathrm{degenerate},i},\;5\,\mathrm{Score}_{\mathrm{oracle},i}\right).
-```
-
-where:
-
-- $i$ identifies a pool.
-- $\mathrm{Penalty}_i$ is its missing-or-invalid-answer penalty before applying the pool's balance weight.
-- $\mathrm{Score}_{\mathrm{degenerate},i}$ is the score of the zero-loss reference for pool $i$.
-- $\mathrm{Score}_{\mathrm{oracle},i}$ is the corresponding oracle score for pool $i$.
-- $\max$ selects the larger value; $5$ is the suite's penalty-floor multiplier. The labels “degenerate” and “oracle” identify reference methods, not indices.
-
-The oracle squared-error score is exactly zero, so this reduces to the zero-allowance reference score, `true_loss_rate^2`, weighted by pool balance. The MAE diagnostic likewise uses the zero-answer error. Missing answers cannot outperform the zero anchor; a valid but poor answer can score worse than it, as in the other tasks. Completion is reported separately, and portfolio totals are omitted unless every pool has a valid prediction. For a genuinely zero-loss pool, a missing answer has zero error but still zero completion. Extra IDs earn no credit. Infrastructure failures remain unmeasured. Repeated runs reuse the shared worst-case and spread reducer.
-
-Three references anchor interpretation:
-
-- Exact hidden conditional mean: zero regret, available to tests and the scorer.
-- `cohort`: fits segment logit-linear rates using public inputs, then applies survival, amortization and reversion. Its functional family matches the current generator, so its performance is an estimation reference, not evidence of broad method robustness.
-- `naive`: historical PD times historical LGD times remaining term times current balance, capped at balance; ignores runoff and forecasts. `zero_regret` also reports the degenerate zero-allowance answer's score.
-
-## Why The Original Mode Uses A Point Estimate
-
-For the original point-only mode, this is an explicit scope choice: the scored object is the conditional mean of lifetime net principal loss given the supplied macro path and policy. Squared error elicits that mean. A 95% prediction interval would instead describe variation in a future realized portfolio loss, which is a different target. A confidence interval around the estimated mean would describe estimation uncertainty and would require a separate repeated-sampling coverage experiment. Neither is interchangeable with the current target.
-
-The original mode produces expected pool losses analytically; it does not specify loan counts, individual loan sizes, cross-loan dependence, or a joint distribution of future default and recovery events. Those choices would materially determine a realized-loss interval. Adding arbitrary bounds around the expected allowance, or applying Winkler scoring to a deterministic oracle value, would not test calibrated predictive uncertainty. The appropriate extension would first define and simulate that predictive distribution, then request and score its intervals separately from the allowance estimate.
-
-Accordingly, the original mode measures expected-loss accuracy and repeated-run stability, but does not measure interval calibration, coverage or sharpness. It covers only part of the suite's stated capabilities. Its point-only score must not be presented as interchangeable with the suite's interval scores or included in an aggregate ranking without an explicit decision about that narrower scope. The default simulation mode below supplies that extension. Original pilot scores remain point-only and must not be relabeled as interval results.
-
-## Simulated Lifetime Loss Mode
-
-Run `inspect eval pereval/tasks/cecl/task.py -T simulation=true -T baseline=cohort --model mockllm/model` for the public reference, or omit `baseline` and choose a model to evaluate an agent. Simulation is now the default: `-T simulation=true` is optional. Use `-T simulation=false` to reproduce the original point-only task and archived pilot. `oracle_n` defaults to 10,000 paths per independent oracle stream and must be at least 100. Small values are useful for smoke tests, not calibrated comparisons. No new AI evaluations are reported here.
-
-This mode reuses CCAR's bounded probit shock mechanism around the existing CECL logistic mean PD. For quarterly mean probability $m_q$, the aggregate default fraction is:
-
-```math
-d_q=\Phi\!\left(\frac{\Phi^{-1}(m_q)+\sqrt{\rho}\,z_q}{\sqrt{1-\rho}}\right).
-```
-
-where:
-
-- $q$ identifies a future quarter. This equation describes one simulation path, with its path superscript omitted for readability.
-- $d_q$ is that path's aggregate quarterly default fraction, conditional on the principal still exposed at the start of the quarter.
-- $m_q$ is mean quarterly PD under the supplied economic scenario, after applying forecast and reversion rules.
-- $z_q$ is the dimensionless systemic shock in quarter $q$.
-- $\rho$ is the dispersion parameter, with $0\le\rho<1$; larger values increase default-rate variation. It is not the temporal persistence parameter.
-- $\Phi$ is the standard normal cumulative distribution function; $\Phi^{-1}$ is its inverse, not a reciprocal. The square-root terms preserve the intended marginal mean.
-
-$\Phi$ is the standard normal cumulative distribution function and $\Phi^{-1}$ its inverse. The parameter $\rho$ controls the size of default-rate fluctuations; $z_q$ is the systemic shock. Positive shocks raise defaults. The stationary shock starts as standard normal and evolves as:
-
-```math
-z_1\sim\mathcal{N}(0,1),\qquad
-z_{q+1}=\phi z_q+\sqrt{1-\phi^2}\,\epsilon_{q+1},
-\qquad \epsilon_q\overset{\mathrm{iid}}{\sim}\mathcal{N}(0,1).
-```
-
-where:
-
-- $q$ identifies the current quarter and $q+1$ the next quarter, on one simulation path.
-- $z_1$ is the first future shock; $z_q$ and $z_{q+1}$ are successive systemic shocks.
-- $\phi$ is the temporal persistence coefficient, with $-1<\phi<1$; the benchmark uses $0.6$.
-- $\epsilon_{q+1}$ is the new random innovation for the next quarter, independent of prior shocks.
-- $\mathcal{N}(0,1)$ denotes a normal distribution with mean zero and variance one; $\sim$ means “is distributed as,” and iid means independent and identically distributed.
-- $\sqrt{1-\phi^2}$ scales the innovation so the shock variance stays at one under stationary initialization. Lowercase $\phi$ denotes persistence; uppercase $\Phi$ in the preceding equation denotes a distribution function.
-
-Here $\phi$ is the public policy's persistence parameter. Stationary initialization and the innovation scaling preserve the marginal normal distribution, so:
-
-```math
-\mathbb{E}[d_q\mid\text{supplied macro path}]=m_q,
-\qquad \mathrm{Corr}(z_q,z_{q+k})=\phi^k.
-```
-
-where:
-
-- $q$ is a quarter and $k$ is a nonnegative lag measured in quarters, so $q+k$ is $k$ quarters later.
-- $\mathbb{E}$ denotes expectation across simulated futures; the vertical bar indicates conditioning on the supplied macroeconomic path.
-- $d_q$ is the simulated default fraction and $m_q$ its marginal quarterly mean.
-- $\mathrm{Corr}$ denotes correlation; $z_q$ and $z_{q+k}$ are latent shocks at the two dates.
-- $\phi^k$ is persistence raised to the lag $k$. For example, $\phi=0.6$ gives a two-quarter latent-shock correlation of $0.36$.
-
-This is a marginal mean across simulated futures, not a mean conditional on an observed previous shock. The correlation formula describes latent shocks, not exactly the nonlinear default fractions. Quarterly PD is conditional on surviving to the quarter, not an annualized rate. Values of zero and one remain exact boundaries. A zero shock gives the median default fraction, which generally differs from its mean.
-
-The public policy supplies `rho=0.02` and `persistence=0.6`. These are synthetic design choices, not estimates from FRED, ALFRED or a real portfolio. Historical observations remain noisy measurements of conditional mean rates, as in the original task; they are not realizations of these future systemic shocks. The initial future shock is independent of that measurement history. Therefore this version tests estimation of mean response laws and propagation of a disclosed stochastic process, not inference of its persistence or initial state. Learning uncertainty dynamics from realized historical defaults is future work.
-
-Apply the existing forecast and reversion rules to the mean rates before drawing full default paths through contractual maturity. LGD and prepayment remain deterministic conditional rates. This is a large homogeneous pool approximation: aggregate default fractions vary with systemic conditions, with no individual-loan sampling noise. Pools in the same segment share shocks, including across different remaining terms; segments have independent shocks. No portfolio-wide interval is requested, and pool interval endpoints must not be added to claim one.
-
-Apply defaults, conditional prepayments and scheduled principal amortization separately along every path, then sum that path's lifetime loss. The allowance is the mean of those lifetime losses, not the lifetime recursion evaluated at marginal mean PDs. With persistent defaults, past shocks affect both surviving balances and current default fractions; the two calculations generally differ. For $N$ simulated paths:
-
-```math
-\widehat{\mathrm{ECL}}=\frac{1}{N}\sum_{n=1}^{N}L^{(n)},
-\qquad \mathrm{PI}_{95\%}=\left[Q_{0.025}(L),\;Q_{0.975}(L)\right].
-```
-
-where:
-
-- $n=1,\ldots,N$ identifies a simulation path, and $N$ is the total number of paths.
-- $L^{(n)}$ is lifetime loss on path $n$, in dollars; $(n)$ is a path label, not a power.
-- $\widehat{\mathrm{ECL}}$ is the estimated mean lifetime loss, in dollars.
-- $L$ denotes the simulated lifetime-loss distribution, and $Q_a(L)$ denotes its quantile at cumulative probability $a$.
-- $0.025$ and $0.975$ are the 2.5th and 97.5th percentiles. $\mathrm{PI}_{95\%}$ denotes the resulting central 95% prediction interval, with both endpoints in dollars.
-
-Submit `pool_id,ecl,ecl_lower,ecl_upper` in dollars. The bounds describe the central 95% distribution of **that pool's own** future lifetime loss conditional on the supplied scenario, not a confidence interval for the estimated allowance, and not a share of a portfolio-level band. Each pool's interval is scored against that pool's loss distribution. Bounds must satisfy:
-
-```math
-0\le L_{\mathrm{lower}}\le L_{\mathrm{upper}}\le B.
-```
-
-where:
-
-- $L_{\mathrm{lower}}$ and $L_{\mathrm{upper}}$ are the submitted lower and upper lifetime-loss interval endpoints, in dollars.
-- “lower” and “upper” are descriptive endpoint labels, not quarter or path indices.
-- $B$ is the pool's initial dollar principal, which bounds net principal loss in this model.
-
-The mean must also be finite and within principal, but need not lie inside the central interval for a skewed distribution.
-
-The hidden oracle uses one stream to estimate the mean and 2.5%/97.5% quantiles, and an independent stream to evaluate interval scores and coverage. Both streams are reproducible and isolated from public inputs and from historical data generation. Private metadata stores rates, evaluation seeds and draw counts instead of held-out losses; scoring regenerates the evaluation stream and preserves shared same-segment shocks. Older sample-based archives remain supported. The stored mean standard error (`ecl_mc_se`) reports Monte Carlo precision. The expected-loss score now compares against an estimated mean, not an exact analytical expectation. Monte Carlo error should be assessed before interpreting tiny differences between models; changing `oracle_n` changes the scoring reference.
-
-The headline metric in both modes is `ecl_regret`. Interval construction propagates a disclosed shock law conditional on estimated mean rates, so intervals are diagnostics rather than an independent ranking axis. Historical measurement noise contains no realizations of future shocks; hiding their parameters without redesigning history would make them unidentifiable. Intervals use the suite's shared 95% Winkler formula on loss rates, weighted by each pool's initial balance. Reported metrics include `winkler_agent`, `winkler_oracle`, their signed difference `winkler_regret_raw`, and its nonnegative counterpart `winkler_regret`, coverage, and mean width (a fraction of initial balance). The degenerate interval has zero width at the balance-weighted mean oracle loss rate across pools, carrying overall scale without pool-specific information. The point-score zero-allowance anchor remains separately reported as `zero_regret`. Invalid or missing intervals receive the same maximum-of-degenerate-and-five-times-oracle penalty defined above, applied to their interval scores. Finite calibration and independent evaluation can produce negative signed differences. Diagnostic `winkler_regret` is clipped at zero; `winkler_regret_raw` preserves the difference for precision checks. This finite simulation reference is not an exactly achievable population floor. Small gains from more draws do not establish better estimation. These normalized lifetime scores must not be numerically pooled with CCAR's quarterly scores without an explicit comparison design.
-
-Mean accuracy is reported as `ecl_regret` and loss-rate MAE. `completion` always measures valid means; `point_completion` is its alias. `interval_completion` and `submission_completion` require valid means and intervals; duplicate pool IDs invalidate both. Repeated-run worst-case and spread summarize expected-loss regret in both modes. The cohort reference fits the original public mean-rate models and propagates the disclosed shocks with 20,000 reproducible paths; the naive reference retains its historical-rate allowance and a zero-width interval. Neither reference receives hidden coefficients or oracle draws.
-
-## How The Functional Form Behaves
+That distinction is the point of the simulation mode: with persistent shocks, high-default paths lose exposed principal earlier, so future default fractions and surviving EAD are dependent and the product of their averages does not recover expected loss.
 
 ![Four plots showing the logistic mean response, shock dispersion, persistent default paths, and simulated lifetime loss distributions.](../images/cecl-functional-form.png)
 
-1. **Economic conditions change the mean.** The first panel uses illustrative coefficients within the generator's PD ranges. Higher unemployment raises mean PD; stronger house-price growth offsets some of that increase. The logistic curve remains bounded between zero and one.
-2. **Shock strength changes dispersion.** With mean quarterly PD fixed at 3%, larger rho produces a wider response to systemic shocks. The horizontal reference is the mean across all shocks, not the value at a zero shock. The benchmark setting is rho = 0.02; 0.10 is a sensitivity illustration.
-3. **Persistence changes the sequence.** The third panel uses the same random innovations for two example paths. Positive persistence creates longer runs of high or low defaults without changing the marginal mean. These are illustrative paths, not forecast confidence bands.
-4. **Lifetime loss combines risk and runoff.** The last panel applies the implemented accounting to 100,000 paths per setting, with 3% mean quarterly PD, 45% LGD, 2% conditional quarterly prepayment, and a 40-quarter term. All values are synthetic. The persistent case has a wider lifetime-loss distribution in this example; its mean can also change because high-default paths lose exposed principal earlier. This is why we average path losses rather than run the recursion once on average PDs.
+The panels show each ingredient in isolation: economic conditions move the bounded logistic mean; `rho` sets dispersion around it; persistence lengthens runs of high or low defaults without changing the marginal mean; and the combination of risk with runoff widens the lifetime-loss distribution and shifts its mean. Reproduce with `python scripts/plot_cecl_functional_form.py`.
 
-Reproduce the PNG with `python scripts/plot_cecl_functional_form.py` from the repository root, with Matplotlib installed alongside the project dependencies. The plot uses the actual `default_paths` and `path_losses` implementation. These figures illustrate the synthetic mechanism, not empirical calibration or measured AI performance.
+## Scoring
 
-## A Smoke Run Found the Word "Aggregate" Ambiguous
+The headline metric is `ecl_regret`, the balance-weighted squared error of pool loss rates:
 
-The first free-model run of the interval task produced a complete submission, implemented the disclosed shock law correctly, and still scored coverage 0.461 against a nominal 0.95. The cause was the prompt, not the model. It asked for "a central 95% interval for aggregate lifetime loss", and the model read "aggregate" as across pools rather than across the loans inside a pool. Its own reasoning records the choice: "It says aggregate lifetime loss in dollars. That suggests the interval is for the total loss across the portfolio." It then built one portfolio band and allocated it across pools in proportion to expected loss.
+```math
+R_{\mathrm{ECL}}=\sum_i \frac{B_i}{\sum_j B_j}\left(\frac{\widehat{\mathrm{ECL}}_i-\mathrm{ECL}_i}{B_i}\right)^2.
+```
 
-That is too narrow per pool, because pool losses are driven by shared segment shocks and do not diversify away. Reproducing the reading on the same instance, with the same correct simulation and the same means so that only the bounded quantity differs:
+Lower is better, opposite errors in different pools cannot cancel, and it is not comparable with CCAR's Winkler regret. Also reported: loss-rate MAE in basis points, completion, portfolio dollars and signed bias for complete submissions.
 
-| Interpretation | Winkler regret | Coverage | Mean width |
-| --- | ---: | ---: | ---: |
-| Per pool, as intended | 0.0000 | 0.949 | 0.0312 |
-| Portfolio band allocated across pools | 0.0308 | 0.658 | 0.0174 |
-| Observed from the model | 0.1401 | 0.461 | 0.0166 |
-| Cohort reference | 0.0002 | 0.951 | 0.0313 |
+**Intervals are a diagnostic, not a ranking axis**, because the shock law is disclosed to the agent. They are scored with the suite's shared 95% Winkler formula on loss rates, balance-weighted, reporting `winkler_agent`, `winkler_oracle`, the signed `winkler_regret_raw` and its clipped counterpart, coverage and mean width.
 
-The allocated width of 0.0174 matches the model's 0.0166 to within five percent, so the wording accounts for the narrowness almost exactly. It accounts for about sixty percent of the coverage shortfall; the remainder comes from the model's mean being off, 96 bps of loss-rate error against the reference's 7.6, which mis-centres an interval of roughly the right width.
+Missing, malformed, duplicate, non-finite or out-of-bounds entries take the suite penalty per pool, `max(degenerate, 5 x oracle)`. Since the oracle's squared error is zero, that reduces to the zero-allowance score, so a missing answer can never beat the zero anchor while a valid but poor answer can score worse than it.
 
-The prompt now says "for EACH pool ... THAT POOL'S OWN lifetime loss", states that every interval is scored on its own, names the allocated-portfolio construction as the thing not to do, and defines "aggregate" where the response law needs the word. `tests/test_cecl_prompt.py` pins the wording and the measured gap between the two readings.
+Three anchors: the exact hidden conditional mean at zero regret, `cohort`, which fits segment logit-linear rates from public inputs and propagates the disclosed shocks over 20,000 paths, and `naive`, which is historical PD times LGD times remaining term times balance, capped at balance, ignoring runoff and the forecast.
 
-Re-running the same model on the same instance with only the prompt changed confirms it:
+The oracle estimates means and quantiles on one stream and evaluates on an independent one, so the reference is a finite Monte Carlo estimate rather than an exact floor. `ecl_mc_se` reports its precision, and changing `oracle_n` changes the scoring reference, so small differences should be checked against it before being read.
 
-| Row | Messages | `ecl_regret` | Loss-rate MAE (bps) | Winkler regret | Coverage | Mean width |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Cohort reference | 1 | 8.4e-07 | 7.57 | 0.0002 | 0.951 | 0.0313 |
-| nemotron-3-super (free), before | 44 | 1.50e-04 | 96.12 | 0.1401 | 0.461 | 0.0166 |
-| nemotron-3-super (free), after | 48 | 1.63e-05 | 30.97 | 0.0052 | 0.918 | 0.0332 |
-| Naive reference | 1 | 7.06e-02 | 2105.13 | 8.3850 | 0.000 | 0.0000 |
+## Results
 
-Coverage moves from 0.461 to 0.918 against a nominal 0.95, and the width from 0.0166 to 0.0332, which lands on the reference's 0.0313. That is the causal part, and it is now confirmed twice: the offline reconstruction predicted 0.0174 for the wrong reading, and the corrected run delivers a width matching the reference.
+Worst-case regret over three instances. Lower is better.
 
-The expected-loss metrics also improved, `ecl_regret` by about nine times and MAE from 96 to 31 bps, and that part is **not attributed**. The edit touched only interval wording, so either the clearer framing incidentally helped the mean fit or this is ordinary run-to-run variation on a resampled agent. One pair of runs cannot separate those, and the [reproducibility finding](../limitations.md#run-to-run-reproducibility) measured same-instance swings up to thirty times, which is far larger than this difference. It should not be read as evidence that prompt wording improves mean estimation.
+<!-- scores:begin (generated by scripts/render_scores.py; do not edit by hand) -->
 
-The general lesson is worth keeping separate from the fix. The scorer, the generator and this document were all unambiguous that no portfolio interval exists. The ambiguity lived only in the system prompt, which is the one artefact the agent sees, and a documented intention is worth nothing if the prompt contradicts it. A cell produced that way looks like a calibration failure and is mostly a specification failure.
+| Model | CECL |
+| --- | --- |
+| *Oracle (true model)* | *0* |
+| Claude Opus 5.5 | **0.0000028** |
+| minimax-m3.1-flash | 0.0000065 |
+| deepseek-v4-flash-0731 | 0.000014 |
+| Kimi K3 | 0.000015 |
+| nemotron-3-ultra | 0.000016 |
+| mimo-v2.5 | 0.000029 |
+| GLM-5.1 | 0.000059 |
+| nemotron-3-super | 0.00056 |
+| gpt-6-luna | 0.00057 |
+| Qwen3.6-35B-A3B (local) | 0.001945 |
+| gemma-4-26B-A4B (local) | 0.001948 |
+| ling-3.0-flash | 0.0087 |
+| Claude Haiku 4.5 | 0.0099 |
+| *Degenerate answer* | *0.019* |
+| *Naive baseline* | *0.071* |
 
-## What The Task Does Not Test
+<!-- scores:end -->
 
-The history has exactly two macroeconomic columns, and both are true drivers. There are no distractor features and no feature-selection-under-collinearity challenge comparable to CCAR. The prompt fully supplies the accounting recursion, event ordering, amortization convention and rate-reversion blend. Implementing them correctly is tested; discovering or choosing those conventions is not.
+**The column is two groups and a gap, not a gradient.** Six models land between 0.0000065 and 0.000059 with interval coverage 0.93 to 0.96, then nothing until the second group, whose coverage falls away to 0.84, 0.69, 0.67 and 0.48. Within the leading six the spread is a factor of nine on three instances, which this suite cannot resolve, so read the column as whether a model built the simulation and calibrated to it rather than as an ordering.
 
-The hidden work is estimating segment response laws and their coefficients from noisy observations, using them under out-of-range macroeconomic conditions, and consistently applying the disclosed mechanics over different contractual terms. The functional family is fixed and logistic, so the task does not establish robustness across alternative response families. These deliberately disclosed mechanics define a controlled exercise; they should not be interpreted as a claim that ASC 326 prescribes this particular recursion or reversion policy.
+No model is worse than the degenerate answer here. Only the naive baseline is, which makes this the one column where the naive method is clearly the floor and nothing falls through it.
 
-## Scope And Accounting Context
+The two local rows sit between the groups and their ordering is not meaningful: the cells differ by 0.15%, far below anything this suite resolves ([detail](../local-models.md)).
 
-The [interagency policy statement on allowances for credit losses](https://www.federalreserve.gov/frrs/guidance/interagency-policy-statement-on-allowances-for-credit-losses.htm) describes expected losses over contractual terms with expected prepayments and reversion to historical information beyond reasonable and supportable forecasts. Those concepts motivate this task. The supplied path, reversion policy and loan conventions are benchmark assumptions, not prescribed choices for an institution.
+## Solutions
 
-The first version covers funded term-loan principal only. It excludes revolving commitments, renewals and extensions, purchased credit-deteriorated assets, collateral-dependent measurement, accrued interest, qualitative overlays, discounted cash flow methods, scenario mixtures, and management's selection and documentation of reasonable and supportable forecasts. It does not validate financial reporting controls or certify an allowance under ASC 326. Parameters vary but the logistic response family is fixed; broader families and real portfolio validation remain future work.
+The strongest submissions do the same four things, and the task rewards executing disclosed mechanics exactly rather than inventing anything.
 
-## Notes On The Published Column
+**Fit the rates as what they are.** Per segment, a quasi-binomial logit GLM for PD and prepayment on unemployment and house-price growth, which targets the conditional mean directly on a bounded rate, and OLS for LGD. Fits reach R-squared of 0.9 to 0.99, so the response laws are recoverable from the noisy history; getting them wrong is not where this task separates models.
 
-This section holds what the README's score table needs to say about this column specifically. Row-level provenance is in [models.md](../models.md).
+**Apply the reversion policy literally.** Forecast path for eight quarters, linear reversion to the historical sample mean over four, then hold to maturity. The reversion estimate must come from the noisy observations, which is the one place estimation error enters the mean rates.
 
-CECL is reported as `ecl_regret`, balance-weighted squared error in pool lifetime loss rates, which is its headline metric. The simulated prediction intervals are diagnostics rather than a ranking axis, because the shock law is disclosed to the agent.
+**Simulate, do not shortcut.** Draw the disclosed AR(1) probit shocks, shared within a segment, and run the full balance recursion on every path. The leaders use 200,000 paths where the reference uses 20,000. Averaging path losses rather than running the recursion once at mean PD is the difference the simulation mode exists to measure.
 
-**The column is two groups and a gap, not a gradient.** Six models land between 0.0000065 and 0.000059 with interval coverage 0.93 to 0.96, then nothing until nemotron-3-super at 0.00056, gpt-6-luna at 0.00057, ling at 0.0087 and Claude Haiku at 0.0099, whose coverage falls to 0.84, 0.69, 0.67 and 0.48. No model is worse than the degenerate answer in this column: only the naive baseline is, at 0.071 against the degenerate 0.019. An earlier version of this note said Claude Haiku was, which was wrong, since its 0.0099 is comfortably inside the degenerate. Within the leading six the spread is a factor of nine on three instances, which this suite cannot resolve, so read the column as whether a model built the simulation and calibrated to it rather than as an ordering.
+**Take the interval from the simulated distribution.** The 2.5% and 97.5% quantiles of that pool's own path losses. Rows that score well on the mean and badly on coverage almost always constructed the interval some other way.
 
-Two rows come from a different serving path than their other cells: mimo-v2.5 and ling-3.0-flash no longer have free endpoints, and nemotron-3-ultra's free endpoint returned HTTP 503 on five consecutive attempts while the paid one completed in three minutes.
+## Limitations
 
-The two local rows sit between the groups, at 0.001945 and 0.001948. Their ordering is not meaningful: the two cells differ by 0.15%, far below anything this suite resolves, and only the mean-rank column distinguishes them ([detail](../local-models.md)).
+**There is no feature-selection challenge.** The history has exactly two macro columns and both are true drivers, so there is nothing comparable to CCAR's collinear distractors. The prompt also supplies the accounting recursion, event ordering, amortization convention and reversion blend in full. Implementing them correctly is tested; discovering or choosing them is not.
+
+**The functional family is fixed and logistic**, so the task does not establish robustness across alternative response families. Parameters vary, families do not.
+
+**Uncertainty dynamics are disclosed, not inferred.** Historical measurement noise contains no realizations of future systemic shocks, and hiding `rho` and `persistence` without redesigning the history would make them unidentifiable. Learning them from realized defaults is future work.
+
+**Scope.** This covers funded term-loan principal only, and excludes revolving commitments, renewals, purchased credit-deteriorated assets, collateral-dependent measurement, accrued interest, qualitative overlays, discounted cash flow, scenario mixtures, and management's selection of reasonable and supportable forecasts. The [interagency policy statement](https://www.federalreserve.gov/frrs/guidance/interagency-policy-statement-on-allowances-for-credit-losses.htm) motivates the task; the supplied path, reversion policy and conventions are benchmark assumptions, not prescribed choices, and nothing here certifies an allowance under ASC 326.
+
+**A point-only legacy mode exists** behind `-T simulation=false`, scoring `ecl_regret` alone against the analytic conditional mean with no interval requested. Its scores are not interchangeable with interval results and must not be pooled with them.
+
+**One prompt ambiguity has already cost a cell.** An early run implemented the shock law correctly and still scored coverage 0.461, because the prompt said "aggregate lifetime loss" and the model built one portfolio band and allocated it across pools in proportion to expected loss. Pool losses share segment shocks and do not diversify away, so that construction is far too narrow per pool. Reconstructing the misreading on the same instance reproduced its width to within five percent, and re-running with only the interval wording changed moved coverage from 0.461 to 0.918 and the width from 0.0166 to 0.0332, against the reference's 0.0313. The scorer, the generator and this document were all unambiguous that no portfolio interval exists; the ambiguity lived only in the system prompt, which is the one artefact the agent sees. `tests/test_cecl_prompt.py` now pins the wording. A cell produced that way looks like a calibration failure and is mostly a specification failure.

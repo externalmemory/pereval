@@ -1,6 +1,6 @@
 # CCAR Stress Loss Model
 
-The suite's realistic domain task. A regression under noisy data with a response law that is drawn per instance, included deliberately as a contrast to three-body.
+The suite's realistic domain task. A regression under noisy data with a response law drawn per instance, included deliberately as a contrast to three-body.
 
 ```
 inspect eval pereval/tasks/ccar/task.py --model <provider/model>                 # needs Docker
@@ -10,47 +10,27 @@ inspect eval pereval/tasks/ccar/task.py -T n_instances=1 -T repeats=5           
 python -m pereval.tasks.ccar.generator --out-dir runs/ccar --seed 1 --family interaction
 ```
 
-> **These scores stand.** The response law used to be eight constants hard-coded in the
-> public generator, which made every instance solvable in closed form with no estimation:
-> that exploit scored 0.00014 mean regret against 0.013 for the reference. The law is now
-> drawn per instance, including which two macros are non-zero.
->
-> That is a change to the answer key, not to the question. No agent was ever told the
-> drivers, so the problem an agent faces is unchanged, and the archived runs measure it.
-> The parameter draws are centred tightly on the old calibration, so the scale is preserved
-> (oracle 0.082 against 0.070, overlapping across seed sets) and old and new runs sit in
-> one column. Optional extras that would break that, rotating the functional form and
-> splitting scenario severity, are off by default.
+## Task
 
-## The Task
+The agent gets a quarterly panel of nine macroeconomic drivers (GDP, unemployment, home price index, BBB spread, S&P 500, DJIA, NASDAQ, VIX, CPI) together with a portfolio default rate over an in-time window, plus a nine-quarter forward stress scenario for the same drivers. It must project the default rate, point estimate and 95% interval, for each stressed quarter.
 
-The agent gets a quarterly panel of nine macroeconomic drivers (GDP, unemployment, home price index, BBB spread, S&P 500, DJIA, NASDAQ, VIX, CPI) plus a portfolio default rate over an in-time window, and a 9-quarter forward stress scenario for the same drivers, and must project the default rate (point plus 95% interval) for the stressed quarters. It scores the same oracle-anchored Winkler interval, averaged over the nine quarters.
+## Data
 
-## The Data-Generating Process
+The generating process is documented here and in the source but never placed in the agent's context, which sees only the two CSVs.
 
-Documented here and in the source, but never placed in the agent's context, which sees only the two CSVs. It is built to reward sound out-of-sample judgment rather than recovering any particular model.
+Macros come from a diagonal-AR(1)-plus-correlated-innovations generator calibrated to real FRED series, matching persistence, marginal moments, cross-correlations and heavy-tailed crises. The default rate is an extended-Vasicek function of just two of the nine drivers, so a solution has to do feature selection under heavy collinearity (three of the nine are near-duplicate equity indices), discover a transform, choose a bounded functional form, and calibrate systematic uncertainty for the interval.
 
-Macros come from a diagonal-AR(1)-plus-correlated-innovations generator calibrated to real FRED series (matched persistence, marginal moments, cross-correlations, heavy-tailed crises). The default rate is an extended-Vasicek function of just two of the nine drivers, so the model must do feature selection under heavy collinearity (three of the nine are near-duplicate equity indices), discover a transform, choose a bounded functional form, and calibrate the systematic uncertainty for the interval.
-
-Which two drivers, with what coefficients, and in what functional form are all drawn per instance:
+Which two drivers, with what coefficients, in what functional form, are drawn per instance:
 
 - **Drivers.** One macro that rises in a recession (unemployment, BBB spread or VIX) enters as a level; one that falls (HPI, GDP or NASDAQ) enters as a year-over-year change. Nine pairs.
-- **Parameters.** `p`, `rho`, `k1` and `k2` are drawn from ranges bracketing the FRED calibration. Standardization is on the pre-stress window, so it is instance-specific and absorbed by any fitted model.
-- **Family**, rotated across instances, three of them. `vasicek` is probit-linear. `threshold` adds slope above a kink placed at the 80th to 95th percentile of the in-time driver distribution, so only a handful of in-time quarters sit above it and the nonlinearity is nearly invisible to an in-sample fit while the whole stress path is above it. `interaction` adds a `u1*u2` cross term, which is close to invisible in sample where both drivers sit near their means and decisive under a scenario that pushes them adversely together.
+- **Parameters.** `p`, `rho`, `k1` and `k2` are drawn from ranges bracketing the FRED calibration. Standardisation is on the pre-stress window, so it is instance-specific and is absorbed by any fitted model.
+- **Family**, rotated across instances. `vasicek` is probit-linear. `threshold` adds slope above a kink placed at the 80th to 95th percentile of the in-time driver distribution, so only a handful of in-time quarters sit above it and the nonlinearity is nearly invisible to an in-sample fit while the whole stress path is above it. `interaction` adds a `u1*u2` cross term, close to invisible in sample where both drivers sit near their means and decisive under a scenario that pushes them adversely together.
 
-Twenty-seven laws, none of them in the source. A fourth family, `lagged`, was built and dropped: the level drivers are persistent enough and the stress ramp smooth enough that a one or two quarter lag is nearly unidentifiable, and it left the linear reference at 0.0174 against 0.0173 on `vasicek`, so it added a family without adding a distinction.
+Twenty-seven laws, none of them in the source.
 
-The scenario overlay ramps each level driver to a target anchored on its marginal mean rather than adding an increment to its last observed value. That is what a supervisory scenario does, and it fixes a defect: with an increment, how adverse the scenario was in standardized terms depended on where the series happened to sit, so a driver that started low could end barely above its own in-time mean and a `threshold` instance could be identical to a `vasicek` one.
+The scenario overlay ramps each level driver to a target anchored on its marginal mean rather than adding an increment to its last observed value, which is what a supervisory scenario does. A rare one-quarter systemic crisis, a contaminated-normal COVID- or GFC-like event, is added to the **observed macros only**: the default rate is generated from the fundamental drivers, so an unemployment spike appears in the data and the defaults do not follow it. A model that fits that quarter naively attenuates its unemployment sensitivity and pays for it under stress. Early quarters carry ragged missing data, as on FRED, and the scenario pushes the fundamentals past the in-time range, where linear-in-level fits and flipped signs are punished out of sample.
 
-A rare one-quarter systemic crisis (a contaminated-normal COVID/GFC-like event) is added to the observed macros only: the default rate is generated from the fundamental drivers, so a COVID-style unemployment spike appears in the data but the default does not follow it, and a model that fits that quarter naively attenuates its unemployment sensitivity and pays for it under stress. Early quarters have ragged missing data, as on FRED. The scenario pushes the fundamentals past the in-time range, where linear-in-level fits and flipped signs get punished out of sample.
-
-## Scenario Severity Is a Factor, Not a Residual
-
-Each instance draws a scenario type, crossed with the response family so a nine-instance dataset covers every combination once: `baseline` leaves the drivers at their unconditional means, `adverse` and `severe` ramp them progressively further. Pin one with `-T scenario=baseline`.
-
-Benign scenarios are there on purpose. A loss model has to be accurate across the whole range, and over-predicting losses in benign conditions is an error rather than a safe choice, because conservatism is not a substitute for accuracy. Keeping only adverse scenarios would test whether a model is pessimistic, not whether it is right.
-
-That is measurable rather than rhetorical. Taking the probit-linear reference and shifting it adverse by a fixed amount, which is what a habitually conservative model does, gives mean Winkler regret over ten instances per scenario:
+**Scenario severity is a factor, not a residual.** Each instance draws `baseline`, `adverse` or `severe`, crossed with the response family so a nine-instance dataset covers every combination once. Benign scenarios are there on purpose: over-predicting losses in benign conditions is an error, not a safe choice, and keeping only adverse scenarios would test whether a model is pessimistic rather than whether it is right. Taking the probit-linear reference and shifting it adverse by a fixed amount, which is what a habitually conservative model does, gives mean Winkler regret over ten instances per scenario:
 
 | Scenario | accurate fit | +0.15 probit | +0.30 | +0.50 |
 | --- | --- | --- | --- | --- |
@@ -58,22 +38,20 @@ That is measurable rather than rhetorical. Taking the probit-linear reference an
 | adverse | 0.200 | 0.083 | **0.070** | 0.205 |
 | severe | 1.452 | 1.020 | 0.698 | **0.499** |
 
-On severe scenarios leaning adverse *improves* regret by 2.9x, because a linear fit under-predicts a nonlinear response out of range and the bias partly cancels the misspecification. On benign scenarios the same habit costs 9.4x. A suite scored only on stress would read that first column as skill.
+Leaning adverse improves severe-scenario regret by 2.9x, because a linear fit under-predicts a nonlinear response out of range and the bias partly cancels the misspecification. The same habit costs 9.4x on benign scenarios. The two factors interact by construction: a kink acts only above its threshold and a cross term only when both drivers are far from their means, so under `baseline` all three families coincide, and over twelve seeds eleven show both nonlinear families within 0.01 of `vasicek`, against none under `severe`.
 
-The two factors interact, by construction rather than by accident. A kink acts only above its threshold and a cross term only when both drivers are far from their means, so under `baseline` all three families coincide: over twelve seeds, eleven show both nonlinear families deviating from `vasicek` by less than 0.01, against none under `severe`. That is the trap working. The nonlinearity is invisible in benign conditions and in sample, and decisive exactly where the projection is being relied on.
+## Scoring
 
-**Pooling defeats it, which matters more than the table above.** Averaged over all three scenarios, raw regret is *minimised* by a bump of +0.30 (0.287 against 0.563 for the accurate fit), because severe instances carry far larger absolute regret and dominate the mean. Normalising each instance by its own degenerate anchor pulls the optimum back to +0.15 but does not reach zero. So the scenario factor makes conservatism detectable only if the results are read per scenario; a single pooled CCAR number still rewards leaning adverse, and should not be quoted on its own.
+The same oracle-anchored **Winkler interval regret** as the [ballistic task](ballistic.md#scoring), averaged over the nine stressed quarters, with MAE, coverage and width reported alongside.
 
-## Baselines and Anchors
+Four anchors bracket it (`-T baseline=naive|vasicek|informed`, plus the degenerate answer the scorer computes on every run):
 
-Four anchors (`-T baseline=naive|vasicek|informed`, plus the degenerate answer computed by the scorer):
+- **`naive`**: OLS of the default rate on all nine macro levels. Fragile under stress extrapolation, and measurably worse than the degenerate answer, so it is a floor in the strict sense.
+- **`vasicek`**: the competent reference. Probit-transforms the default rate, builds eighteen candidate drivers (all nine macros as levels and as YoY changes), selects among them by backward elimination on sign plausibility and significance, then fits the probit-linear extended-Vasicek model in closed form with robust outlier handling ([estimator](https://CRAN.R-project.org/package=vasicekfit)).
+- **`informed`**: the same fit handed the true drivers from hidden truth. Not a competitor but a decomposition, since no agent has this information.
+- **Degenerate**: one constant point estimate, no interval.
 
-- **`naive`**: OLS of the default rate on all nine macro levels. Fragile under stress extrapolation, and now measurably *worse than the degenerate answer*, so it is a floor in the strict sense.
-- **`vasicek`**: the competent reference. Probit-transforms the default rate, builds eighteen candidate drivers (all nine macros as levels and as YoY changes), selects among them by backward elimination on sign plausibility and significance, then fits the probit-linear extended-Vasicek model by its closed form with robust outlier handling. See [the vasicekfit paper](https://CRAN.R-project.org/package=vasicekfit) for the estimator.
-- **`informed`**: the same fit, handed the true drivers from hidden truth. Not a competitor, a decomposition: no agent has this information.
-- **Degenerate**: one constant point estimate, no interval. Reported by the scorer on every run as `degenerate_regret`.
-
-The gap from `informed` up to `vasicek` is the measured cost of feature selection, and it is small relative to the gap down to `naive`. Mean Winkler regret over eight instances per family:
+Mean Winkler regret over eight instances per family:
 
 | Anchor | vasicek | threshold | interaction | All |
 | --- | --- | --- | --- | --- |
@@ -82,37 +60,57 @@ The gap from `informed` up to `vasicek` is the measured cost of feature selectio
 | Degenerate answer | 0.869 | 1.505 | 1.312 | 1.229 |
 | `naive` OLS on nine levels | 0.947 | 1.358 | 1.392 | 1.233 |
 
-`informed` degrades from 0.038 to 0.185 across the families because it stays probit-linear by design, so it is near-oracle on `vasicek` and competent-but-misspecified on the other two. A reference exact on every instance would only be measuring whether the agent guessed one fixed law. Read the reference per family, not pooled.
+`informed` degrades from 0.038 to 0.185 across the families because it stays probit-linear by design, so it is near-oracle on `vasicek` and competent-but-misspecified on the other two. A reference exact on every instance would only measure whether the agent guessed one fixed law, so read the reference per family rather than pooled.
 
-**Selecting the right drivers is not achievable and does not need to be.** Backward elimination recovers the exact true pair in 3 of 24 instances. Nine heavily collinear macros over eighty quarters do not identify a pair, and the surviving driver is usually a correlated proxy that moves the same way under the scenario, so the path is still predicted well. Recovering the right variable and predicting the right path are different achievements and only the second is scored. Alternatives measured and rejected, pooled regret over the same 24 instances: exhaustive search over all 153 sign-plausible pairs 0.490, ridge over all eighteen candidates 0.606, lasso 0.669, against backward elimination's 0.430. Shrinkage over the full candidate set does worse than selection, which is what the collinear equity distractors are there to produce: a fit that keeps all of them gets large offsetting coefficients that cancel in sample and stop cancelling once the scenario leaves the observed range.
+## Results
 
-## Scores (Eight Instances, Fixed-Law Variant)
+Worst-case regret over eight instances. Lower is better.
 
-> **These rows measured the fixed-law task.** They are valid measurements, not contaminated ones, and they stand as a result for that variant. They do not compare to results from the current generator, which is harder. A rerun is pending.
->
-> All rows were n=8. The cast was partial (no paid frontier models beyond Kimi K3, no full free roster), and a row for `hy3-free` was removed because the model is no longer served and cannot be reproduced.
+<!-- scores:begin (generated by scripts/render_scores.py; do not edit by hand) -->
 
-Means over eight generated instances, reported as **mean ± 2 SD** (2× the sample standard deviation across the instances, not a confidence interval), ordered by the upper end mean + 2 SD so consistency is rewarded, matching the quantile table. Every row runs the same eight instances (seed 1), so the comparison is paired. Lower is better; coverage targets 0.95.
+| Model | CCAR |
+| --- | --- |
+| *Oracle (true model)* | *0.031* |
+| GLM-5.1 | **0.055** |
+| Claude Opus 5.5 | 0.077 |
+| minimax-m3.1-flash | 0.080 |
+| gpt-6-luna | 0.117 |
+| Kimi K3 | 0.12 |
+| ling-3.0-flash | 0.193 |
+| nemotron-3-ultra | 0.27 |
+| deepseek-v4-flash-0731 | 0.30 |
+| Qwen3.6-35B-A3B (local) | 0.366 |
+| Claude Haiku 4.5 | 0.37 |
+| gemma-4-26B-A4B (local) | 0.44 |
+| nemotron-3-super | 0.45 |
+| mimo-v2.5 | 0.57 |
+| *Degenerate answer* | *0.57* |
+| *Naive baseline* | *0.85* |
 
-| Row | Winkler regret (mean ± 2 SD) | Coverage | Note |
-| --- | --- | --- | --- |
-| Vasicek reference (true model) | 0.013 ± 0.022 | 0.93 | closed-form extended Vasicek |
-| GLM-5.1 | 0.029 ± 0.035 | 0.92 | best model, near the reference; tightest band of any model |
-| Kimi K3 | 0.033 ± 0.082 | 0.90 | frontier (not free) |
-| deepseek-v4-flash-free | 0.043 ± 0.102 | 0.89 | superseded version; message limit 300 (at 120 it left 18 points unpredicted and scored 0.084) |
-| ling-3.0-flash (free) | 0.112 ± 0.123 | 0.80 | |
-| nemotron-3-ultra (free) | 0.085 ± 0.161 | 0.76 | best of the newly-added free models |
-| deepseek-v4-flash-0731 | 0.078 ± 0.189 | 0.90 | one instance at 0.303 sets its band and its summary cell |
-| Claude Haiku 4.5 | 0.137 ± 0.274 | 0.74 | strong here despite failing every orbital task |
-| nemotron-3-super (free) | 0.136 ± 0.303 | 0.73 | |
-| mimo-v2.5 (free) | 0.131 ± 0.371 | 0.79 | one scenario at 0.567 dominates its spread |
-| Naive OLS baseline | 0.200 ± 0.544 | 0.63 | OLS on all nine levels |
-| laguna-m.1 (free) | 0.216 ± 0.694 | 0.67 | the only model worse than the naive baseline |
+<!-- scores:end -->
 
-Nine of ten models beat the naive OLS baseline, and the best of them approach the near-oracle Vasicek reference, so CCAR is tractable even for cheap models. The task still discriminates the right way, with the fragile linear-on-levels approach near the bottom and the physics-informed reference at the top. The one model that lands *below* the naive baseline is laguna (0.216 vs 0.200), and by the upper-bound ordering it ranks last. The naive regression is a real floor that a weak enough model can fall through.
+The gap from `informed` to `vasicek`, 0.107 to 0.140, is the measured cost of feature selection, and it is small next to the gap down to the naive floor at 1.23. CCAR is the suite's most tractable column: most of the cast beats OLS-on-levels and the leaders approach the competent reference, which is the difficulty gradient working as intended at the easy end of the realistic tasks.
 
-nemotron-3-ultra is the best of the free models here (0.085), consistent with it being the strongest free model on the quantile task too, though on the orbital tasks it was among the worst, so CCAR and quantile (both statistical-modelling tasks) track together while the physics tasks do not.
+Per-instance regret is heavy-right-tailed, because one badly missed scenario dominates the average, so instance-to-instance spread is large next to the gaps between leading rows.
 
-The ± 2 SD bands are wide, and honestly so: per-instance regret is heavy-right-tailed because a single badly-missed scenario dominates the Winkler score, so the instance-to-instance spread dwarfs the mean gaps. At n=8 the leading model rows (GLM-5.1 0.029 ± 0.035, Kimi K3 0.033 ± 0.082, deepseek 0.043 ± 0.102, nemotron-3-ultra 0.085 ± 0.161) overlap each other and the Vasicek reference; GLM-5.1's is the tightest band and the only one that clearly separates from the naive baseline, but even it overlaps K3 and deepseek (eight instances do not resolve them). The mean ordering is suggestive; the bands say only the extremes (the reference at the top, laguna at the bottom) are established at this sample size, the same repeated-run lesson the quantile study makes explicit.
+## Solutions
 
-deepseek illustrates the budget caveat directly: at message limit 120 it ran out on several instances and scored a penalty-inflated 0.084 at coverage 0.67, but at limit 300 it finishes all eight (130 to 189 messages each) and drops to 0.043, so its earlier row reflected budget, not capability. Most rows here finish well under 120 messages; only deepseek needed the higher cap, and raising it does not advantage the others, which were never budget-constrained. (nemotron-3-ultra-free and north-mini-code-free errored on this run and are omitted.)
+The approach at the top of this column is consistent across instances, and it is four decisions.
+
+**Transform first.** Every strong submission models `logit(default_rate)` or `log(default_rate)` rather than the rate itself, which keeps predictions inside (0, 1) and makes the response approximately linear in the drivers. Fitting the rate directly is the single most expensive omission, because the scenario pushes the drivers past the in-time range and an untransformed linear fit leaves the unit interval.
+
+**Build changes as candidates, not just levels.** The true law pairs a level with a year-over-year change, so a candidate set of levels only cannot contain the answer. Strong runs construct four-quarter differences and log changes alongside the levels and screen them on correlation and sign.
+
+**Throw out the planted crisis quarters.** The strongest row identifies the one-quarter macro spikes where the default rate did not respond, and excludes or repairs them before fitting, in five of eight instances explicitly, naming them by a VIX or unemployment screen. This is the trap the generator plants, and handling it is most of the separation between a careful fit and a mechanical one.
+
+**Take the interval from the fit and widen it for model disagreement.** The better runs use OLS prediction intervals on the transformed scale, including parameter uncertainty, back-transformed to the rate, and some average several near-equivalent specifications and widen the interval by their disagreement.
+
+**Recovering the true drivers is not achievable and does not need to be.** Backward elimination recovers the exact true pair in 3 of 24 instances. Nine heavily collinear macros over eighty quarters do not identify a pair, and the surviving driver is usually a correlated proxy that moves the same way under the scenario, so the path is still predicted well. Recovering the right variable and predicting the right path are different achievements and only the second is scored. Alternatives measured over the same 24 instances: exhaustive search over all 153 sign-plausible pairs 0.490, ridge over all eighteen candidates 0.606, lasso 0.669, against backward elimination's 0.430. Shrinkage over the full candidate set does worse than selection, which is what the collinear equity distractors produce: a fit that keeps all of them gets large offsetting coefficients that cancel in sample and stop cancelling once the scenario leaves the observed range.
+
+## Limitations
+
+**A pooled CCAR number rewards leaning adverse.** Averaged over all three scenarios, raw regret is minimised by a fixed +0.30 adverse bump (0.287 against 0.563 for the accurate fit), because severe instances carry far larger absolute regret and dominate the mean. Normalising each instance by its own degenerate anchor pulls the optimum back to +0.15 but not to zero. The scenario factor makes conservatism detectable only if results are read per scenario, so the single pooled cell in the score table should not be quoted on its own.
+
+**The column mixes two generator variants.** The response law used to be eight constants hard-coded in the public generator, which made every instance solvable in closed form with no estimation. It is now drawn per instance, including which two macros are non-zero. That changed the answer key rather than the question, since no agent was ever told the drivers, and the parameter draws are centred tightly enough on the old calibration to preserve the scale (oracle 0.082 against 0.070, overlapping across seed sets), so archived runs stay in the column ([detail](../limitations.md#the-ccar-response-law-was-public)). Optional extras that would break that, rotating the functional form and splitting scenario severity, are off by default.
+
+**A fourth response family was built and dropped.** `lagged` left the linear reference at 0.0174 against 0.0173 on `vasicek`, because the level drivers are persistent enough and the stress ramp smooth enough that a one or two quarter lag is nearly unidentifiable. It added a family without adding a distinction.

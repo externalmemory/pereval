@@ -7,42 +7,73 @@ inspect eval pereval/tasks/ballistic/task.py --model <provider/model>      # nee
 python -m pereval.tasks.ballistic.generator --out-dir runs/demo --seed 1   # inspect one instance
 ```
 
-## The Task
+## Task
 
-The agent receives (category, x, y) training rows and must predict y with 95% prediction intervals at held-out distances beyond the training range. y is projectile drop simulated by py-ballisticcalc with noise on muzzle velocity and launch angle; the held-out window for rifle categories is kept supersonic, so the extrapolation trap is pure velocity-dependent drag. It scores point accuracy (MAE vs the true conditional mean), interval calibration (coverage), and sharpness (width), combined into an oracle-anchored Winkler interval score.
+The agent is given `data/train.csv` with `(category, x, y)` rows and `data/test.csv` with `(category, x)`, and must write `predictions.csv` holding a point estimate and a 95% prediction interval for a *new noisy observation* at every test row. `y` is projectile drop in metres at horizontal distance `x` in metres.
 
-## Isolation
+For every category the test distances lie beyond the training range, so this is extrapolation rather than interpolation: a tree ensemble cannot leave the training hull at all, and a polynomial leaves it in the wrong direction. The sandbox has numpy, pandas, scikit-learn, statsmodels and scipy, and no network.
 
-Each instance is generated host-side and only neutral CSVs enter the agent's sandbox: the ballistics engine, the generator, and the ground-truth oracle stay out. What forces the agent to model the data rather than re-simulate it is that category identifiers are opaque and the ballistic parameters are randomized per run, so there is no known load to look up, and any simulation would first require estimating each category's parameters from the training data, which is the task itself. The sandbox additionally has no network, which blocks the weaker shortcuts of installing the exact engine, downloading its drag tables, or querying an online calculator. It does not prevent the agent from recognizing the physics from the data, which is legitimate.
+## Data
 
-## No Competent Anchor, Deliberately
+Instances are generated host-side by `pereval/tasks/ballistic/generator.py`, and only the two neutral CSVs enter the sandbox. A category is a projectile class, rifle or pistol, with muzzle velocity, G1 ballistic coefficient, weight and diameter drawn per run. `y` comes from the py-ballisticcalc point-mass simulator with Gaussian noise injected into muzzle velocity and launch angle, redrawn for every row, so observations are conditionally i.i.d. given `(category, x)`. The noise magnitude is never disclosed, so interval width has to be estimated from the data rather than assumed.
 
-The other tasks bracket a model between a naive floor and a competent reference: CCAR has the probit-linear Vasicek fit, the orbital tasks have the Kepler fit. Ballistic has only the naive parabola and the degenerate answer, so a score of 12 cannot be read as "near the achievable frontier" or "ten times off it". That gap is a real limitation on what this column supports, and it is accepted rather than closed.
+Category identifiers are random alphanumerics, so a label cannot be inverted into a real load and looked up. For rifle categories the held-out window is held above Mach 1.2, which keeps the trap on pure velocity-dependent drag rather than on a transonic effect. The simulator, the generator and `truth.json` stay outside the sandbox, and the sandbox has no network, which blocks installing the engine, fetching its drag tables, or querying an online calculator. None of that prevents an agent from recognising the physics in the data, which is legitimate.
 
-A competent reference here would have to fit a drag model, which means it would have to know the data is ballistic. The task withholds exactly that: category identifiers are opaque so the agent cannot invert a label into a known load. Disclosing the domain in the prompt to make a fair reference possible would change the task, invalidate every run already recorded, and hand over the isolation property that the design is built on. For a task whose job is calibrating the harness across a difficulty gradient rather than carrying a domain claim, that is a bad trade.
+## Scoring
 
-## Scores (three runs, mean ± 2 SD)
+The headline metric is **Winkler regret**: the agent's mean Winkler interval score (Gneiting and Raftery, 2007) minus a Monte Carlo oracle's, over the held-out points. The interval score charges width plus a `2/alpha` penalty for each miss, so it prices sharpness and calibration in one number and cannot be gamed by widening. Anchoring on the oracle makes zero the achievable floor rather than an abstract one.
 
-Three instances (seed 1, `n_instances=3`), reported as **mean ± 2 SD** across the runs, ordered by the upper end mean + 2 SD. Every row is paired on the same three instances. Lower Winkler regret is better; coverage targets 0.95. The parabola baseline (`-T baseline=true`) is the naive quadratic reference, not a model.
+A third anchor, the **degenerate answer**, is the best constant point estimate with a zero-width interval. It prices non-response, and it is the line a submission has to clear to have said anything at all.
 
-| Row | runs | Winkler regret (mean ± 2 SD) | Coverage |
-| --- | --- | --- | --- |
-| mimo-v2.5 (free) | 3 | 10.5 ± 4.0 | 0.39 |
-| Kimi K3 | 3 | 6.1 ± 13.9 | 0.85 |
-| deepseek-v4-flash-0731 | 3 | 8.7 ± 11.3 | 0.47 |
-| GLM-5.1 | 3 | 8.0 ± 12.8 | 0.56 |
-| nemotron-3-ultra (free) | 3 | 11.0 ± 10.8 | 0.42 |
-| Parabola baseline (naive) | 3 | 17.2 ± 9.3 | 0.23 |
-| ling-3.0-flash (free) | 3 | 21.9 ± 35.9 | 0.28 |
-| nemotron-3-super (free) | 3 | 59.1 ± 1.3 | 0.13 |
-| laguna-m.1 (free) | 3 | 59.1 ± 1.3 | 0.13 |
-| deepseek-v4-flash-free (superseded version) | 3 | 30.5 ± 77.2 | 0.14 |
-| Claude Haiku 4.5 | 3 | 37.8 ± 79.8 | 0.22 |
+Reported alongside: MAE against the true conditional mean, coverage against the nominal 0.95, and mean interval width.
 
-Five rows clear the naive parabola baseline: mimo-v2.5, Kimi K3, deepseek-v4-flash-0731, GLM-5.1 and nemotron-3-ultra (upper bounds 14.5, 20.0, 20.0, 20.8, 21.8 vs the baseline's 26.5). mimo is the tightest of them (± 4.0), which is why it leads on the upper-bound ordering despite not having the lowest mean; Kimi K3 has the lowest mean (6.1) and one of the widest bands, and the two orderings disagree for exactly that reason. The five are separated by less than the width of any one of their bands, so the ordering among them is not a result; clearing the baseline is.
+## Results
 
-Ballistic is the task where the frontier model is least distinguishable from cheap ones. K3's 6.1 ± 13.9 overlaps mimo, GLM-5.1 and nemotron-3-ultra completely, and its worst run (14.0) is the cell the summary table reports. That is the expected shape for a task with no competent reference: without a drag-model anchor there is no scale on which "close to the achievable frontier" can be stated, so the column separates the models that beat a parabola from those that do not and nothing finer.
+Worst-case regret over three instances. Lower is better.
 
-The bottom of the table is more interesting than a mean ranking shows. **Claude Haiku 4.5's mean (37.8) is lower than laguna's and nemotron-3-super's (59.1), yet it ranks last**, because its ± 79.8 band (one instance blew out to 83) pushes its upper bound to 118 against their 60. Ordering by the worst case rewards the consistent-but-mediocre over the erratic, which is the intended behaviour.
+<!-- scores:begin (generated by scripts/render_scores.py; do not edit by hand) -->
 
-**laguna and nemotron-3-super score bit-for-bit identically (59.1 ± 1.3).** That is not a duplicate: both weak models independently fell back to the same deterministic per-category *linear* least-squares fit, which produces identical predictions and is simply wrong for nonlinear velocity-dependent drop (a straight line where the drag curve bends). Two different models converging on the same naive method is itself a finding, and the near-zero ± 1.3 band confirms it: a fixed method has no run-to-run method variance, only the small block-sampling wobble.
+| Model | Ballistic |
+| --- | --- |
+| minimax-m3.1-flash | **4.3** |
+| Claude Opus 5.5 | 4.9 |
+| GLM-5.1 | 12 |
+| gpt-6-luna | 12 |
+| mimo-v2.5 | 12 |
+| Kimi K3 | 14 |
+| deepseek-v4-flash-0731 | 14 |
+| Qwen3.6-35B-A3B (local) | 14 |
+| nemotron-3-ultra | 16 |
+| *Naive baseline* | *22* |
+| ling-3.0-flash | 43 |
+| gemma-4-26B-A4B (local) | 59 |
+| nemotron-3-super | 60 |
+| *Degenerate answer* | *61* |
+| Claude Haiku 4.5 | 83 |
+| *Oracle (true model)* | *none* |
+
+<!-- scores:end -->
+
+The oracle has no entry because its regret is zero by construction. Read the column against two lines rather than against the leader: the *naive baseline* is a per-category quadratic least-squares fit, the obvious wrong functional form, and the *degenerate answer* is a constant. A row inside 22 has found curvature a parabola misses; a row past 61 has submitted something worse than a single number.
+
+The spread among the rows that clear the baseline is narrower than the run-to-run spread of any one of them, so the ordering inside that group is not a result. Clearing the baseline is.
+
+## Solutions
+
+The approach that works is the same one across every row near the top, and it is three decisions.
+
+**Fit a power law with a free exponent, not a parabola.** The leaders fit drop as `a + b * x^p` with `p` estimated per category, usually in log space, and recover exponents from roughly 2.0 to 3.3. The naive baseline fixes `p = 2`, and the gap between a free exponent and a fixed one is most of what the column measures: drag makes the curve steepen faster than quadratic, and the error compounds over the extrapolation.
+
+**Fit each category separately.** Categories differ in projectile class and parameters, so pooling them averages incompatible curves.
+
+**Get the interval from the residuals.** Width has to come from the data, and the better rows use either a bootstrap over the fitted parameters or a robust residual scale, combined with the estimation uncertainty that grows as the model is pushed past the training range. Rows that clear the baseline on point error and still score badly almost always did this part by assumption instead of measurement.
+
+## Limitations
+
+**There is no competent anchor, deliberately.** CCAR has a probit-linear Vasicek fit and the orbital tasks have a Kepler fit, so a score there can be read as a distance from what a careful analyst achieves. Ballistic has only the naive parabola and the degenerate constant, so a regret of 12 cannot be read as "near the achievable frontier" or "ten times off it".
+
+Closing that gap would mean shipping a reference that fits a drag model, which requires knowing the data is ballistic, which is exactly what the task withholds. Disclosing the domain in the prompt would hand over the isolation the design rests on and invalidate every archived run. For a task whose job is calibrating the harness rather than carrying a domain claim, that trade is not worth making, so the limitation is accepted rather than closed.
+
+**The column separates coarsely.** With no competent reference there is no scale on which "close to the frontier" can be stated, so this column distinguishes the rows that beat a parabola from those that do not, and nothing finer. It is also the task where the frontier models are least distinguishable from cheap ones.
+
+**py-ballisticcalc is LGPL-3.0**, used as an unmodified installed dependency and not redistributed here.

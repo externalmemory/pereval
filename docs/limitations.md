@@ -122,11 +122,11 @@ The arbitrary constant is gone. What is enforced per share is the range the prom
 
 Archival consequence: **none.** Every one of the 73 archived migration samples that still carries its `predictions.csv` re-scores bit-identically under the new parse. Six samples have ever failed the mass check and five of those are unreadable artefacts already scoring 1.0, where the check fires on emptiness rather than on mass. Exactly one real deviation has ever been submitted, Qwen3.6-35B on instance-1-seed-1731038949, whose six cells carry 0.9663 to 0.9917 of the mass. It scored 0.7961 before and scores 0.7961 now, and it reports the finding in both cases. Under the review's proposed fix it would have become 1.0, which is the degenerate answer, so a 3.4% mass error would have cost a 26% worsening of a published cell on a submission that is substantively informative.
 
-### What the Three Have in Common
+### Common Factors
 
 Two of the three were invisible because a per-run field that happens to be correct for a single run was silently reused as if it summarised many, and the third was invisible because a test chose a value 0.001 away from the boundary it was named after. Neither failure needs a modelling mistake to occur, and neither would have been caught by adding another task. 271 tests passed on the commit that contained all three.
 
-## What the Re-Run Actually Cost
+## Cost of the Re-Run
 
 Nine free runs were spent re-measuring the four `n/m` cells. One cell came back. The rest is a record of how much of an eval's effort goes into establishing that a number is not a measurement.
 
@@ -209,7 +209,7 @@ The cost of the attempt is not small. The eval spent **122.6M total tokens**, of
 
 The suite is not consistent about this, though: the flyby runs recorded above were **discarded** as budget-limited when they hit the wall clock, while these were scored, because that task's wall-clock failure left nothing to read and this one's did not. Whether a time-limited run is reportable currently depends on whether the task happens to leave a readable artifact behind, which is not a decision anyone made.
 
-## What Completing One Row Did to the Aggregate
+## Effect of Completing One Row
 
 Until Kimi K3's row was finished, the mean-rank column was indistinguishable from randomly permuting each column independently: p = 0.57 on the spread of mean ranks. Completing K3 took it to p = 0.037, and adding a complete deepseek-v4-flash-0731 row took it to p = 0.004 on the spread and p = 0.007 on the range, measured over the six columns the table then had. Adding the CECL column took the spread to p = 0.001 and the range to p = 0.016, and completing a minimax-m3.1-flash:free row took them to p < 0.0001 on the spread and p = 0.002 on the range over ten ranked rows and seven columns. Adding the migration column as the eighth takes them to **p < 0.00001 on the spread and p = 0.001 on the range**.
 
@@ -238,7 +238,7 @@ The positive finding is that the suite has resolving power at the top of the ran
 
 That the same model is unremarkable on CCAR and quantile is not a limitation and not news. CCAR was built tractable on purpose, "included deliberately as a contrast to three-body", and the per-task doc has recorded since the first cast that "CCAR is tractable even for cheap models". A frontier model failing to separate on a task designed to be solvable by cheap ones is the difficulty gradient working as intended. The genuine caveat about the aggregate leaning on the physics tasks is a property of the task mix, and is covered under [The Overall Rank Depends on the Task Mix](#the-overall-rank-depends-on-the-task-mix).
 
-## What the Eleventh Row Did to the Aggregate
+## Effect of the Twelfth Row
 
 Adding Claude Opus 5.5 as the eleventh ranked row moves the range of mean ranks from p = 0.001 to **p = 0.00005**. The spread cannot move, because it was already below what a million permutations can resolve at ten rows and still is, so the range is the only place an eleventh row can register, and there it moved by a factor of twenty.
 
@@ -417,7 +417,7 @@ The quantile task is the exception and needs its own argument, because its data 
 
 ## Sample Size
 
-Every score table reports at least three runs per model as median (worst), after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The distance from the median to the worst is routinely larger than the distance between adjacent rows (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p < 0.00001 on the spread of mean ranks over eight columns), but only because the top four rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What the Eleventh Row Did to the Aggregate](#what-the-eleventh-row-did-to-the-aggregate) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
+Every score table reports at least three runs per model as median (worst), after the repeated-run standard was adopted, and no longer reports any cell whose runs did not all complete. The distance from the median to the worst is routinely larger than the distance between adjacent rows (regret is heavy-right-tailed), so only coarse contrasts are established: the reference at the top, the models that fall through the naive baseline at the bottom, and the two-axis statistical-vs-physics split. Mid-field orderings are not resolved at n=3. The aggregate rank is now distinguishable from chance (permutation p < 0.00001 on the spread of mean ranks over eight columns), but only because the top four rows separate from the field; the ordering beneath them remains unresolved, as the leave-one-out table under [What the Eleventh Row Did to the Aggregate](#effect-of-the-twelfth-row) shows. Paired-difference comparison, the standard remedy and the one this project's own design doc prescribes, was measured and does not help here: 1% variance reduction on regret levels and 10% on logs, because the variance is model-by-instance interaction rather than instance difficulty. See [task-design.md](task-design.md#pairing-is-not-the-lever), and the next honest step is tens of instances with the paired, task-clustered error analysis described in [task-design.md](task-design.md).
 
 ### Three Runs Cannot Support a Two SD Band
 
