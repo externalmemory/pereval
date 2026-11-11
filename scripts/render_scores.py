@@ -147,9 +147,11 @@ def render(mode, path):
             ax.add_patch(Rectangle((LBL + j * CW + 0.012, y(i) - RH / 2 + 0.012),
                                    CW - 0.024, RH - 0.024, facecolor=fc,
                                    edgecolor=t["grid"], linewidth=0.9))
+            best = not is_ref and np.isfinite(v) and RANKS[j][i] == 1
             ax.text(LBL + j * CW + CW / 2, y(i), disp[j], ha="center", va="center",
                     fontsize=6.9, color=t["muted"] if is_ref else t["ink"],
-                    style="italic" if is_ref else "normal")
+                    style="italic" if is_ref else "normal",
+                    fontweight="bold" if best else "normal")
         rtxt = "floor" if i == 0 else ("not ranked" if is_ref else f"{mr:.2f}")
         ax.add_patch(Rectangle((LBL + ncol * CW + 0.012, y(i) - RH / 2 + 0.012),
                                RANKW - 0.024, RH - 0.024, facecolor=t["rankbg"],
@@ -157,11 +159,12 @@ def render(mode, path):
         ax.text(LBL + ncol * CW + RANKW / 2, y(i), rtxt, ha="center", va="center",
                 fontsize=6.4 if is_ref else 7.2, color=t["muted"] if is_ref else t["ink"],
                 style="italic" if is_ref else "normal",
-                fontweight="normal" if is_ref else "bold")
+                fontweight="bold" if (not is_ref and mr == BEST_MR) else "normal")
 
     ax.text(0, -0.78,
             "Shading is rank within each column, best to worst; the columns are not comparable "
-            "with each other.\nEvery cell is worst-case regret over at least three runs. Lower is better.",
+            "with each other. Bold is the best cell in a column.\nEvery cell is worst-case regret "
+            "over at least three runs. Lower is better.",
             ha="left", va="center", fontsize=6.4, color=t["muted"], linespacing=1.5)
     fig.savefig(path, facecolor=t["surface"], bbox_inches="tight", pad_inches=0.16)
     plt.close(fig)
@@ -184,6 +187,7 @@ def rank_in_col(j):
 
 
 RANKS = {j: rank_in_col(j) for j in range(len(COLS))}
+BEST_MR = min(ROWS[i][1] for i in ranked)
 
 
 
@@ -232,6 +236,8 @@ def markdown_table():
                 txt = f"*{txt}*"
             out.append(txt)
         rt = mean_rank_text(i)
+        if mr is not None and mr == BEST_MR:
+            rt = f"**{rt}**"
         out.append(f"{em}{rt}{em}" if em else rt)
         lines.append("| " + " | ".join(out) + " |")
     return "\n".join(lines)
@@ -316,7 +322,7 @@ def readme_block():
         FIGURE.format(nrow=len(ROWS), ncol=len(COLS), nranked=len(ranked)),
         "Shading is rank within that column, green best through red worst; the "
         + " and ".join(f"*{r[0]}*" for r in ROWS if r[1] is None)
-        + " rows are unranked and are shaded neutral. **Bold** below marks the best cell in a "
+        + " rows are unranked and are shaded neutral. **Bold** marks the best cell in a "
           "column. Mean rank is a Borda count within each column and is deliberately the only "
           "aggregate, since the cells are not comparable across columns.",
         "<details>",

@@ -12,6 +12,19 @@ It qualifies a development *process*, not a model. A nine-quarter stress project
 
 Three principles shape every task. **Objective verification:** each task has a verifiable target ([docs/task-design.md](docs/task-design.md)). **Scalar regret:** each task scores continuous regret against an oracle or reference, so a task keeps discriminating even when every agent does well, because the magnitudes still separate them. **Pessimistic assessment:** the question is not how well agents do on average but whether the *worst case* is good enough, so every cell is a maximum rather than a mean.
 
+## Tasks
+
+| Task | Type | Challenge |
+| --- | --- | --- |
+| [CCAR stress loss](docs/tasks/ccar.md) | realistic domain | feature selection under collinearity, transform discovery, bounded functional form, stress extrapolation |
+| [CECL lifetime losses](docs/tasks/cecl.md) | synthetic credit portfolio | lifetime allowance, amortization, defaults and prepayments, recoveries, forecast reversion; simulated lifetime-loss prediction intervals |
+| [Rating migration under stress](docs/tasks/migration.md) | synthetic credit portfolio | annual-to-quarterly matrix decomposition against the Markov embedding problem, macro-conditional transition matrices, one model projected over three supervisory scenarios |
+| [Macro tail quantiles](docs/tasks/quantile.md) | realistic domain | population vs sample quantile, tail extrapolation from 10 observations |
+| [Ballistic extrapolation](docs/tasks/ballistic.md) | controlled mechanism | out-of-range extrapolation against velocity-dependent drag |
+| [Orbital: two-body, three-body, hyperbolic flyby](docs/tasks/orbital.md) | controlled mechanism | periodic signal recovery, coupled retrograde geometry, angles-only orbit determination |
+
+CCAR and quantile are the original realistic domain tasks. CECL adds a synthetic lifetime-credit-loss task. Migration is the newest and hardest of the credit tasks. The mechanism tasks calibrate the harness across a difficulty gradient with exactly known ground truth.
+
 ## Scores
 
 Every cell is the **worst-case regret** over at least three runs, CCAR over eight instances. Lower is better.
@@ -25,7 +38,7 @@ Every cell is the **worst-case regret** over at least three runs, CCAR over eigh
   <img alt="Score matrix: 16 rows across 8 tasks, 14 of the rows ranked, each cell shaded by its rank within that column, green for best through to red for worst. The same numbers are in the collapsed block below and in docs/scores.csv." src="docs/images/scores-light.png">
 </picture>
 
-Shading is rank within that column, green best through red worst; the *Oracle (true model)* and *Degenerate answer* rows are unranked and are shaded neutral. **Bold** below marks the best cell in a column. Mean rank is a Borda count within each column and is deliberately the only aggregate, since the cells are not comparable across columns.
+Shading is rank within that column, green best through red worst; the *Oracle (true model)* and *Degenerate answer* rows are unranked and are shaded neutral. **Bold** marks the best cell in a column. Mean rank is a Borda count within each column and is deliberately the only aggregate, since the cells are not comparable across columns.
 
 <details>
 
@@ -34,7 +47,7 @@ Shading is rank within that column, green best through red worst; the *Oracle (t
 | Model | CCAR | CECL | Migration | Ballistic | Two-body | Three-body | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | *0.031* | *0* | *0* | *none* | *0.005* | *0.039* | *0.31* | *none* | *floor* |
-| Claude Opus 5.5 | 0.077 | **0.0000028** | **0.118** | 4.9 | **0.065** | **0.0393** | **24** | 0.083 | 1.88 |
+| Claude Opus 5.5 | 0.077 | **0.0000028** | **0.118** | 4.9 | **0.065** | **0.0393** | **24** | 0.083 | **1.88** |
 | minimax-m3.1-flash | 0.080 | 0.0000065 | 0.629 | **4.3** | 0.069 | 164 | 361 | 0.070 | 3.00 |
 | Kimi K3 | 0.12 | 0.000015 | 0.301 | 14 | 0.094 | 3.3 | 50 | 0.077 | 3.75 |
 | deepseek-v4-flash-0731 | 0.30 | 0.000014 | 0.625 | 14 | 0.30 | 269 | 522 | **0.067** | 5.13 |
@@ -72,20 +85,7 @@ Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks a
 
 Row labels name the model, not the endpoint that served it, and serving provenance is not controlled ([detail](docs/limitations.md#serving-provenance-is-not-controlled)). A cell is reported only if none of its runs failed for reasons outside the agent's control, with the recorded exceptions noted in [docs/models.md](docs/models.md). Two rows were measured with three draws per instance rather than one and are reported on a matched convention that keeps them comparable. CCAR's response law is now drawn per instance rather than fixed and published, which changed the answer key rather than the question, so archived runs stay in the column ([detail](docs/limitations.md#the-ccar-response-law-was-public)).
 
-Per-row provenance, measurement conventions, and the caveats behind individual cells are in [docs/models.md](docs/models.md). Per-task scoring definitions are in the task docs linked below. Everything known to be wrong or unresolved is in [docs/limitations.md](docs/limitations.md).
-
-## Tasks
-
-| Task | Type | Challenge |
-| --- | --- | --- |
-| [CCAR stress loss](docs/tasks/ccar.md) | realistic domain | feature selection under collinearity, transform discovery, bounded functional form, stress extrapolation |
-| [CECL lifetime losses](docs/tasks/cecl.md) | synthetic credit portfolio | lifetime allowance, amortization, defaults and prepayments, recoveries, forecast reversion; simulated lifetime-loss prediction intervals |
-| [Rating migration under stress](docs/tasks/migration.md) | synthetic credit portfolio | annual-to-quarterly matrix decomposition against the Markov embedding problem, macro-conditional transition matrices, one model projected over three supervisory scenarios |
-| [Macro tail quantiles](docs/tasks/quantile.md) | realistic domain | population vs sample quantile, tail extrapolation from 10 observations |
-| [Ballistic extrapolation](docs/tasks/ballistic.md) | controlled mechanism | out-of-range extrapolation against velocity-dependent drag |
-| [Orbital: two-body, three-body, hyperbolic flyby](docs/tasks/orbital.md) | controlled mechanism | periodic signal recovery, coupled retrograde geometry, angles-only orbit determination |
-
-CCAR and quantile are the original realistic domain tasks. CECL adds a synthetic lifetime-credit-loss task. Migration is the newest and hardest of the credit tasks. The mechanism tasks calibrate the harness across a difficulty gradient with exactly known ground truth.
+Per-row provenance, measurement conventions, and the caveats behind individual cells are in [docs/models.md](docs/models.md). Per-task scoring definitions are in the task docs linked under [Tasks](#tasks). Everything known to be wrong or unresolved is in [docs/limitations.md](docs/limitations.md).
 
 ## Quick Start
 
