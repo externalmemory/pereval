@@ -91,7 +91,7 @@ Size is not the axis they respond to. The largest model in the table, nemotron-3
 
 **Three instances of twenty six blew up numerically, and they set three of the eight cells.** The quantile cell is the clearest case. On seed 1, one block of one hundred fit a Student's t with an unconstrained location, the optimizer diverged to `loc = 15824746916060.2`, and that block's q99 came out at 3.76e12. The same seed's q90 was 0.0944, essentially sound, and the other two seeds scored 0.061 and 0.075. The agent's own verification step checked row count, column names, the absence of NaNs and that q95 fell inside its interval, and never checked magnitude. Two-body instance 2 (1193 against 1.73 and 2.34) and three-body instance 1 (2925 against 76.9 and 331) fail the same way.
 
-**gemma's failure is different and worse: it often submits nothing.** Four of its nine migration instances never produced an answer. That is a failure of the agent loop rather than of the statistics, and it is why its migration cell is a degenerate 1.000 on four draws and 6.179 on the one that did submit.
+**gemma's failure is different and worse: it often submits nothing.** Four of its nine migration instances never produced an answer. That is a failure of the agent loop rather than of the statistics, and it is why four of those nine draws score the degenerate 1.000 by default rather than on their statistics.
 
 ### Reproducibility Was Near-Perfect, and That Was an Artifact
 
@@ -103,9 +103,29 @@ Three CCAR instances were run twice during the early greedy work, once in a thre
 | 2 | 0.1536092188756754 | 0.1536092188756754 | 31, 31 |
 | 0 | 0.08701395118909286 | 0.07517589998792479 | 59, 46 |
 
-That looked like a sharp contrast with the archived hosted rows, where re-running the same model on byte-identical instances moved cells by 7.4x ([detail](limitations.md#run-to-run-reproducibility)). It was not a property of local serving. It was greedy decoding, which `mlx_lm.server` defaults to and which nobody chose, and **it does not hold for either published row**, because both now decode with sampling. The published local rows carry the same run-to-run noise as every hosted row, and on migration they carry more: two Qwen runs at near-identical samplers produced worst cells of 1.267 and 5.453, a factor of four apart.
+That looked like a sharp contrast with the archived hosted rows, where re-running the same model on byte-identical instances moved cells by 7.4x ([detail](limitations.md#run-to-run-reproducibility)). It was not a property of local serving. It was greedy decoding, which `mlx_lm.server` defaults to and which nobody chose. Switching both rows to sampling removed most of it but not all, for a second reason given in the next section. The published local rows carry the same run-to-run noise as every hosted row, and on migration they carry more: two Qwen runs at near-identical samplers produced worst cells of 1.267 and 5.453, a factor of four apart.
 
 The one instance that diverged even under greedy decoding is the one whose first run hit the token limit, at 59 calls against 46. The divergence originates in the sandbox rather than the model: the agent writes and runs its own Python, and anything time-dependent or unseeded in that code changes the tool output, which changes the next prompt and forks the trajectory. Determinism in the server never bought determinism in the loop.
+
+### Identical Transcripts Across Runs Are a Server Artifact
+
+**Setting `temperature: 1.0` does not guarantee that two runs of the same instance are two draws.** Hashing the concatenated message text of all 160 archived local sample transcripts finds seven groups that are bit-identical. Two are the greedy CCAR pairs above. Five come from runs that sent `temperature: 1.0`:
+
+| Task | Instance | Messages | Runs that are bit-identical |
+| --- | --- | --- | --- |
+| CECL | instance-0-baseline | 500 | 2026-10-30, 11-02, 11-03, 11-04 |
+| CECL | instance-1-adverse | 500 | 2026-11-03, 11-04 |
+| Migration | instance-0 | 500 | 2026-11-05, 11-07 |
+| Migration | instance-1 | 492 | 2026-11-05, 11-07 |
+| Migration | instance-2 | 2 | 2026-11-08, 11-11 |
+
+The last row is a crash two messages in and is not a run. The other four are complete agent loops of 492 to 500 messages reproducing to the byte, which sampling at temperature 1.0 cannot produce.
+
+The cause is in the server, and it is a close cousin of the greedy default. In `mlx_lm` 0.32.2, `server.py` seeds the RNG only when the request body carries a `seed` field, and Inspect sends none. Nothing anywhere else in the package reseeds at model load. So MLX's global RNG runs from whatever state the process started in, and **the first conversation served after a server restart draws the same stream every time.** That is exactly where these duplicates sit: each is the first eval of a row on a freshly restarted server, and within one eval the determinism carries into the second instance as well.
+
+One link in that chain is read from the source rather than measured, namely that MLX's default global seed is fixed at import rather than drawn from entropy. The decisive test is two identical requests to a freshly restarted server, which has not been run here because it needs the machine idle.
+
+The consequence for every count on this page is that **repeats of one instance are not independent draws unless the server generated something else first**, and any tally of draws has to dedupe by transcript hash rather than by run. One of the five archived submitted draws of gemma's migration instance 0 is such a duplicate, which is why [the gemma migration spread](#the-gemma-rows-individual-cells) is quoted over four draws rather than five.
 
 ## The Decoder Settings, And Where They Differ Between the Two Rows
 
@@ -137,7 +157,9 @@ The penalty is kept because it wins on both median and worst and removes the las
 
 `mlx-community/gemma-4-26B-A4B-it-qat-4bit` at revision `0e3cbab38ce568cf6e23543010d08d03b731910c`, under `mlx_lm.server` 0.32.2 with `--prefill-step-size 256 --prompt-cache-size 1`.
 
-**Its migration 6.179 is the worst cell in the table, and neither truncation nor greedy decoding explains it.** It is set by instance 0 of the run of 2026-10-28, which submitted (`completion` 1.0) rather than running out of room, and which decoded at temperature 1.0 rather than greedily. It is 6.2x the degenerate answer. A separate serving path was tried to rule out a transport defect behind it: `mlx_lm.server` silently discards a tool call whose arguments its `gemma4` parser cannot parse, 9 of 100 attempts in the archived runs, and llama.cpp's grammar-constrained parser removes that defect completely (853 model calls, zero discarded). It did not improve the task, so the cell stands and the defect is not its cause.
+**Its migration 6.179 is the worst cell in the table, and it is the worst of four draws on one instance spanning 20x.** The cell is set by instance 0 of the run of 2026-10-28, which submitted (`completion` 1.0) rather than running out of room, and it is 6.2x the degenerate answer. That byte-identical instance has been re-run six times since. Counting the original and discarding one bit-identical repeat as not a draw ([why](#identical-transcripts-across-runs-are-a-server-artifact)), its independent submitted draws are **0.315, 0.643, 0.976 and 6.179**, a spread of 19.6x, and three of the four are better than the degenerate 1.000 rather than worse. Two of the six re-runs produced no submission at all, one by erroring out and one by looping to the message limit without calling `submit`.
+
+Neither truncation nor a transport defect explains the cell. A separate serving path was tried to rule out the latter: `mlx_lm.server` silently discards a tool call whose arguments its `gemma4` parser cannot parse, 9 of 100 attempts in the archived runs, and llama.cpp's grammar-constrained parser removes that defect completely (853 model calls, zero discarded). It did not improve the task. What does account for the cell is run-to-run variance, and an earlier version of this page argued the opposite on the strength of a single draw. The cell stands, because the convention reports the worst draw and that is what it is, but it describes the tail of this model's behaviour on one instance rather than its standing on the column. Read it against the 0.315 draw, which would place third of fifteen in that column, between Kimi K3 (0.301) and GLM-5.1 (0.523).
 
 **Its flyby 1327 is a coverage failure**, set by instance 2 at coverage 0.00055, a near-zero-width interval that misses.
 
