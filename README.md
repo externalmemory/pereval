@@ -8,7 +8,7 @@
 
 Generic coding and Q&A benchmarks don't test whether an LLM agent can *develop and estimate a statistical model*. perEval probes that corner with tasks drawn from credit risk, macroeconomic loss modeling, and physical mechanisms with known ground truth.
 
-It qualifies a development *process*, not a model. A nine-quarter stress projection cannot be validated against outcomes, because the actuals arrive nine quarters late on a path that is not the scenario path, so the testable object is the process that produced it. [docs/claim.md](docs/claim.md) states what a score supports, what it does not, and how the coverage maps onto SR 26-2.
+It qualifies a development *process*, not a model. A nine-quarter stress projection cannot be validated against outcomes, because the actuals arrive nine quarters late on a path that is not the scenario path, so the testable object is the process that produced it. [docs/claim.md](docs/claim.md) states what a score supports, what it does not, and how the coverage maps onto SR 26-2 and the OCC's November 2026 examiner framework for agentic systems, which grades such systems by what a failure would cost rather than by how advanced they are.
 
 Three principles shape every task. **Objective verification:** each task has a verifiable target ([docs/task-design.md](docs/task-design.md)). **Scalar regret:** each task scores continuous regret against an oracle or reference, so a task keeps discriminating even when every agent does well, because the magnitudes still separate them. **Pessimistic assessment:** the question is not how well agents do on average but whether the *worst case* is good enough, so every cell is a maximum rather than a mean.
 

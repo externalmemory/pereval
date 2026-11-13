@@ -36,13 +36,25 @@ Change control does engage in one case: an agent invoked inside a production pro
 - **A claim about conceptual soundness.** Only the numeric prediction is scored, never the reasoning. An agent that reaches a well-calibrated answer for a bad reason is not penalized except where the flaw surfaces out of sample.
 - **A transfer claim to deployment.** Whether a perEval score predicts the quality of a model that the agent builds on a real portfolio is **unmeasured**. No such study exists here.
 
-## Relation to SR 26-2
+## Relation to SR 26-2 and OCC Bulletin 2026-54
 
 Footnote 3 in SR 26-2 places generative and agentic AI outside its scope, but the half of that footnote often left unquoted is also important:
 
 > "Nonetheless, a banking organization's risk management and governance practices should guide the determination of appropriate governance and controls for any tools, processes, or systems not covered in this document. However, the principles described in this guidance apply to traditional statistical and quantitative models and non-generative, non-agentic AI models."
 
 That is a delegation, not a gap, and it has a sharp consequence: a CCAR model an agent builds is a traditional statistical model and is fully in scope no matter what built it. The bank owes a control determination for the tool, and the guidance prescribes no method for it. perEval is a candidate method, not a compliance artifact; the guidance "does not set forth enforceable standards or prescriptive requirements".
+
+**The OCC filled part of that gap in November 2026, and only on the examiner side.** [OCC Bulletin 2026-54](https://www.occ.gov/news-issuances/bulletins/2026/bulletin-2026-54.html), "Super Intelligence: Supervisory Framework", issued 2026-11-04, is a resource for examiners assessing how banks use generative and agentic systems. It is explicitly not an expectation-setting document: "This supervisory framework does not establish supervisory expectations for banks," and banks are not asked to use it to assess their own systems. It therefore cannot be cited as a requirement perEval helps meet, and the control determination footnote 3 delegates to the bank is still unprescribed. What the framework does supply is the axes.
+
+It classifies by what a failure would cost rather than by how advanced the system is, resting on "transfer of agency" and "degree of human oversight" rather than "technical sophistication", and it "emphasizes a bank's control intensity could increase with the potential consequences of an SI agent's failure or misuse". It also tells examiners not to treat such systems as a "separate and distinct risk category" and says a bank need not set a separate SI "risk appetite". That cuts the same way as footnote 3: the deliverable is a statistical model and is judged as one.
+
+Read against those three axes, perEval covers one and is silent on two:
+
+- **Potential consequences of failure.** Aligned by construction. Every cell is a maximum rather than a mean, which is a consequence-weighted read of the same kind.
+- **Transfer of agency.** **Not measured.** Every score comes from an agent holding full agency over the development, so the suite measures one point on this axis rather than a range.
+- **Degree of human oversight.** **Not measured**, for the same reason. Every run is unsupervised, which is the end of the axis carrying the highest control intensity. perEval speaks to the configuration a bank would control most heavily and is silent on the supervised configurations it would be likelier to deploy.
+
+The framework does not address validation of agentic systems, so nothing in it displaces the position above: perEval is a candidate method rather than a compliance artifact. Both positions are provisional, because the agencies state in the same guidance that they plan to issue a request for information on model risk management covering banks' use of AI, generative and agentic included.
 
 Model testing in SR 26-2 runs "from out-of-sample and out-of-time testing, to a comparison of alternative assumptions and methodologies, to a critical assessment of data quality, relevance, and inputs". perEval covers one of those three.
 
