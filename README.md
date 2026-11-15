@@ -75,7 +75,7 @@ Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks a
 
 **Three-body is closed and the flyby is not.** Opus's 0.0393 sits on the oracle's 0.039, so that column has a ceiling rather than headroom. On the flyby, eleven of the fourteen ranked rows are worse than the degenerate answer, and the leader fails the task outright one pass in three. Leading that column is not the same as solving it.
 
-**Migration is the hardest column in the suite.** Only Opus and Kimi K3 land inside the competent one-factor reference's 0.368, and seven of the fourteen ranked rows score worse than the degenerate answer, the most of any column.
+**Migration is the hardest column in the suite.** Only Opus and Kimi K3 land inside the competent one-factor reference's 0.368, and seven of the fourteen ranked rows score worse than the degenerate answer. Only the flyby, at eleven, has more.
 
 **Three rows rank below the naive baseline.** The *naive baseline* is the obvious wrong method, not the floor, and Claude Haiku 4.5 and both local rows fall through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling is within a few percent of the lowest quantile score in the table and still worse than a constant on three-body.
 
@@ -83,7 +83,7 @@ Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks a
 
 ### Reading The Cells
 
-Row labels name the model, not the endpoint that served it, and serving provenance is not controlled ([detail](docs/limitations.md#serving-provenance-is-not-controlled)). A cell is reported only if none of its runs failed for reasons outside the agent's control, with the recorded exceptions noted in [docs/models.md](docs/models.md). Two rows were measured with three draws per instance rather than one and are reported on a matched convention that keeps them comparable. CCAR's response law is now drawn per instance rather than fixed and published, which changed the answer key rather than the question, so archived runs stay in the column ([detail](docs/limitations.md#the-ccar-response-law-was-public)).
+Row labels name the model, not the endpoint that served it, and serving provenance is not controlled ([detail](docs/limitations.md#serving-provenance-is-not-controlled)). A cell is reported only if none of its runs failed for reasons outside the agent's control, with the recorded exceptions noted in [docs/models.md](docs/models.md). Two rows were measured with three draws per instance rather than one and are reported on a matched convention that keeps them comparable. CCAR's response law is now drawn per instance rather than fixed and published ([detail](docs/limitations.md#the-ccar-response-law-was-public)). That change also altered what a given seed generates, so **the CCAR column holds two disjoint instance sets** and two of its cells are comparable only if both rows are in the same one ([which rows, and what it invalidates](docs/limitations.md#the-ccar-column-holds-two-instance-sets)).
 
 Per-row provenance, measurement conventions, and the caveats behind individual cells are in [docs/models.md](docs/models.md). Per-task scoring definitions are in the task docs linked under [Tasks](#tasks). Everything known to be wrong or unresolved is in [docs/limitations.md](docs/limitations.md).
 
@@ -110,7 +110,7 @@ pereval/            Python package: Inspect tasks and scorers
   tasks/ccar/       FRED-calibrated macro + Vasicek generator, task, OLS + Vasicek baselines
   tasks/cecl/       synthetic lifetime loss generator, task, cohort + naive baselines
   tasks/migration/  rating transition generator, task, one-factor + single-driver + no-migration baselines
-  tasks/quantile/   screened FRED YoY snapshot, generator, task, six reference estimators
+  tasks/quantile/   screened FRED YoY snapshot, generator, task, seven reference estimators
   tasks/ballistic/  generator, Inspect task, Docker sandbox, quadratic baseline
   tasks/orbit/      two-body, three-body, and hyperbolic-flyby generators, tasks, baselines
   scorers/          oracle-anchored interval scorer (linear and circular), pinball regret

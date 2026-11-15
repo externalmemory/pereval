@@ -238,10 +238,12 @@ TASK_HEADERS = {"docs/tasks/migration.md": {"Migration": "Score"}}
 
 # Failed checks for the migration page only. Migration is the suite's one task
 # with a binary check battery, and the count belongs on its page rather than in
-# the matrix: it ranks 0.79 with the score it sits next to, so a ninth Borda
-# column would mostly re-cast the migration column's own votes while shifting
-# every mean rank. The matrix also shades rank on the premise that each column
-# is a regret against an anchor, which a count has none of.
+# the matrix. The matrix shades rank on the premise that each column is a regret
+# against an anchor, and a count has no anchor: the oracle and the degenerate
+# answer file no artefacts at all, so a rank in such a column would not mean
+# what a rank means in the other eight. It also ranks only 0.50 against the
+# score it sits next to, so a ninth Borda column would move every mean rank on
+# a measure that is neither a regret nor independent of its neighbour.
 #
 # Each value is the count on the sample that SETS the cell, not a maximum taken
 # over instances independently, so the row describes one run. Opus is on the

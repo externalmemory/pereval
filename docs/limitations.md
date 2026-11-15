@@ -42,7 +42,7 @@ Rotating the form matters as much as randomizing the numbers, and for a differen
 
 **The published CCAR numbers are kept, not withdrawn.** The exploit was a vulnerability, not a realized contamination, and conflating the two would have thrown away valid measurements. Every model tested has a knowledge cutoff long before this repository existed (first commit 9 July 2026, runs 13 to 28 July), the sandbox has no network, and the generator source never enters it, so the channel was closed by dates alone. The direct evidence agrees: the closed form scores 0.00014, so a model that had recalled the constants would show a cell indistinguishable from the oracle, and the best measured cell is 0.055. Nobody used it.
 
-Nor are they set aside. The archived CCAR runs sit in the same column as any run on the current generator, because the fix changed the answer key rather than the question: no agent was told which macros were the drivers, so the problem it faced is unchanged, and the parameter draws are centred tightly on the old calibration so the scale is preserved (oracle 0.082 against 0.070, with overlapping ranges across seed sets).
+Nor are they set aside. The archived CCAR runs sit in the same column as any run on the current generator, because the difficulty and the units are preserved: no agent was told which macros were the drivers, so the kind of problem it faced is unchanged, and the parameter draws are centred tightly on the old calibration so the scale is too (oracle 0.082 against 0.070, with overlapping ranges across seed sets). What is *not* preserved is the instance: the same seed yields different data before and after the fix, so the column holds two disjoint instance sets and a cell from one cannot be compared with a cell from the other. That is a separate defect with its own section, [The CCAR Column Holds Two Instance Sets](#the-ccar-column-holds-two-instance-sets).
 
 Getting there took discarding most of what had been built on top of the fix. Rotating the functional form and splitting scenario severity into baseline, adverse and severe are improvements to the task, not repairs to the defect, and enabling them by default would have stranded eight instances by eight models of paid-for measurement for no security benefit. They are opt-in. The parameter ranges were also loosened three times wider than needed, putting mean rho at 0.030 against the old fixed 0.020 and moving the oracle from 0.070 to 0.100, which rescaled the units every archived number was reported in.
 
@@ -350,6 +350,23 @@ That relaunch cost the comparison something else. All three runs were given a fo
 
 The general repair is to re-measure the whole table at a fixed instance count and a fixed draw count, which is ten models by seven tasks and is not affordable here. Until then the rule in the table header carries its sample count explicitly, so a row measured any other way is visibly a different statistic rather than silently one.
 
+## The CCAR Column Holds Two Instance Sets
+
+**The CCAR column compares models on two different datasets, and nothing in the table says so.** The generator changes of 2026-07-30 and 2026-07-31 altered what a given seed produces, so `seed=1835504127` is not one instance but two. The first training row reads gdp 118.0381, unemployment 7.3963, default_rate 0.040679 under the old generator and gdp 136.7405, unemployment 4.275, default_rate 0.017963 under the current one, which is the data every agent saw, not just the answer it was scored against. The instance ids differ too: archived runs carry `instance-0-seed-1835504127` and current ones `instance-0-vasicek-legacy-seed-1835504127`.
+
+The split, by transcript fingerprint, with mimo-v2.5 placed by its run date of 2026-07-14 because it archived no CCAR transcript at all:
+
+| Instance set | Rows |
+| --- | --- |
+| Old (gdp 118.0381) | GLM-5.1, Kimi K3, nemotron-3-ultra, nemotron-3-super, Claude Haiku 4.5, mimo-v2.5 |
+| Current (gdp 136.7405) | Claude Opus 5.5, minimax-m3.1-flash, deepseek-v4-flash-0731, gpt-6-luna, ling-3.0-flash, Qwen3.6-35B-A3B, gemma-4-26B-A4B |
+
+**What this invalidates.** The column's best cell, GLM-5.1 at 0.055, is on the old set and Claude Opus 5.5's 0.077 is on the current one, so the statement that Opus loses CCAR narrowly is not a measurement. Any comparison that crosses the two groups in this column is unsupported, and that includes CCAR's contribution to six of the fourteen mean ranks. Comparisons inside either group stand, as does the column's shape: the oracle moves from 0.070 to 0.082 across the sets, so the scale is preserved and the ordering is not nonsense, merely unmeasured where it crosses.
+
+**The claim this page used to make was wrong.** It said the fix "changed the answer key rather than the question", on the grounds that no agent was told which macros were the drivers, so the problem was unchanged. That defends the *difficulty* and the *units*, which do survive, and not the *instance*, which does not. Two models answering `instance-0` answered different questions about different data.
+
+**It is not being repaired.** The repair is to re-run six rows at eight instances each on the current generator, which is paid-model spend on a column whose order the re-run would be unlikely to change, since the oracle says the scales agree. The alternative repairs are worse: splitting the column into two halves of six and seven rows leaves neither half comparable to the published aggregate, and dropping CCAR from the mean rank discards a measured column from every row to fix six of them. So the column stays, labelled here, and a reader comparing two CCAR cells has to check which set each row is in first.
+
 ## A Lookahead Is Left in Place in the CCAR Macro Columns
 
 The CCAR generator builds `sp500` and `djia` by standardising NASDAQ returns, and that standardisation runs over the whole simulated path, stress window included. So the severity of the future scenario sets the scale of two macro columns throughout the published history. Holding the seed and changing only the scenario label moves 49 of 80 history rows.
@@ -441,7 +458,7 @@ The README's mean-rank column is a Borda count over the suite's eight columns: f
 
 Balanced is not the same as independent. The eight columns are not eight axes: the Spearman rank-correlation matrix across them has a participation ratio of 2.41 effective dimensions over the fourteen ranked rows, lower than the 3.5 measured over six columns, so the columns added since have agreed with the existing ones more than they diversified them. Eight correlated votes over fourteen rows is a thin aggregate, and the fix for a weak aggregate is more tasks rather than more interpretation of this one.
 
-**The mix no longer changes who leads.** Claude Opus 5.5 is first on the statistical axis and first on the physics axis, so its position does not depend on the weighting. It is not first on every individual column, placing second on CCAR and ballistic and fifth on quantile, which is the distinction between leading an aggregate and leading a task. Below it the mix reorders the field substantially, and the per-axis split is the more informative reading:
+**The mix no longer changes who leads.** Claude Opus 5.5 is first on the statistical axis and first on the physics axis, so its position does not depend on the weighting. It is not first on every individual column, placing second on ballistic and sixth on quantile, which is the distinction between leading an aggregate and leading a task. It also places second on CCAR, to a row on a different instance set, so that placement is not measured either way. Below it the mix reorders the field substantially, and the per-axis split is the more informative reading:
 
 - **nemotron-3-ultra is 6th of fourteen on the statistical axis and 11th on the physics axis**, the widest split of any model. ling-3.0-flash shows the same shape, 8th against 12th, gemma-4-26B-A4B a milder version, 11th against 14th, and deepseek-v4-flash-0731 milder still, 4th against 6th.
 - **gpt-6-luna and mimo-v2.5 run the other way**, 4th on physics against 7th on statistical and 7th against 9th respectively. For gpt-6-luna this is almost entirely the flyby cell, where it places 2nd.

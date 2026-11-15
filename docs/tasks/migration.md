@@ -10,14 +10,15 @@ inspect eval pereval/tasks/migration/task.py -T n_instances=3 -T seed=1 --model 
 
 ## Task
 
-The agent is given four files and writes three.
+The agent is given five files and writes three.
 
 | Given | Contents |
 | --- | --- |
 | `data/transitions.csv` | observed rating transitions for this portfolio, annual counts by from-grade and to-grade, twenty years |
 | `data/macro_history.csv` | nine quarterly macro series over the same period |
 | `data/scenario.csv` | the same nine series for nine future quarters, under each of `baseline`, `adverse` and `severe` |
-| `data/portfolio.csv` | the cohort to project, as obligor counts by rating |
+| `data/portfolio.csv` | the cohort to project, as obligor counts by rating. Its rating mix is not the historical portfolio's |
+| `data/policy.json` | the checkpoint quarters and the scenario names |
 
 | Written | Contents |
 | --- | --- |
@@ -43,7 +44,13 @@ All calibration figures come from S&P Global Ratings, *Default, Transition, and 
 
 The study publishes percentages, not counts. For a single-year static pool every entry of a row is an integer count over one cohort size, so counts are recoverable by searching cohort size upward and keeping the first value for which all nine published entries match an integer count to two decimal places and sum to the cohort size. `scripts/migration_invert_counts.py` performs that derivation and checks it against the committed counts, and `tests/test_migration.py` pins the round trip.
 
-Cohort size is identified only up to a positive integer multiple, and the smallest consistent value is used. For the Global panel an external figure closes that: the reconstructed default column sums to exactly 130, and the study states separately, in prose rather than in any table, that of the 145 total defaulters in 2024, 130 were rated at the start of the year. The global 2024 rated cohort totals 6,496 issuers. The three regional panels have no equivalent check.
+Cohort size is identified only up to a positive integer multiple, and the smallest consistent value is used. One external figure bears on the Global panel: the reconstructed default column sums to exactly 130, and the study states separately, in prose rather than in any table, that of the 145 total defaulters in 2024, 130 were rated at the start of the year. That check is real and it is also narrow, since it constrains one column of one panel in aggregate. The three regional panels have no equivalent check.
+
+**The Global AA cohort is provably too small, and the figure that appeared to confirm the panel's scale does not.** The reconstruction puts Global AA at 95 while its own regional panels put U.S. at 116, Europe at 27 and EM at 28, totalling 171, and a global cohort cannot be smaller than the regions inside it. Every other rating has Global exceeding the regional sum by 1.03x to 1.13x, as unlisted regions require; AA alone sits at 0.56x. The smallest multiple of 95 that clears 171 is 190, which puts AA at 1.11x and in line with A at 1.12x and BBB at 1.13x, so 190 is the likelier value and 95 is the search terminating one multiple early.
+
+That matters for the issuer total. The committed Global cohorts sum to 6,496, which is also the figure the study gives for the 2024 rated cohort, and that agreement is what this page used to read as closing the identification. It does not close it. The Global panel carries no AAA row, so a sum over it should fall short of a total rated cohort rather than match it exactly, and with AA at 190 the panel totals 6,591. The two discrepancies were cancelling: an AA row at half its value against a missing AAA row. So **6,496 is a property of the reconstruction and not an issuer count**, the panel's row-level scale rests on the 130 check alone, and the AA row is known to be wrong by a factor of two.
+
+The committed data is left as it is rather than patched to 190, because re-deriving the row needs the source study and inventing a nine-entry split that happens to sum to 190 would replace a known-wrong number with an unaudited one. Nothing in the suite's scores depends on it: `regional_counts()` is read only by `tests/test_migration.py` and `scripts/migration_invert_counts.py`, while the generator calibrates from `global_average()` and `top_of_scale_annual()`, which read a different file.
 
 ### The Data Rejects a Time-Homogeneous Markov Chain
 
@@ -137,11 +144,11 @@ Worst-case regret over three instances, where 1.0 is the degenerate answer, besi
 
 <!-- scores:end -->
 
-Read against two lines. The **competent one-factor reference scores 0.368**, and only two rows land inside it. The **degenerate answer is 1.000** by construction, and seven of the fourteen ranked rows are outside it, the most of any column in the suite.
+Read against two lines. The **competent one-factor reference scores 0.368**, and only two rows land inside it. The **degenerate answer is 1.000** by construction, and seven of the fourteen ranked rows are outside it. Only the flyby, at eleven of fourteen, has more.
 
 That is the headline: on the suite's hardest column, half the field does worse than predicting that nothing migrates at all.
 
-**The two columns disagree, and that is why both are here.** gpt-6-luna's 1.094 is worse than the degenerate answer and passes all sixteen checks: a fully admissible model, correctly documented, beaten by assuming nothing migrates. deepseek's 0.625 is the column's fifth-best score and fails ten. gemma's 6.179, the worst cell in the suite, fails four. The naive baseline passes all sixteen. Over the thirteen ranked rows the two columns rank together at 0.79, so admissibility tracks accuracy loosely overall and not at all at the top, which is the measured form of what the [checks](#checks) argue from degrading the reference's own matrices.
+**The two columns disagree, and that is why both are here.** gpt-6-luna's 1.094 is worse than the degenerate answer and passes all sixteen checks: a fully admissible model, correctly documented, beaten by assuming nothing migrates. deepseek's 0.625 is the column's fifth-best score and fails ten. gemma's 6.179, the worst cell in the suite, fails four. The naive baseline passes all sixteen. Over the fourteen rows carrying a count the two columns rank together at 0.50, Kendall tau-b 0.34, which is not significant at n = 14 (p = 0.07). So admissibility barely tracks accuracy overall and not at all at the top, which is the measured form of what the [checks](#checks) argue from degrading the reference's own matrices.
 
 **Ten of sixteen is one omission rather than ten findings.** The three rows at ten fail the identical ten checks, and the first of them is `matrices_readable`. An absent or unreadable artefact fails every check that reads it, so those rows filed a projection and never filed the matrices that document it. Read ten as no `matrices.csv`, and sixteen, which no published cell carries, as no submission at all.
 

@@ -10,13 +10,27 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 
 A cell is reported only if none of its runs failed for reasons outside the agent's control. Two columns of the gemma row are a recorded exception to that rule, documented in [local-models.md](local-models.md).
 
+**Eighteen of the 104 model cells have no `.eval` log behind them.** `logs/` holds no successful log at all for these model and task pairs:
+
+| Row | Cells with no log |
+| --- | --- |
+| Claude Haiku 4.5 | CCAR, ballistic, two-body, three-body, flyby, quantile |
+| nemotron-3-super | CCAR, ballistic, two-body, flyby, quantile |
+| nemotron-3-ultra | ballistic, flyby, quantile |
+| GLM-5.1 | flyby, quantile |
+| mimo-v2.5 | flyby, quantile |
+
+For those cells the only evidence is the markdown transcript in `runs/`, which is a derived file. That is a lower bound two ways. It counts only pairs with no log whatsoever, so it misses cells whose log covers different instances than the published figure, which is how an independent review arrived at 22 rather than 18 by also counting CCAR for GLM-5.1, nemotron-3-ultra and Kimi K3. And the README describes `runs/` and `logs/` together as the archive "behind every published table", which for these cells only `runs/` is.
+
+The rule in `scripts/save_transcript.py` made this worse than it needed to be. It overwrites the transcript of a cell that is re-run, on the argument that a transcript is derived and the log is the record, and that argument was applied unconditionally while being true only where the log exists. Since 2026-11-15 each transcript records the log it was rendered from and the script moves an existing transcript to `<stem>-superseded.md` rather than replacing it when that log is gone, so these cells can no longer lose their only record to a re-run. It does not reconstruct the eighteen missing logs, which are not recoverable.
+
 The **mean rank** column is a Borda count within each column, computed from the cells by `scripts/render_scores.py`. It is the only aggregate, because the cells are not comparable across columns. It cannot be recomputed from the table's *displayed* figures, because the ballistic column rounds to two significant digits and three of its rows share a displayed 12 and three more a displayed 14; the generator stores and ranks the unrounded cells, and [limitations.md](limitations.md#mean-rank-is-computed-from-the-cells) gives them. Until 2026-11-15 the column was maintained by hand and six of the fourteen values disagreed with their own columns, by up to 0.13.
 
 Row labels name the model, not the endpoint that served it. A `:free` variant is the same weights under a different serving tier, and where the two have been compared directly they agree: Kimi K3 scored 0.023 free against 0.024 paid on one matched instance. Most of the free endpoints these rows were originally measured on have since been retired, so a cell is reproducible on the paid path and not on the one that produced it ([detail](limitations.md#serving-provenance-is-not-controlled)).
 
 ### The Matched Convention
 
-Two rows, minimax-m3.1-flash and Claude Opus 5.5, were measured with three draws per instance rather than one. A maximum over their raw samples would be taken over fifteen or twenty four draws rather than three, which is not the same statistic as the archived cells. Both are therefore reported as **the mean, over every way of drawing one sample per instance, of the maximum across the same instances the other rows use**: three for the orbital, ballistic and CECL columns, eight for CCAR, and for quantile three paired single-instance runs on the archived seeds. Migration is three instances for Opus and outside the convention for minimax, noted below.
+Two rows, minimax-m3.1-flash and Claude Opus 5.5, were measured with three draws per instance rather than one. A maximum over their raw samples would be taken over fifteen or twenty four draws rather than three, which is not the same statistic as the archived cells. Both are therefore reported as **the mean, over every way of drawing one sample per instance, of the maximum across the same instances the other rows use**: three for the orbital, ballistic and CECL columns, eight for CCAR, and for quantile three paired single-instance runs on the archived seeds. On CCAR "the same instances" means the same as the other rows measured on the current generator; six rows are on an earlier instance set and are not matched to these ([detail](limitations.md#the-ccar-column-holds-two-instance-sets)). Migration is three instances for Opus and outside the convention for minimax, noted below.
 
 Spreads for these rows are reported as **median (worst)**, not as a mean with a band, for the reason given in [limitations.md](limitations.md#three-runs-cannot-support-a-two-sd-band). The median is the median of the same combination distribution the cell averages, so it does not depend on which draw is labelled which pass.
 
@@ -26,7 +40,7 @@ Three passes over the archived instances at `epochs=1` on the same seeds, 29 pro
 
 Spread across the three passes, as median (worst), in column order: CCAR 0.074 (0.095), CECL 1.91e-06 (4.47e-06), migration 0.075 (0.204), ballistic 4.81 (6.74), two-body 0.086 (0.089), three-body 0.0388 (0.0432), flyby 0.67 (70), quantile 0.079 (0.098). The three per-pass maxima behind them, in pass order, are CCAR 0.095 / 0.059 / 0.074, CECL 4.47e-06 / 1.91e-06 / 1.87e-06, migration 0.075 / 0.204 / 0.061, ballistic 4.81 / 6.74 / 3.28, two-body 0.089 / 0.086 / 0.013, three-body 0.0388 / 0.0432 / 0.0388, flyby 0.52 / 69.75 / 0.44, quantile 0.073 / 0.079 / 0.098.
 
-**The variance across passes is the finding.** The row takes five of eight columns and the aggregate, loses CCAR and ballistic narrowly, and loses quantile outright. Judged on its worst pass rather than its mean, which is the pessimistic reading this suite is built around, only three of those five leads survive: three-body at 0.0432 against 3.3, CECL at 4.47e-06 against 6.5e-06, and migration at 0.204 against 0.301, so a 76x margin and two of roughly 1.5x measured on three instances.
+**The variance across passes is the finding.** The row takes five of eight columns and the aggregate, loses ballistic narrowly and quantile outright, and places second on CCAR to a row measured on a different instance set, so that one is not a comparison ([detail](limitations.md#the-ccar-column-holds-two-instance-sets)). Judged on its worst pass rather than its mean, which is the pessimistic reading this suite is built around, only three of those five leads survive: three-body at 0.0432 against 3.3, CECL at 4.47e-06 against 6.5e-06, and migration at 0.204 against 0.301, so a 76x margin and two of roughly 1.5x measured on three instances.
 
 The columns are not one distribution. Three-body is the most stable cell the suite has measured, three pass maxima of 0.0388, 0.0432 and 0.0388. The flyby spans 434x on a single instance, 0.375 then 69.75 then 0.161, with no limit hit in any of the three. Averaging that into one cell is the table's convention and not a description of it: eight of the nine flyby draws land under 0.67 and the ninth is 69.75, which is a model that usually solves the task rather than one that solves it, and the failing draw spent 29 tool calls against the 13 and 10 of the other two.
 
@@ -50,7 +64,7 @@ On the archived instances alone the spread reads, as median (worst), CCAR 0.090 
 
 Measured on the archived convention, one draw per instance over the same instances every other row uses, so its cells are plain maxima and need no matched-convention adjustment. One pass, eight columns, 29 samples, every sample completing at `status=success` and none errored, 3h31m of wall clock for 38.4M tokens. Four samples hit the task message limit of 500 (CECL instances 0 and 2, CCAR instance 1, migration instance 1) and **none of them sets its column's cell**, so no number in this row rests on a truncated run.
 
-**The flyby cell is the row's only genuinely good result, and it is good in a different way from Opus.** 45 against Opus's 24 makes it one of three rows inside the degenerate answer's 138 in the column where nine of fourteen are worse than a constant, and its three instances read 30.4, 15.7 and 44.8 where Opus's three draws of one instance read 0.52, 70 and 0.44. Opus usually solves the flyby and occasionally fails it outright; this row never does either. The mechanism is visible in the diagnostics: coverage 1.0, 0.9996 and 1.0 against mean widths of 32, 20 and 49 and point errors of 6.8, 4.7 and 4.7, so it buys coverage with width rather than accuracy, which is what keeps it mid-column rather than near the oracle's 0.31.
+**The flyby cell is the row's only genuinely good result, and it is good in a different way from Opus.** 45 against Opus's 24 makes it one of three rows inside the degenerate answer's 138 in the column where eleven of fourteen are worse than a constant, and its three instances read 30.4, 15.7 and 44.8 where Opus's three draws of one instance read 0.52, 70 and 0.44. Opus usually solves the flyby and occasionally fails it outright; this row never does either. The mechanism is visible in the diagnostics: coverage 1.0, 0.9996 and 1.0 against mean widths of 32, 20 and 49 and point errors of 6.8, 4.7 and 4.7, so it buys coverage with width rather than accuracy, which is what keeps it mid-column rather than near the oracle's 0.31.
 
 **Its migration cell is worse than the degenerate answer, and not because it ran out of room.** 1.094 is set by instance 0, which submitted after 23 messages with no limit hit, while instance 1 ran into the 500-message limit and scored 0.309 and instance 2 scored 0.202 in 56 messages. The worst cell in the column's weakest group is the instance the agent tried least on, which is a different failure from the truncation that bounds minimax's 0.629 from above.
 
@@ -60,13 +74,13 @@ Measured on the archived convention, one draw per instance over the same instanc
 
 **Its ballistic instance 0 is a reproducible defect rather than a sampled one.** Two independent runs ninety minutes apart returned `winkler_regret` 12.365336039551813 and 12.365336039551858 with identical coverage of 0.285 in 20 messages each, differing only in the last bits of floating-point accumulation, which is the same shape as the Opus row's under-coverage on that instance in three of three.
 
-**One rank in this row is not determined.** Its ballistic 12.37 falls inside the three-way tie at 12 with GLM-5.1 and mimo-v2.5, whose unrounded cells are not recoverable from this repository's logs ([detail](limitations.md#serving-provenance-is-not-controlled)); the rank used here is the pessimistic 5, and if 12.37 in fact beats both then this row's ballistic rank is 3 and its mean rank 6.13 rather than 6.38.
+**One rank in this row rests on three decimals.** Its ballistic cell is 12.365336, which shares a displayed 12 with GLM-5.1 and mimo-v2.5. GLM's 12.166 genuinely beats it, so rank 3 was never available; mimo's cell survives only as 12.365 in a `runs/` transcript, which is below the precision that separates the two ([detail](limitations.md#mean-rank-is-computed-from-the-cells)). Ranking the figures as recorded puts this row fifth and mimo fourth; treating the pair as tied would read 6.31 here and 7.44 there rather than 6.38 and 7.38.
 
 Served by the OpenCode Go subscription at provider default sampling, with a custom `user-agent` and a per-conversation `x-opencode-session` header, which that endpoint requires of direct callers. Cost is metered rather than estimated, from the provider's own `/inference/go/v1/usage` endpoint: the pass moved the rolling five-hour window from 0 to 25 percent, the weekly from 15 to 25 and the monthly from 57 to 62, so a full eight-column row is about five points of a monthly allowance.
 
 ## Kimi K3
 
-The only frontier model here and not the only paid one, since Claude Haiku 4.5 is also paid. Its cells come from two serving endpoints, compared on one matched instance ([detail](limitations.md#serving-provenance-is-not-controlled)).
+Paid, and not the only paid row: Claude Opus 5.5, Claude Haiku 4.5 and gpt-6-luna are too, and the first of those is frontier-class, which this line predates. Its cells come from two serving endpoints, compared on one matched instance ([detail](limitations.md#serving-provenance-is-not-controlled)).
 
 ## deepseek-v4-flash-0731
 
