@@ -30,7 +30,7 @@ from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Score, mean, scorer, stderr
 from inspect_ai.solver import basic_agent, system_message
 from inspect_ai.tool import bash, python
-from inspect_ai.util import sandbox
+from inspect_ai.util import OutputLimitExceededError, sandbox
 
 from pereval.scorers.stability import epochs as _epochs
 from pereval.scorers.pinball import (
@@ -126,7 +126,8 @@ def quantile_scorer():
         truth = state.metadata["truth"]
         try:
             text = await sandbox().read_file("predictions.csv")
-        except FileNotFoundError:
+        except (FileNotFoundError, IsADirectoryError, PermissionError,
+                        UnicodeDecodeError, OutputLimitExceededError):
             text = None
         preds = parse_predictions(text)
         records = [

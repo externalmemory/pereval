@@ -372,7 +372,8 @@ def _fitted_annual_rates(mats, base, zfit):
     return out
 
 
-def predict(files: dict[str, str], method: str = "onefactor") -> str:
+def predict(files: dict[str, str],
+            method: str = "onefactor") -> tuple[str, str, str]:
     """One estimation on the history, then one projection per scenario.
 
     The split matters and is the point of the task's shape: `base`, `zhat` and

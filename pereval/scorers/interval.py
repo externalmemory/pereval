@@ -103,7 +103,14 @@ def localize_interval(lo: float, hi: float, ref: float, period: float | None):
     if period is None:
         return (hi, lo) if lo > hi else (lo, hi)
     raw = float(hi) - float(lo)
-    width = min(raw, float(period)) if raw >= 0.0 else float(np.mod(raw, period))
+    if raw >= 0.0:
+        width = min(raw, float(period))
+    else:
+        # A wrapping submission spanning an exact multiple of the period, [360, 0]
+        # or [180, -180], has a modulo of zero, which read a claim on the whole
+        # circle as a point prediction. That is the same favourable misreading the
+        # ordered cap above exists to prevent, so it costs the full period too.
+        width = float(np.mod(raw, period)) or float(period)
     mid = float(_localize([lo + width / 2.0], ref, period)[0])
     return mid - width / 2.0, mid + width / 2.0
 
@@ -174,7 +181,13 @@ def score_points(points: list[dict], preds: dict[tuple, tuple[float, float, floa
                "ws_degenerate": ws_deg}
 
         pred = preds.get(p["key"])
-        valid = pred is not None and all(np.isfinite(v) for v in pred)
+        # The width has to be finite too, not just the bounds. [-1e308, 1e308] is
+        # three finite numbers whose difference overflows float64, and the overflow
+        # propagates through interval_score as inf * 0 to a nan regret, which is
+        # neither a score nor a refusal. An interval wider than float64 can hold is
+        # not a prediction, so it is read as an abstention and penalized as one.
+        valid = (pred is not None and all(np.isfinite(v) for v in pred)
+                 and np.isfinite(float(pred[2]) - float(pred[1])))
         if valid:
             point, lo, hi = pred
             point = float(_localize([point], tm, period)[0])
@@ -216,7 +229,7 @@ def parse_predictions(text: str | None, key_columns: list[str]) -> dict[tuple, t
     preds: dict[tuple, tuple[float, float, float]] = {}
     if not text or not text.strip():
         return preds
-    reader = csv.DictReader(io.StringIO(text))
+    reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
     if not reader.fieldnames:
         return preds
     fields = {name.strip().lower(): name for name in reader.fieldnames}
@@ -229,7 +242,7 @@ def parse_predictions(text: str | None, key_columns: list[str]) -> dict[tuple, t
             point = float(row[fields["y_pred"]])
             lo = float(row[fields["y_lower"]])
             hi = float(row[fields["y_upper"]])
-        except (ValueError, TypeError, AttributeError):
+        except (ValueError, TypeError, AttributeError, OverflowError):
             continue
         preds[key] = (point, lo, hi)
     return preds
@@ -266,7 +279,7 @@ def make_interval_scorer(name: str, key_columns: list[str], period: float | None
     """Build an Inspect scorer that reads predictions.csv from the sandbox and
     scores it against points extracted from sample metadata by truth_to_points."""
     from inspect_ai.scorer import Score, mean, scorer, stderr
-    from inspect_ai.util import sandbox
+    from inspect_ai.util import OutputLimitExceededError, sandbox
 
     @scorer(
         name=name,
@@ -288,7 +301,8 @@ def make_interval_scorer(name: str, key_columns: list[str], period: float | None
             points = truth_to_points(state.metadata["truth"])
             try:
                 text = await sandbox().read_file("predictions.csv")
-            except FileNotFoundError:
+            except (FileNotFoundError, IsADirectoryError, PermissionError,
+                        UnicodeDecodeError, OutputLimitExceededError):
                 text = None
             preds = parse_predictions(text, key_columns)
             agg = score_points(points, preds, period)

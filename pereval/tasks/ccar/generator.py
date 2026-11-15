@@ -21,7 +21,13 @@ Data-generating process, none of which is disclosed to the agent:
 
 - Contamination: a rare, one-quarter, systemic crisis (COVID/GFC-like) is added to
   the OBSERVED macros only, as a common correlated spike (unemployment/spread/VIX
-  up, GDP/equities down). It is transient and reverts next quarter.
+  up, GDP/equities down). The SHOCK is one quarter; its footprint is not, and the
+  difference depends on the series kind. For the "level" and "loglevel" series
+  (unemployment, bbb_spread, vix) the spike mean-reverts at that series' own phi.
+  For the "growth" and "ret" series (gdp, hpi, cpi, nasdaq) it is a shock to the
+  growth rate, so the LEVEL is permanently displaced and the year-over-year change
+  carries it for four quarters. Nothing of it reaches the default rate, which is
+  built from the fundamental drivers.
 
 - Default rate: extended-Vasicek, dr = Phi((lin + sqrt(rho)*eps)/sqrt(1-rho)) with
   eps ~ N(0,1) i.i.d., where lin is a probit-scale conditional mean built from two
@@ -31,20 +37,23 @@ Data-generating process, none of which is disclosed to the agent:
   the default rate does not follow it; only persistent moves in the fundamental drive
   defaults. The other seven macros are correlated distractors.
 
-  Every parameter of that law (p, rho, k1, k2), WHICH two macros are the drivers, and
-  the functional form of lin, rotated over three families, are all DRAWN PER
-  INSTANCE. This
-  is load-bearing rather than cosmetic. When the coefficients were fixed module
+  Every parameter of that law (p, rho, k1, k2) and WHICH two macros are the drivers
+  are DRAWN PER INSTANCE. The functional form of lin CAN rotate over three families
+  but does not by default: DEFAULT_FAMILY is fixed `vasicek` and rotation is opt-in
+  via -T family=rotate, for the archive-preservation reason given below. Drawing
+  the parameters is load-bearing rather than cosmetic. When the coefficients were fixed module
   constants they were also published in this file, so the whole instance was
   solvable in closed form from the repo without estimating anything: that exploit
   scored 0.0001 mean regret against 0.013 for the fitted reference and 0.029 for
   the best measured model, and it defeated the contamination argument in
   docs/limitations.md, which rests on parameters not being recoverable from the
-  source. Rotating the family does the second half of the job. A single fixed form
-  means a good score can only demonstrate that the agent recovers THIS law; the
-  inference the suite wants to support is that it can recover A law, which requires
-  the form to vary. docs/task-design.md names both mitigations (per-instance
-  parameters, rotate DGP families) as obligations of the plasmode family.
+  source. Rotating the family would do the second half of the job, and is
+  available rather than done: a single fixed form means a good score can only
+  demonstrate that the agent recovers THIS law, while the inference the suite wants
+  to support is that it can recover A law, which requires the form to vary.
+  docs/task-design.md names both mitigations (per-instance parameters, rotate DGP
+  families) as obligations of the plasmode family, and only the first is in force
+  by default, so the published column rests on one functional form.
 
 - Stress scenario: the 9 out-of-time quarters ramp the FUNDAMENTAL drivers toward a
   target anchored on each series' marginal mean (unemployment, spreads and VIX up, GDP,
@@ -543,7 +552,7 @@ def main():
     ap.add_argument("--n-intime", type=int, default=80)
     ap.add_argument("--oracle-n", type=int, default=2000)
     ap.add_argument("--family", choices=FAMILIES, default=None,
-                    help="pin the response family; default draws one from the seed")
+                    help="pin the response family; default is fixed vasicek")
     args = ap.parse_args()
     seed = args.seed if args.seed is not None else int(np.random.SeedSequence().generate_state(1)[0])
     bundle = generate(seed=seed, n_intime=args.n_intime, oracle_n=args.oracle_n, family=args.family)

@@ -9,10 +9,10 @@ The project uses [uv](https://docs.astral.sh/uv/). Install it, create a virtual 
 ```
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv venv --python 3.12
-uv sync
+uv sync --extra dev
 ```
 
-`uv sync` installs the exact pinned versions from `uv.lock`. Activate the environment with `source .venv/bin/activate`, or prefix commands with `.venv/bin/`.
+`uv sync` installs the exact pinned versions from `uv.lock`. The `--extra dev` is what brings in pytest and ruff, so plain `uv sync` leaves the test step below unable to run. Activate the environment with `source .venv/bin/activate`, or prefix commands with `.venv/bin/`.
 
 Run the tests (no Docker needed):
 

@@ -18,10 +18,16 @@ at, which is the wrong way round: a cell is re-run because the first attempt fai
 the file holding the failure outranked the file holding the result. It happened on three
 cells of one local-model run before anyone noticed.
 
-Overwriting costs no evidence, because a transcript is derived and the `.eval` log is the
-record. Logs carry their own timestamp and id, are never overwritten, and are committed,
-so a superseded transcript can be rebuilt by running this script against the older log.
-Keeping the old log is therefore the way to keep the old transcript. Re-saving the same
+Overwriting costs no evidence WHERE THE LOG SURVIVES, because a transcript is derived and
+the `.eval` log is the record. Logs carry their own timestamp and id, are never
+overwritten, and are committed, so a superseded transcript can be rebuilt by running this
+script against the older log. Keeping the old log is therefore the way to keep the old
+transcript. That argument was applied unconditionally and it does not hold
+unconditionally: 22 published cells have no `.eval` log covering their instances, so for
+those the overwritable transcript is the only evidence behind the number. Each transcript
+therefore records the log it came from in a `- log` header line, and an existing
+transcript is moved to `<stem>-superseded.md` rather than replaced when that line is
+absent or names a log no longer in logs/. Re-saving the same
 log twice is still a no-op, byte for byte, and a run that draws no figure now clears a
 stale PNG left by the run it replaces, which would otherwise sit under a current
 transcript's name showing the previous attempt's submission.
@@ -71,7 +77,7 @@ def _call_text(args: dict) -> str:
     return "" if not args else json.dumps(args, indent=2, default=str)
 
 
-def render(log, sample) -> str:
+def render(log, sample, log_path: str | None = None) -> str:
     scores = sample.scores or {}
     sc = scores.get(log.eval.task) or (next(iter(scores.values())) if scores else None)
     head = [f"# {log.eval.model} — {log.eval.task} (id={sample.id})", ""]
@@ -79,6 +85,11 @@ def render(log, sample) -> str:
         head.append(f"- {sc.explanation}")
     head.append(f"- messages {len(sample.messages)} | limit {sample.limit} "
                 f"| seed {(sample.metadata or {}).get('seed')}")
+    # The log this transcript was rendered from, by basename. It is what makes the
+    # overwrite rule below checkable rather than assumed: a transcript that names a
+    # log still in logs/ can be rebuilt, and one that does not is the only record.
+    if log_path:
+        head.append(f"- log {os.path.basename(log_path)}")
     head += ["", "---", ""]
 
     body = []
@@ -100,8 +111,44 @@ def render(log, sample) -> str:
     return "\n".join(head + body) + "\n"
 
 
-def _target_path(path: str, content: str) -> str | None:
-    """Where this sample's transcript goes. None if it is already there, byte for byte."""
+LOG_LINE = "- log "
+
+
+def _rebuildable(path: str, log_dirs=()) -> bool:
+    """Does the log that produced this transcript still exist?
+
+    A transcript written before the `- log` header line, or one naming a log that
+    is no longer on disk, cannot be rebuilt by re-running this script, so it is the
+    only record of that run and must not be overwritten. Eighteen published cells
+    are in exactly that position: `logs/` holds no successful log for them and the
+    overwritable transcript is the evidence behind the number.
+
+    log_dirs are searched before the repository's own logs/, so a caller working
+    outside the repository resolves against the logs it is actually reading.
+    """
+    try:
+        with open(path, newline="") as f:
+            for _ in range(8):
+                line = f.readline()
+                if not line:
+                    break
+                if line.startswith(LOG_LINE):
+                    name = line[len(LOG_LINE):].strip()
+                    return any(os.path.exists(os.path.join(d, name))
+                               for d in (*log_dirs, os.path.join(ROOT, "logs")))
+    except OSError:
+        return False
+    return False
+
+
+def _target_path(path: str, content: str, log_dirs=()) -> str | None:
+    """Where this sample's transcript goes. None if it is already there, byte for byte.
+
+    An existing transcript that nothing can rebuild is moved aside rather than
+    replaced. The standing rule is that overwriting costs no evidence because the
+    `.eval` log is the record; that holds only while the log exists, and this is
+    where it is checked instead of assumed.
+    """
     if os.path.exists(path):
         # newline="" disables universal-newline translation. Transcripts carry \r\n
         # from sandbox tool output, and a default text read turns that back into \n,
@@ -109,6 +156,15 @@ def _target_path(path: str, content: str) -> str | None:
         with open(path, newline="") as f:
             if f.read() == content:
                 return None  # already saved, nothing to do and no figure to redraw
+        if not _rebuildable(path, log_dirs):
+            stem, ext = os.path.splitext(path)
+            keep = f"{stem}-superseded{ext}"
+            n = 2
+            while os.path.exists(keep):
+                keep = f"{stem}-superseded-{n}{ext}"
+                n += 1
+            os.rename(path, keep)
+            print(f"kept {keep} (no log in logs/ can rebuild it)", file=sys.stderr)
     return path
 
 
@@ -166,11 +222,12 @@ def main(paths):
         log = read_eval_log(p)
         for s in (log.samples or []):
             stem = os.path.join(RUNS, f"{sample_stem(log, s)}.md")
-            out = _target_path(stem, render(log, s))
+            content = render(log, s, p)
+            out = _target_path(stem, content, (os.path.dirname(os.path.abspath(p)),))
             if out is None:
                 continue
             with open(out, "w") as f:
-                f.write(render(log, s))
+                f.write(content)
             print(out)
             _write_figure(log, s, out)
 

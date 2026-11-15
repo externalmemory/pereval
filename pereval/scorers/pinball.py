@@ -10,9 +10,21 @@ oracle. There does not need to be one: the pinball loss
     L(q, tau) = E_pop[rho_tau(X - q)],   rho_tau(d) = d * (tau - 1[d < 0])
 
 is minimised exactly at the population tau-quantile, so the population itself
-supplies both the truth and the achievable floor. Regret is therefore
-non-negative and zero only for a perfect answer, with no truth estimator, no
-Harrell-Davis target, and no tuning.
+supplies both the truth and the achievable floor, with no truth estimator, no
+Harrell-Davis target and no tuning.
+
+KNOWN DEFECT, measured and not fixed: the floor is subtracted at
+`np.quantile(pop, tau)`, which is Hyndman-Fan type 7 and interpolates between
+order statistics, while the exact minimiser of this finite-population loss is an
+order statistic (`method="inverted_cdf"`). Type 7 therefore sits slightly ABOVE
+the true floor, so regret is not non-negative: on seed 1 the exact minimiser
+scores below zero on 264 of 300 tau-blocks, worst -0.047 and mean -0.0014. That
+is around 2% of the best published cell, so it cannot reorder the column, but
+"zero only for a perfect answer" is false as written and the prompt repeats the
+claim. The one-line fix is `method="inverted_cdf"` in pinball_regret, and it is
+deferred rather than applied because it shifts the floor under every published
+quantile cell and re-measuring the column costs paid runs. Apply it the next
+time that column is re-measured, not before.
 
 Why not the Winkler interval score used elsewhere in this suite: measured on a
 pilot, grafting one fixed interval shape onto every candidate rule's own point
@@ -157,7 +169,7 @@ def parse_predictions(text: str | None) -> dict[int, dict]:
     preds: dict[int, dict] = {}
     if not text or not text.strip():
         return preds
-    reader = csv.DictReader(io.StringIO(text))
+    reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
     if not reader.fieldnames:
         return preds
     f = {n.strip().lower(): n for n in reader.fieldnames}
@@ -167,7 +179,7 @@ def parse_predictions(text: str | None) -> dict[int, dict]:
         try:
             preds[int(float(row[f["block"]]))] = {
                 k: float(row[f[k]]) for k in ("q90", "q95", "q99", "lo", "hi")}
-        except (ValueError, TypeError, AttributeError):
+        except (ValueError, TypeError, AttributeError, OverflowError):
             continue
     return preds
 

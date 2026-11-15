@@ -265,9 +265,6 @@ def main():
     print("gamma at test points: " + " ".join(f"{p['true_mean']:.1f}" for p in bundle["points"]))
 
 
-if __name__ == "__main__":
-    main()
-
 
 # --- baselines: naive polynomial vs 3D hyperbolic orbit determination -------
 
@@ -406,3 +403,11 @@ def hyperbolic_od_baseline():
         await sandbox().write_file("predictions.csv", _od_fit_predict(tr, te))
         return state
     return solve
+
+
+# At the end of the module, not beside main(). generate_hyperbolic() reaches
+# _od_fit_predict() through reference_regret(), which is defined below the
+# baselines section, so running this file as a script from any earlier point
+# raised NameError before the generator produced anything.
+if __name__ == "__main__":
+    main()

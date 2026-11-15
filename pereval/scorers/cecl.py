@@ -14,13 +14,13 @@ from pereval.scorers.interval import interval_score
 def score_predictions(truth: list[dict], text: str | None) -> dict[str, float]:
     predictions, duplicates = {}, set()
     if text:
-        for row in csv.DictReader(io.StringIO(text)):
+        for row in csv.DictReader(io.StringIO(text.lstrip("\ufeff"))):
             key = row.get("pool_id")
             if key in predictions:
                 duplicates.add(key)
             try:
                 predictions[key] = float(row["ecl"])
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 predictions[key] = float("nan")
     total_balance = sum(p["balance"] for p in truth)
     regret = mae = zero_regret = predicted_total = true_total = 0.0
@@ -91,7 +91,7 @@ def evaluation_losses(pool):
 def score_loss_intervals(truth, text):
     """Dollar submissions, balance-weighted loss-rate scores on held-out draws."""
     rows, duplicates = {}, set()
-    for row in csv.DictReader(io.StringIO(text or "")):
+    for row in csv.DictReader(io.StringIO((text or "").lstrip("\ufeff"))):
         key = row.get("pool_id")
         if key in rows:
             duplicates.add(key)
@@ -127,7 +127,7 @@ def score_loss_intervals(truth, text):
                 and 0 <= point <= 1
                 and 0 <= lo <= hi <= 1
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             valid = False
         if valid:
             agent = float(interval_score(lo, hi, samples).mean())
@@ -161,34 +161,41 @@ def _valid_mean(row, balance):
     try:
         value = float(row["ecl"])
         return math.isfinite(value) and 0 <= value <= balance
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return False
 
 
 def cecl_scorer(simulation: bool = False):
     from inspect_ai.scorer import Score, mean, scorer, stderr
-    from inspect_ai.util import sandbox
+    from inspect_ai.util import OutputLimitExceededError, sandbox
 
     @scorer(
         name="cecl",
         metrics={
             "ecl_regret": [mean(), stderr()],
-            **({"winkler_regret": [mean(), stderr()]} if simulation else {}),
-            **{
-                key: [mean()]
-                for key in (
-                    "winkler_regret_raw",
-                    "submission_completion",
-                    "winkler_agent",
-                    "winkler_oracle",
-                    "winkler_degenerate",
-                    "degenerate_regret",
-                    "coverage",
-                    "mean_width",
-                    "interval_completion",
-                    "point_completion",
-                )
-            },
+            # Every interval metric is declared only when intervals are asked
+            # for. score_predictions() emits none of them without simulation, and
+            # Inspect raises TypeError on a declared metric the score value does
+            # not carry, so declaring them unconditionally made `simulation=False`
+            # fail at aggregation rather than score the run.
+            **({
+                "winkler_regret": [mean(), stderr()],
+                **{
+                    key: [mean()]
+                    for key in (
+                        "winkler_regret_raw",
+                        "submission_completion",
+                        "winkler_agent",
+                        "winkler_oracle",
+                        "winkler_degenerate",
+                        "degenerate_regret",
+                        "coverage",
+                        "mean_width",
+                        "interval_completion",
+                        "point_completion",
+                    )
+                },
+            } if simulation else {}),
             "zero_regret": [mean()],
             "loss_rate_mae_bps": [mean()],
             "completion": [mean()],
@@ -201,7 +208,8 @@ def cecl_scorer(simulation: bool = False):
         async def score(state, target):
             try:
                 text = await sandbox().read_file("predictions.csv")
-            except FileNotFoundError:
+            except (FileNotFoundError, IsADirectoryError, PermissionError,
+                        UnicodeDecodeError, OutputLimitExceededError):
                 text = None
             value = score_predictions(state.metadata["truth"], text)
             return Score(

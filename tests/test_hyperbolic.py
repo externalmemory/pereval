@@ -12,7 +12,10 @@ from pereval.tasks.orbit.hyperbolic import (
     _poly_fit_predict,
     build_truth,
     generate_hyperbolic,
-    test_csv_text,
+    # Aliased: pytest collects any module-level name beginning with test_, so the
+    # imported generator helper was being run as a test. It takes the bundle
+    # fixture, returns a str and passed vacuously, inflating the count by one.
+    test_csv_text as render_test_csv,
     train_csv_text,
     truth_to_points,
 )
@@ -58,7 +61,7 @@ def test_rejection_guarantees_solvable_reference(bundle):
 
 def test_od_reference_beats_naive_polynomial(bundle):
     pts = truth_to_points(build_truth(bundle))
-    tr, te = train_csv_text(bundle), test_csv_text(bundle)
+    tr, te = train_csv_text(bundle), render_test_csv(bundle)
     od = score_points(pts, parse_predictions(_od_fit_predict(tr, te), ["t"]), period=None)
     poly = score_points(pts, parse_predictions(_poly_fit_predict(tr, te), ["t"]), period=None)
     assert od["winkler_regret"] < 0.5  # near-oracle

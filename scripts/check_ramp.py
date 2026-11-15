@@ -68,7 +68,9 @@ def contrast(a, b):
 
 
 def lin2oklab(r, g, b):
-    l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+    # l, m, s are the cone responses Ottosson's OKLab is defined in terms of, so
+    # they are named as the paper names them rather than renamed to satisfy E741.
+    l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b  # noqa: E741
     m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
     s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
     l_, m_, s_ = (v ** (1 / 3) if v > 0 else -((-v) ** (1 / 3)) for v in (l, m, s))

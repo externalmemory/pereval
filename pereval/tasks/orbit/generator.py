@@ -62,8 +62,19 @@ def _orbit_state(t, P: float, e: float, omega_deg: float, t0: float, a: float):
 
 
 def _kepler_longitude(t, P: float, e: float, omega_deg: float, t0: float) -> np.ndarray:
-    """Heliocentric longitude (degrees, mod 360). Direction to the star from the
-    planet is this plus 180; the constant is absorbed into the random orientation.
+    """Heliocentric longitude (degrees, mod 360): the direction from the star to the
+    planet, not the direction to the star, which is this plus 180.
+
+    In TWO-BODY that constant is unidentifiable and so absorbable: alpha is the only
+    angle and omega_deg is drawn uniformly, so a global 180 shift is the same
+    instance under a different orientation. In THREE-BODY it is not absorbable,
+    because beta is an apparent longitude in this same inertial frame and a shift
+    applied to alpha alone would break the relative geometry the two share. The pair
+    is consistent as written; the point is that the convention is fixed here rather
+    than free. The flyby task uses the OPPOSITE convention for the same symbol: its
+    alpha is the direction to the star, arctan2(-y, -x), so the two tasks' alphas
+    differ by 180 and are not interchangeable.
+
     Radius-independent, which is why alpha does not need the orbit size."""
     theta, _ = _orbit_state(t, P, e, omega_deg, t0, 1.0)
     return np.degrees(theta) % 360.0

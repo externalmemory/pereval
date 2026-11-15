@@ -21,7 +21,8 @@ No location shift is applied. Every estimator under comparison is location-scale
 equivariant, so a shift would be invisible to the score, but it would destroy
 zero as a reference point and close the tail-shape prior channel above.
 
-Ground truth never leaves the host: only the 400 numbers reach the prompt.
+Ground truth never leaves the host: only the 1,000 numbers reach the prompt,
+being ten observations for each of a hundred blocks.
 """
 
 from __future__ import annotations

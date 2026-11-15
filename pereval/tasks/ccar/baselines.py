@@ -93,6 +93,14 @@ def _robust_probit_ols(X, y, thresh=3.0, n_iter=3):
             mask = new if new.sum() >= X.shape[1] + 2 else mask
             break
         mask = new
+    # Refit on the mask that sigma2 is measured from. `mask = new` is the loop's
+    # last act, so without this refit beta is the previous iteration's fit on the
+    # previous iteration's sample while sigma2 measures residuals on the current
+    # one, and the reference reports an interval width that does not belong to its
+    # own point estimate. Both break paths leave beta already fitted on `mask`, so
+    # this is a no-op there and a correction only on the path that runs out of
+    # iterations with the mask still moving.
+    beta, *_ = np.linalg.lstsq(X[mask], y[mask], rcond=None)
     sigma2 = float(np.var(y[mask] - X[mask] @ beta))
     return beta, sigma2
 

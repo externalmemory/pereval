@@ -114,7 +114,13 @@ def _samples(generate, n_instances, seed, oracle_n, target):
 
 def _build(generate, instructions, name, target, n_instances, seed, oracle_n, message_limit,
            baseline, repeats=1):
+    # Validated, because the dispatch below ends in an agent. An unrecognised
+    # name fell through that else and started a paid model run, so a typo in
+    # -T baseline= billed a run instead of failing.
     method = str(baseline).lower()
+    if method not in ("", "true", "harmonic", "kepler"):
+        raise ValueError("baseline must be empty, 'harmonic' (alias 'true') or "
+                         f"'kepler'; got {baseline!r}")
     if method in ("true", "harmonic"):
         solver = harmonic_baseline(target=target)
     elif method == "kepler":

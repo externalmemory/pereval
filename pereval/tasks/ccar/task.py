@@ -7,9 +7,10 @@ interval scorer (linear, keyed by quarter). Nothing about the data-generating
 process (the drivers, the transforms, the functional form, the crisis mechanism)
 is disclosed.
 
-The response law is drawn per instance and its functional form rotates over three
-families, so nothing about it is recoverable from this repository; see the generator
-docstring for why that is load-bearing rather than cosmetic.
+The response law's parameters and drivers are drawn per instance, so nothing about
+them is recoverable from this repository. Its functional form can rotate over three
+families with -T family=rotate but is fixed `vasicek` by default; see the generator
+docstring for why the draw is load-bearing and why the rotation is opt-in.
 
 Run (requires Docker and a model):
     inspect eval pereval/tasks/ccar/task.py --model openai-api/zen/<id>
@@ -144,7 +145,13 @@ def ccar(
     repeats>1 runs the agent that many times per instance on byte-identical inputs
     and reports the worst case and the spread; see pereval.scorers.stability.
     """
+    # Validated, because the dispatch below ends in an agent. An unrecognised
+    # name fell through that else and started a paid model run, so a typo in
+    # -T baseline= billed a run instead of failing.
     method = str(baseline).lower()
+    if method not in ("", "naive", "vasicek", "informed"):
+        raise ValueError("baseline must be empty, 'naive', 'vasicek' or "
+                         f"'informed'; got {baseline!r}")
     if method == "naive":
         solver = naive_baseline()
     elif method == "vasicek":

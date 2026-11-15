@@ -186,13 +186,13 @@ def parse_predictions(text: str | None) -> dict[str, dict[int, np.ndarray]]:
         return {}
     raw: dict[tuple[str, int], dict[str, float]] = {}
     seen: set[tuple[str, int, str]] = set()
-    for row in csv.DictReader(io.StringIO(text)):
+    for row in csv.DictReader(io.StringIO(text.lstrip("\ufeff"))):
         try:
             scen = str(row["scenario"]).strip()
             q = int(float(row["quarter"]))
             state = str(row["state"]).strip()
             share = float(row["share"])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return {}
         if (scen, q, state) in seen or state not in ORDER:
             return {}
@@ -312,7 +312,7 @@ def parse_matrices(text: str | None) -> dict[str, dict[int, np.ndarray]]:
     if not text:
         return {}
     raw: dict[tuple[str, int], dict[str, np.ndarray]] = {}
-    for row in csv.DictReader(io.StringIO(text)):
+    for row in csv.DictReader(io.StringIO(text.lstrip("\ufeff"))):
         try:
             scen = str(row["scenario"]).strip()
             if scen == HISTORY_SCENARIO:
@@ -320,7 +320,7 @@ def parse_matrices(text: str | None) -> dict[str, dict[int, np.ndarray]]:
             q = int(float(row["quarter"]))
             frm = str(row["from_rating"]).strip()
             vals = np.array([float(row[c]) for c in MATRIX_COLS], dtype=float)
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return {}
         if frm == ORDER[D_INDEX]:
             continue
@@ -668,11 +668,11 @@ def parse_backtest_by_scenario(text: str | None) -> dict[str, dict[int, float]]:
     if not text:
         return {}
     out: dict[str, dict[int, float]] = {}
-    for row in csv.DictReader(io.StringIO(text)):
+    for row in csv.DictReader(io.StringIO(text.lstrip("\ufeff"))):
         try:
             year = int(float(row["year"]))
             rate = float(row["default_rate"])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             continue
         scen = str(row.get("scenario") or "").strip()
         out.setdefault(scen, {})[year] = rate
@@ -940,13 +940,13 @@ def _raw_matrix_blocks(text: str | None) -> dict[str, dict[int, np.ndarray]]:
     if not text:
         return {}
     raw: dict[tuple[str, int], dict[str, np.ndarray]] = {}
-    for row in csv.DictReader(io.StringIO(text)):
+    for row in csv.DictReader(io.StringIO(text.lstrip("\ufeff"))):
         try:
             scen = str(row["scenario"]).strip()
             q = int(float(row["quarter"]))
             frm = str(row["from_rating"]).strip()
             vals = np.array([float(row[c]) for c in MATRIX_COLS], dtype=float)
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return {}
         if frm == ORDER[D_INDEX]:
             continue
@@ -975,13 +975,13 @@ def _raw_prediction_blocks(text: str | None) -> dict[str, dict[int, np.ndarray]]
     if not text:
         return {}
     raw: dict[tuple[str, int], dict[str, float]] = {}
-    for row in csv.DictReader(io.StringIO(text)):
+    for row in csv.DictReader(io.StringIO(text.lstrip("\ufeff"))):
         try:
             scen = str(row["scenario"]).strip()
             q = int(float(row["quarter"]))
             state = str(row["state"]).strip()
             share = float(row["share"])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return {}
         if state not in ORDER:
             return {}
@@ -1018,7 +1018,11 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
 
     # Artefact integrity. Each of these is a hard failure: the submission is not
     # a set of probabilities, so nothing downstream of it can be believed.
-    fail["matrices_readable"] = (not mats or len(mats) < len(order)
+    # Named, not counted. The history block is a key in `mats` like any
+    # scenario, so counting keys let a submission that dropped a whole scenario
+    # reach len(order) on history plus the two it kept and pass the check that
+    # exists to catch exactly that.
+    fail["matrices_readable"] = (not mats or any(n not in mats for n in order)
                                  or HISTORY_SCENARIO not in mats)
     fail["matrix_cells_finite"] = (not m_all
                                    or not all(np.isfinite(m).all() for m in m_all))
@@ -1031,7 +1035,7 @@ def model_checks(mtext: str | None, ptext: str | None, btext: str | None,
                              for m in m_all for i in range(D_INDEX)))
 
     p_all = [v for scen in preds.values() for v in scen.values()]
-    fail["predictions_readable"] = not preds or len(preds) < len(order)
+    fail["predictions_readable"] = not preds or any(n not in preds for n in order)
     fail["prediction_shares_finite"] = (not p_all
                                         or not all(np.isfinite(v).all() for v in p_all))
     fail["prediction_shares_sum_to_one"] = (
@@ -1360,7 +1364,7 @@ def explain(v: dict[str, float]) -> str:
 
 def migration_scorer():
     from inspect_ai.scorer import Score, mean, scorer, stderr
-    from inspect_ai.util import sandbox
+    from inspect_ai.util import OutputLimitExceededError, sandbox
 
     @scorer(name="migration",
             metrics={"score": [mean(), stderr()],
@@ -1371,7 +1375,8 @@ def migration_scorer():
             for name in ("predictions.csv", "matrices.csv", "backtest.csv"):
                 try:
                     files[name] = await sandbox().read_file(name)
-                except FileNotFoundError:
+                except (FileNotFoundError, IsADirectoryError, PermissionError,
+                        UnicodeDecodeError, OutputLimitExceededError):
                     files[name] = None
             v = score_value(state.metadata["truth"], files["predictions.csv"],
                             files["matrices.csv"], files["backtest.csv"])

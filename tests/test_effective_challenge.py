@@ -711,22 +711,55 @@ def test_a_rerun_transcript_replaces_the_attempt_it_supersedes(tmp_path):
 
     The old rule kept both files and gave the newcomer the dated suffix, which put
     the superseded attempt under the name every published table is audited from.
+    Replacing in place is conditional on the superseded transcript naming a log
+    that still exists, which is what makes it cost no evidence.
     """
     st = _saver()
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "first.eval").write_text("stand-in for the first attempt's log")
     path = str(tmp_path / "model-task-instance-0-seed-1.md")
+    first = "# head\n\n- log first.eval\n\ncrashed run\n"
 
     # first attempt lands on the bare name
-    assert st._target_path(path, "crashed run") == path
-    open(path, "w").write("crashed run")
+    assert st._target_path(path, first, (str(logs),)) == path
+    open(path, "w").write(first)
 
-    # the re-run takes the same name, not a dated sibling
-    assert st._target_path(path, "the reported run") == path
+    # the re-run takes the same name, not a dated sibling, because first.eval
+    # can rebuild what is being replaced
+    assert st._target_path(path, "the reported run", (str(logs),)) == path
     open(path, "w").write("the reported run")
     assert open(path).read() == "the reported run"
-    assert [f.name for f in tmp_path.iterdir()] == ["model-task-instance-0-seed-1.md"]
+    assert sorted(f.name for f in tmp_path.iterdir()) == [
+        "logs", "model-task-instance-0-seed-1.md"]
 
     # re-saving the same log is still a no-op, so mtimes and figures survive
-    assert st._target_path(path, "the reported run") is None
+    assert st._target_path(path, "the reported run", (str(logs),)) is None
+
+
+def test_a_transcript_no_log_can_rebuild_is_kept_rather_than_replaced(tmp_path):
+    """Overwriting costs no evidence only while the log survives.
+
+    Eighteen published cells have no successful `.eval` log, so for those the
+    transcript is the record rather than a derived view of one, and the rule that
+    replaces it in place would destroy the only evidence behind the number.
+    """
+    st = _saver()
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    path = tmp_path / "model-task-instance-0-seed-1.md"
+
+    # names a log that is not there
+    path.write_text("# head\n\n- log vanished.eval\n\nthe only record\n")
+    assert st._target_path(str(path), "a re-run", (str(logs),)) == str(path)
+    kept = tmp_path / "model-task-instance-0-seed-1-superseded.md"
+    assert kept.exists() and "the only record" in kept.read_text()
+
+    # names no log at all, which is every transcript written before the rule
+    path.write_text("# head\n\n- messages 20\n\nalso the only record\n")
+    assert st._target_path(str(path), "a re-run", (str(logs),)) == str(path)
+    kept2 = tmp_path / "model-task-instance-0-seed-1-superseded-2.md"
+    assert kept2.exists() and "also the only record" in kept2.read_text()
 
 
 def test_a_rerun_that_draws_nothing_takes_the_old_figure_with_it(tmp_path):

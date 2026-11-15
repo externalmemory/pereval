@@ -1,9 +1,9 @@
 """Published rating-migration reference data, loaded from CSV.
 
-This module carries measured inputs only. It is calibration material for a task
-that does not exist yet: there is no generator, scorer or Inspect task in this
-package, deliberately. See docs/tasks/migration.md for provenance and for why
-the 2024 counts are reconstructed rather than published directly.
+This module carries measured inputs only: it is the calibration material the
+generator draws on, and holds no generator, scorer or task itself. See
+docs/tasks/migration.md for provenance and for why the 2024 counts are
+reconstructed rather than published directly.
 
 Nothing here enters an agent sandbox. These are host-side reference numbers.
 """
@@ -114,6 +114,10 @@ def regional_counts() -> dict[str, dict[str, dict]]:
     from the published percentages. Counts are exact integers, not estimates,
     but the cohort size is identified only up to the smallest consistent value;
     see docs/tasks/migration.md. Covers COUNT_ROWS, so no AAA row.
+
+    KNOWN WRONG in one row: Global AA is committed at 95, which is smaller than
+    the 171 its own U.S., Europe and EM rows account for. The likely value is
+    190. Nothing in the suite's scores reads this function; see the task doc.
     """
     out: dict[str, dict[str, dict]] = {r: {} for r in REGIONS}
     for row in _rows("sp2024_regional_counts.csv"):

@@ -90,9 +90,20 @@ def stability() -> ScoreReducer:
         for k in keys:
             xs = [float(v[k]) for v in values if k in v and np.isfinite(float(v[k]))]
             out[k] = float(np.mean(xs)) if xs else float("nan")
-        regrets = [float(v[key]) for v in values
-                   if key in v and np.isfinite(float(v[key]))]
-        if regrets:
+        regrets = [float(v[key]) for v in values if key in v]
+        # A non-finite regret is the worst case, not a run to leave out. Filtering
+        # the non-finite ones here and taking the maximum of the rest inverted the
+        # pessimistic convention outright: regrets of 0.5, inf and 0.7 reported a
+        # worst case of 0.7 over three runs, so the one run that produced an
+        # unusable answer made the cell look like the better of the two that
+        # worked. inf is a real and unbounded regret and ranks above any finite
+        # one; nan is an unreadable one and cannot be ranked at all, so it poisons
+        # the maximum rather than being dropped from it.
+        if regrets and any(not np.isfinite(x) for x in regrets):
+            out["regret_worst"] = (float("inf") if not any(np.isnan(x) for x in regrets)
+                                   else float("nan"))
+            out["regret_spread"] = float("nan")
+        elif regrets:
             out["regret_worst"] = float(np.max(regrets))
             out["regret_spread"] = float(np.max(regrets) - np.min(regrets))
         else:
