@@ -50,37 +50,50 @@ from matplotlib.patches import Rectangle
 COLS = ["CCAR", "CECL", "Migration", "Ballistic", "Two-body", "Three-body", "Flyby", "Quantile"]
 NAN = float("nan")
 
-# name, mean rank or None if unranked, cells, display strings
+# name, ranked flag (None = a reference row, outside the Borda count), cells,
+# display strings. The mean rank is COMPUTED from these cells, never stored: a
+# hand-maintained aggregate drifted from the cells it claimed to summarise, and
+# six of the fourteen published values disagreed with their own columns.
+#
+# Cells are stored at the best precision the record supports, not at display
+# precision, because rounding a cell changes its rank. Rounding the ballistic
+# column to two significant digits manufactured a Kimi/deepseek tie that is not
+# real and hid a deepseek/Qwen tie that is, which moved four mean ranks.
+#
+# Two cells are the matched convention of docs/models.md rather than a single
+# run's maximum, so they are stored as published: Opus and minimax on ballistic.
+# mimo's ballistic cell survives only in runs/ at three decimals, so its order
+# against gpt-6-luna is below the precision of the record; see docs/models.md.
 ROWS = [
  ("Oracle (true model)",      None, [0.031, 0.0, 0.0, NAN, 0.005, 0.039, 0.31, NAN],
    ["0.031","0","0","none","0.005","0.039","0.31","none"]),
- ("Claude Opus 5.5",          1.88, [0.077, 2.8e-06, 0.118, 4.9, 0.065, 0.0393, 24, 0.083],
+ ("Claude Opus 5.5",          True, [0.077, 2.8e-06, 0.118, 4.9, 0.065, 0.0393, 24, 0.083],
    ["0.077","0.0000028","0.118","4.9","0.065","0.0393","24","0.083"]),
- ("minimax-m3.1-flash",       3.00, [0.080, 6.5e-06, 0.629, 4.3, 0.069, 164, 361, 0.070],
+ ("minimax-m3.1-flash",       True, [0.080, 6.5e-06, 0.629, 4.3, 0.069, 164, 361, 0.070],
    ["0.080","0.0000065","0.629","4.3","0.069","164","361","0.070"]),
- ("Kimi K3",                  3.75, [0.12, 1.5e-05, 0.301, 14, 0.094, 3.3, 50, 0.077],
+ ("Kimi K3",                  True, [0.12, 1.5e-05, 0.301, 13.991244649838583, 0.094, 3.3, 50, 0.077],
    ["0.12","0.000015","0.301","14","0.094","3.3","50","0.077"]),
- ("deepseek-v4-flash-0731",   5.13, [0.30, 1.4e-05, 0.625, 14, 0.30, 269, 522, 0.067],
+ ("deepseek-v4-flash-0731",   True, [0.30, 1.4e-05, 0.625, 14.134644186444648, 0.30, 269, 522, 0.067],
    ["0.30","0.000014","0.625","14","0.30","269","522","0.067"]),
- ("GLM-5.1",                  5.82, [0.055, 5.9e-05, 0.523, 12, 0.092, 436, 899, 0.25],
+ ("GLM-5.1",                  True, [0.055, 5.9e-05, 0.523, 12.166, 0.092, 436, 899, 0.25],
    ["0.055","0.000059","0.523","12","0.092","436","899","0.25"]),
- ("gpt-6-luna",               6.38, [0.117, 5.7e-04, 1.094, 12, 0.222, 408, 45, 0.128],
+ ("gpt-6-luna",               True, [0.117, 5.7e-04, 1.094, 12.365336039551858, 0.222, 408, 45, 0.128],
    ["0.117","0.00057","1.094","12","0.222","408","45","0.128"]),
- ("mimo-v2.5",                7.32, [0.57, 2.9e-05, 0.556, 12, 0.19, 2426, 292, 0.15],
+ ("mimo-v2.5",                True, [0.57, 2.9e-05, 0.556, 12.365, 0.19, 2426, 292, 0.15],
    ["0.57","0.000029","0.556","12","0.19","2426","292","0.15"]),
- ("nemotron-3-ultra",         9.01, [0.27, 1.6e-05, 1.214, 16, 2429, 817, 1356, 0.099],
+ ("nemotron-3-ultra",         True, [0.27, 1.6e-05, 1.214, 15.521, 2429, 817, 1356, 0.099],
    ["0.27","0.000016","1.214","16","2429","817","1356","0.099"]),
- ("ling-3.0-flash",           9.62, [0.193, 8.7e-03, 1.612, 43, 1556, 3309, 591, 0.076],
+ ("ling-3.0-flash",           True, [0.193, 8.7e-03, 1.612, 42.564585985122996, 1556, 3309, 591, 0.076],
    ["0.193","0.0087","1.612","43","1556","3309","591","0.076"]),
- ("nemotron-3-super",         9.88, [0.45, 5.6e-04, 1.400, 60, 106, 370, 918, 0.12],
+ ("nemotron-3-super",         True, [0.45, 5.6e-04, 1.400, 59.610, 106, 370, 918, 0.12],
    ["0.45","0.00056","1.400","60","106","370","918","0.12"]),
- ("Naive baseline",          10.38, [0.85, 0.071, 0.765, 22, 17, 332, 20037, 0.14],
+ ("Naive baseline",           True, [0.85, 0.071, 0.765, 21.768414756396734, 17, 332, 20037, 0.14],
    ["0.85","0.071","0.765","22","17","332","20037","0.14"]),
- ("Qwen3.6-35B-A3B (local)", 10.50, [0.3662, 0.001945, 1.267, 14.13, 1193, 2925, 915.7, 3.758e12],
+ ("Qwen3.6-35B-A3B (local)",  True, [0.3662, 0.001945, 1.267, 14.134644186444646, 1193, 2925, 915.7, 3.758e12],
    ["0.366","0.001945","1.267","14","1193","2925","916","3.8e12"]),
- ("Claude Haiku 4.5",        11.12, [0.37, 9.9e-03, 4.068, 83, 105, 1850, 1348, 0.10],
+ ("Claude Haiku 4.5",         True, [0.37, 9.9e-03, 4.068, 83.316, 105, 1850, 1348, 0.10],
    ["0.37","0.0099","4.068","83","105","1850","1348","0.10"]),
- ("gemma-4-26B-A4B (local)", 11.25, [0.4377, 0.001948, 6.179, 59.32, 3377, 2550, 1327, 0.07751],
+ ("gemma-4-26B-A4B (local)",  True, [0.4377, 0.001948, 6.179, 59.319721004100565, 3377, 2550, 1327, 0.07751],
    ["0.44","0.001948","6.179","59","3377","2550","1327","0.078"]),
  ("Degenerate answer",        None, [0.57, 0.019, 1.000, 61, 2861, 3019, 138, 0.12],
    ["0.57","0.019","1.000","61","2861","3019","138","0.12"]),
@@ -152,14 +165,15 @@ def render(mode, path):
                     fontsize=6.9, color=t["muted"] if is_ref else t["ink"],
                     style="italic" if is_ref else "normal",
                     fontweight="bold" if best else "normal")
-        rtxt = "floor" if i == 0 else ("not ranked" if is_ref else f"{mr:.2f}")
+        rtxt = "floor" if i == 0 else ("not ranked" if is_ref else f"{MEAN_RANK[i]:.2f}")
         ax.add_patch(Rectangle((LBL + ncol * CW + 0.012, y(i) - RH / 2 + 0.012),
                                RANKW - 0.024, RH - 0.024, facecolor=t["rankbg"],
                                edgecolor=t["grid"], linewidth=0.9))
         ax.text(LBL + ncol * CW + RANKW / 2, y(i), rtxt, ha="center", va="center",
                 fontsize=6.4 if is_ref else 7.2, color=t["muted"] if is_ref else t["ink"],
                 style="italic" if is_ref else "normal",
-                fontweight="bold" if (not is_ref and mr == BEST_MR) else "normal")
+                fontweight="bold" if (not is_ref and MEAN_RANK.get(i) == BEST_MR)
+                else "normal")
 
     ax.text(0, -0.78,
             "Shading is rank within each column, best to worst; the columns are not comparable "
@@ -173,21 +187,37 @@ ranked = [i for i, r in enumerate(ROWS) if r[1] is not None]
 M = np.array([r[2] for r in ROWS], dtype=float)
 
 
+# Cells are compared at twelve significant digits. Two cells that agree to
+# twelve digits came from the same prediction array and differ only in the order
+# the sum accumulated: deepseek-v4-flash-0731 and Qwen3.6-35B-A3B submitted
+# bitwise-identical ballistic predictions and score 14.134644186444648 against
+# 14.134644186444646, which is a tie that raw float comparison would break
+# arbitrarily. Twelve digits is far beyond any measurement precision here and
+# still absorbs that noise.
+RANK_SIGDIG = 12
+
+
 def rank_in_col(j):
     """Rank among ranked rows only; lower value is better. Ties take the average."""
     vals = np.array([M[i, j] for i in ranked])
-    order = np.argsort(vals, kind="mergesort")
-    rk = np.empty(len(vals))
-    rk[order] = np.arange(1, len(vals) + 1)
-    for v in set(vals):
-        m = vals == v
+    key = np.array([float(f"{v:.{RANK_SIGDIG}g}") for v in vals])
+    order = np.argsort(key, kind="mergesort")
+    rk = np.empty(len(key))
+    rk[order] = np.arange(1, len(key) + 1)
+    for v in set(key):
+        m = key == v
         if m.sum() > 1:
             rk[m] = rk[m].mean()
     return dict(zip(ranked, rk))
 
 
 RANKS = {j: rank_in_col(j) for j in range(len(COLS))}
-BEST_MR = min(ROWS[i][1] for i in ranked)
+
+# The Borda count: the mean of a row's ranks over the columns it has a cell in.
+# Computed, so it cannot disagree with the ranks above it in this file.
+MEAN_RANK = {i: float(np.mean([RANKS[j][i] for j in range(len(COLS))
+                               if np.isfinite(M[i, j])])) for i in ranked}
+BEST_MR = min(MEAN_RANK.values())
 
 
 
@@ -253,9 +283,8 @@ block below and in docs/scores.csv." src="docs/images/scores-light.png">
 
 
 def mean_rank_text(i):
-    mr = ROWS[i][1]
-    if mr is not None:
-        return f"{mr:.2f}"
+    if ROWS[i][1] is not None:
+        return f"{MEAN_RANK[i]:.2f}"
     return "floor" if i == 0 else "not ranked"
 
 
@@ -273,7 +302,7 @@ def markdown_table():
                 txt = f"*{txt}*"
             out.append(txt)
         rt = mean_rank_text(i)
-        if mr is not None and mr == BEST_MR:
+        if mr is not None and MEAN_RANK[i] == BEST_MR:
             rt = f"**{rt}**"
         out.append(f"{em}{rt}{em}" if em else rt)
         lines.append("| " + " | ".join(out) + " |")

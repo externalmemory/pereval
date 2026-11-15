@@ -38,11 +38,11 @@ Worst-case regret over three instances. Lower is better.
 | minimax-m3.1-flash | **4.3** |
 | Claude Opus 5.5 | 4.9 |
 | GLM-5.1 | 12 |
-| gpt-6-luna | 12 |
 | mimo-v2.5 | 12 |
+| gpt-6-luna | 12 |
 | Kimi K3 | 14 |
-| deepseek-v4-flash-0731 | 14 |
 | Qwen3.6-35B-A3B (local) | 14 |
+| deepseek-v4-flash-0731 | 14 |
 | nemotron-3-ultra | 16 |
 | *Naive baseline* | *22* |
 | ling-3.0-flash | 43 |
