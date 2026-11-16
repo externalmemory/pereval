@@ -124,7 +124,7 @@ Worst-case regret over three instances. Lower is better.
 
 No model is worse than the degenerate answer here. Only the naive baseline is, which makes this the one column where the naive method is clearly the floor and nothing falls through it.
 
-The two local rows sit between the groups and their ordering is not meaningful: the cells differ by 0.15%, far below anything this suite resolves ([detail](../local-models.md)).
+Qwen and gemma sit between the groups and their ordering is not meaningful: the cells differ by 0.15%, far below anything this suite resolves. The third local row, Nemotron-3.5-Lightning, is lower down at 0.00905, inside a 14% window that also holds ling and Claude Haiku 4.5, so those three are not ordered by this column either ([detail](../local-models.md)).
 
 ## Solutions
 

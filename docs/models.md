@@ -2,7 +2,7 @@
 
 Everything about *how a row was measured* rather than *what a task asks*. The README's table carries the numbers; this file carries the conditions they were produced under, the places where one row's convention differs from another's, and the individual cells that need a caveat.
 
-Task-level scoring definitions live with the tasks: [CECL](tasks/cecl.md), [migration](tasks/migration.md), [quantile](tasks/quantile.md), [orbital](tasks/orbital.md). The two local rows are in [local-models.md](local-models.md). Known defects and unresolved questions are in [limitations.md](limitations.md).
+Task-level scoring definitions live with the tasks: [CECL](tasks/cecl.md), [migration](tasks/migration.md), [quantile](tasks/quantile.md), [orbital](tasks/orbital.md). The three local rows are in [local-models.md](local-models.md). Known defects and unresolved questions are in [limitations.md](limitations.md).
 
 ## Conventions That Apply To Every Row
 

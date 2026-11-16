@@ -78,9 +78,9 @@ Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks a
 
 **Migration is the hardest column in the suite.** Only Opus and Kimi K3 land inside the competent one-factor reference's 0.368, and eight of the fifteen ranked rows score worse than the degenerate answer. Only the flyby, at twelve, has more.
 
-**Three rows rank below the naive baseline.** The *naive baseline* is the obvious wrong method, not the floor, and Claude Haiku 4.5 and both local rows fall through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling is within a few percent of the lowest quantile score in the table and still worse than a constant on three-body.
+**Three rows rank below the naive baseline.** The *naive baseline* is the obvious wrong method, not the floor, and Claude Haiku 4.5, gemma-4-26B-A4B and Nemotron-3.5-Lightning fall through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling is within a few percent of the lowest quantile score in the table and still worse than a constant on three-body.
 
-**Local hardware reaches every column but places near the bottom.** The two local rows ran on one 48 GB Mac Mini. Both complete all eight tasks, and both land below the naive baseline. Their cells are also the noisiest in the table: Qwen's quantile cell of 3.8e12 comes from a single block of one hundred in one of three seeds where a Student's t fit diverged, while its other two seeds scored 0.061 and 0.075. See [docs/local-models.md](docs/local-models.md).
+**Local hardware reaches every column but places near the bottom.** The three local rows ran on one 48 GB Mac Mini. All three complete all eight tasks, two of them land below the naive baseline, and the third clears it by 0.07 of a mean rank, which is narrower than anything this suite resolves. Their cells are also the noisiest in the table: Qwen's quantile cell of 3.8e12 comes from a single block of one hundred in one of three seeds where a Student's t fit diverged, while its other two seeds scored 0.061 and 0.075. See [docs/local-models.md](docs/local-models.md).
 
 ### Reading The Cells
 
