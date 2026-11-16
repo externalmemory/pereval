@@ -113,6 +113,7 @@ Worst-case regret over three instances. Lower is better.
 | Qwen3.6-35B-A3B (local) | 0.001945 |
 | gemma-4-26B-A4B (local) | 0.001948 |
 | ling-3.0-flash | 0.0087 |
+| Nemotron-3.5-Lightning (local) | 0.00905 |
 | Claude Haiku 4.5 | 0.0099 |
 | *Degenerate answer* | *0.019* |
 | *Naive baseline* | *0.071* |

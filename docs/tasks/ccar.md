@@ -85,6 +85,7 @@ Worst-case regret over eight instances. Lower is better.
 | nemotron-3-super | 0.45 |
 | mimo-v2.5 | 0.57 |
 | *Degenerate answer* | *0.57* |
+| Nemotron-3.5-Lightning (local) | 0.828 |
 | *Naive baseline* | *0.85* |
 
 <!-- scores:end -->

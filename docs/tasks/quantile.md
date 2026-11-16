@@ -61,6 +61,7 @@ Worst-case regret over three instances. Lower is better.
 | deepseek-v4-flash-0731 | **0.067** |
 | minimax-m3.1-flash | 0.070 |
 | ling-3.0-flash | 0.076 |
+| Nemotron-3.5-Lightning (local) | 0.077 |
 | Kimi K3 | 0.077 |
 | gemma-4-26B-A4B (local) | 0.078 |
 | Claude Opus 5.5 | 0.083 |

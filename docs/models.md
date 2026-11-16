@@ -10,7 +10,7 @@ Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR 
 
 A cell is reported only if none of its runs failed for reasons outside the agent's control. Two columns of the gemma row are a recorded exception to that rule, documented in [local-models.md](local-models.md).
 
-**Eighteen of the 104 model cells have no `.eval` log behind them.** `logs/` holds no successful log at all for these model and task pairs:
+**Eighteen of the 112 model cells have no `.eval` log behind them.** `logs/` holds no successful log at all for these model and task pairs:
 
 | Row | Cells with no log |
 | --- | --- |
@@ -24,7 +24,7 @@ For those cells the only evidence is the markdown transcript in `runs/`, which i
 
 The rule in `scripts/save_transcript.py` made this worse than it needed to be. It overwrites the transcript of a cell that is re-run, on the argument that a transcript is derived and the log is the record, and that argument was applied unconditionally while being true only where the log exists. Since 2026-11-15 each transcript records the log it was rendered from and the script moves an existing transcript to `<stem>-superseded.md` rather than replacing it when that log is gone, so these cells can no longer lose their only record to a re-run. It does not reconstruct the eighteen missing logs, which are not recoverable.
 
-The **mean rank** column is a Borda count within each column, computed from the cells by `scripts/render_scores.py`. It is the only aggregate, because the cells are not comparable across columns. It cannot be recomputed from the table's *displayed* figures, because the ballistic column rounds to two significant digits and three of its rows share a displayed 12 and three more a displayed 14; the generator stores and ranks the unrounded cells, and [limitations.md](limitations.md#mean-rank-is-computed-from-the-cells) gives them. Until 2026-11-15 the column was maintained by hand and six of the fourteen values disagreed with their own columns, by up to 0.13.
+The **mean rank** column is a Borda count within each column, computed from the cells by `scripts/render_scores.py`. It is the only aggregate, because the cells are not comparable across columns. It cannot be recomputed from the table's *displayed* figures, because the ballistic column rounds to two significant digits and three of its rows share a displayed 12, three more a displayed 14 and two a displayed 60; the generator stores and ranks the unrounded cells, and [limitations.md](limitations.md#mean-rank-is-computed-from-the-cells) gives them. Until 2026-11-15 the column was maintained by hand and six of the fourteen values disagreed with their own columns, by up to 0.13.
 
 Row labels name the model, not the endpoint that served it. A `:free` variant is the same weights under a different serving tier, and where the two have been compared directly they agree: Kimi K3 scored 0.023 free against 0.024 paid on one matched instance. Most of the free endpoints these rows were originally measured on have since been retired, so a cell is reproducible on the paid path and not on the one that produced it ([detail](limitations.md#serving-provenance-is-not-controlled)).
 
@@ -64,7 +64,7 @@ On the archived instances alone the spread reads, as median (worst), CCAR 0.090 
 
 Measured on the archived convention, one draw per instance over the same instances every other row uses, so its cells are plain maxima and need no matched-convention adjustment. One pass, eight columns, 29 samples, every sample completing at `status=success` and none errored, 3h31m of wall clock for 38.4M tokens. Four samples hit the task message limit of 500 (CECL instances 0 and 2, CCAR instance 1, migration instance 1) and **none of them sets its column's cell**, so no number in this row rests on a truncated run.
 
-**The flyby cell is the row's only genuinely good result, and it is good in a different way from Opus.** 45 against Opus's 24 makes it one of three rows inside the degenerate answer's 138 in the column where eleven of fourteen are worse than a constant, and its three instances read 30.4, 15.7 and 44.8 where Opus's three draws of one instance read 0.52, 70 and 0.44. Opus usually solves the flyby and occasionally fails it outright; this row never does either. The mechanism is visible in the diagnostics: coverage 1.0, 0.9996 and 1.0 against mean widths of 32, 20 and 49 and point errors of 6.8, 4.7 and 4.7, so it buys coverage with width rather than accuracy, which is what keeps it mid-column rather than near the oracle's 0.31.
+**The flyby cell is the row's only genuinely good result, and it is good in a different way from Opus.** 45 against Opus's 24 makes it one of three rows inside the degenerate answer's 138 in the column where twelve of fifteen are worse than a constant, and its three instances read 30.4, 15.7 and 44.8 where Opus's three draws of one instance read 0.52, 70 and 0.44. Opus usually solves the flyby and occasionally fails it outright; this row never does either. The mechanism is visible in the diagnostics: coverage 1.0, 0.9996 and 1.0 against mean widths of 32, 20 and 49 and point errors of 6.8, 4.7 and 4.7, so it buys coverage with width rather than accuracy, which is what keeps it mid-column rather than near the oracle's 0.31.
 
 **Its migration cell is worse than the degenerate answer, and not because it ran out of room.** 1.094 is set by instance 0, which submitted after 23 messages with no limit hit, while instance 1 ran into the 500-message limit and scored 0.309 and instance 2 scored 0.202 in 56 messages. The worst cell in the column's weakest group is the instance the agent tried least on, which is a different failure from the truncation that bounds minimax's 0.629 from above.
 
@@ -86,6 +86,8 @@ Paid, and not the only paid row: Claude Opus 5.5, Claude Haiku 4.5 and gpt-6-lun
 
 Replaces deepseek-v4-flash-free, a different and now-superseded model version whose row had three unmeasured cells. It beats the degenerate constant on every run of every task except two of three on the flyby ([detail](limitations.md#budget-confounds)).
 
-## Qwen3.6-35B-A3B and gemma-4-26B-A4B
+## Qwen3.6-35B-A3B, gemma-4-26B-A4B and Nemotron-3.5-Lightning
 
-Both local rows, served from one 48 GB Mac Mini rather than a hosted provider. Their weights, serving configuration, decoder settings and per-cell caveats are in [local-models.md](local-models.md).
+The three local rows, served from one 48 GB Mac Mini rather than a hosted provider. Their weights, serving configuration, decoder settings and per-cell caveats are in [local-models.md](local-models.md).
+
+Nemotron-3.5-Lightning is `mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 30B total and 3B active, pinned at revision `55ac8c89`. It is the only row in the table measured at its own `generation_config.json` and nothing else, temperature 1.0 and top_p 0.95 with no `top_k`, `min_p` or presence penalty, which is the local equivalent of running a hosted row at its provider's default. All eight of its columns come from logs with no sample error, which is not true of either other local row.

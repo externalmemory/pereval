@@ -34,9 +34,9 @@ Two consequences follow.
 
 A Hugging Face repo name does not identify a set of tensors. `mlx-community` and `unsloth` re-quantize in place, so "the same model" re-downloaded later can be different weights, and a published cell measured against the old ones stops being reproducible without anyone touching this repository.
 
-That is not a hypothetical. Of the four models pulled to this machine, one moved during the project: `mlx-community/Qwen3.6-27B-OptiQ-4bit` went from `7575c79a` to `3413c683` on 2026-10-30, after it was downloaded here. No published cell rests on it, so it cost nothing, but the next one might.
+That is not a hypothetical. Of the five models pulled to this machine, one moved during the project: `mlx-community/Qwen3.6-27B-OptiQ-4bit` went from `7575c79a` to `3413c683` on 2026-10-30, after it was downloaded here. No published cell rests on it, so it cost nothing, but the next one might.
 
-Every revision actually used, verified against `main` on 2026-11-09:
+Every revision actually used, verified against `main` on 2026-11-09, and the Nemotron row on 2026-11-16:
 
 | Model | Revision used | Still `main`? | Repo last modified |
 | --- | --- | --- | --- |
@@ -44,8 +44,9 @@ Every revision actually used, verified against `main` on 2026-11-09:
 | `mlx-community/Qwen3.6-35B-A3B-4bit-DWQ` | `73c707af4243243b18193444467872d20cff9399` | yes | 2026-04-17 |
 | `unsloth/gemma-4-26B-A4B-it-qat-GGUF` | `7b92b5b28818151e8669af2e45e88d6086f490dd` | yes | 2026-07-17 |
 | `mlx-community/Qwen3.6-27B-OptiQ-4bit` | `7575c79af388aa16ce4722fe6c3fd0d3a8e964d2` | **no**, now `3413c683` | 2026-10-30 |
+| `mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | `55ac8c89261109b36c04371cd3f479a4594208c8` | yes | 2026-08-11 |
 
-The first row is the one that matters: it backs the `gemma-4-26B-A4B (local)` row of the main table, and its local weights have since been deleted from the machine to reclaim disk. The row is still reproducible, because that revision is still what `main` points at and the repo has not changed since June. Pass the revision explicitly rather than trusting the name:
+The first row is the one that matters: it backs the `gemma-4-26B-A4B (local)` row of the main table, and its local weights have since been deleted from the machine to reclaim disk. The row is still reproducible, because that revision is still what `main` points at and the repo has not changed since June. The Nemotron weights were reclaimed the same way, and that row has the strongest provenance of the five: the repo was last modified on 2026-08-11, three months before the runs, and had not moved when checked again a week after them, so `main` was the same set of tensors on both sides of the measurement. Pass the revision explicitly rather than trusting the name:
 
 ```bash
 hf download mlx-community/gemma-4-26B-A4B-it-qat-4bit \
@@ -60,20 +61,20 @@ Everything in the plumbing worked on the first try: tool calling through the Ins
 
 ## Results
 
-Both local rows now complete all eight columns on the archived convention: one draw per instance over the same instances every hosted row uses, three instances per task and eight for CCAR, with quantile as three paired single-instance runs on the archived seeds. Their cells are therefore plain maxima and need no matched-convention adjustment.
+All three local rows now complete all eight columns on the archived convention: one draw per instance over the same instances every hosted row uses, three instances per task and eight for CCAR, with quantile as three paired single-instance runs on the archived seeds. Their cells are therefore plain maxima and need no matched-convention adjustment.
 
-| Task | Qwen3.6-35B-A3B | gemma-4-26B-A4B | Column context for the Qwen cell |
-| --- | --- | --- | --- |
-| CCAR | **0.366** | 0.44 | mid-field, between deepseek-v4-flash-0731 (0.30) and Claude Haiku 4.5 (0.37) |
-| CECL | **0.001945** | 0.001948 | between nemotron-3-super (0.00056) and ling-3.0-flash (0.0087) |
-| Migration | **1.267** | 6.179 | worse than the degenerate answer (1.000) and than the naive baseline (0.765) |
-| Ballistic | **14** | 59 | between Kimi K3 (14) and nemotron-3-ultra (16) |
-| Two-body | **1193** | 3377 | worse than the naive baseline (17), better than the degenerate answer (2861) |
-| Three-body | 2925 | **2550** | inside the degenerate answer (3019) only just, and worse than the naive fit (332) |
-| Flyby | **916** | 1327 | worse than the degenerate answer (138) by nearly seven times |
-| Quantile | 3.8e12 | **0.078** | last in the column by thirteen orders of magnitude |
+| Task | Qwen3.6-35B-A3B | gemma-4-26B-A4B | Nemotron-3.5-Lightning | Column context for the Qwen cell |
+| --- | --- | --- | --- | --- |
+| CCAR | **0.366** | 0.44 | 0.828 | mid-field, between deepseek-v4-flash-0731 (0.30) and Claude Haiku 4.5 (0.37) |
+| CECL | **0.001945** | 0.001948 | 0.00905 | between nemotron-3-super (0.00056) and ling-3.0-flash (0.0087) |
+| Migration | **1.267** | 6.179 | 7.648 | worse than the degenerate answer (1.000) and than the naive baseline (0.765) |
+| Ballistic | **14** | 59 | 60 | between Kimi K3 (14) and nemotron-3-ultra (16) |
+| Two-body | **1193** | 3377 | 3431 | worse than the naive baseline (17), better than the degenerate answer (2861) |
+| Three-body | 2925 | 2550 | **1526** | inside the degenerate answer (3019) only just, and worse than the naive fit (332) |
+| Flyby | 916 | 1327 | **681** | worse than the degenerate answer (138) by nearly seven times |
+| Quantile | 3.8e12 | 0.078 | **0.077** | last in the column by thirteen orders of magnitude |
 
-Qwen takes six of the eight cells. Its mean rank is 10.50 against gemma's 11.25, and both sit below the naive baseline's 10.38.
+Qwen takes five of the eight cells and Nemotron the other three; gemma takes none. The mean ranks are 10.81, 11.50 and 11.62, against the naive baseline's 10.88, so one local row is now above the baseline and two below it. The split does not follow the statistical and physics axes: Qwen wins CCAR, CECL, migration, ballistic and two-body, and Nemotron wins three-body, the flyby and quantile.
 
 **The medians tell a different story from the cells, and the gap between them is the point.** Qwen's per-column medians are 0.134, 0.00015, 0.482, 12.1, 2.34, 331, 330 and 0.075. Every one of those beats gemma's published cell, and most would place mid-table. The published row does not, because three of its twenty six instances blew up numerically and a maximum convention promotes exactly those three. This is not an argument against the convention, which is the whole premise of the suite, but it is the clearest demonstration in the repository of what a worst-case cell does and does not describe.
 
@@ -399,6 +400,9 @@ Tested so far, all at 4-bit on the same 48 GB machine:
 | Qwen3.6-35B-A3B-4bit-DWQ | 113k observed | 19.5 GB | 41 tok/s | 2,453 tok/s | four tasks, one an upper bound |
 | Qwen3.6-27B-OptiQ | 39,744 to 49,744 | 20.4 GB | 14 tok/s | 374 tok/s | none, screened out on the ceiling |
 | Gemma 4 26B A4B QAT | 89,601 to 99,601 | 15.6 GB | 74 tok/s | 2,100 tok/s | all eight tasks |
+| NVIDIA Nemotron 3.5 Lightning 30B A3B | 136,305 reached, not probed | 17.8 GB | not measured | not measured | all eight tasks |
+
+The Nemotron row is the one entry whose serving numbers are missing, and they are missing for a reason worth recording: its weights were reclaimed before anyone thought to probe it, so filling those three cells now means re-downloading 17.8 GB and restarting the server on a machine that is running another row. The ceiling figure given is not a probe but the largest context the agent loop actually reached, on migration instance 0, which is a floor on the ceiling rather than a measurement of it. The screening question those columns exist to answer was in any case answered by the row itself: the model completed all eight columns without hitting a context wall.
 
 The 27B was screened out before any task ran: the smallest ceiling of the three despite being the smallest model by parameter count, because `OptiQ` mixed precision puts it near 6 bits per weight and its KV geometry is 3.2x the 35B's per token. It is also the slowest of the three by a factor of three on decode, which is the one axis where a local model has no margin to give away.
 

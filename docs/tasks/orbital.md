@@ -64,6 +64,7 @@ Worst-case regret over three instances per task, ordered by the two-body column.
 | nemotron-3-ultra | 2429 | 817 | 1356 |
 | *Degenerate answer* | *2861* | *3019* | *138* |
 | gemma-4-26B-A4B (local) | 3377 | 2550 | 1327 |
+| Nemotron-3.5-Lightning (local) | 3431 | 1526 | 681 |
 
 <!-- scores:end -->
 
@@ -71,7 +72,7 @@ Worst-case regret over three instances per task, ordered by the two-body column.
 
 **Three-body has a ceiling rather than headroom.** Claude Opus 5.5 sits on the oracle, so there is nothing left to win, and the next row is two orders of magnitude behind it. Most of the field is still worse than the naive harmonic fit, which is the shape of a task that needs a leap rather than more effort.
 
-**The flyby is the column where leading it is not solving it.** Eleven of the fourteen ranked rows are worse than the degenerate constant. The leader's cell averages three draws of 0.52, 70 and 0.44, so it is a model that usually solves the task and occasionally fails it outright, reported under a convention that keeps the failure. gpt-6-luna reaches a comparable cell by the opposite route, buying coverage with interval width rather than accuracy ([detail](../models.md#gpt-6-luna)).
+**The flyby is the column where leading it is not solving it.** Twelve of the fifteen ranked rows are worse than the degenerate constant. The leader's cell averages three draws of 0.52, 70 and 0.44, so it is a model that usually solves the task and occasionally fails it outright, reported under a convention that keeps the failure. gpt-6-luna reaches a comparable cell by the opposite route, buying coverage with interval width rather than accuracy ([detail](../models.md#gpt-6-luna)).
 
 A low regret at a coverage near 1.00 is the signature to watch for: it means enormously wide intervals that always contain the truth and are crushed by the width penalty, rather than a fitted orbit.
 

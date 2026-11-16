@@ -35,7 +35,7 @@ Every cell is the **worst-case regret** over at least three runs, CCAR over eigh
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/scores-dark.png">
-  <img alt="Score matrix: 16 rows across 8 tasks, 14 of the rows ranked, each cell shaded by its rank within that column, green for best through to red for worst. The same numbers are in the collapsed block below and in docs/scores.csv." src="docs/images/scores-light.png">
+  <img alt="Score matrix: 17 rows across 8 tasks, 15 of the rows ranked, each cell shaded by its rank within that column, green for best through to red for worst. The same numbers are in the collapsed block below and in docs/scores.csv." src="docs/images/scores-light.png">
 </picture>
 
 Shading is rank within that column, green best through red worst; the *Oracle (true model)* and *Degenerate answer* rows are unranked and are shaded neutral. **Bold** marks the best cell in a column. Mean rank is a Borda count within each column and is deliberately the only aggregate, since the cells are not comparable across columns.
@@ -47,20 +47,21 @@ Shading is rank within that column, green best through red worst; the *Oracle (t
 | Model | CCAR | CECL | Migration | Ballistic | Two-body | Three-body | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | *0.031* | *0* | *0* | *none* | *0.005* | *0.039* | *0.31* | *none* | *floor* |
-| Claude Opus 5.5 | 0.077 | **0.0000028** | **0.118** | 4.9 | **0.065** | **0.0393** | **24** | 0.083 | **1.88** |
+| Claude Opus 5.5 | 0.077 | **0.0000028** | **0.118** | 4.9 | **0.065** | **0.0393** | **24** | 0.083 | **2.00** |
 | minimax-m3.1-flash | 0.080 | 0.0000065 | 0.629 | **4.3** | 0.069 | 164 | 361 | 0.070 | 3.00 |
-| Kimi K3 | 0.12 | 0.000015 | 0.301 | 14 | 0.094 | 3.3 | 50 | 0.077 | 3.75 |
+| Kimi K3 | 0.12 | 0.000015 | 0.301 | 14 | 0.094 | 3.3 | 50 | 0.077 | 3.88 |
 | deepseek-v4-flash-0731 | 0.30 | 0.000014 | 0.625 | 14 | 0.30 | 269 | 522 | **0.067** | 5.19 |
-| GLM-5.1 | **0.055** | 0.000059 | 0.523 | 12 | 0.092 | 436 | 899 | 0.25 | 5.75 |
-| gpt-6-luna | 0.117 | 0.00057 | 1.094 | 12 | 0.222 | 408 | 45 | 0.128 | 6.38 |
-| mimo-v2.5 | 0.57 | 0.000029 | 0.556 | 12 | 0.19 | 2426 | 292 | 0.15 | 7.38 |
-| nemotron-3-ultra | 0.27 | 0.000016 | 1.214 | 16 | 2429 | 817 | 1356 | 0.099 | 9.00 |
-| ling-3.0-flash | 0.193 | 0.0087 | 1.612 | 43 | 1556 | 3309 | 591 | 0.076 | 9.62 |
-| nemotron-3-super | 0.45 | 0.00056 | 1.400 | 60 | 106 | 370 | 918 | 0.12 | 9.88 |
-| *Naive baseline* | *0.85* | *0.071* | *0.765* | *22* | *17* | *332* | *20037* | *0.14* | *10.38* |
-| Qwen3.6-35B-A3B (local) | 0.366 | 0.001945 | 1.267 | 14 | 1193 | 2925 | 916 | 3.8e12 | 10.44 |
-| Claude Haiku 4.5 | 0.37 | 0.0099 | 4.068 | 83 | 105 | 1850 | 1348 | 0.10 | 11.12 |
-| gemma-4-26B-A4B (local) | 0.44 | 0.001948 | 6.179 | 59 | 3377 | 2550 | 1327 | 0.078 | 11.25 |
+| GLM-5.1 | **0.055** | 0.000059 | 0.523 | 12 | 0.092 | 436 | 899 | 0.25 | 6.00 |
+| gpt-6-luna | 0.117 | 0.00057 | 1.094 | 12 | 0.222 | 408 | 45 | 0.128 | 6.50 |
+| mimo-v2.5 | 0.57 | 0.000029 | 0.556 | 12 | 0.19 | 2426 | 292 | 0.15 | 7.62 |
+| nemotron-3-ultra | 0.27 | 0.000016 | 1.214 | 16 | 2429 | 817 | 1356 | 0.099 | 9.25 |
+| ling-3.0-flash | 0.193 | 0.0087 | 1.612 | 43 | 1556 | 3309 | 591 | 0.076 | 9.75 |
+| nemotron-3-super | 0.45 | 0.00056 | 1.400 | 60 | 106 | 370 | 918 | 0.12 | 10.25 |
+| Qwen3.6-35B-A3B (local) | 0.366 | 0.001945 | 1.267 | 14 | 1193 | 2925 | 916 | 3.8e12 | 10.81 |
+| *Naive baseline* | *0.85* | *0.071* | *0.765* | *22* | *17* | *332* | *20037* | *0.14* | *10.88* |
+| Nemotron-3.5-Lightning (local) | 0.828 | 0.00905 | 7.648 | 60 | 3431 | 1526 | 681 | 0.077 | 11.50 |
+| gemma-4-26B-A4B (local) | 0.44 | 0.001948 | 6.179 | 59 | 3377 | 2550 | 1327 | 0.078 | 11.62 |
+| Claude Haiku 4.5 | 0.37 | 0.0099 | 4.068 | 83 | 105 | 1850 | 1348 | 0.10 | 11.75 |
 | *Degenerate answer* | *0.57* | *0.019* | *1.000* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
 
 Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks as well and makes a changed score a reviewable diff rather than a new image.
@@ -73,9 +74,9 @@ Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks a
 
 **Claude Opus 5.5 takes five of eight columns and the aggregate, but judged on its worst pass only three of those leads survive.** Three-body at 0.0432 against 3.3 is a 76x margin; CECL and migration are closer to 1.5x, measured on three instances. The columns are not one distribution: three-body is the most stable cell the suite has measured, while its flyby spans 434x on a single instance.
 
-**Three-body is closed and the flyby is not.** Opus's 0.0393 sits on the oracle's 0.039, so that column has a ceiling rather than headroom. On the flyby, eleven of the fourteen ranked rows are worse than the degenerate answer, and the leader fails the task outright one pass in three. Leading that column is not the same as solving it.
+**Three-body is closed and the flyby is not.** Opus's 0.0393 sits on the oracle's 0.039, so that column has a ceiling rather than headroom. On the flyby, twelve of the fifteen ranked rows are worse than the degenerate answer, and the leader fails the task outright one pass in three. Leading that column is not the same as solving it.
 
-**Migration is the hardest column in the suite.** Only Opus and Kimi K3 land inside the competent one-factor reference's 0.368, and seven of the fourteen ranked rows score worse than the degenerate answer. Only the flyby, at eleven, has more.
+**Migration is the hardest column in the suite.** Only Opus and Kimi K3 land inside the competent one-factor reference's 0.368, and eight of the fifteen ranked rows score worse than the degenerate answer. Only the flyby, at twelve, has more.
 
 **Three rows rank below the naive baseline.** The *naive baseline* is the obvious wrong method, not the floor, and Claude Haiku 4.5 and both local rows fall through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling is within a few percent of the lowest quantile score in the table and still worse than a constant on three-body.
 
