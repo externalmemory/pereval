@@ -10,7 +10,11 @@ Generic coding and Q&A benchmarks don't test whether an LLM agent can *develop a
 
 It qualifies a development *process*, not a model. A nine-quarter stress projection cannot be validated against outcomes, because the actuals arrive nine quarters late on a path that is not the scenario path, so the testable object is the process that produced it. [docs/claim.md](docs/claim.md) states what a score supports, what it does not, and how the coverage maps onto SR 26-2 and the OCC's November 2026 examiner framework for agentic systems, which grades such systems by what a failure would cost rather than by how advanced they are.
 
-Three principles shape every task. **Objective verification:** each task has a verifiable target ([docs/task-design.md](docs/task-design.md)). **Scalar regret:** each task scores continuous regret against an oracle or reference, so a task keeps discriminating even when every agent does well, because the magnitudes still separate them. **Pessimistic assessment:** the question is not how well agents do on average but whether the *worst case* is good enough, so every cell is a maximum rather than a mean.
+Three principles shape every task:
+
+- **Objective verification:** each task has a verifiable target ([docs/task-design.md](docs/task-design.md)).
+- **Scalar regret:** each task scores continuous regret against an oracle or reference, so a task keeps discriminating even when every agent does well, because the magnitudes still separate them.
+- **Pessimistic assessment:** the question is not how well agents do on average but whether the *worst case* is good enough, so every cell is a maximum rather than a mean.
 
 ## Tasks
 
@@ -70,23 +74,18 @@ Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks a
 
 <!-- scores:end -->
 
-### Findings
+**The result is that the framework discriminates across a diverse set of agents, not that one model is better than another.** Fourteen models over four endpoint types, eight columns, 112 cells, 94 of them with an `.eval` log behind them.
 
-**Claude Opus 5.5 takes five of eight columns and the aggregate, but judged on its worst pass only three of those leads survive.** Three-body at 0.0432 against 3.3 is a 76x margin; CECL and migration are closer to 1.5x, measured on three instances. The columns are not one distribution: three-body is the most stable cell the suite has measured, while its flyby spans 434x on a single instance.
-
-**Three-body is closed and the flyby is not.** Opus's 0.0393 sits on the oracle's 0.039, so that column has a ceiling rather than headroom. On the flyby, twelve of the fifteen ranked rows are worse than the degenerate answer, and the leader fails the task outright one pass in three. Leading that column is not the same as solving it.
-
-**Migration is the hardest column in the suite.** Only Opus and Kimi K3 land inside the competent one-factor reference's 0.368, and eight of the fifteen ranked rows score worse than the degenerate answer. Only the flyby, at twelve, has more.
-
-**Three rows rank below the naive baseline.** The *naive baseline* is the obvious wrong method, not the floor, and Claude Haiku 4.5, gemma-4-26B-A4B and Nemotron-3.5-Lightning fall through it. The *degenerate answer* is a single constant with no interval, and it reads differently in every column on purpose: ling is within a few percent of the lowest quantile score in the table and still worse than a constant on three-body.
-
-**Local hardware reaches every column but places near the bottom.** The three local rows ran on one 48 GB Mac Mini. All three complete all eight tasks, two of them land below the naive baseline, and the third clears it by 0.07 of a mean rank, which is narrower than anything this suite resolves. Their cells are also the noisiest in the table: Qwen's quantile cell of 3.8e12 comes from a single block of one hundred in one of three seeds where a Student's t fit diverged, while its other two seeds scored 0.061 and 0.075. See [docs/local-models.md](docs/local-models.md).
-
-### Reading The Cells
+- **No column is saturated.** Every column separates its ranked rows by at least 15x, six of the eight by more than 60x and four by more than 25,000x. A task that could not tell these agents apart would show up here as a flat column, and none is flat.
+- **No column has a floor.** In all eight, at least one ranked row scores worse than the degenerate constant, so the trivial answer is nowhere a safe one.
+- **The columns are not redundant.** The participation ratio across the physics and statistics axes is 2.45, where eight columns measuring one underlying thing would collapse towards 1, and eight of the fifteen ranked rows move two or more places between those axes ([detail](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
+- **The ordering inside a column is not a result.** Shading is rank, so the figure implies one, but at the resolution stated above only order-of-magnitude gaps survive it, and the sample behind each cell is at least three runs.
+- **Ballistic barely discriminates, which is a property of the task and not of the models.** Eight of the fifteen ranked rows land in three displayed values, and a locally served 30B and a hosted 120B of the same family two generations apart filed the same predictions and the same intervals on all three instances ([detail](docs/limitations.md#mean-rank-is-computed-from-the-cells)).
+- **What the suite catches is the evidence that it measures anything.** A diverged Student's t fit in one block of a hundred puts a quantile cell at 3.8e12; an artefact that passes all sixteen admissibility checks still loses to assuming nothing migrates (gpt-6-luna at 1.094); and the worst migration cell in the table, 7.648, fails only two of those sixteen.
 
 Row labels name the model, not the endpoint that served it, and serving provenance is not controlled ([detail](docs/limitations.md#serving-provenance-is-not-controlled)). A cell is reported only if none of its runs failed for reasons outside the agent's control, with the recorded exceptions noted in [docs/models.md](docs/models.md). Two rows were measured with three draws per instance rather than one and are reported on a matched convention that keeps them comparable. CCAR's response law is now drawn per instance rather than fixed and published ([detail](docs/limitations.md#the-ccar-response-law-was-public)). That change also altered what a given seed generates, so **the CCAR column holds two disjoint instance sets** and two of its cells are comparable only if both rows are in the same one ([which rows, and what it invalidates](docs/limitations.md#the-ccar-column-holds-two-instance-sets)).
 
-Per-row provenance, measurement conventions, and the caveats behind individual cells are in [docs/models.md](docs/models.md). Per-task scoring definitions are in the task docs linked under [Tasks](#tasks). Everything known to be wrong or unresolved is in [docs/limitations.md](docs/limitations.md).
+Per-row provenance, measurement conventions, and the caveats behind individual cells are in [docs/models.md](docs/models.md). Per-task scoring definitions are in the task docs linked under [Tasks](#tasks). Local models ran on one 48 GB Mac Mini ([detail](docs/local-models.md)). Everything known to be wrong or unresolved is in [docs/limitations.md](docs/limitations.md).
 
 ## Quick Start
 
