@@ -94,6 +94,10 @@ The p99 column does the work: bounded rules score 0.049 to 0.052 there, extrapol
 
 That a naive moment-matched normal leads the reference set is a real result rather than a bug, and the reason to be careful with any single column.
 
+**Two rows did not approximate that estimator, they reproduced it.** Scored against references computed on their own blocks, Nemotron-3.5-Lightning's three draws match the moment-matched normal on every statistic the scorer records: regret 0.0765, 0.0699 and 0.0632, with the same p90, p95, p99, hit rate, MAE and spread ratio on each instance. On seed 1576890651 coverage and spread match too, 0.850 and 4.971, so that submission is indistinguishable from the baseline in every recorded figure. gemma-4-26B-A4B's draw on seed 1835504127 is the same recipe again, 0.0765 with identical sub-scores, differing only in coverage, 0.52 against the reference's 0.84. Both wrote the fit out explicitly, Nemotron as `x_bar + norm.ppf(p) * s` and gemma as `norm.ppf(p, loc=mean, scale=std)`, both at `ddof=1`, which is one estimator written two ways.
+
+Two consequences are worth stating plainly. The published Nemotron quantile cell is the reference baseline's score rather than a measurement of that model, so the best local row in this column is a four-line textbook recipe. And the pinball regret is blind to the only thing those submissions did differently: the point quantiles are identical, the intervals are not, and coverage runs from 0.52 to 0.85 across submissions that score the same to four decimals.
+
 Note on resolution: the block-sampling floor at 100 blocks is about ±0.03, and differences finer than roughly 0.005 cannot be read across rows at all.
 
 ## Solutions
