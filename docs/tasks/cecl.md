@@ -120,7 +120,9 @@ Worst-case regret over three instances. Lower is better.
 
 <!-- scores:end -->
 
-**The column is two groups and a gap, not a gradient.** Six models land between 0.0000065 and 0.000059 with interval coverage 0.93 to 0.96, then nothing until the second group, whose coverage falls away to 0.84, 0.69, 0.67 and 0.48. Within the leading six the spread is a factor of nine on three instances, which this suite cannot resolve, so read the column as whether a model built the simulation and calibrated to it rather than as an ordering.
+**The column is two groups and a gap, not a gradient.** Seven models land between 0.0000028 and 0.000059, and every clean draw any of them produced has interval coverage between 0.917 and 0.957. Then nothing until the second group, which starts a factor of nine higher at 0.00056. Coverage is what separates the two groups rather than the point estimate: each of the seven rows below the gap has at least one clean draw whose coverage falls to 0.69 or worse, the worst draw per row running 0.69 for gpt-6-luna, 0.53 for ling-3.0-flash, 0.46 for nemotron-3-super, 0.35 for gemma-4-26B-A4B, 0.32 for Nemotron-3.5-Lightning, 0.31 for Claude Haiku 4.5 and 0.20 for Qwen3.6-35B-A3B. Within the leading seven the spread is a factor of twenty-one on three instances, which this suite cannot resolve, so read the column as whether a model built the simulation and calibrated to it rather than as an ordering.
+
+Those coverage figures are ranges over every clean draw in `logs/`, not the coverage of the draw that set the published cell. Twelve of the fourteen cells are stored to two significant figures, so a cell cannot be matched back to the sample that produced it, and a per-row range over the clean draws is the strongest claim the archive supports.
 
 No model is worse than the degenerate answer here. Only the naive baseline is, which makes this the one column where the naive method is clearly the floor and nothing falls through it.
 
