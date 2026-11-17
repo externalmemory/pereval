@@ -59,11 +59,11 @@ Worst-case regret over three instances per task, ordered by the two-body column.
 | *Naive baseline* | *17* | *332* | *20037* |
 | Claude Haiku 4.5 | 105 | 1850 | 1348 |
 | nemotron-3-super | 106 | 370 | 918 |
+| gemma-4-26B-A4B (local) | 1138 | 166 | 4353 |
 | Qwen3.6-35B-A3B (local) | 1193 | 2925 | 916 |
 | ling-3.0-flash | 1556 | 3309 | 591 |
 | nemotron-3-ultra | 2429 | 817 | 1356 |
 | *Degenerate answer* | *2861* | *3019* | *138* |
-| gemma-4-26B-A4B (local) | 3377 | 2550 | 1327 |
 | Nemotron-3.5-Lightning (local) | 3431 | 1526 | 681 |
 
 <!-- scores:end -->

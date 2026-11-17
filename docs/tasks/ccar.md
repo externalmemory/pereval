@@ -81,12 +81,12 @@ Worst-case regret over eight instances. Lower is better.
 | deepseek-v4-flash-0731 | 0.30 |
 | Qwen3.6-35B-A3B (local) | 0.366 |
 | Claude Haiku 4.5 | 0.37 |
-| gemma-4-26B-A4B (local) | 0.44 |
 | nemotron-3-super | 0.45 |
 | mimo-v2.5 | 0.57 |
 | *Degenerate answer* | *0.57* |
 | Nemotron-3.5-Lightning (local) | 0.828 |
 | *Naive baseline* | *0.85* |
+| gemma-4-26B-A4B (local) | 2.9 |
 
 <!-- scores:end -->
 

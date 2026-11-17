@@ -110,8 +110,8 @@ Worst-case regret over three instances. Lower is better.
 | GLM-5.1 | 0.000059 |
 | nemotron-3-super | 0.00056 |
 | gpt-6-luna | 0.00057 |
+| gemma-4-26B-A4B (local) | 0.000571 |
 | Qwen3.6-35B-A3B (local) | 0.001945 |
-| gemma-4-26B-A4B (local) | 0.001948 |
 | ling-3.0-flash | 0.0087 |
 | Nemotron-3.5-Lightning (local) | 0.00905 |
 | Claude Haiku 4.5 | 0.0099 |
@@ -124,7 +124,7 @@ Worst-case regret over three instances. Lower is better.
 
 No model is worse than the degenerate answer here. Only the naive baseline is, which makes this the one column where the naive method is clearly the floor and nothing falls through it.
 
-Qwen and gemma sit between the groups and their ordering is not meaningful: the cells differ by 0.15%, far below anything this suite resolves. The third local row, Nemotron-3.5-Lightning, is lower down at 0.00905, inside a 14% window that also holds ling and Claude Haiku 4.5, so those three are not ordered by this column either ([detail](../local-models.md)).
+The three local rows land in three different places. gemma's 0.000571 is within 0.3% of gpt-6-luna's 0.00057, which is stored to two significant figures, so those two cannot be ordered from the archive at all. Qwen sits alone at 0.001945. Nemotron-3.5-Lightning is lower down at 0.00905, inside a 14% window that also holds ling and Claude Haiku 4.5, so those three are not ordered by this column either ([detail](../local-models.md)).
 
 ## Solutions
 

@@ -63,7 +63,6 @@ Worst-case regret over three instances. Lower is better.
 | ling-3.0-flash | 0.076 |
 | Nemotron-3.5-Lightning (local) | 0.077 |
 | Kimi K3 | 0.077 |
-| gemma-4-26B-A4B (local) | 0.078 |
 | Claude Opus 5.5 | 0.083 |
 | nemotron-3-ultra | 0.099 |
 | Claude Haiku 4.5 | 0.10 |
@@ -73,6 +72,7 @@ Worst-case regret over three instances. Lower is better.
 | *Naive baseline* | *0.14* |
 | mimo-v2.5 | 0.15 |
 | GLM-5.1 | 0.25 |
+| gemma-4-26B-A4B (local) | 3.6e6 |
 | Qwen3.6-35B-A3B (local) | 3.8e12 |
 | *Oracle (true model)* | *none* |
 

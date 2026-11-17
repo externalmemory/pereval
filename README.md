@@ -51,21 +51,21 @@ Shading is rank within that column, green best through red worst; the *Oracle (t
 | Model | CCAR | CECL | Migration | Ballistic | Two-body | Three-body | Flyby | Quantile | Mean rank |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | *Oracle (true model)* | *0.031* | *0* | *0* | *none* | *0.005* | *0.039* | *0.31* | *none* | *floor* |
-| Claude Opus 5.5 | 0.077 | **0.0000028** | **0.118** | 4.9 | **0.065** | **0.0393** | **24** | 0.083 | **2.00** |
+| Claude Opus 5.5 | 0.077 | **0.0000028** | **0.118** | 4.9 | **0.065** | **0.0393** | **24** | 0.083 | **1.88** |
 | minimax-m3.1-flash | 0.080 | 0.0000065 | 0.629 | **4.3** | 0.069 | 164 | 361 | 0.070 | 3.00 |
 | Kimi K3 | 0.12 | 0.000015 | 0.301 | 14 | 0.094 | 3.3 | 50 | 0.077 | 3.88 |
-| deepseek-v4-flash-0731 | 0.30 | 0.000014 | 0.625 | 14 | 0.30 | 269 | 522 | **0.067** | 5.19 |
+| deepseek-v4-flash-0731 | 0.30 | 0.000014 | 0.625 | 14 | 0.30 | 269 | 522 | **0.067** | 5.31 |
 | GLM-5.1 | **0.055** | 0.000059 | 0.523 | 12 | 0.092 | 436 | 899 | 0.25 | 6.00 |
 | gpt-6-luna | 0.117 | 0.00057 | 1.094 | 12 | 0.222 | 408 | 45 | 0.128 | 6.50 |
-| mimo-v2.5 | 0.57 | 0.000029 | 0.556 | 12 | 0.19 | 2426 | 292 | 0.15 | 7.62 |
+| mimo-v2.5 | 0.57 | 0.000029 | 0.556 | 12 | 0.19 | 2426 | 292 | 0.15 | 7.50 |
 | nemotron-3-ultra | 0.27 | 0.000016 | 1.214 | 16 | 2429 | 817 | 1356 | 0.099 | 9.25 |
-| ling-3.0-flash | 0.193 | 0.0087 | 1.612 | 43 | 1556 | 3309 | 591 | 0.076 | 9.75 |
-| nemotron-3-super | 0.45 | 0.00056 | 1.400 | 60 | 106 | 370 | 918 | 0.12 | 10.25 |
-| Qwen3.6-35B-A3B (local) | 0.366 | 0.001945 | 1.267 | 14 | 1193 | 2925 | 916 | 3.8e12 | 10.81 |
-| *Naive baseline* | *0.85* | *0.071* | *0.765* | *22* | *17* | *332* | *20037* | *0.14* | *10.88* |
+| ling-3.0-flash | 0.193 | 0.0087 | 1.612 | 43 | 1556 | 3309 | 591 | 0.076 | 9.88 |
+| nemotron-3-super | 0.45 | 0.00056 | 1.400 | 60 | 106 | 370 | 918 | 0.12 | 10.12 |
+| *Naive baseline* | *0.85* | *0.071* | *0.765* | *22* | *17* | *332* | *20037* | *0.14* | *10.75* |
+| Qwen3.6-35B-A3B (local) | 0.366 | 0.001945 | 1.267 | 14 | 1193 | 2925 | 916 | 3.8e12 | 11.06 |
 | Nemotron-3.5-Lightning (local) | 0.828 | 0.00905 | 7.648 | 60 | 3431 | 1526 | 681 | 0.077 | 11.50 |
-| gemma-4-26B-A4B (local) | 0.44 | 0.001948 | 6.179 | 59 | 3377 | 2550 | 1327 | 0.078 | 11.62 |
-| Claude Haiku 4.5 | 0.37 | 0.0099 | 4.068 | 83 | 105 | 1850 | 1348 | 0.10 | 11.75 |
+| Claude Haiku 4.5 | 0.37 | 0.0099 | 4.068 | 83 | 105 | 1850 | 1348 | 0.10 | 11.62 |
+| gemma-4-26B-A4B (local) | 2.9 | 0.000571 | 6.746 | 58 | 1138 | 166 | 4353 | 3.6e6 | 11.75 |
 | *Degenerate answer* | *0.57* | *0.019* | *1.000* | *61* | *2861* | *3019* | *138* | *0.12* | *not ranked* |
 
 Also in [docs/scores.csv](docs/scores.csv), which carries the per-column ranks as well and makes a changed score a reviewable diff rather than a new image.
@@ -78,7 +78,7 @@ The table illustrates that the framework discriminates across a diverse set of a
 
 - **No column is saturated.** The shading shows a consistent gradient in every column, with near-frontier models ahead of local ones on most tasks.
 - **No column has a floor.** In all eight, at least one ranked row scores worse than the degenerate constant, so the trivial answer is nowhere a safe one.
-- **The columns are not redundant.** The participation ratio across the physics and statistics axes is 2.45, where eight columns measuring one underlying thing would collapse towards 1, and eight of the fifteen ranked rows move two or more places between those axes ([detail](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
+- **The columns are not redundant.** The participation ratio across the physics and statistics axes is 2.53, where eight columns measuring one underlying thing would collapse towards 1, and nine of the fifteen ranked rows move two or more places between those axes ([detail](docs/limitations.md#the-overall-rank-depends-on-the-task-mix)).
 
 Per-row provenance, measurement conventions, and the caveats behind individual cells are in [docs/models.md](docs/models.md). Per-task scoring definitions are in the task docs linked under [Tasks](#tasks). Local models ran on one 48 GB Mac Mini ([detail](docs/local-models.md)). Everything known to be wrong or unresolved is in [docs/limitations.md](docs/limitations.md).
 

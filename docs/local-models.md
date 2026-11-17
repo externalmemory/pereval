@@ -65,20 +65,22 @@ All three local rows now complete all eight columns on the archived convention: 
 
 | Task | Qwen3.6-35B-A3B | gemma-4-26B-A4B | Nemotron-3.5-Lightning | Column context for the Qwen cell |
 | --- | --- | --- | --- | --- |
-| CCAR | **0.366** | 0.44 | 0.828 | mid-field, between deepseek-v4-flash-0731 (0.30) and Claude Haiku 4.5 (0.37) |
-| CECL | **0.001945** | 0.001948 | 0.00905 | between nemotron-3-super (0.00056) and ling-3.0-flash (0.0087) |
-| Migration | **1.267** | 6.179 | 7.648 | worse than the degenerate answer (1.000) and than the naive baseline (0.765) |
-| Ballistic | **14** | 59 | 60 | between Kimi K3 (14) and nemotron-3-ultra (16) |
-| Two-body | **1193** | 3377 | 3431 | worse than the naive baseline (17), better than the degenerate answer (2861) |
-| Three-body | 2925 | 2550 | **1526** | inside the degenerate answer (3019) only just, and worse than the naive fit (332) |
-| Flyby | 916 | 1327 | **681** | worse than the degenerate answer (138) by nearly seven times |
-| Quantile | 3.8e12 | 0.078 | **0.077** | last in the column by thirteen orders of magnitude |
+| CCAR | **0.366** | 2.9 | 0.828 | mid-field, between deepseek-v4-flash-0731 (0.30) and Claude Haiku 4.5 (0.37) |
+| CECL | 0.001945 | **0.000571** | 0.00905 | between nemotron-3-super (0.00056) and ling-3.0-flash (0.0087) |
+| Migration | **1.267** | 6.746 | 7.648 | worse than the degenerate answer (1.000) and than the naive baseline (0.765) |
+| Ballistic | **14** | 58 | 60 | between Kimi K3 (14) and nemotron-3-ultra (16) |
+| Two-body | 1193 | **1138** | 3431 | worse than the naive baseline (17), better than the degenerate answer (2861) |
+| Three-body | 2925 | **166** | 1526 | inside the degenerate answer (3019) only just, and worse than the naive fit (332) |
+| Flyby | 916 | 4353 | **681** | worse than the degenerate answer (138) by nearly seven times |
+| Quantile | 3.8e12 | 3.6e6 | **0.077** | last in the column, six orders of magnitude past gemma |
 
-Qwen takes five of the eight cells and Nemotron the other three; gemma takes none. The mean ranks are 10.81, 11.50 and 11.62, against the naive baseline's 10.88, so one local row is now above the baseline and two below it. The split does not follow the statistical and physics axes: Qwen wins CCAR, CECL, migration, ballistic and two-body, and Nemotron wins three-body, the flyby and quantile.
+Qwen takes three of the eight cells, gemma three and Nemotron two. The mean ranks are 11.06, 11.75 and 11.50, against the naive baseline's 10.75, so **all three local rows are now below the baseline**. gemma took none of the eight when its row was a maximum over mixed decoder settings and takes three now that it is sampled throughout, which is a statement about what the old row's provenance was costing it rather than about the model changing. The split does not follow the statistical and physics axes: Qwen wins CCAR, migration and ballistic, gemma wins CECL, two-body and three-body, and Nemotron wins the flyby and quantile.
 
-**The medians tell a different story from the cells, and the gap between them is the point.** Qwen's per-column medians are 0.134, 0.00015, 0.482, 12.1, 2.34, 331, 330 and 0.075. Every one of those beats gemma's published cell, and most would place mid-table. The published row does not, because three of its twenty six instances blew up numerically and a maximum convention promotes exactly those three. This is not an argument against the convention, which is the whole premise of the suite, but it is the clearest demonstration in the repository of what a worst-case cell does and does not describe.
+**The best local result in the table is gemma's three-body 166, which places 4th of fifteen**, behind Claude Opus 5.5 (0.039), Kimi K3 (3.3) and minimax-m3.1-flash (164), and ahead of deepseek-v4-flash-0731 and the naive baseline. A 26B model at 4-bit on a Mac Mini lands 1% behind minimax-m3.1-flash, which is the second best row in the table overall. One cell is not a result, and the same row is last of fifteen overall, but it is the clearest evidence on this page that the ceiling for local hardware on these tasks is not set by parameter count.
 
-Pooling all nine same-convention migration instances per model, Qwen is genuinely the better model on that column (Mann-Whitney p = 0.020), and the difference is not visible in the cells: 6.179 against 5.453 on the two worst draws is no difference at all. Where the two models differ unambiguously is in finishing at all. Qwen submitted on 9 of 9 migration instances and on all 26 instances of the full row; gemma submitted on 5 of 9, scoring the degenerate 1.000 by default on the other four (Fisher exact p = 0.082, suggestive rather than significant at this sample size).
+**The medians tell a different story from the cells, and the gap between them is the point.** Qwen's per-column medians are 0.134, 0.00015, 0.482, 12.1, 2.34, 331, 330 and 0.075. Seven of the eight beat gemma's published cell, the exception being three-body, where Qwen's median of 331 is worse than gemma's cell of 166, and most would place mid-table. The published row does not, because three of its twenty six instances blew up numerically and a maximum convention promotes exactly those three. This is not an argument against the convention, which is the whole premise of the suite, but it is the clearest demonstration in the repository of what a worst-case cell does and does not describe.
+
+Pooling all nine same-convention migration instances per model, Qwen is genuinely the better model on that column (Mann-Whitney p = 0.020), and the difference is not visible in the cells: 6.746 against 5.453 on the two worst draws is no difference at all. Where the two models differ unambiguously is in finishing at all. Qwen submitted on 9 of 9 migration instances and on all 26 instances of the full row; gemma submitted on 5 of 9, scoring the degenerate 1.000 by default on the other four (Fisher exact p = 0.082, suggestive rather than significant at this sample size).
 
 **The instance count is not a detail.** CCAR was first run on three instances by mistake, giving a maximum of 0.154. On the full eight it is 0.313 for that earlier partial run, so the short run understated the cell by a factor of two and would have placed the model three ranks too high. A maximum over fewer draws is biased low, and on this column the bias was large enough to change the conclusion from "near-competitive" to "mid-field".
 
@@ -104,7 +106,7 @@ Three CCAR instances were run twice during the early greedy work, once in a thre
 | 2 | 0.1536092188756754 | 0.1536092188756754 | 31, 31 |
 | 0 | 0.08701395118909286 | 0.07517589998792479 | 59, 46 |
 
-That looked like a sharp contrast with the archived hosted rows, where re-running the same model on byte-identical instances moved cells by 7.4x ([detail](limitations.md#run-to-run-reproducibility)). It was not a property of local serving. It was greedy decoding, which `mlx_lm.server` defaults to and which nobody chose. Switching both rows to sampling removed most of it but not all, for a second reason given in the next section. The published local rows carry the same run-to-run noise as every hosted row, and on migration they carry more: two Qwen runs at near-identical samplers produced worst cells of 1.267 and 5.453, a factor of four apart.
+That looked like a sharp contrast with the archived hosted rows, where re-running the same model on byte-identical instances moved cells by 7.4x ([detail](limitations.md#run-to-run-reproducibility)). It was not a property of local serving. It was greedy decoding, which `mlx_lm.server` defaults to and which nobody chose. Switching the local rows to sampling removed most of it but not all, for a second reason given in the next section. The published local rows carry the same run-to-run noise as every hosted row, and on migration they carry more: two Qwen runs at near-identical samplers produced worst cells of 1.267 and 5.453, a factor of four apart.
 
 The one instance that diverged even under greedy decoding is the one whose first run hit the token limit, at 59 calls against 46. The divergence originates in the sandbox rather than the model: the agent writes and runs its own Python, and anything time-dependent or unseeded in that code changes the tool output, which changes the next prompt and forks the trajectory. Determinism in the server never bought determinism in the loop.
 
@@ -128,15 +130,21 @@ One link in that chain is read from the source rather than measured, namely that
 
 The consequence for every count on this page is that **repeats of one instance are not independent draws unless the server generated something else first**, and any tally of draws has to dedupe by transcript hash rather than by run. One of the five archived submitted draws of gemma's migration instance 0 is such a duplicate, which is why [the gemma migration spread](#the-gemma-rows-individual-cells) is quoted over four draws rather than five.
 
-## The Decoder Settings, And Where They Differ Between the Two Rows
+## The Decoder Settings, And Where They Differ Between the Rows
 
-`mlx_lm.server` defaults `--temp` to **0.0** and Inspect sends no temperature unless one is configured, so the early local work here decoded greedily while every hosted row ran at its provider's default. That asymmetry sat in the setup unnoticed, and the two rows resolved it differently.
+`mlx_lm.server` defaults `--temp` to **0.0** and Inspect sends no temperature unless one is configured, so the early local work here decoded greedily while every hosted row ran at its provider's default. That asymmetry sat in the setup unnoticed, and the three rows resolved it differently.
 
 Verified rather than assumed: four identical prompts at `temperature 1.0, top_p 0.95, top_k 64` returned four different sentences, and the same prompt at the server's default returned the same sentence twice. The request body's temperature is honoured, and the default really is greedy.
 
 **The Qwen row is one sampler throughout**, Qwen3.6's own recommended preset: `temperature 1.0`, `top_p 0.95`, `presence_penalty 1.5`, `top_k 20`, `min_p 0.0`. Inspect forwards temperature, top_p and presence_penalty natively; `top_k` and `min_p` are not forwarded by the OpenAI-compatible provider and must ride in `extra_body` or they are dropped silently.
 
-**The gemma row is a maximum over two different decoder settings, which no other row in the table is.** Ten of the twenty one successful runs behind it were greedy and eleven were sampled at `temperature 1.0`, `top_p 0.95`, `top_k 64`, and the cells are maxima across both. Three cells are set by a greedy run (CCAR, quantile and two-body) and five by a sampled one (ballistic, CECL, flyby, migration and three-body). It is recorded rather than hidden because restricting the cells to the sampled runs alone moves only three of them: CCAR to 0.42, quantile to 0.074 and two-body to 3177. This is a provenance defect in that row rather than a property of local serving.
+**The gemma row was a maximum over two different decoder settings, and is not any more.** It is now sampled throughout at `temperature 1.0`, `top_p 0.95`, `top_k 64` and nothing else, one draw per instance, taken from the most recent complete sampled run of each task, with CECL assembled from three single-sample runs. The row it replaced mixed ten greedy runs with eleven sampled ones and took maxima across both, which no other row in the table did.
+
+Seven of the eight cells moved: CCAR 0.44 to 2.9, CECL 0.001948 to 0.000571, migration 6.179 to 6.746, two-body 3377 to 1138, three-body 2550 to 166, the flyby 1327 to 4353 and quantile 0.078 to 3.6e6. Ballistic moved from 59.3197 to 58.3283, which the table shows as 59 and 58.
+
+**An earlier version of this page predicted that the restriction would move only three cells**, to CCAR 0.42, quantile 0.074 and two-body 3177. That was right about the sampled runs in hand when it was written, which were all from late October, and a second sampled pass in November changed every part of the answer: the restriction moves seven cells, and the quantile prediction was wrong by seven orders of magnitude. A forecast of what a convention change will cost is worth no more than the draws available when it is made.
+
+**The replacement is not an improvement, it is a different model.** Three-body improves 15x and two-body 3x while the flyby gets 3.3x worse and quantile goes from 0.078 to 3.6e6, and the mean rank moves from 11.62 to 11.75, which is last of the fifteen ranked rows.
 
 ### Sampling and the Presence Penalty
 
@@ -156,15 +164,27 @@ The penalty is kept because it wins on both median and worst and removes the las
 
 ### The gemma Row's Individual Cells
 
-`mlx-community/gemma-4-26B-A4B-it-qat-4bit` at revision `0e3cbab38ce568cf6e23543010d08d03b731910c`, under `mlx_lm.server` 0.32.2 with `--prefill-step-size 256 --prompt-cache-size 1`.
+`mlx-community/gemma-4-26B-A4B-it-qat-4bit` at revision `0e3cbab38ce568cf6e23543010d08d03b731910c`, under `mlx_lm.server` 0.32.2 with `--prompt-cache-size 1`. Seven columns were served at `--prefill-step-size 256`; two of the three CECL draws were served at 64, for the reason given under [The CECL Column Cost Sixty-Nine Hours of Crashes](#the-cecl-column-cost-sixty-nine-hours-of-crashes-and-then-twenty-five-minutes).
 
-**Its migration 6.179 is the worst cell in the table, and it is the worst of four draws on one instance spanning 20x.** The cell is set by instance 0 of the run of 2026-10-28, which submitted (`completion` 1.0) rather than running out of room, and it is 6.2x the degenerate answer. That byte-identical instance has been re-run six times since. Counting the original and discarding one bit-identical repeat as not a draw ([why](#identical-transcripts-across-runs-are-a-server-artifact)), its independent submitted draws are **0.315, 0.643, 0.976 and 6.179**, a spread of 19.6x, and three of the four are better than the degenerate 1.000 rather than worse. Two of the six re-runs produced no submission at all, one by erroring out and one by looping to the message limit without calling `submit`.
+**Its CCAR 2.917 is now worse than the degenerate answer**, which the cell it replaced was not. Instance 7 predicted all nine points and put intervals of mean width 0.714 around a default-rate path it missed by 0.255, for coverage of 0.095, against an oracle that scores 0.085. A mean width of 0.71 on a quantity bounded by 1 is not a narrow-interval failure; it is a wide interval in the wrong place, which is the one failure mode the Winkler score punishes from both sides at once.
 
-Neither truncation nor a transport defect explains the cell. A separate serving path was tried to rule out the latter: `mlx_lm.server` silently discards a tool call whose arguments its `gemma4` parser cannot parse, 9 of 100 attempts in the archived runs, and llama.cpp's grammar-constrained parser removes that defect completely (853 model calls, zero discarded). It did not improve the task. What does account for the cell is run-to-run variance, and an earlier version of this page argued the opposite on the strength of a single draw. The cell stands, because the convention reports the worst draw and that is what it is, but it describes the tail of this model's behaviour on one instance rather than its standing on the column. Read it against the 0.315 draw, which would place third of fifteen in that column, between Kimi K3 (0.301) and GLM-5.1 (0.523).
+**Its migration 6.746 is the second worst cell in the suite**, behind the local Nemotron row's 7.648, and it fails six of the sixteen checks including `matrices_readable` ([which six, and what family they are](tasks/migration.md#results)). The cell is set by instance 0 of the run of 2026-11-14, which submitted (`completion` 1.0) rather than running out of room.
 
-**Its flyby 1327 is a coverage failure**, set by instance 2 at coverage 0.00055, a near-zero-width interval that misses.
+That byte-identical instance has now been run seven times under sampling. Discarding one bit-identical repeat as not a draw ([why](#identical-transcripts-across-runs-are-a-server-artifact)), its independent submitted draws are **0.315, 0.643, 0.976, 6.179 and 6.746**, a spread of 21.4x, and three of the five are better than the degenerate 1.000 rather than worse. Two further runs produced no submission at all. The conclusion the old cell supported survives the new one unchanged: the cell describes the tail of this model's behaviour on one instance rather than its standing on the column, and the 0.315 draw would place third of fifteen, between Kimi K3 (0.301) and GLM-5.1 (0.523).
 
-**Two cells carry a recorded exception to the rule that a cell is reported only if none of its runs failed outside the agent's control.** The CECL and migration columns each have sibling runs that ended with the server returning `{'error': 'generation thread died'}`, a crash outside the agent's control, which would make those two cells unreportable as written. They are kept with the failure recorded, because the successful runs behind them are complete and the crash is a property of the server rather than of the attempt. Both columns' cells come only from runs that completed.
+Neither truncation nor a transport defect explains it. A separate serving path was tried to rule out the latter: `mlx_lm.server` silently discards a tool call whose arguments its `gemma4` parser cannot parse, 9 of 100 attempts in the archived runs, and llama.cpp's grammar-constrained parser removes that defect completely (853 model calls, zero discarded). It did not improve the task.
+
+**Its ballistic 58.33 is the score of a straight line**, which is the cleanest single explanation of a published cell on this page. The submitted code fits `y = a + b*x` per category, while the naive baseline fits a per-category parabola and scores 21.77, and the rows at the top of the column fit a power law with a free exponent between 2.0 and 3.3. The cell is not a model failing to compute; it is a model choosing the bottom rung of the functional-form ladder, and the column pricing that choice at 2.7x the baseline. The same value, by the same recipe, is what the local Nemotron row submitted on that instance.
+
+**Its flyby 4353 is a total coverage failure**, set by instance 1 at coverage **0.000**, with intervals of mean width 17.4 placed around a trajectory missed by 117.2. The cell it replaced failed the same way by the opposite route, coverage 0.00055 at a near-zero width. Narrow and wrong, or wide and wrong, both score as not knowing where the object is.
+
+**Its quantile 3.6e6 is a single blown-up draw, and it is the second one in this table.** Seed 3 reports pinball regret 3,588,379 against a degenerate 0.1149, with the damage escalating by tail level: 288 at p90, 8,439 at p95 and 3,579,653 at p99. The other two sampled seeds scored 0.0765 and 0.2558. So both local MoE rows now carry a quantile cell set by one numerically divergent draw out of three, which is the same failure mode twice in two unrelated models and so a property of the task's tail estimation rather than of either model.
+
+The consequence is not the same for both, though, and that is worth separating. Qwen's median of 0.075 would place **3rd of fifteen** in that column, so for Qwen the blowup is the entire story of the cell. gemma's median of 0.2558 would place **14th**, behind GLM-5.1 and still worse than the naive baseline's 0.14, so for gemma the blowup costs one rank and the underlying tail estimation is weak on its own.
+
+**Its three-body 166 is by a wide margin the best-calibrated cell in this row**, at coverage 0.900 against a nominal 0.90, mean width 125.2 and a point error of 33.4, where the row's other interval-scored cells cover 0.095, 0.000 and 0.300. It is quoted here because the rest of this page is a catalogue of coverage collapse, and one cell in one column got it exactly right.
+
+**One column now carries a recorded exception to the rule that a cell is reported only if none of its runs failed outside the agent's control.** CECL's three draws come from three logs, and in one of them the other two samples ended with the server returning `{'error': 'generation thread died'}`. The draw that contributes to the cell completed and scored cleanly, so the cell is kept with the failure recorded. The migration column carried the same exception under the old row and no longer does: its cell now comes from a run in which all three samples completed without error.
 
 ### The Qwen Row's Individual Cells
 
@@ -173,6 +193,22 @@ Neither truncation nor a transport defect explains the cell. A separate serving 
 **Nothing in this row was context-limited.** The model's `max_position_embeddings` is 262,144 and the highest peak input anywhere in the row was 124,380 tokens, on three-body instance 2. Quantile, which the hosted rows reach at roughly 264k and which was expected to be the one unreachable column, peaked at 46k to 58k: that figure is a property of how hosted models approach the task, not an intrinsic requirement of it.
 
 **Its quantile 3.8e12 is a single diverged optimizer**, described under failures above. It is published as measured, on the convention this suite reports, and it is the cell most worth reading alongside that column's median of 0.075.
+
+### The Nemotron Row's Individual Cells
+
+`mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` at revision `55ac8c89`, 30B total and 3B active. It is the only row in the table measured at its own `generation_config.json` and nothing else, `temperature 1.0` and `top_p 0.95` with no `top_k`, `min_p` or presence penalty, which is the local equivalent of running a hosted row at its provider's default.
+
+**All eight of its columns come from logs with no sample error**, which neither other local row can claim.
+
+**Its migration 7.648 is the worst cell in the suite**, and it is the most expensive single sample in the archive. Instance 0 made 246 model calls, peaked at 136,305 tokens of context and submitted; the three-sample run behind it moved 31.4M input tokens. Its two sibling instances scored 0.420 and 0.883, both better than the degenerate answer, so the column's worst cell sits beside two draws that are unremarkable, on one model, in one run.
+
+**Its ballistic instance-0 draw matches gemma's published ballistic cell to fifteen significant digits**, 58.32831841879476 from both, and the submitted code says why without any need for a coincidence. Both fitted a per-category ordinary least-squares **straight line** and built the textbook t-based 95% prediction interval around it, `sigma * sqrt(1 + 1/n + (x - xbar)**2 / Sxx)` at `stats.t.ppf(0.975, n - 2)`. gemma reached the coefficients through `np.linalg.lstsq` on `column_stack((ones, x))` and Nemotron through the closed-form `b = Sxy / Sxx`, which is one estimator by two routes: the regrets agree to every digit the record carries and the mean widths differ by a single unit in the last place, 0.6067844736556112 against 0.6067844736556114. That last-place difference is the evidence that these are independent implementations rather than a copied artefact.
+
+A deterministic estimator on a fixed dataset returns the same answer to whoever picks it, so a shared value here is the expected result and not a defect. What the shared values do document is the **resolution** of the column: ballistic has a discrete ladder of textbook recipes, and any two rows on the same rung are indistinguishable by construction. The archive has at least five such values on instance 0 alone, and they are different recipes rather than the same one: the pair at 12.420615385817205, deepseek-v4-flash and hy3, got there through per-category `np.polyfit(x, y, 2)` with a residual-standard-deviation interval, a rung above the straight line ([the same point, made on a different pair](limitations.md#mean-rank-is-computed-from-the-cells)).
+
+**Its quantile 0.0765 is the best local cell in that column by six orders of magnitude**, and the only local quantile cell not set by a divergent optimizer. Its flyby 681 is likewise the best of the three, though still five times the degenerate answer.
+
+**Its serving numbers are missing, and that is a lesson rather than an oversight.** The weights were reclaimed before anyone thought to probe decode speed, prefill speed or the context ceiling, so filling those cells now means re-downloading 17.8 GB and restarting the server on a machine that is running another row. The 136,305-token figure quoted in the candidates table is the largest context the agent loop actually reached, which is a floor on the ceiling and not a measurement of it.
 
 ## The Context Ceiling Was a Server Default
 
@@ -276,9 +312,37 @@ An earlier probe suggested prefix reuse did **not** work, and that probe was wro
 
 **Reasoning suppression.** `chat_template_kwargs: {"enable_thinking": false}` works through Inspect's `GenerateConfig(extra_body=...)`. `reasoning_effort` is silently ignored. Worth knowing because the very first call returned `content: null` with `finish_reason: length`, having spent the entire token budget inside the reasoning block.
 
+## The CECL Column Cost Sixty-Nine Hours of Crashes and Then Twenty-Five Minutes
+
+Completing the sampled gemma row needed one clean draw on each of CECL's three instances. Instance 0 landed on 2026-11-13. Instances 1 and 2 took four more days, five crashed attempts and 69.2 hours of machine time, and then both landed inside twenty-five minutes. One of the five crashes was on instance 0, in a sweep that took the other two down with it at zero model calls.
+
+| Attempt | Instance | Calls | Peak context | Duration | Outcome |
+| --- | --- | --- | --- | --- | --- |
+| 11-13 05:02 | 1 | 171 | 206,188 | 15h01m | crash |
+| 11-15 10:10 | 0 | 114 | 192,481 | 8h42m | crash |
+| 11-15 19:15 | 1 | 158 | 212,734 | 18h59m | crash |
+| 11-16 14:34 | 2 | 124 | 199,500 | 12h35m | crash |
+| 11-17 03:15 | 1 | 130 | 184,205 | 13h53m | crash |
+| 11-17 18:27 | 1 | **5** | **17,700** | **9m** | clean |
+| 11-17 18:37 | 2 | **11** | **20,770** | **16m** | clean |
+
+Three further samples recorded zero model calls, because they were siblings in a run whose server had already died and failed fast through their retries. The crash signature is always the same: the server returns `{'error': 'generation thread died'}` and the worker is gone.
+
+**These eleven samples reproduce, on a second task and with a much larger sample, what [The Probe Ceiling Overstates What an Agent Loop Reaches](#the-probe-ceiling-overstates-what-an-agent-loop-reaches) already concluded from three migration runs: there is no single survival ceiling.** Pooling every gemma CECL sample ever run, no sample peaking below 148,000 tokens has ever crashed, 0 of 6, while 8 of the 11 that went above it did (Fisher exact p = 0.009), so context is a strong predictor. It is not a threshold. One instance-1 run reached **215,446 tokens and finished**, higher than any of the five crashes above, while another died at 184,205. Across both tasks the archive now holds ten deaths spanning 147,973 to 231,531 tokens and four survivals spanning 150,763 to 216,198, and the highest survival sits above eight of the ten deaths. No figure here can be quoted as a safe maximum, the 298,658 probe included.
+
+**`--kv-bits 8` is not available for this model at all**, which is the one mitigation that looked obvious. See [KV Quantization Does Not Help](#kv-quantization-does-not-help): the flag raises `NotImplementedError` before the server will serve a request.
+
+**The two clean draws did not clear the wall, they went around it.** They took 5 and 11 model calls where the four sampled attempts before them on the same byte-identical instances took 124 to 171, and they peaked at a tenth of the crash band. The deployability problem is untouched: a long-path draw on this task on this hardware still cannot finish, and the cell exists because two draws happened to be short.
+
+**The cell's value is not an artifact of that, though.** Two of the crashed instance-1 attempts had already written a submission to disk when the server died, and `score_on_error` salvaged them at 0.002001 and 0.000535. Those are inadmissible as clean draws, but they bracket the 0.000571 that the short path produced, so the short trajectory did not win the cell by answering an easier question. A greedy draw from 2026-10-27 points the same way: it also finished short, 25 calls at a 19,313-token peak, and scored 0.000574, which is 0.6% from the sampled short draw's value. Both serving configurations are recorded rather than reconciled: instance 0 was served at `--prefill-step-size 256` and the two short draws at 64, and since neither short draw came near the ceiling, the smaller step size earns no credit for them.
+
 ## KV Quantization Does Not Help
 
-`--kv-bits 8` is the obvious lever for the memory ceiling, and it costs more than it buys. Greedy decoding on this server is bit-reproducible, so repeated calls in one arm give an identical hash and the noise floor is exactly zero. That makes the A/B clean.
+`--kv-bits 8` is the obvious lever for the memory ceiling. On gemma it cannot be used at all, and on Qwen, where it can, it costs more than it buys.
+
+**On `gemma-4-26B-A4B` the flag is refused by the architecture.** The server raises `NotImplementedError: RotatingKVCache Quantization NYI`. Of that checkpoint's 30 layers, 25 are `sliding_attention` with a 1024-token window and get a `RotatingKVCache`, whose `to_quantized` raises unconditionally in `mlx_lm` 0.32.2, so no amount of flag tuning reaches a working server. The irony is in the arithmetic: with 8 KV heads at head_dim 256, those 25 rotating layers are capped at 1024 tokens each and hold 0.21 GB in total, while the 5 `full_attention` layers that grow without bound hold 8.7 GB at a 212,734-token context. The flag is blocked by the layers that were never the problem.
+
+The A/B below was run on Qwen, which has no sliding-window layers and accepts the flag. Greedy decoding on this server is bit-reproducible, so repeated calls in one arm give an identical hash and the noise floor is exactly zero. That makes the A/B clean.
 
 | Prompt tokens | Same arm reproducible | fp16 vs kv8 char similarity | fp16 repeat time | kv8 repeat time |
 | --- | --- | --- | --- | --- |
@@ -351,7 +415,7 @@ The no-submit loop makes this worse rather than better, because thrashing turns 
 | Stop reasons | 733 `stop`, 12 `tool_calls`, 4 `max_tokens` |
 | Output tokens | median 1,692 per call, 630,313 in total |
 
-**It is not truncation and it is not the server.** Four of 248 calls hit `max_tokens`; the rest stopped normally at a median of 1,692 tokens. Every POST returned `HTTP/1.0 200 OK`. The model produces fluent, normal-length prose, `basic_agent` re-prompts it because there is no tool call to execute, and the cycle repeats at two to twenty-six minutes a turn until the message limit ends the sample. This is the same family as the repetition loop under [The Decoder Settings](#the-decoder-settings-and-where-they-differ-between-the-two-rows), and greedy decoding is the obvious suspect, but that is inferred rather than tested. Low confidence on the cause, high confidence on the shape.
+**It is not truncation and it is not the server.** Four of 248 calls hit `max_tokens`; the rest stopped normally at a median of 1,692 tokens. Every POST returned `HTTP/1.0 200 OK`. The model produces fluent, normal-length prose, `basic_agent` re-prompts it because there is no tool call to execute, and the cycle repeats at two to twenty-six minutes a turn until the message limit ends the sample. This is the same family as the repetition loop under [The Decoder Settings](#the-decoder-settings-and-where-they-differ-between-the-rows), and greedy decoding is the obvious suspect, but that is inferred rather than tested. Low confidence on the cause, high confidence on the shape.
 
 **It is intermittent, which is why it went unnoticed.** Per-sample message counts, same tasks, same instance counts:
 
@@ -381,11 +445,11 @@ Two Gemma runs were killed on the strength of the `.eval` mtime, at 13 and 17 ho
 
 ## Remaining Levers
 
-The gap is no longer context, and the fix was never a better model. One server flag moved the measured ceiling from 89,601 tokens to past 298,658, which settles six of the eight tasks outright, so for those the levers that remain are all about the scores. CCAR and migration are not settled: they reached 216,198 and 231,531 tokens, 72% and 78% of a ceiling that is itself optimistic, and migration crashed the server at that figure and again at 199,374.
+The gap is no longer context, and the fix was never a better model. One server flag moved the measured ceiling from 89,601 tokens to past 298,658, which settles six of the eight tasks outright, so for those the levers that remain are all about the scores. CCAR, migration and CECL are not settled. CCAR and migration reached 216,198 and 231,531 tokens, 72% and 78% of a ceiling that is itself optimistic, and migration crashed the server at that figure and again at 199,374. CECL is the worst of the three and the best measured: eight of its samples have crashed the server between 147,973 and 212,734 tokens, and the two draws that completed the column did so by taking 5 and 11 model calls rather than by surviving a long path ([detail](#the-cecl-column-cost-sixty-nine-hours-of-crashes-and-then-twenty-five-minutes)).
 
-**Sampling is the first lever, and it was set wrong by default.** See [The Decoder Settings](#the-decoder-settings-and-where-they-differ-between-the-two-rows). Greedy decoding is what put the migration agent into a repetition loop, and it is also the reason the local rows are not strictly comparable with the hosted ones.
+**Sampling is the first lever, and it was set wrong by default.** See [The Decoder Settings](#the-decoder-settings-and-where-they-differ-between-the-rows). Greedy decoding is what put the migration agent into a repetition loop, and it is also the reason the local rows are not strictly comparable with the hosted ones.
 
-**Calibration is the second, and nothing here says it is cheap.** Coverage is the component that collapses, on every task where an interval is scored, on all three local models tested. The point estimates stay in a credible range while the intervals are narrow and misplaced, which is a prompting and scoring-feedback problem as much as a model one. Nothing in the serving setup touches it.
+**Calibration is the second, and nothing here says it is cheap.** Coverage is the component that collapses, on every task where an interval is scored, on all three local models tested, the one exception being gemma's three-body cell at coverage 0.900. The point estimates stay in a credible range while the intervals are narrow and misplaced, which is a prompting and scoring-feedback problem as much as a model one. Nothing in the serving setup touches it.
 
 **More memory is no longer on the list.** The ceiling turned out to be transient prefill workspace rather than a persistent allocation, so buying RAM buys a smaller multiple of what a flag already gave for free. Moderate confidence: the mechanism is inferred from a 16.8 GiB residual and from the response to `--prefill-step-size`, not from an allocator trace.
 
@@ -410,6 +474,6 @@ Still queued:
 
 - Qwen3.8-27B
 
-The thing to watch is interval coverage rather than the point estimates, because that is the component that has failed on both models tested and it is the component a model risk function will not waive.
+The thing to watch is interval coverage rather than the point estimates, because that is the component that has failed on all three models tested and it is the component a model risk function will not waive.
 
 The protocol for each: `--prefill-step-size 256 --prompt-cache-size 1` on the server, a real completion as the health check rather than `/v1/models`, and on the Inspect side `-T n_instances=3 -T seed=1 --max-tokens 16384 --max-connections 1 --token-limit 2500000 --time-limit 86400`, eight instances for CCAR, three single-instance runs at seeds 1, 2 and 3 for quantile, and a transcript saved to `runs/` per sample. Sampling goes in a `--generate-config` file, because Inspect's OpenAI provider forwards `temperature` and `top_p` but silently drops `top_k`, which has to ride in `extra_body` instead. Measure the ceiling first and report it alongside the cells, because a ceiling reached mid-suite costs a human restart and a ceiling measured first costs 15 minutes. Watch progress on `~/.local/share/inspect_ai/traces/trace-<pid>.log` rather than on the `.eval` file, for the reason given under [A Working Run and a Dead One Look Identical](#a-working-run-and-a-dead-one-look-identical).

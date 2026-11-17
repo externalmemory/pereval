@@ -8,7 +8,7 @@ Task-level scoring definitions live with the tasks: [CECL](tasks/cecl.md), [migr
 
 Each cell is the **worst-case (maximum) regret** over at least three runs, CCAR over eight instances. Lower is better everywhere.
 
-A cell is reported only if none of its runs failed for reasons outside the agent's control. Two columns of the gemma row are a recorded exception to that rule, documented in [local-models.md](local-models.md).
+A cell is reported only if none of its runs failed for reasons outside the agent's control. One column of the gemma row is a recorded exception to that rule, documented in [local-models.md](local-models.md).
 
 **Eighteen of the 112 model cells have no `.eval` log behind them.** `logs/` holds no successful log at all for these model and task pairs:
 
