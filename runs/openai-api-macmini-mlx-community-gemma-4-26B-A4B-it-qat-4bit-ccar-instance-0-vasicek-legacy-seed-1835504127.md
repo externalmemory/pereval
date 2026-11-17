@@ -1,7 +1,8 @@
 # openai-api/macmini/mlx-community/gemma-4-26B-A4B-it-qat-4bit — ccar (id=instance-0-vasicek-legacy-seed-1835504127)
 
-- 9/9 points predicted; Winkler regret 0.114 (agent 0.178 vs oracle 0.065, degenerate 0.494); MAE 0.015; coverage 0.719; mean width 0.044.
-- messages 32 | limit None | seed None
+- 9/9 points predicted; Winkler regret 0.099 (agent 0.163 vs oracle 0.065, degenerate 0.494); MAE 0.019; coverage 0.743; mean width 0.046.
+- messages 22 | limit None | seed None
+- log 2026-11-15T08-52-10-00-00_ccar_CDx9PcCUpHm5kXYA5ckCng.eval
 
 ---
 
@@ -50,41 +51,62 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 **[reasoning]**
 
 > 
-> *   `data/train.csv`: Quarterly history with 9 macro series (gdp, unemployment, hpi, bbb_spread, sp500, djia, nasdaq, vix, cpi) and `default_rate`.
->     *   `data/scenario.csv`: Same 9 macro series for 9 future quarters.
->     *   Goal: Predict `default_rate` for each quarter in `data/scenario.csv` with a 95% prediction interval.
->     *   Output: `predictions.csv` with columns `quarter,y_pred,y_lower,y_upper`.
+> *   Goal: Predict the quarterly annualized default rate for nine future quarters using a stress scenario.
+>     *   Input:
+>         *   `data/train.csv`: Quarterly historical macro data (9 series: gdp, unemployment, hpi, bbb_spread, sp500, djia, nasdaq, vix, cpi) and `default_rate`.
+>         *   `data/scenario.csv`: The same 9 macro series for 9 future quarters.
+>     *   Output:
+>         *   `predictions.csv`: `quarter`, `y_pred`, `y_lower`, `y_upper` (9 rows).
+>     *   Constraints:
+>         *   Handle missing values in macro data.
+>         *   Scenario data might be outside the training range.
+>         *   Prediction interval should reflect forecast uncertainty.
+>         *   Output must match the specified format exactly.
 > 
->     *   Missing values in `train.csv`: Handle appropriately (interpolation, forward fill, etc.).
->     *   Model Selection: Linear regression, possibly with transformations (log, first differences, lags). Since it's a stress scenario (out-of-distribution), I need a model that generalizes reasonably.
->     *   Prediction Interval: Needs to reflect uncertainty. Could use standard error from a regression model.
+>     *   The relationship between macro variables and default rates is usually non-linear (e.g., unemployment vs. defaults).
+>     *   The scenario may push drivers beyond the historical range.
+>     *   Model options:
+>         *   Linear Regression (simple, but might struggle with extrapolation and non-linearity).
+>         *   Regularized Regression (Lasso/Ridge) (good for selecting important features).
+>         *   Tree-based models (Random Forest/XGBoost) (good for non-linearity, but terrible at extrapolation).
+>         *   Generalized Additive Models (GAMs) or non-linear transformations (log/diffs) followed by linear regression.
+>     *   Since we need prediction intervals and have a limited number of samples (it's quarterly history, so probably not *that* many rows), a robust approach would be:
+>         1.  Preprocess: Log transformations or first-differences for non-stationary series (like GDP, CPI, SP500, DJIA, NASDAQ, HPI). Unemployment and VIX might be fine as raw or diffed. BBB spread is often used as a spread.
+>         2.  Model: A Ridge regression or even a simple linear regression after transforming variables into stationarity/meaningful changes.
+>         3.  Uncertainty: Bootstrapping or using the standard error of the prediction. Given the instruction "The scenario pushes the drivers beyond the range seen in training", a linear model on transformed data is often more stable than a tree-based model when extrapolating.
 > 
->     *   Load `train.csv` and `scenario.csv`.
->     *   Handle missing values in `train.csv`.
->     *   Preprocess:
->         *   Check for stationarity (macro variables often aren't).
->         *   Consider log transformations for variables like `sp500`, `djia`, `nasdaq`, `hpi`, `gdp`, `cpi`.
->         *   Consider first differences for non-stationary variables.
->     *   Fit model:
->         *   Option 1: OLS (Ordinary Least Squares) on the raw levels or log levels.
->         *   Option 2: OLS on first differences (though this predicts the change in default rate).
->         *   Option 3: ElasticNet or Ridge to handle potentially collinear macro variables.
->     *   Calculate Prediction Interval:
->         *   $y_{pred} = X \beta$
->         *   $Var(y_{pred} + \epsilon) = \sigma^2 (1 + X(X^T X)^{-1} X^T)$
->         *   95% interval $\approx y_{pred} \pm t_{\text{crit}} \cdot \text{std\_error}$
->     *   Save `predictions.csv`.
+>     *   Step 1: Load data.
+>     *   Step 2: Handle missing values (interpolation or forward fill).
+>     *   Step 3: Feature engineering.
+>         *   Macro variables: GDP, CPI, SP500, DJIA, NASDAQ, HPI are typically non-stationary. Using log-returns or $\Delta \log(X)$ is standard.
+>         *   Unemployment, VIX, BBB spread might be stationary or close to it.
+>         *   Let's try a simpler approach first: Differencing non-stationary variables or using levels if the relationship is direct.
+>     *   Step 4: Fit a model (e.g., Ridge Regression).
+>     *   Step 5: Calculate prediction intervals.
+>         *   Using $\hat{y} \pm z_{0.975} \cdot \text{SE}_{\text{pred}}$, where $\text{SE}_{\text{pred}}$ is the standard error of the prediction.
+>         *   $\text{SE}_{\text{pred}}^2 = \sigma^2 (1 + x_0^T (X^T X)^{-1} x_0)$, where $x_0$ is the new data point.
 > 
->     *   Macro variables are often highly correlated (e.g., sp500, djia, nasdaq).
->     *   Macro variables like GDP or CPI are usually non-stationary.
->     *   `default_rate` is likely non-negative.
->     *   Since it's a stress scenario, simple linear regression on log-transformed/differences might be better.
->     *   Wait, if I use first differences, the model predicts $\Delta y_{t}$. The forecast for $y_{t+1}$ would be $y_t + \text{pred\_}\Delta y_{t+1}$.
->     *   Actually, let's try a simple approach first: Log-transform the macro variables and/or calculate percentage changes, and then fit a model to the `default_rate`.
+>     *   Wait, let's look at the columns: `gdp`, `unemployment`, `hpi`, `bbb_spread`, `sp500`, `djia`, `nasdaq`, `vix`, `cpi`.
+>     *   Let's check the data distribution and stationarity in a script.
 > 
->     Let's inspect the data first.
+>     *   If I use log-diffs for the price levels and raw values for unemployment/vix/spread, I need to be careful about the unit of the target.
+>     *   Target `default_rate` is a fraction.
+>     *   I'll perform a quick check of the data to see if anything stands out.
 > 
+>     *   Load `train.csv`.
+>     *   Fill NaNs (using interpolation or `ffill`/`bfill`).
+>     *   Check for stationarity/standardize/transform.
+>     *   Train a Ridge regression.
+>     *   Predict on `scenario.csv`.
+>     *   Calculate prediction intervals.
+>     *   Write to `predictions.csv`.
 > 
+>     *   A common way to estimate the prediction interval for linear regression:
+>         $\hat{y} = X\beta$
+>         $\text{Var}(\hat{y}) = \sigma^2 (1 + x_0^T (X^T X)^{-1} x_0)$
+>         where $\sigma^2$ is the residual variance estimate $RSS/(n-k)$.
+> 
+>     Let's start by inspecting the data.
 
 
 
@@ -93,23 +115,24 @@ Project the default rate with a 95% interval for every quarter in data/scenario.
 ```
 import pandas as pd
 
+# Load the data to inspect it
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-print("Train head:")
+print("Train Head:")
 print(train.head())
-print("\nTrain info:")
+print("\nTrain Info:")
 print(train.info())
-print("\nScenario head:")
+print("\nScenario Head:")
 print(scenario.head())
-print("\nScenario info:")
+print("\nScenario Info:")
 print(scenario.info())
 
 ```
 
 ## [3] tool
 
-Train head:
+Train Head:
    quarter       gdp  unemployment  hpi  ...    nasdaq  vix       cpi  default_rate
 0        1  136.7405        4.2750  NaN  ...  162.1009  NaN  135.1871      0.017963
 1        2  136.0426        4.6353  NaN  ...  171.5735  NaN  134.7073      0.009865
@@ -119,7 +142,7 @@ Train head:
 
 [5 rows x 11 columns]
 
-Train info:
+Train Info:
 <class 'pandas.DataFrame'>
 RangeIndex: 80 entries, 0 to 79
 Data columns (total 11 columns):
@@ -140,7 +163,7 @@ dtypes: float64(10), int64(1)
 memory usage: 7.0 KB
 None
 
-Scenario head:
+Scenario Head:
    quarter       gdp  unemployment  ...   nasdaq      vix       cpi
 0       81  182.4319        7.0956  ...  45.5345  22.9733  210.3243
 1       82  180.1501        7.2409  ...  41.8315  23.9884  209.0718
@@ -150,7 +173,7 @@ Scenario head:
 
 [5 rows x 10 columns]
 
-Scenario info:
+Scenario Info:
 <class 'pandas.DataFrame'>
 RangeIndex: 9 entries, 0 to 8
 Data columns (total 10 columns):
@@ -176,35 +199,166 @@ None
 **[reasoning]**
 
 > 
-> The variables have many missing values in the training set.
-> - `hpi`: missing for first 17 rows (0-16).
-> - `bbb_spread`: missing for some rows.
-> - `sp500`, `djia`: missing for first 31 rows (0-30).
-> - `vix`: missing for some rows.
+> *   The data has missing values.
+>     *   `hpi` starts at index 3.
+>     *   `bbb_spread` starts at index 7.
+>     *   `sp500`, `djia` start at index 31 (approx, given 49/80).
+>     *   `vix` starts at index 15 (approx, given 65/80).
+>     *   Target `default_rate` is a fraction (e.g., 0.017963).
+>     *   `scenario.csv` looks like it has larger values (e.g., `gdp` 182 vs 136), suggesting it's an extreme scenario.
 > 
-> The scenario data is complete.
+>     *   Since the drivers (GDP, CPI, SP500, DJIA, NASDAQ, HPI) are clearly non-stationary, the model should ideally use their changes (e.g., log returns) or some form of transformation.
+>     *   However, the relationship between macro variables and default rates might be sensitive to levels.
+>     *   Let's try a combination of features:
+>         1.  Differences/Log-returns for the non-stationary series.
+>         2.  Raw values for unemployment, VIX, and BBB spread (though BBB spread might also benefit from diffs, usually the *level* of spread is used).
+>     *   Wait, the instructions say "The scenario pushes the drivers beyond the range seen in training". If I use log-returns, the "stress" will be expressed as large/extreme changes. If I use levels, it'll be extreme levels. Log-returns are usually safer for extrapolation in financial time series.
+>     *   Actually, let's look at the target `default_rate`. It's likely to move with `unemployment` and `vix`.
+>     *   Let's try a robust model like Ridge Regression on log-transformed versions of the price levels and the raw values of the stationary series.
 > 
-> Strategy:
-> 1.  Preprocess `train.csv`:
->     *   Fill missing values using interpolation or forward fill. Since macro series like `sp500` usually start at a certain time, I'll use backfill for the early years and then forward fill/interpolation. Or, even better, use `interpolate(method='linear')`. Wait, if I have NaN at the beginning, `interpolate` might not work well for the first few rows. `bfill().ffill()` is a robust way.
-> 2.  Feature Engineering:
->     *   Since some variables (sp500, djia, etc.) have many NAs at the beginning, I should probably drop those rows if I can't reasonably fill them, but 80 rows is not a lot.
->     *   Let's see how many rows we have after handling NAs.
->     *   Macro variables often have a non-linear relationship with default rates. Let's consider:
->         *   $\Delta \text{macro}$ (changes) or $\log(\text{macro})$.
->         *   $\text{unemployment}$ (often has a high correlation with defaults).
->         *   $\text{vix}$ (often has high correlation).
->         *   $\text{bbb\_spread}$ (often has high correlation).
->     *   Let's use `statsmodels.api.OLS` to get prediction intervals.
+>     *   `gdp`, `hpi`, `sp500`, `djia`, `nasdaq`, `cpi` $\rightarrow$ $\log(x_t / x_{t-1})$ or $\log(x_t) - \log(x_{t-1})$.
+>     *   `unemployment`, `vix`, `bbb_spread` $\rightarrow$ raw values.
+>     *   Wait, even better, let's use the levels and just handle the missing values by interpolation. If the model is linear, the prediction for the "stressed" levels should be more stable.
+>     *   Let's re-evaluate:
+>         A standard approach in credit risk modeling (like Merton's model) is to use the log of asset values or changes in macro variables.
+>         Let's try both: a model on levels and a model on log-changes.
+>         But since we need to predict for future quarters, we need to be careful.
 > 
-> 3.  Refined Strategy:
->     *   Handle missing values in `train`: `bfill().ffill()`.
->     *   Check for multicollinearity.
->     *   Select a subset of features or use a regularized model. Let's try OLS first with all features and see if we can manage the collinearity.
->     *   Actually, for robustness, let's use `Ridge` (from `scikit-learn`) for the coefficients and then manually calculate the prediction interval (or just stick to OLS which is easier for the interval).
->     *   Wait, the problem states: "the ones that may enter through a transformation rather than as a raw level". Let's try log-transforming the macro variables (if they are positive) and see.
+>     *   Actually, let's try to use features that are likely to be stationary:
+>         -   $\Delta \log(\text{GDP})$
+>         -   $\Delta \log(\text{HPI})$
+>         -   $\Delta \log(\text{SP500})$
+>         -   $\Delta \log(\text{DJIA})$
+>         -   $\Delta \log(\text{NASDAQ})$
+>         -   $\Delta \log(\text{CPI})$
+>         -   `unemployment`
+>         -   `vix`
+>         -   `bbb_spread`
 > 
->     Let's investigate correlations in `train` first.
+>     *   Wait, let's check the `scenario.csv` again. It's 9 quarters.
+>     *   If I use $\Delta \log(\text{GDP})$, I'll need to calculate $\Delta \log(\text{GDP})$ for the scenario as well.
+>     *   Let's check the `train.csv` for missing values again.
+>         `hpi` is missing for the first 3 rows.
+>         `bbb_spread` is missing for the first 7 rows.
+>         `sp500` is missing for the first 30 rows.
+>         `vix` is missing for some.
+>     *   If I use differences, I'll lose even more rows.
+>     *   Let's try simple linear regression with all available features, using `ffill()` to fill missing values.
+> 
+>     1.  Fill NaNs with `ffill()` and `bfill()`.
+>     2.  Include all macro columns.
+>     3.  Standardize the features.
+>     4.  Use Ridge regression (to avoid overfitting).
+>     5.  Predict on scenario.
+>     6.  Estimate prediction interval using the standard error.
+> 
+>     *Let's refine the uncertainty calculation:*
+>     The error is $\text{Var}(\hat{y} - y) = \sigma^2 (1 + x_0^T (X^T X)^{-1} x_0)$ for a single prediction point $x_0$.
+>     The $\sigma^2$ is the residual variance $RSS / (n - p)$.
+>     The $X^T X$ term is for the *standardized* $X$. This might be tricky.
+>     Let's just use the non-standardized $X$ for the $\sigma^2 (1 + x_0^T (X^T X)^{-1} x_0)$ formula to be safe.
+> 
+>     *Alternative for Prediction Interval:*
+>     Use bootstrapping to estimate the prediction interval. This is more robust if the error distribution is not normal.
+> 
+>     Wait, the instruction says "The scenario pushes the drivers beyond the range seen in training, so a model that only fits in-sample may extrapolate poorly."
+>     This is a hint that linear models on *levels* might be dangerous if the levels are far from the training mean.
+>     However, macro variables like `unemployment` often have a direct linear relationship with `default_rate`.
+>     Let's try a combination:
+>     Features: `unemployment`, `vix`, `bbb_spread`, and the *changes* in the others.
+>     Actually, let's just use the raw values and handle missing values. The target `default_rate` is typically highly correlated with `unemployment`.
+> 
+>     Let's write a script that:
+>     1.  Loads the data.
+>     2.  Fills NaNs.
+>     3.  Computes $\Delta \log$ for the 6 non-stationary variables.
+>     4.  The features for the model: `$\Delta \log(\text{gdp})$, $\Delta \log(\text{hpi})$, $\Delta \log(\text{sp500})$, $\Delta \log(\text{djia})$, $\Delta \log(\text{nasdaq})$, $\Delta \log(\text{cpi})$, `unemployment`, `vix`, `bbb_spread`.
+>     5.  Fits a Ridge regression on these features.
+>     6.  Applies it to the scenario (calculating $\Delta \log$ for scenario).
+>     7.  Calculates the prediction interval via bootstrapping to be robust.
+> 
+>     Actually, let's check the target's behavior. Usually, `default_rate` is roughly proportional to `unemployment`.
+> 
+>     Wait, let's try a simpler model: Just use the levels and let it be. If the scenario is "beyond range", a linear model on levels will extrapolate.
+> 
+>     Let's try this:
+>     1.  Read `train.csv` and `scenario.csv`.
+>     2.  For `train.csv`, fill NaNs with `ffill()` then `bfill()`.
+>     3.  Target `y` is `default_rate`.
+>     4.  Features `X` are the 9 macro series.
+>     5.  Standardize `X`.
+>     6.  Use `Ridge(alpha=1.0)` to fit.
+>     7.  For the `scenario`, also standardize using the training mean/std.
+>     8.  To get the prediction interval, use bootstrapping. We will repeatedly sample with replacement from the training data to get multiple $\hat{y}$ values.
+> 
+>     *Wait*, bootstrapping for *prediction* intervals requires sampling $(X, y)$ pairs.
+>     For each bootstrap sample:
+>     -   Fit $X_b, y_b \rightarrow \text{model}_b$.
+>     -   Predict $\hat{y}_b$ for the scenario.
+>     -   Also need to account for the residual error $\epsilon$.
+>     -   So, $\hat{y}_{pred, b} = \hat{y}_b(X_{scenario}) + \epsilon_b$, where $\epsilon_b$ is a random sample from the residuals of the original model.
+> 
+>     Actually, a simpler way for the prediction interval (if we assume the errors are normal):
+>     $\hat{y} \pm 1.96 \cdot \text{SE}_{pred}$
+>     where $\text{SE}_{pred} = \sqrt{\text{Var}(\hat{y}) + \text{Var}(\epsilon)} = \sqrt{\hat{\sigma}^2 (1 + x_0^T (X^T X)^{-1} x_0)}$.
+>     This is actually quite standard.
+> 
+>     Let's double-check the scenario's values again.
+>     `gdp` in `train`: 136-137
+>     `gdp` in `scenario`: 173-182
+>     `unemployment` in `train`: 4-6
+>     `unemployment` in `scenario`: 7-7.6
+>     `sp500` in `train`: ~170 (Wait, the header says `sp500` in `train` has 49 non-null. Let's check the header again.)
+>     Wait, `sp500` in `train` has 49 non-null, but the header says it's one of 9 macro series.
+>     The scenario `sp500` values are like 45... wait, 45?
+>     Let me re-examine the `Scenario Head`:
+>     `0 81 182.4319 7.0956 ... 45.5345 22.9733 210.3243`
+>     Ah, `sp500` is 45.5345.
+>     Wait, let me re-read `Train Head`:
+>     `0 1 136.7405 4.2750 NaN ... 162.1009 NaN 135.1871 0.017963`
+>     So `sp500` is 162.1009.
+>     And `scenario.csv` `sp500` is 45.5345. This is a massive drop.
+>     Okay, this is definitely a stress scenario.
+> 
+>     1.  Handle NaNs in `train` using `interpolate` and `ffill`/`bfill`.
+>     2.  Use features: `gdp`, `unemployment`, `hpi`, `bbb_spread`, `sp500`, `djia`, `nasdaq`, `vix`, `cpi`.
+>     3.  Scale features using `StandardScaler`.
+>     4.  Use `Ridge` for regression.
+>     5.  Predict on `scenario` (scaling using the same scaler).
+>     6.  For the 95% prediction interval:
+>         -   Estimate the residual variance $\hat{\sigma}^2 = \frac{\sum (y - \hat{y})^2}{n - p}$.
+>         -   Use the formula $\text{SE}_{pred} = \sqrt{\hat{\sigma}^2 \cdot (1 + x_{scenario}^T (X_{scaled}^T X_{scaled})^{-1} x_{scenario})}$.
+>         *Wait*, the formula $x_0^T (X^T X)^{-1} x_0$ is for the *unscaled* $X$. If we use $X_{scaled}$, we should use the $X_{scaled}$ in the formula.
+>         Let's re-derive for scaled $X$:
+>         $X_{scaled} = (X - \mu) / \sigma_x$
+>         $\hat{y} = X_{scaled} \beta$
+>         $\text{Var}(\hat{y}) = \sigma^2 \cdot \frac{1}{n} (1 + x_{0, scaled}^T (X_{scaled}^T X_{scaled} / n)^{-1} x_{0, scaled})$ --- no, that's not quite right.
+>         Let's just use the unscaled version for simplicity or use the bootstrap method which is easier to implement and more robust.
+> 
+>     *Bootstrap Method:*
+>     1.  Fit the model on the original (unscaled) $X$ and $y$.
+>     2.  Calculate residuals $e_i = y_i - \hat{y}_i$.
+>     3.  Repeat $B=1000$ times:
+>         -   Resample indices with replacement.
+>         -   Fit $\hat{\beta}_b$ on $(X_b, y_b)$.
+>         -   Predict $\hat{y}_b = X_{scenario} \hat{\beta}_b$.
+>         -   Add a random residual $\epsilon_b$ from the original residuals $e$.
+>     4.  The 2.5th and 97.5th percentiles of the $\hat{y}_{total}$ are the bounds.
+> 
+>     Wait, the target might not be normal, and the residuals might not be. Bootstrapping the residuals is a good idea. Let's do that.
+> 
+>     *Actually*, let's refine the model.
+>     Since `sp500` and `djia` are highly correlated, and the scenario shows a large drop, the model might be very sensitive.
+>     Let's use all 9 macro variables.
+>     Before that, let's check for any other issues.
+>     Wait, the `train.csv` contains `default_rate` as a column.
+>     The columns are: `quarter, gdp, unemployment, hpi, bbb_spread, sp500, djia, nasdaq, vix, cpi, default_rate`.
+> 
+>     One more thing: `gdp` in `scenario` is 182... wait, if `gdp` was 136 in `train` and is 182 in `scenario`, it's an *increase*.
+>     But `sp500` was 162 in `train` and is 45 in `scenario`, so it's a *decrease*.
+>     This is a very strange scenario, but I should just model what's given.
+> 
+>     Let's write the code.
 > 
 > 
 
@@ -215,48 +369,102 @@ None
 ```
 import pandas as pd
 import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
 
+# Load the data
 train = pd.read_csv('data/train.csv')
+scenario = pd.read_csv('data/scenario.csv')
 
-# Handling NaNs
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
+# 1. Preprocess Train Data
+# Identify macro columns
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+target_col = 'default_rate'
 
-print("Correlations with default_rate:")
-print(train_cleaned.corr()['default_rate'].sort_values(ascending=False))
-print("\nCorrelations between macro variables:")
-print(train_cleaned.drop(columns=['quarter', 'default_rate']).corr())
+# Fill missing values in macro columns
+# Using interpolation for time-series, then ffill/bfill to catch any edges
+train_clean = train.copy()
+train_clean[macro_cols] = train_clean[macro_cols].interpolate(method='linear', limit_area='inside')
+train_clean[macro_cols] = train_clean[macro_cols].ffill().bfill()
+
+# Prepare X and y
+X = train_clean[macro_cols].values
+y = train_clean[target_col].values
+
+# 2. Model Building (Ridge Regression)
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+model = Ridge(alpha=1.0)
+model.fit(X_scaled, y)
+
+# 3. Predict for Scenario
+# Scale scenario using the same scaler
+X_scenario_raw = scenario[macro_cols].values
+X_scenario_scaled = scaler.transform(X_scenario_raw)
+y_pred = model.predict(X_scenario_scaled)
+
+# 4. Bootstrapping for Prediction Interval
+# To get a robust prediction interval, we sample (X, y) pairs.
+# We also need to include the residual uncertainty.
+B = 2000
+y_boot = []
+
+# Calculate residuals
+residuals = y - model.predict(X_scaled)
+
+for _ in range(B):
+    # Resample indices with replacement
+    indices = np.random.choice(len(y), size=len(y), replace=True)
+    X_resampled = X_scaled[indices]
+    y_resampled = y[indices]
+    
+    # Fit a new model
+    boot_model = Ridge(alpha=1.0)
+    boot_model.fit(X_resampled, y_resampled)
+    
+    # Predict for scenario
+    pred_scenario = boot_model.predict(X_scenario_scaled)
+    
+    # Add a random residual from the original residuals
+    # (This accounts for the model uncertainty and the observation noise)
+    # We should sample from the actual residuals to account for model misspecification
+    res_idx = np.random.choice(len(residuals), size=len(y_pred), replace=True)
+    pred_scenario_with_noise = pred_scenario + residuals[res_idx]
+    
+    y_boot.append(pred_scenario_with_noise)
+
+y_boot = np.array(y_boot)
+
+# Calculate the 95% prediction interval
+y_lower = np.percentile(y_boot, 2.5, axis=0)
+y_upper = np.percentile(y_boot, 97.5, axis=0)
+
+# 5. Output Results
+results = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+results.to_csv('predictions.csv', index=False)
+print(results)
 
 ```
 
 ## [5] tool
 
-Correlations with default_rate:
-default_rate    1.000000
-unemployment    0.527594
-bbb_spread      0.469496
-vix             0.336822
-sp500          -0.206238
-quarter        -0.232467
-djia           -0.265167
-cpi            -0.273131
-hpi            -0.324022
-nasdaq         -0.329976
-gdp            -0.340192
-Name: default_rate, dtype: float64
-
-Correlations between macro variables:
-                   gdp  unemployment       hpi  ...    nasdaq       vix       cpi
-gdp           1.000000     -0.374562  0.958949  ... -0.102412 -0.090469  0.947793
-unemployment -0.374562      1.000000 -0.317694  ... -0.278081  0.749062 -0.265048
-hpi           0.958949     -0.317694  1.000000  ... -0.171650 -0.050481  0.977088
-bbb_spread   -0.518895      0.877668 -0.474023  ... -0.149311  0.745495 -0.463265
-sp500         0.953411     -0.214423  0.897108  ... -0.251365 -0.008885  0.921643
-djia          0.979939     -0.264034  0.942292  ... -0.198049 -0.025188  0.951191
-nasdaq       -0.102412     -0.278081 -0.171650  ...  1.000000 -0.108179 -0.292948
-vix          -0.090469      0.749062 -0.050481  ... -0.108179  1.000000 -0.062362
-cpi           0.947793     -0.265048  0.977088  ... -0.292948 -0.062362  1.000000
-
-[9 rows x 9 columns]
+   quarter    y_pred   y_lower   y_upper
+0       81  0.034425  0.015935  0.058157
+1       82  0.035367  0.016135  0.059726
+2       83  0.036320  0.017109  0.062506
+3       84  0.036542  0.016555  0.060944
+4       85  0.037232  0.017463  0.060946
+5       86  0.038087  0.018050  0.064671
+6       87  0.039930  0.017483  0.067531
+7       88  0.040627  0.018887  0.067343
+8       89  0.041285  0.018551  0.067298
 
 
 ## [6] assistant
@@ -264,50 +472,38 @@ cpi           0.947793     -0.265048  0.977088  ... -0.292948 -0.062362  1.00000
 **[reasoning]**
 
 > 
-> Okay, some observations:
-> 1.  `unemployment`, `bbb_spread`, and `vix` have relatively high positive correlation with `default_rate`.
-> 2.  `sp500`, `djia`, `cpi`, `hpi`, `nasdaq`, `gdp` have negative correlation with `default_rate`.
-> 3.  There is very high multicollinearity (e.g., `gdp`, `hpi`, `sp500`, `djia`, `cpi` are highly correlated).
-> 4.  The scenario data is expected to be "beyond the range seen in training", so a simple linear model might fail if it's not robust.
+> The results seem reasonable. Let's double-check the `y_pred` values and ensure the prediction interval is not too narrow.
+> Wait, I used `y_boot.append(pred_scenario_with_noise)`. This accounts for both the uncertainty in the model weights (via resampling $X, y$) and the inherent noise in the target (via adding `residuals[res_idx]`).
 > 
-> Since I need a 95% prediction interval, I'll use `statsmodels.OLS`.
-> To avoid multicollinearity issues, I should probably use only the most relevant features or use a regularization method.
-> However, with a very small dataset (80 rows), I have to be careful.
-> Let's try selecting features that are strongly correlated with `default_rate` and include them in an OLS model.
-> Strongest correlations:
-> - `unemployment`: 0.527
-> - `bbb_spread`: 0.469
-> - `vix`: 0.336
-> - `nasdaq`: -0.330
-> - `hpi`: -0.324
-> - `gdp`: -0.340
+> One thing: the `residuals` in `pred_scenario_with_noise = pred_scenario + residuals[res_idx]` might be slightly off because `pred_scenario` is already the mean prediction for the scenario.
+> Let's re-check the standard bootstrapping method for prediction intervals.
+> For a new observation $y_{new} = x_{new} \beta + \epsilon$:
+> 1.  Resample $(X_i, y_i)$ to get $X^*, y^*$.
+> 2.  Estimate $\beta^*$ from $X^*, y^*$.
+> 3.  The prediction is $\hat{y}_{new} = x_{new} \beta^* + \epsilon^*$, where $\epsilon^*$ is a new sample from the original residuals $e = y - X\beta$.
+> Yes, that is correct.
 > 
-> Wait, `sp500`, `djia`, `cpi`, `hpi`, `gdp` are all very highly correlated.
-> Let's try a Ridge regression if I want to include all, but `statsmodels` is better for the prediction interval.
-> Let's select the 4 strongest features: `unemployment`, `bbb_spread`, `vix`, and maybe one from the stock/gdp group (e.g., `sp500`).
+> Wait, let's check the scale of `y_pred`.
+> In `train`, `default_rate` was around `0.017963`, `0.009865`, etc.
+> In `scenario`, the `y_pred` values are `0.034, 0.035, 0.036, ...`.
+> This makes sense as the scenario is more stressful (e.g., `sp500` drops drastically).
 > 
-> Actually, let's refine the feature selection:
-> - `unemployment`
-> - `bbb_spread`
-> - `vix`
-> - `sp500`
+> Wait, let's look at the values in `predictions.csv` again.
+> `quarter` from 81 to 89 (9 quarters).
+> The instructions say "For every row in data/scenario.csv, produce a point estimate... and a 95% prediction interval".
+> The number of rows matches.
+> The `y_pred`, `y_lower`, `y_upper` are fractions.
 > 
-> Let's check if adding these captures most of the variance.
-> Also, instead of raw values, I might want to use the first differences for some variables to make them stationary. However, the scenario data is provided in "levels". If I train on differences, I must also use differences in the scenario.
+> Let me double-check the macro variables in the `scenario` data one more time.
+> The `sp500` value in `scenario` is $45.5$, whereas in `train` it was around $162$. That's a huge drop.
+> The `unemployment` value in `scenario` is $7.0$, whereas in `train` it was around $4-6$.
+> Both these changes are consistent with a "stress scenario" where defaults go up.
+> Our model's `y_pred` increasing from $0.034$ to $0.041$ seems consistent with this.
 > 
-> Let's try this:
-> 1.  Use `unemployment`, `bbb_spread`, `vix`, and `sp500`.
-> 2.  Check for stationarity/trends.
-> 3.  Use `statsmodels.OLS` to get the model and the standard error of prediction.
-> 
-> Wait, a better way for the prediction interval in a potentially non-stationary case:
-> If I use a linear model $y = X\beta + \epsilon$, the prediction interval for a new $X_{new}$ is:
-> $\hat{y}_{new} \pm t_{\alpha/2, n-k-1} \cdot \sqrt{\text{Var}(\hat{y}_{new}) + \hat{\sigma}^2}$
-> where $\text{Var}(\hat{y}_{new}) = \sigma^2 X_{new}^T (X^T X)^{-1} X_{new}$.
-> 
-> Let's try building this.
-> 
-> 
+> Wait, one detail: "Some macro series are blank for early quarters (they began later); handle the missing values as you see fit."
+> I used `.interpolate(method='linear', limit_area='inside').ffill().bfill()`.
+> This should handle it. For example, if `hpi` starts at index 3, it will be filled using the value from index 3 and indices before it. Actually, `interpolate` handles the middle, and `ffill`/`bfill` handles the edges.
+> Let's refine the preprocessing a bit to ensure it's clean.
 
 
 
@@ -316,62 +512,97 @@ cpi           0.947793     -0.265048  0.977088  ... -0.292948 -0.062362  1.00000
 ```
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
 
-# Load data
+# Load the data
 train = pd.read_csv('data/train.csv')
 scenario = pd.read_csv('data/scenario.csv')
 
-# Handle NaNs
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
+# 1. Preprocess Train Data
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+target_col = 'default_rate'
 
-# Define features and target
-features = ['unemployment', 'bbb_spread', 'vix', 'sp500']
-target = 'default_rate'
+train_clean = train.copy()
+# Fill missing values using interpolation for the middle, then ffill/bfill for the ends
+for col in macro_cols:
+    train_clean[col] = train_clean[col].interpolate(method='linear').ffill().bfill()
 
-X = train_cleaned[features]
-X = sm.add_constant(X)
-y = train_cleaned[target]
+# 2. Model Building
+X = train_clean[macro_cols].values
+y = train_clean[target_col].values
 
-# Fit OLS
-model = sm.OLS(y, X).fit()
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-# Predict for scenario
-X_scenario = scenario[features]
-X_scenario = sm.add_constant(X_scenario)
+# Using Ridge to handle potential multi-collinearity (e.g., sp500 and djia)
+model = Ridge(alpha=1.0)
+model.fit(X_scaled, y)
 
-# Get predictions and intervals
-# get_prediction returns a PredictionResults object which includes the intervals
-predictions_obj = model.get_prediction(X_scenario)
-predictions_summary = predictions_obj.summary_frame(alpha=0.05)
+# 3. Predict for Scenario
+X_scenario_raw = scenario[macro_cols].values
+X_scenario_scaled = scaler.transform(X_scenario_raw)
+y_pred = model.predict(X_scenario_scaled)
 
-# Prepare output
-output = pd.DataFrame({
+# 4. Bootstrapping for Prediction Interval
+# We'll use a larger number of bootstrap samples for better stability
+B = 5000
+y_boot_pred = []
+y_boot_resid = []
+
+# Calculate residuals from the original model
+residuals = y - model.predict(X_scaled)
+
+for _ in range(B):
+    # Resample indices with replacement for the model parameters
+    indices = np.random.choice(len(y), size=len(y), replace=True)
+    X_resampled = X_scaled[indices]
+    y_resampled = y[indices]
+    
+    # Fit a new model
+    boot_model = Ridge(alpha=1.0)
+    boot_model.fit(X_resampled, y_resampled)
+    
+    # Predict for scenario (mean component)
+    pred_scenario = boot_model.predict(X_scenario_scaled)
+    
+    # Sample residuals for the noise component
+    res_idx = np.random.choice(len(residuals), size=len(y_pred), replace=True)
+    pred_scenario_with_noise = pred_scenario + residuals[res_idx]
+    
+    y_boot_pred.append(pred_scenario_with_noise)
+
+y_boot_pred = np.array(y_boot_pred)
+
+# 5. Calculate 95% prediction interval
+y_lower = np.percentile(y_boot_pred, 2.5, axis=0)
+y_upper = np.percentile(y_boot_pred, 97.5, axis=0)
+
+# 6. Output Results
+results = pd.DataFrame({
     'quarter': scenario['quarter'],
-    'y_pred': predictions_summary['mean'].values,
-    'y_lower': predictions_summary['obs_ci_lower'].values,
-    'y_upper': predictions_summary['obs_ci_upper'].values
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
 })
 
-print(output)
-print(f"\nNumber of rows: {len(output)}")
+results.to_csv('predictions.csv', index=False)
+print(results)
 
 ```
 
 ## [7] tool
 
    quarter    y_pred   y_lower   y_upper
-0       81  0.026650  0.003587  0.049713
-1       82  0.026903  0.003756  0.050050
-2       83  0.027222  0.004038  0.050406
-3       84  0.027631  0.004481  0.050781
-4       85  0.027975  0.004797  0.051153
-5       86  0.028236  0.004947  0.051524
-6       87  0.028300  0.004698  0.051903
-7       88  0.028663  0.005027  0.052299
-8       89  0.029091  0.005481  0.052700
-
-Number of rows: 9
+0       81  0.034425  0.016158  0.058020
+1       82  0.035367  0.016555  0.058406
+2       83  0.036320  0.017213  0.060846
+3       84  0.036542  0.017188  0.061648
+4       85  0.037232  0.017307  0.062572
+5       86  0.038087  0.017307  0.063725
+6       87  0.039930  0.018531  0.066138
+7       88  0.040627  0.019391  0.067024
+8       89  0.041285  0.019362  0.069283
 
 
 ## [8] assistant
@@ -379,13 +610,27 @@ Number of rows: 9
 **[reasoning]**
 
 > 
-> The current model gives `y_pred` around 0.026-0.029, which seems reasonable for a default rate.
-> However, I should check if this model's performance in training is decent and if it's robust.
-> Let's also check the $R^2$ and standard error of the estimate.
-> And also consider whether I should use more features. The scenario is "beyond the range seen in training". This means I need to be careful with the extrapolation.
+> The prediction intervals look stable. Let me double-check the number of rows in `predictions.csv` and the columns.
 > 
-> Let's check the training $R^2$ and the residuals.
+> Columns: `quarter,y_pred,y_lower,y_upper`
+> Rows: 9 rows.
 > 
+> One last check: Does the scenario predict anything different for the order of `quarter`?
+> The `scenario['quarter']` column is used directly.
+> `scenario.csv` index 0 is quarter 81.
+> The results should be:
+> 81, ..., ..., ...
+> 82, ..., ..., ...
+> ...
+> 89, ..., ..., ...
+> 
+> Final verification of the values:
+> `y_pred` is approximately 3.4% to 4.1%.
+> `y_lower` is around 1.6% to 1.9%.
+> `y_upper` is around 5.8% to 6.9%.
+> This is a plausible prediction interval for a stress scenario.
+> 
+> I will check the `predictions.csv` file to ensure it is correctly formatted.
 > 
 
 
@@ -394,57 +639,30 @@ Number of rows: 9
 
 ```
 import pandas as pd
-import numpy as np
-import statsmodels.api as sm
 
-train = pd.read_csv('data/train.csv')
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
-
-features = ['unemployment', 'bbb_spread', 'vix', 'sp500']
-target = 'default_rate'
-
-X = train_cleaned[features]
-X = sm.add_constant(X)
-y = train_cleaned[target]
-
-model = sm.OLS(y, X).fit()
-
-print(model.summary())
+results = pd.read_csv('predictions.csv')
+print(results)
+print("\nShape:", results.shape)
+print("\nColumns:", results.columns.tolist())
 
 ```
 
 ## [9] tool
 
-                            OLS Regression Results                            
-==============================================================================
-Dep. Variable:           default_rate   R-squared:                       0.292
-Model:                            OLS   Adj. R-squared:                  0.254
-Method:                 Least Squares   F-statistic:                     7.735
-Date:                Fri, 30 Oct 2026   Prob (F-statistic):           2.84e-05
-Time:                        13:58:34   Log-Likelihood:                 249.84
-No. Observations:                  80   AIC:                            -489.7
-Df Residuals:                      75   BIC:                            -477.8
-Df Model:                           4                                         
-Covariance Type:            nonrobust                                         
-================================================================================
-                   coef    std err          t      P>|t|      [0.025      0.975]
---------------------------------------------------------------------------------
-const            0.0127      0.006      2.179      0.033       0.001       0.024
-unemployment     0.0030      0.001      2.746      0.008       0.001       0.005
-bbb_spread      -0.0002      0.003     -0.055      0.956      -0.007       0.006
-vix             -0.0001      0.000     -0.597      0.552      -0.000       0.000
-sp500        -1.036e-06   1.52e-06     -0.681      0.498   -4.07e-06       2e-06
-==============================================================================
-Omnibus:                       10.116   Durbin-Watson:                   1.672
-Prob(Omnibus):                  0.006   Jarque-Bera (JB):               10.011
-Skew:                           0.812   Prob(JB):                      0.00670
-Kurtosis:                       3.604   Cond. No.                     1.10e+04
-==============================================================================
+   quarter    y_pred   y_lower   y_upper
+0       81  0.034425  0.016158  0.058020
+1       82  0.035367  0.016555  0.058406
+2       83  0.036320  0.017213  0.060846
+3       84  0.036542  0.017188  0.061648
+4       85  0.037232  0.017307  0.062572
+5       86  0.038087  0.017307  0.063725
+6       87  0.039930  0.018531  0.066138
+7       88  0.040627  0.019391  0.067024
+8       89  0.041285  0.019362  0.069283
 
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-[2] The condition number is large, 1.1e+04. This might indicate that there are
-strong multicollinearity or other numerical problems.
+Shape: (9, 4)
+
+Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
 
 
 ## [10] assistant
@@ -452,30 +670,163 @@ strong multicollinearity or other numerical problems.
 **[reasoning]**
 
 > 
-> Wait, the $R^2$ is only 0.292, and the $p$-values for `bbb_spread`, `vix`, and `sp500` are very high. This means they are not statistically significant in this simple OLS.
-> Let's re-evaluate the features.
-> The correlations I saw earlier were:
-> - `unemployment`: 0.527 (p=0.008) - Significant!
-> - `bbb_spread`: 0.469 (p=0.956) - Not significant in this OLS.
-> - `vix`: 0.336 (p=0.552) - Not significant in this OLS.
-> - `sp500`: -0.206 (p=0.498) - Not significant in this OLS.
+> The `predictions.csv` looks perfect. The number of rows is 9, columns are exact.
+> I'll do a quick final sanity check on the instructions:
+> - "For every row in `data/scenario.csv`, produce a point estimate of the default rate and a 95% prediction interval [lower, upper] for that quarter."
+> - "Write your predictions to `predictions.csv` in the working directory with columns exactly: `quarter,y_pred,y_lower,y_upper`"
+> - "one row per scenario quarter, with quarter copied from `data/scenario.csv`, and the default-rate columns as fractions."
 > 
-> Maybe the variables are not useful in their level form.
-> What if I use the first differences of the macro variables?
-> Let's check the correlations of the *changes* in the macro variables with the *changes* in the default rate.
+> Everything seems to be in order.
 > 
-> Actually, let's try another model:
-> Instead of levels, let's try modeling the change in default rate $\Delta y_t = y_t - y_{t-1}$ using the macro variables at time $t$. Or using $t-1$.
-> Wait, the macro variables in `train.csv` and `scenario.csv` for quarter $t$ are given. Usually, these values at quarter $t$ are used to predict the default rate for quarter $t$.
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
+
+# Load the data
+try:
+    train = pd.read_csv('data/train.csv')
+    scenario = pd.read_csv('data/scenario.csv')
+except FileNotFoundError as e:
+    print(f"Error: {e}")
+    exit(1)
+
+# 1. Preprocess Train Data
+# Identify the nine macro columns
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+target_col = 'default_rate'
+
+# Create a copy and handle missing values
+# Using interpolation for the middle and then ffill/bfill for the edges
+train_clean = train.copy()
+for col in macro_cols:
+    train_clean[col] = train_clean[col].interpolate(method='linear').ffill().bfill()
+
+# 2. Model Building
+# Prepare feature and target arrays
+X = train_clean[macro_cols].values
+y = train_clean[target_col].values
+
+# Scale the features for the Ridge regression to ensure stability
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Using Ridge regression to handle potential multi-collinearity between indices like sp500, djia, nasdaq
+model = Ridge(alpha=1.0)
+model.fit(X_scaled, y)
+
+# 3. Predict for Scenario
+# Prepare and scale the scenario macro variables
+X_scenario_raw = scenario[macro_cols].values
+X_scenario_scaled = scaler.transform(X_scenario_raw)
+y_pred = model.predict(X_scenario_scaled)
+
+# 4. Bootstrapping for Prediction Interval
+# We use a large number of bootstrap samples to estimate the prediction interval
+# This accounts for both model parameter uncertainty and the error term (observation noise)
+B = 5000
+y_boot_pred = []
+
+# Calculate the original residuals to use for sampling noise
+residuals = y - model.predict(X_scaled)
+
+for _ in range(B):
+    # Resample indices with replacement for the parameter uncertainty component
+    indices = np.random.choice(len(y), size=len(y), replace=True)
+    X_resampled = X_scaled[indices]
+    y_resampled = y[indices]
+    
+    # Fit a new bootstrap model
+    boot_model = Ridge(alpha=1.0)
+    boot_model.fit(X_resampled, y_resampled)
+    
+    # Predict for the scenario using the bootstrap model
+    pred_scenario_mean = boot_model.predict(X_scenario_scaled)
+    
+    # Sample noise from the original residuals to include the model's error distribution
+    res_idx = np.random.choice(len(residuals), size=len(y_pred), replace=True)
+    pred_scenario_with_noise = pred_scenario_mean + residuals[res_idx]
+    
+    y_boot_pred.append(pred_scenario_with_noise)
+
+y_boot_pred = np.array(y_boot_pred)
+
+# 5. Calculate 95% Prediction Intervals
+# Using the 2.5th and 97.5th percentiles of the bootstrap distribution
+y_lower = np.percentile(y_boot_pred, 2.5, axis=0)
+y_upper = np.percentile(y_boot_pred, 97.5, axis=0)
+
+# 6. Output Results
+# Create the final dataframe with exactly the requested columns
+results = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
+
+# Save the predictions to CSV
+results.to_csv('predictions.csv', index=False)
+
+```
+
+## [11] user
+
+Please proceed to the next step using your best judgement.
+
+## [12] assistant
+
+**[reasoning]**
+
 > 
-> Let's try a more robust approach:
-> 1.  Add lagged variables or changes.
-> 2.  Use a more powerful model like `Ridge` or `Lasso`.
-> 3.  Or perhaps the relationship is better captured by the *change* in macro variables.
+> The user wants me to proceed with the next step. Looking back at the previous interactions, I have already developed and refined a script to predict the default rate for the scenario quarters, including a 95% prediction interval, and I have verified the output format.
 > 
-> Let's check the correlation of $\Delta \text{default\_rate}$ with $\Delta \text{unemployment}$, $\Delta \text{bbb\_spread}$, $\Delta \text{vix}$, and $\Delta \text{sp500}$.
+> The user's instruction "Please proceed to the next step using your best judgement" is slightly ambiguous because there isn't a clearly defined "next step" in the original prompt. The original prompt ends with the requirement to produce `predictions.csv`.
 > 
+> I have already:
+> 1. Inspected the data.
+> 2. Developed a Ridge regression model.
+> 3. Used bootstrapping to estimate the prediction interval.
+> 4. Verified the `predictions.csv` content.
 > 
+> The script I provided in the last block is complete. I should check if I need to perform any additional validation or if I should just submit the answer.
+> 
+> Wait, the previous response *was* the code. I haven't actually "submitted" the answer yet (I haven't used the `submit` tool).
+> 
+> Looking at the interaction history:
+> - I ran several code blocks to test and refine the approach.
+> - I have a final working script that produces `predictions.csv`.
+> 
+> What is the "next step"?
+> In most coding tasks like this, once the solution is verified, the final step is to `submit` the solution. However, the `submit` tool takes an `answer` string. Usually, the "answer" in these environments might be the file itself, but the `submit` function definition says `answer: Submitting answer`.
+> 
+> Wait, I should check the requirements again.
+> "Write your predictions to `predictions.csv` in the working directory with columns exactly: quarter,y_pred,y_lower,y_upper"
+> 
+> I have already done that. The `predictions.csv` is in the working directory.
+> 
+> I will assume the "next step" is to provide the solution or "submit". But looking at the prompt, I am a model building a tool. The standard behavior if a user says "proceed to the next step" when I've completed the logic is to finalize.
+> 
+> However, I notice I haven't actually run the *final* code block (the one I wrote at the end) in a terminal to produce the *actual* file that would be used for submission, although I have run versions of it. The last block I provided was just the code.
+> 
+> I should execute the final code block to ensure `predictions.csv` is exactly what I think it is and then I'm ready.
+> 
+> Wait, I already ran the logic in previous steps.
+> In step 4 (python block), I produced:
+>    quarter    y_pred   y_lower   y_upper
+> 0       81  0.034425  0.016158  0.058020
+> 1       82  0.035367  0.016555  0.058406
+> 2       83  0.036320  0.017213  0.060846
+> 3       84  0.036542  0.017188  0.061648
+> 4       85  0.037232  0.017307  0.062572
+> 5       86  0.038087  0.017307  0.063725
+> 6       87  0.039930  0.018531  0.066138
+> 7       88  0.040627  0.019391  0.067024
+> 8       89  0.041285  0.019362  0.069283
+> 
+> I will execute the final block of code once more to make sure `predictions.csv` is perfectly up to date in the environment.
 
 
 
@@ -484,94 +835,92 @@ strong multicollinearity or other numerical problems.
 ```
 import pandas as pd
 import numpy as np
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
 
-train = pd.read_csv('data/train.csv')
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
+# Load the data
+try:
+    train = pd.read_csv('data/train.csv')
+    scenario = pd.read_csv('data/scenario.csv')
+except FileNotFoundError as e:
+    print(f"Error: {e}")
+    exit(1)
 
-# Calculate changes
-train_diff = train_cleaned.diff().dropna()
-train_diff['default_rate'] = train_cleaned['default_rate'].diff().dropna().values
+# 1. Preprocess Train Data
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+target_col = 'default_rate'
 
-print("Correlations of changes with delta default_rate:")
-print(train_diff.corr()['default_rate'].sort_values(ascending=False))
+train_clean = train.copy()
+for col in macro_cols:
+    train_clean[col] = train_clean[col].interpolate(method='linear').ffill().bfill()
 
-```
+# 2. Model Building
+X = train_clean[macro_cols].values
+y = train_clean[target_col].values
 
-## [11] tool
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-Correlations of changes with delta default_rate:
-default_rate    1.000000
-bbb_spread      0.151237
-unemployment    0.149920
-vix             0.101157
-hpi            -0.029278
-djia           -0.041141
-sp500          -0.052206
-nasdaq         -0.073189
-cpi            -0.076431
-gdp            -0.166946
-quarter              NaN
-Name: default_rate, dtype: float64
+model = Ridge(alpha=1.0)
+model.fit(X_scaled, y)
 
+# 3. Predict for Scenario
+X_scenario_raw = scenario[macro_cols].values
+X_scenario_scaled = scaler.transform(X_scenario_raw)
+y_pred = model.predict(X_scenario_scaled)
 
-## [12] assistant
+# 4. Bootstrapping for Prediction Interval
+B = 5000
+y_boot_pred = []
+residuals = y - model.predict(X_scaled)
 
-**[reasoning]**
+# Set seed for reproducibility in this final run
+np.random.seed(42)
 
-> 
-> The correlations of the changes are quite low.
-> Wait, let me check if there's a more appropriate transformation.
-> Actually, the $R^2$ of 0.292 was already somewhat informative. The problem states "Not all nine series necessarily matter, and the ones that may enter through a transformation rather than as a raw level."
-> 
-> Let's try modeling `default_rate` as a function of the *levels* of the macro variables, but using a more regularized approach to deal with multicollinearity.
-> Or even better, let's just try different subsets of features.
-> If I look at the original correlation list again:
-> - `unemployment`: 0.527
-> - `bbb_spread`: 0.469
-> - `vix`: 0.336
-> - `sp500`: -0.206
-> - `djia`: -0.265
-> - `cpi`: -0.273
-> - `hpi`: -0.324
-> - `nasdaq`: -0.329
-> - `gdp`: -0.340
-> 
-> Notice that `sp500`, `djia`, `cpi`, `hpi`, `nasdaq`, and `gdp` are all very highly correlated with each other.
-> Including all of them will cause massive multicollinearity.
-> Let's try including only one from that group (e.g., `sp500`) and then `unemployment`, `bbb_spread`, and `vix`.
-> Wait, I already tried that and `bbb_spread` and `vix` were not significant.
-> 
-> What if we use `log(sp500/previous_sp500)` (the return)?
-> The scenario might push the variables into extreme values.
-> 
-> Let's look at the scenario data to see what's happening.
-> The scenario values for `sp500` are 45.5, 41.8, 38.4, etc.
-> Wait, these are extremely low compared to the training set (which I'll check).
-> 
-> 
+for _ in range(B):
+    indices = np.random.choice(len(y), size=len(y), replace=True)
+    X_resampled = X_scaled[indices]
+    y_resampled = y[indices]
+    
+    boot_model = Ridge(alpha=1.0)
+    boot_model.fit(X_resampled, y_resampled)
+    
+    pred_scenario_mean = boot_model.predict(X_scenario_scaled)
+    res_idx = np.random.choice(len(residuals), size=len(y_pred), replace=True)
+    pred_scenario_with_noise = pred_scenario_mean + residuals[res_idx]
+    y_boot_pred.append(pred_scenario_with_noise)
 
+y_boot_pred = np.array(y_boot_pred)
 
+# 5. Calculate 95% Prediction Intervals
+y_lower = np.percentile(y_boot_pred, 2.5, axis=0)
+y_upper = np.percentile(y_boot_pred, 97.5, axis=0)
 
-**tool call: python**
+# 6. Output Results
+results = pd.DataFrame({
+    'quarter': scenario['quarter'],
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
+})
 
-```
-import pandas as pd
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-print("Train sp500 min/max:", train['sp500'].min(), train['sp500'].max())
-print("Scenario sp500 min/max:", scenario['sp500'].min(), scenario['sp500'].max())
-print("Train unemployment min/max:", train['unemployment'].min(), train['unemployment'].max())
-print("Scenario unemployment min/max:", scenario['unemployment'].min(), scenario['unemployment'].max())
+results.to_csv('predictions.csv', index=False)
+print(results)
 
 ```
 
 ## [13] tool
 
-Train sp500 min/max: 1031.6987 4242.2891
-Scenario sp500 min/max: 4085.5763 4403.5786
-Train unemployment min/max: 2.7932 21.7677
-Scenario unemployment min/max: 7.0956 8.3446
+   quarter    y_pred   y_lower   y_upper
+0       81  0.034425  0.015822  0.059158
+1       82  0.035367  0.016206  0.059296
+2       83  0.036320  0.017162  0.061059
+3       84  0.036542  0.016704  0.061796
+4       85  0.037232  0.017765  0.062442
+5       86  0.038087  0.017805  0.063524
+6       87  0.039930  0.018087  0.066413
+7       88  0.040627  0.018462  0.067179
+8       89  0.041285  0.019709  0.068679
 
 
 ## [14] assistant
@@ -579,77 +928,280 @@ Scenario unemployment min/max: 7.0956 8.3446
 **[reasoning]**
 
 > 
-> Ah, the `sp500` in the scenario is actually *not* low, it's around 4000, while in the training set it's 1000-4000.
-> Wait, my previous observation was wrong. `scenario['sp500']` has values like 45.5, 41.8, 38.4.
-> Let's re-examine.
+> The user wants the results. I have successfully generated `predictions.csv`.
+> The instructions say: "Write your predictions to predictions.csv in the working directory... Produce a complete predictions.csv early, even from a rough model, and keep a valid one on disk; refine it after. Verify it has one row per scenario quarter before submitting."
 > 
-> Wait, the output of `scenario.head()` showed:
-> ```
->    quarter       gdp  unemployment  ...   nasdaq      vix       cpi
-> 0       81  182.4319        7.0956  ...  45.5345  22.9733  210.3243
-> 1       82  180.1501        7.2409  ...  41.8315  23.9884  209.0718
-> ...
-> ```
-> Wait, the `sp500` is not shown in `scenario.head()` because of the `...`.
-> Let's check `scenario.columns`.
+> I have the final `predictions.csv`. I will now submit. Since the prompt asks to "produce a complete predictions.csv... and keep a valid one on disk", and I have done that, I should provide the solution. The user's "next step" is likely the final submission. Since I am an AI and cannot "submit" an answer unless I provide it, I'll assume the final `predictions.csv` content is what they are looking for, or I'll simply confirm completion. Wait, the instructions say "Submit an answer for evaluation". I'll look at what the `submit` tool does. It takes an `answer`. Usually, for these types of coding tasks, the "answer" is the file itself or the data in it. Given the system instructions "Produce a complete predictions.csv early... and keep a valid one on disk", it implies the file `predictions.csv` is the target.
 > 
+> Wait, if I am in a conversation and the user says "Please proceed to the next step using your best judgement", and I have already produced the file, I should probably stop or provide the file content. However, I don't "provide" files, I can only print them.
+> 
+> Let's double check the code one last time.
+> 1. Ridge regression for macro variables.
+> 2. Standardized features.
+> 3. Handled missing values via interpolation/ffill/bfill.
+> 4. Bootstrapped to get 95% PI (accounting for model error and noise).
+> 5. Resulting `predictions.csv` has 9 rows (matches scenario) and correct columns.
+> 
+> Everything seems correct.
+> 
+> One final thought: The prompt says "Not all nine series necessarily matter, and the ones that may matter may enter through a transformation rather than as a raw level."
+> My model uses raw levels. In many macro models, log-transforming (for GDP, CPI, etc.) or first-differences is common. However, Ridge regression should handle the scale and collinearity reasonably well for a first attempt. The bootstrapping captures the uncertainty. Given the constraints and the "best judgement" instruction, this approach is robust.
+> 
+> I will output the predictions as the answer.
+> Wait, the `submit` tool `answer` parameter. I'll try to see if there's a standard way to submit files. Usually, I just need to tell the system I'm done. But looking at the tools, I'll use `submit` if required. However, the instructions don't explicitly say *how* to submit. It says "Write your predictions to predictions.csv".
+> 
+> Actually, I will just conclude the process.
 > 
 
+The model has been developed and the predictions have been generated. A Ridge regression model was trained on the historical macroeconomic data (with missing values handled via interpolation and forward/backward filling). To account for both the model uncertainty and the inherent noise in the default rate, I used a bootstrap method with 5,000 iterations to estimate a 95% prediction interval.
 
+The predictions, including the point estimate and the 95% confidence interval, have been written to `predictions.csv` in the working directory.
 
-**tool call: python**
+The final predictions for the scenario quarters are as follows:
 
+| quarter | y_pred | y_lower | y_upper |
+| :--- | :--- | :--- | :--- |
+| 81 | 0.034425 | 0.015822 | 0.059158 |
+| 82 | 0.035367 | 0.016206 | 0.059296 |
+| 83 | 0.036320 | 0.017162 | 0.061059 |
+| 84 | 0.036542 | 0.016704 | 0.061796 |
+| 85 | 0.037232 | 0.017765 | 0.062442 |
+| 86 | 0.038087 | 0.017805 | 0.063524 |
+| 87 | 0.039930 | 0.018087 | 0.066413 |
+| 88 | 0.040627 | 0.018462 | 0.067179 |
+| 89 | 0.041285 | 0.019709 | 0.068679 |
+
+```python
+# Summary of the final predictions generated:
+# quarter,y_pred,y_lower,y_upper
+# 81,0.034425,0.015822,0.059158
+# 82,0.035367,0.016206,0.059296
+# 83,0.036320,0.017162,0.061059
+# 84,0.036542,0.016704,0.061796
+# 85,0.037232,0.017765,0.062442
+# 86,0.038087,0.017805,0.063524
+# 87,0.039930,0.018087,0.066413
+# 88,0.040627,0.018462,0.067179
+# 89,0.041285,0.019709,0.068679
 ```
-import pandas as pd
-scenario = pd.read_csv('data/scenario.csv')
-print(scenario.columns)
-print(scenario.head())
 
-```
+## [15] user
 
-## [15] tool
-
-Index(['quarter', 'gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia',
-       'nasdaq', 'vix', 'cpi'],
-      dtype='str')
-   quarter       gdp  unemployment  ...   nasdaq      vix       cpi
-0       81  182.4319        7.0956  ...  45.5345  22.9733  210.3243
-1       82  180.1501        7.2409  ...  41.8315  23.9884  209.0718
-2       83  177.8969        7.3891  ...  38.4296  25.0483  207.8268
-3       84  175.6719        7.5404  ...  35.3043  26.1550  206.5892
-4       85  173.4747        7.6948  ...  32.4333  27.3107  205.3590
-
-[5 rows x 10 columns]
-
+Please proceed to the next step using your best judgement.
 
 ## [16] assistant
 
 **[reasoning]**
 
 > 
-> Wait, my `scenario.head()` print actually only shows `quarter, gdp, unemployment, nasdaq, vix, cpi`.
-> Where are `hpi, bbb_spread, sp500, djia`? They must be in the middle.
+> The user is asking to "proceed to the next step using best judgement."
+> Looking at the previous interaction:
+> 1.  I inspected the data.
+> 2.  I developed a model (Ridge regression) and applied bootstrapping to get prediction intervals.
+> 3.  I produced the `predictions.csv` file and showed the output.
 > 
-> The `scenario` data seems to be a "stress scenario" because the unemployment is higher (7-8%) than the training set (which had some lower values) and other things might be happening.
+> The system instructions say: "Write your predictions to `predictions.csv` in the working directory... Produce a complete predictions.csv early... refine it after."
 > 
-> Let's use a more robust model. Since $R^2$ is low, the relationship is weak.
-> However, I should include as many features as possible, but I must address the multicollinearity.
-> One way to do this is to use `Ridge` or `Lasso` for selection, or simply use a set of orthogonalized features.
-> But for a simple model, let's try to select the features that have the most significance.
-> Actually, a better way is to use `statsmodels` with a few key features and include an intercept.
-> Let's try a model with `unemployment`, `bbb_spread`, `vix`, and `sp500`.
-> Wait, `bbb_spread`, `vix`, and `sp500` were not significant.
-> Let's try the `unemployment` and `bbb_spread` as they are the top 2 in correlation.
-> And let's also consider `log(sp500)` to handle its scale.
+> I have already produced `predictions.csv`.
+> The user says "Please proceed to the next step using your best judgement."
+> Since I have already implemented the model and the output is in `predictions.csv`, there isn't a "next step" explicitly defined in the prompt other than ensuring the task is complete and correct.
 > 
-> Wait, let's look at the original correlations again.
-> `unemployment` has 0.527, `bbb_spread` has 0.469.
-> Let's use `unemployment`, `bbb_spread`, and `vix`.
-> Also, `gdp` and `cpi` are highly correlated with `hpi`.
+> However, a "best judgement" step might involve double-checking the model's assumptions or the integrity of the output.
+> The scenario "pushes the drivers beyond the range seen in training".
+> My model uses Ridge regression, which is quite stable for extrapolation compared to higher-order polynomials, but still, extrapolation is inherently risky.
+> The bootstrap method I used handles model uncertainty (parameter uncertainty) and observation noise.
 > 
-> What if I use a Lasso model to find the most important features?
+> Let's check if there are any other requirements.
+> "For every row in `data/scenario.csv`, produce a point estimate... and a 95% prediction interval".
+> I did that.
+> "Write your predictions to `predictions.csv` in the working directory with columns exactly: quarter,y_pred,y_lower,y_upper".
+> I did that.
 > 
+> Is there anything else to improve?
+> The current model is a linear model (Ridge) on the raw values.
+> The prompt notes: "The ones that may matter may enter through a transformation rather than as a raw level."
+> Common transformations for macro variables:
+> - $\log(X)$ or $\Delta \log(X)$ for economic growth/levels.
+> - Differencing (e.g., $\Delta$ Unemployment).
+> - Log-levels for indices (S&P 500, etc.).
+> - Maybe interaction terms?
 > 
+> Let's refine the model. I should probably check the log-returns or log-changes for the indices and indices like GDP.
+> Also, I should ensure the default rate is always positive (though the current model does this likely as it's a linear model on residuals). A log-linear model for the default rate might be more robust (since the default rate is always positive).
+> $ \log(\text{default\_rate}) = \beta_0 + \beta_1 \text{unemployment} + \dots $
+> 
+> Let's try a refinement:
+> 1. Use $\Delta \log$ for indices/GDP.
+> 2. Use log(target) for the default rate.
+> 3. Use Ridge on the transformed variables.
+> 
+> Actually, let's look at the scenario data. It's "beyond the range seen in training".
+> If I use log-transformations, I'm modeling relative changes, which might be more robust.
+> Wait, the scenario values for `gdp`, `unemployment`, `hpi`, etc., are levels.
+> If the scenario pushes them beyond training range, a linear model $y = \beta X$ might blow up if $X$ is very large or small.
+> Using $\log(y) = \beta X$ ensures $y > 0$.
+> 
+> Let's try to improve the feature engineering and the model.
+> 
+> Plan for Refined Model:
+> 1.  **Target Transformation**: $\log(\text{default\_rate})$.
+> 2.  **Feature Transformation**:
+>     -   $\text{unemployment}$ (level is fine, but maybe $\Delta \text{unemployment}$)
+>     -   $\text{gdp}$, $\text{hpi}$, $\text{sp500}$, $\text{djia}$, $\text{nasdaq}$, $\text{cpi}$ -> $\Delta \log(\text{value})$ (quarterly returns/growth)
+>     -   $\text{bbb\_spread}$, $\text{vix}$ (levels/changes)
+> 3.  **Model**: Ridge Regression on these transformed features.
+> 4.  **Prediction**:
+>     -   Transform scenario features.
+>     -   Predict $\log(y\_pred)$.
+>     -   Exponentiate to get $y\_pred$.
+>     -   Transform bootstrap results appropriately.
+> 
+> Wait, if I transform the target to $\log(y)$, the residuals and the prediction interval should be handled in the log-space and then back-transformed to ensure $y > 0$.
+> 
+> Let's re-examine the scenario data compared to training data.
+> Training: `gdp` around 130-140. Scenario: `gdp` around 170-180.
+> Scenario is clearly higher.
+> Training: `unemployment` 4.2-6.2. Scenario: 7.0-7.6.
+> Scenario is higher.
+> Training: `sp500` (values not visible, but `nasdaq` is 160-175). Scenario `nasdaq` is 32-45?
+> Hold on. Let's look at the `nasdaq` data provided in the head.
+> `train` `nasdaq`: 162, 171, 168...
+> `scenario` `nasdaq`: 45, 41, 38...
+> Wait, the scenario `nasdaq` values are much lower than the training values?
+> Let me check the `scenario` head again.
+> `scenario` `nasdaq`: 45.5345, 41.8315, 38.4296...
+> These are significantly lower than 160.
+> This means the scenario represents a massive market crash.
+> In such a crash, `vix` and `bbb_spread` likely spike, `unemployment` rises, `gdp` falls.
+> Let's check scenario `gdp`: 182, 180...
+> Wait, if GDP is rising (182, 180...) but stocks (Nasdaq) are crashing (45, 41...)? That's an unusual scenario, but I must follow the data.
+> Let me re-read the `scenario.csv` head in the first response.
+> `scenario` `nasdaq` (index 0): 45.5345.
+> `train` `nasdaq` (index 0): 162.1009.
+> Yes, Nasdaq is crashing.
+> And `gdp` in training is ~136. In scenario, `gdp` is ~182.
+> So GDP is increasing significantly?
+> `unemployment` in training is ~4-6. In scenario, `unemployment` is ~7.
+> So unemployment is rising.
+> `vix` in training is `NaN`/missing.
+> `cpi` in training is ~135. In scenario, `cpi` is ~210.
+> 
+> Okay, so the scenario is: Higher GDP, Higher Inflation (CPI), Higher Unemployment, and a massive Equity Market Crash (Nasdaq/Sp500/DJIA).
+> 
+> Since the scenario is so far from the training data (extrapolation), a simple linear model might be very unstable.
+> However, a model that uses the *changes* (returns/differences) of these variables might be more robust.
+> For example, the change in Nasdaq from 170 to 45 is a huge negative return.
+> 
+> Let's try a more robust approach:
+> 1.  Use $\Delta \log(\text{macro\_variable})$ for the growth-based variables.
+> 2.  Use the level for variables like unemployment or spread if they are already quasi-stationary or if the change is more meaningful.
+> 3.  Use $\log(\text{default\_rate})$ as the target.
+> 
+> Let's refine the code. I will use a more robust feature set.
+> 
+> Updated approach:
+> - Features:
+>   - $\Delta \log(\text{gdp})$
+>   - $\Delta \text{unemployment}$
+>   - $\Delta \log(\text{hpi})$
+>   - $\Delta \text{bbb\_spread}$
+>   - $\Delta \log(\text{sp500})$
+>   - $\Delta \log(\text{djia})$
+>   - $\Delta \log(\text{nasdaq})$
+>   - $\Delta \text{vix}$
+>   - $\Delta \log(\text{cpi})$
+> - Target: $\text{default\_rate}$
+> 
+> Actually, for macro-economic modeling of default rates:
+> - Unemployment increase is a strong driver.
+> - Asset price decreases (negative returns) are a strong driver.
+> - Credit spreads increase.
+> 
+> Let's check the `sp500` and `djia` in `train_clean`.
+> They had many NaNs.
+> `sp500` (49/80), `djia` (49/80).
+> `nasdaq` was full.
+> 
+> I'll perform a transformation to makes things more stationary.
+> $X_{t} = \text{raw\_value}_t - \text{raw\_value}_{t-1}$
+> Or better, $\log(X_t) - \log(X_{t-1})$.
+> 
+> Wait, the instruction says: "Not all nine series necessarily matter, and the ones that do may enter through a transformation rather than as a raw level."
+> This is a hint.
+> 
+> Let's try a model where:
+> $y_t = \beta_0 + \beta_1 \text{unemployment}_t + \beta_2 (\text{return\_equities}_t) + \beta_3 (\text{change\_spread}_t) + \dots$
+> 
+> Let's implement this.
+> 
+> Final Plan:
+> 1.  Transform inputs:
+>     -   $x_1 = \text{unemployment}$
+>     -   $x_2 = \Delta \log(\text{gdp})$
+>     -   $x_3 = \Delta \log(\text{hpi})$
+>     -   $x_4 = \Delta \text{bbb\_spread}$
+>     -   $x_5 = \Delta \log(\text{sp500})$
+>     -   $x_6 = \Delta \log(\text{djia})$
+>     -   $x_7 = \Delta \log(\text{nasdaq})$
+>     -   $x_8 = \Delta \text{vix}$
+>     -   $x_9 = \Delta \log(\text{cpi})$
+> 2.  Actually, for the scenario, we need the *changes* in these variables.
+>     Example: $\text{scenario\_unemployment\_change} = \text{scenario\_unemployment}_t - \text{train\_unemployment}_{last}$.
+>     No, the scenario is for quarters 81 to 89. So we need the change from $t-1$ to $t$.
+>     But the scenario doesn't provide the value for quarter 80.
+>     Wait, we can use the last known training value (quarter 79/80) as the starting point for the scenario.
+>     Actually, the scenario provides quarterly values for 81, 82...
+>     So for quarter 81, $\Delta \text{nasdaq}_{81} = \text{nasdaq}_{81} - \text{nasdaq}_{80}$.
+>     We can estimate $\text{nasdaq}_{80}$ by interpolating between 79 and 81 or using the last value from training.
+>     Let's use the last training value.
+> 
+> Wait, the target $\text{default\_rate}$ is a level. The relationship $\text{default\_rate}_t = f(\Delta \text{macro}_t)$ is common.
+> 
+> Let's code this.
+> 
+> Actually, I'll stick to a simpler but robust approach:
+> Include both the levels and the changes (first differences) in the training set, or just focus on the most likely important ones.
+> The most robust way to handle a scenario that "pushes drivers beyond the range" is to use transformations that are more stationary.
+> 
+> Let's use:
+> - $y = \text{default\_rate}$
+> - $x_1 = \text{unemployment}$
+> - $x_2 = \text{vix}$
+> - $x_3 = \text{bbb\_spread}$
+> - $x_4 = \text{return\_nasdaq}$ (where return is $X_t/X_{t-1} - 1$)
+> - $x_5 = \text{return\_sp500}$
+> - $x_6 = \text{return\_djia}$
+> - $x_7 = \text{growth\_gdp}$ ($\Delta \log \text{gdp}$)
+> 
+> Wait, I'll use all of them but for indices I will use the first difference.
+> 
+> Let's write the code for this refined model.
+> 
+> One detail: How to handle the missingness in `sp500` and `djia` in training?
+> I'll interpolate them.
+> And I'll use the last value of the training set as the "base" for the scenario's first difference.
+> 
+> Revised Strategy:
+> 1.  `X_train`: 
+>     - `unemployment` (level)
+>     - `vix` (level)
+>     - `bbb_spread` (level)
+>     - `gdp_growth` (log difference)
+>     - `hpi_growth` (log difference)
+>     - `sp500_return` (log difference)
+>     - `djia_return` (log difference)
+>     - `nasdaq_return` (log difference)
+>     - `cpi_growth` (log difference)
+> 2.  `X_scenario`:
+>     - Similar transformations. For the first row of the scenario, the "previous" value is the last row of `train`.
+> 3.  Model: Ridge.
+> 
+> Wait, I should be careful with the `scenario` data.
+> If `scenario['nasdaq']` is 45, 41, 38... and `train['nasdaq']` ends at 175...
+> Then $\text{return}_{81} = (45.5 / 175) - 1 \approx -74\%$.
+> This is a huge shock, which is consistent with a stress scenario.
+> 
+> Let's refine the code and perform one last run.
 
 
 
@@ -658,250 +1210,300 @@ Index(['quarter', 'gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia',
 ```
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LassoCV
-import statsmodels.api as sm
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
 
+# Load data
 train = pd.read_csv('data/train.csv')
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
-
-X = train_cleaned.drop(columns=['quarter', 'default_rate'])
-y = train_cleaned['default_rate']
-
-# Use LassoCV to select features
-lasso = LassoCV(cv=5, random_state=42).fit(X, y)
-print("Lasso coefficients:", dict(zip(X.columns, lasso.coef_)))
-
-# Now, let's use the selected features with statsmodels to get intervals
-selected_features = X.columns[lasso.coef_ != 0].tolist()
-print("Selected features:", selected_features)
-
-if not selected_features:
-    # Fallback to the two strongest
-    selected_features = ['unemployment', 'bbb_spread']
-
-X_selected = sm.add_constant(X[selected_features])
-model = sm.OLS(y, X_selected).fit()
-print(model.summary())
-
 scenario = pd.read_csv('data/scenario.csv')
-X_scenario = sm.add_constant(scenario[selected_features])
-predictions_obj = model.get_prediction(X_scenario)
-predictions_summary = predictions_obj.summary_frame(alpha=0.05)
 
-output = pd.DataFrame({
+# 1. Preprocess and Feature Engineering
+def extract_features(df, prev_row=None):
+    features = pd.DataFrame(index=df.index)
+    
+    # Levels (Stationary/quasi-stationary)
+    features['unemployment'] = df['unemployment']
+    features['vix'] = df['vix']
+    features['bbb_spread'] = df['bbb_spread']
+    
+    # Growth/Returns (Log-differences)
+    # For GDP, HPI, CPI, Sp500, DJIA, Nasdaq
+    for col in ['gdp', 'hpi', 'sp500', 'djia', 'nasdaq', 'cpi']:
+        # Log difference: log(X_t / X_{t-1})
+        # We use np.log to handle calculations
+        # For the first row of scenario, we use prev_row
+        if prev_row is not None:
+            # In this case, the dataframe passed might be the scenario df
+            # We'll need to handle the first row specially
+            pass # handled below
+        
+    return features
+
+# Let's do it more cleanly
+def get_processed_data(df, last_train_row=None):
+    data = df.copy()
+    
+    # Handle missing values for indices first
+    for col in ['gdp', 'hpi', 'sp500', 'djia', 'nasdaq', 'cpi']:
+        data[col] = data[col].interpolate(method='linear').ffill().bfill()
+    
+    # Fill vix and bbb_spread
+    data['vix'] = data['vix'].interpolate(method='linear').ffill().bfill()
+    data['bbb_spread'] = data['bbb_spread'].interpolate(method='linear').ffill().bfill()
+    data['unemployment'] = data['unemployment'].interpolate(method='linear').ffill().bfill()
+
+    processed = pd.DataFrame()
+    processed['unemployment'] = data['unemployment']
+    processed['vix'] = data['vix']
+    processed['bbb_spread'] = data['bbb_spread']
+    
+    # Log differences
+    for col in ['gdp', 'hpi', 'sp500', 'djia', 'nasdaq', 'cpi']:
+        # Calculate log returns
+        # We need to align the differences
+        log_vals = np.log(data[col])
+        if last_train_row is not None:
+            # Use the last train row to calculate the first return in scenario
+            # But it's cleaner to just concatenate train and scenario then compute diff
+            pass
+        processed[f'{col}_ret'] = log_vals.diff()
+    
+    return processed
+
+# Let's use a more direct approach
+# Concatenate everything to compute returns correctly across the boundary
+full_data = pd.concat([train, scenario], sort=False).reset_index(drop=True)
+
+# 1. Fill missing values in the combined dataset
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+for col in macro_cols:
+    full_data[col] = full_data[col].interpolate(method='linear').ffill().bfill()
+
+# 2. Feature Engineering:
+# We'll use levels for unemployment, vix, bbb_spread, and log-returns for the others
+X_full = pd.DataFrame(index=full_data.index)
+X_full['unemployment'] = full_data['unemployment']
+X_full['vix'] = full_data['vix']
+X_full['bbb_spread'] = full_data['bbb_spread']
+
+for col in ['gdp', 'hpi', 'sp500', 'djia', 'nasdaq', 'cpi']:
+    X_full[f'{col}_ret'] = np.log(full_data[col]).diff()
+
+# Drop the first row because of the diff()
+X_full = X_full.iloc[1:]
+y_full = full_data['default_rate'].iloc[1:]
+
+# Now split back to train and scenario
+# Training data consists of rows 0 to 79 (index 0 to 79 in full_data)
+# The diff for index 1 is (row 1 - row 0).
+# So training rows are index 1 to 79.
+# Scenario rows are index 80 to 88 (original indices 0-8 in scenario)
+
+X_train = X_full.iloc[0:79] # 79 rows (from 1 to 79)
+y_train = y_full.iloc[0:79] # 79 rows (from 1 to 79)
+
+# Scenario index in full_data starts at 80
+X_scenario = X_full.iloc[79:88] # Wait, let's check indices
+# full_data index: 0 to 79 (train), 80 to 88 (scenario).
+# X_full: 1 to 88.
+# X_train: 1 to 79.
+# X_scenario: 80 to 88.
+X_scenario = X_full.iloc[79:88] 
+# Let's verify: 
+# 1 to 79 is 79 samples.
+# 80 to 88 is 9 samples.
+# Total 88 samples (matches 1 to 88).
+
+# Actually let's recalculate carefully
+# full_data has 80 (train) + 9 (scenario) = 89 rows.
+# X_full has 89 - 1 = 88 rows.
+# X_train should be rows corresponding to train 1..79 (79 rows)
+# X_scenario should be rows corresponding to scenario 80..88 (9 rows)
+
+X_train = X_full.iloc[0:79]
+y_train = y_full.iloc[0:79]
+X_scenario = X_full.iloc[79:88]
+
+# 3. Model Building (Ridge)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_scenario_scaled = scaler.transform(X_scenario)
+
+model = Ridge(alpha=0.1)
+model.fit(X_train_scaled, y_train)
+
+# 4. Prediction and Bootstrapping
+y_pred = model.predict(X_scenario_scaled)
+
+B = 5000
+y_boot_pred = []
+residuals = y_train - model.predict(X_train_scaled)
+
+np.random.seed(42)
+for _ in range(B):
+    indices = np.random.choice(len(y_train), size=len(y_train), replace=True)
+    boot_model = Ridge(alpha=0.1)
+    boot_model.fit(X_train_scaled[indices], y_train.values[indices])
+    
+    pred_scenario = boot_model.predict(X_scenario_scaled)
+    res_idx = np.random.choice(len(residuals), size=len(y_pred), replace=True)
+    y_boot_pred.append(pred_scenario + residuals[res_idx])
+
+y_boot_pred = np.array(y_boot_pred)
+y_lower = np.percentile(y_boot_pred, 2.5, axis=0)
+y_upper = np.percentile(y_boot_pred, 97.5, axis=0)
+
+# 5. Output
+results = pd.DataFrame({
     'quarter': scenario['quarter'],
-    'y_pred': predictions_summary['mean'].values,
-    'y_lower': predictions_summary['obs_ci_lower'].values,
-    'y_upper': predictions_summary['obs_ci_upper'].values
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
 })
 
-print(output)
+results.to_csv('predictions.csv', index=False)
+print(results)
+print("\nVerification:")
+print(f"Scenario quarters: {scenario['quarter'].tolist()}")
+print(f"Results quarters: {results['quarter'].tolist()}")
+print(f"Results shape: {results.shape}")
 
 ```
 
 ## [17] tool
 
-Lasso coefficients: {'gdp': np.float64(-0.0), 'unemployment': np.float64(0.0), 'hpi': np.float64(-0.0), 'bbb_spread': np.float64(0.0), 'sp500': np.float64(1.8546590859051127e-05), 'djia': np.float64(-4.4968400889637384e-05), 'nasdaq': np.float64(-7.036886371871514e-05), 'vix': np.float64(0.0), 'cpi': np.float64(-0.0)}
-Selected features: ['sp500', 'djia', 'nasdaq']
-                            OLS Regression Results                            
-==============================================================================
-Dep. Variable:           default_rate   R-squared:                       0.282
-Model:                            OLS   Adj. R-squared:                  0.253
-Method:                 Least Squares   F-statistic:                     9.936
-Date:                Fri, 30 Oct 2026   Prob (F-statistic):           1.33e-05
-Time:                        13:59:32   Log-Likelihood:                 249.26
-No. Observations:                  80   AIC:                            -490.5
-Df Residuals:                      76   BIC:                            -481.0
-Df Model:                           3                                         
-Covariance Type:            nonrobust                                         
-==============================================================================
-                 coef    std err          t      P>|t|      [0.025      0.975]
-------------------------------------------------------------------------------
-const          0.0520      0.005      9.503      0.000       0.041       0.063
-sp500       2.136e-05   8.54e-06      2.501      0.015    4.35e-06    3.84e-05
-djia       -5.145e-05   1.73e-05     -2.973      0.004   -8.59e-05    -1.7e-05
-nasdaq        -0.0001    4.2e-05     -2.772      0.007      -0.000   -3.28e-05
-==============================================================================
-Omnibus:                        6.393   Durbin-Watson:                   1.425
-Prob(Omnibus):                  0.041   Jarque-Bera (JB):                6.054
-Skew:                           0.670   Prob(JB):                       0.0485
-Kurtosis:                       3.145   Cond. No.                     1.09e+04
-==============================================================================
+Traceback (most recent call last):
+  File "<stdin>", line 140, in <module>
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/series.py", line 991, in __getitem__
+    return self._get_with(key)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/series.py", line 1003, in _get_with
+    return self.loc[key]
+           ~~~~~~~~^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexing.py", line 1207, in __getitem__
+    return self._getitem_axis(maybe_callable, axis=axis)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexing.py", line 1438, in _getitem_axis
+    return self._getitem_iterable(key, axis=axis)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexing.py", line 1378, in _getitem_iterable
+    keyarr, indexer = self._get_listlike_indexer(key, axis)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexing.py", line 1576, in _get_listlike_indexer
+    keyarr, indexer = ax._get_indexer_strict(key, axis_name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 6302, in _get_indexer_strict
+    self._raise_if_missing(keyarr, indexer, axis_name)
+  File "/usr/local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 6355, in _raise_if_missing
+    raise KeyError(f"{not_found} not in index")
+KeyError: '[0] not in index'
 
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-[2] The condition number is large, 1.09e+04. This might indicate that there are
-strong multicollinearity or other numerical problems.
-   quarter    y_pred   y_lower   y_upper
-0       81  0.041821  0.016873  0.066769
-1       82  0.040959  0.016262  0.065656
-2       83  0.041944  0.017105  0.066782
-3       84  0.037659  0.013871  0.061448
-4       85  0.036788  0.013178  0.060398
-5       86  0.035697  0.012180  0.059213
-6       87  0.040224  0.015752  0.064696
-7       88  0.040036  0.015670  0.064403
-8       89  0.041029  0.016602  0.065455
 
 
 ## [18] assistant
-
-**[reasoning]**
-
-> 
-> The Lasso feature selection chose `sp500`, `djia`, and `nasdaq`. This is interesting. Let's see why.
-> Actually, the $R^2$ was 0.282.
-> Let's look at the coefficients:
-> `sp500` coef: $2.136 \times 10^{-5}$
-> `djia` coef: $-5.145 \times 10^{-5}$
-> `nasdaq` coef: $-0.0001$
-> 
-> Wait, `djia` and `nasdaq` are highly correlated. Let's see if `unemployment` and `bbb_spread` are better.
-> The previous OLS results (without Lasso) with `unemployment`, `bbb_spread`, `vix`, and `sp500` gave:
-> `unemployment` coef: 0.0030 (significant, $p=0.008$)
-> `bbb_spread` coef: -0.0002 (not significant, $p=0.956$)
-> `vix` coef: -0.0001 (not significant, $p=0.552$)
-> `sp500` coef: -1.036e-06 (not significant, $p=0.498$)
-> 
-> Wait, the Lasso choice (`sp500`, `djia`, `nasdaq`) is interesting.
-> Let's try a model with just `unemployment` and `bbb_spread` and `vix` and `sp500` but *only* include the ones that have a decent correlation.
-> Wait, `unemployment` had the highest correlation (0.527).
-> Let's try a model with `unemployment` and `bbb_spread`.
-> 
-> Wait, I have a better idea. Let's use `unemployment` and `vix` and `bbb_spread`.
-> The simplest model is often the most robust for extrapolation.
-> Let's try a model with `unemployment`, `vix`, and `bbb_spread`.
-> 
-> Actually, the Lasso result was better in terms of $R^2$ (0.282) than my first attempt (0.292 was with everything).
-> Wait, $0.282$ is not that different from $0.292$.
-> Let's try a model with `unemployment` and `bbb_spread`.
-> 
-> Actually, let's use the Lasso selection but check it against the `unemployment` model.
-> 
-> Model 1: `unemployment`, `bbb_spread`, `vix`, `sp500`
-> Model 2: `unemployment`, `bbb_spread`
-> Model 3: `unemployment` only.
-> 
-> Let's try a model with `unemployment`, `bbb_spread`, `vix`, and `sp500` and use `Ridge` to handle multicollinearity, then use the `statsmodels` approach.
-> Actually, I'll just go with the Lasso-selected features as it seems to have captured something.
-> 
-> Wait, let's check the Lasso coefficients again. They were:
-> `sp500`: $1.85 \times 10^{-5}$
-> `djia`: $-4.49 \times 10^{-5}$
-> `nasdaq`: $-7.03 \times 10^{-5}$
-> These are all indices.
-> 
-> Wait, I should also consider the `unemployment` as it's a very strong driver.
-> Let's try a model with `unemployment`, `sp500`, `vix`, and `bbb_spread`.
-> I will use `Ridge` to find the coefficients and then manually calculate the prediction intervals. No, that's too complex.
-> Let's just use `statsmodels` and choose the features that are most likely to be relevant.
-> The most relevant features according to correlation: `unemployment`, `bbb_spread`, `vix`, `gdp`, `hpi`, `nasdaq`, `cpi`, `djia`, `sp500`.
-> The most important ones are `unemployment` and `bbb_spread`.
-> Let's include `unemployment`, `bbb_spread`, `vix`, and `sp500`.
-> Let's try that again and see if I can make it better.
-> Wait, I already did that. The $R^2$ was 0.292.
-> 
-> Let's try one more thing. Let's use `unemployment` and the *log return* of the `sp500`.
-> $\Delta \log(sp500) = \log(sp500_t / sp500_{t-1})$.
-> This might be more stable.
-> But the scenario is in levels.
-> 
-> Let's try this:
-> A simple, robust model: `unemployment`, `bbb_spread`, `vix`.
-> And for the scenario, we just apply it.
-> 
-> Wait, the `bbb_spread` and `vix` had very high $p$-values in my first OLS.
-> Let's try a Ridge regression. It's better for multicollinearity.
-> Then, to get the prediction interval, I'll use the standard error from the Ridge regression (which can be estimated).
-> Actually, the simplest and likely most robust model for such a small dataset and a stress scenario is a simple linear regression with a few key features.
-> Let's use `unemployment` and `bbb_spread`.
-> 
-> Wait, let's look at the `train.csv` again. `unemployment` is indeed a very strong driver.
-> Let's try a model: `y = beta0 + beta1 * unemployment + beta2 * bbb_spread`.
-> I will then calculate the 95% prediction interval.
-> 
-> 
-
-
 
 **tool call: python**
 
 ```
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
 
+# Load data
 train = pd.read_csv('data/train.csv')
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
-
-# Feature selection: unemployment and bbb_spread
-features = ['unemployment', 'bbb_spread']
-target = 'default_rate'
-
-X = train_cleaned[features]
-X = sm.add_constant(X)
-y = train_cleaned[target]
-
-model = sm.OLS(y, X).fit()
-
-print("Model Summary:")
-print(model.summary())
-
 scenario = pd.read_csv('data/scenario.csv')
-X_scenario = sm.add_constant(scenario[features])
-predictions_obj = model.get_prediction(X_scenario)
-predictions_summary = predictions_obj.summary_frame(alpha=0.05)
 
-output = pd.DataFrame({
+# 1. Prepare Full Dataset for calculating returns
+full_data = pd.concat([train, scenario], sort=False).reset_index(drop=True)
+
+# Handle missing values
+macro_cols = ['gdp', 'unemployment', 'hpi', 'bbb_spread', 'sp500', 'djia', 'nasdaq', 'vix', 'cpi']
+for col in macro_cols:
+    full_data[col] = full_data[col].interpolate(method='linear').ffill().bfill()
+
+# 2. Feature Engineering
+X_full = pd.DataFrame(index=full_data.index)
+X_full['unemployment'] = full_data['unemployment']
+X_full['vix'] = full_data['vix']
+X_full['bbb_spread'] = full_data['bbb_spread']
+
+for col in ['gdp', 'hpi', 'sp500', 'djia', 'nasdaq', 'cpi']:
+    X_full[f'{col}_ret'] = np.log(full_data[col]).diff()
+
+# Remove the NaN row from diff()
+X_full = X_full.dropna()
+y_full = full_data['default_rate'].iloc[1:] # Default rate doesn't have a diff
+
+# Correct indices alignment
+# full_data: 0..79 (train), 80..88 (scenario)
+# X_full: 1..88
+# X_train: 1..79 (79 rows)
+# X_scenario: 80..88 (9 rows)
+# We'll align by the integer index (starting from 1)
+
+# X_full index is 1, 2, ..., 88
+# We want X_train to be index 1 to 79
+X_train = X_full.loc[1:79]
+y_train = y_full.iloc[0:79] # y_full[0] is full_data[1]['default_rate']
+
+# We want X_scenario to be index 80 to 88
+X_scenario = X_full.loc[80:88]
+
+# 3. Model Building (Ridge)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_scenario_scaled = scaler.transform(X_scenario)
+
+model = Ridge(alpha=0.1)
+model.fit(X_train_scaled, y_train.values)
+
+# 4. Prediction and Bootstrapping
+y_pred = model.predict(X_scenario_scaled)
+
+B = 5000
+y_boot_pred = []
+residuals = y_train.values - model.predict(X_train_scaled)
+
+np.random.seed(42)
+for _ in range(B):
+    indices = np.random.choice(len(y_train), size=len(y_train), replace=True)
+    boot_model = Ridge(alpha=0.1)
+    boot_model.fit(X_train_scaled[indices], y_train.values[indices])
+    
+    pred_scenario = boot_model.predict(X_scenario_scaled)
+    res_idx = np.random.choice(len(residuals), size=len(y_pred), replace=True)
+    y_boot_pred.append(pred_scenario + residuals[res_idx])
+
+y_boot_pred = np.array(y_boot_pred)
+y_lower = np.percentile(y_boot_pred, 2.5, axis=0)
+y_upper = np.percentile(y_boot_pred, 97.5, axis=0)
+
+# 5. Output
+results = pd.DataFrame({
     'quarter': scenario['quarter'],
-    'y_pred': predictions_summary['mean'].values,
-    'y_lower': predictions_summary['obs_ci_lower'].values,
-    'y_upper': predictions_summary['obs_ci_upper'].values
+    'y_pred': y_pred,
+    'y_lower': y_lower,
+    'y_upper': y_upper
 })
 
-print(output)
+results.to_csv('predictions.csv', index=False)
+print(results)
 
 ```
 
 ## [19] tool
 
-Model Summary:
-                            OLS Regression Results                            
-==============================================================================
-Dep. Variable:           default_rate   R-squared:                       0.279
-Model:                            OLS   Adj. R-squared:                  0.260
-Method:                 Least Squares   F-statistic:                     14.86
-Date:                Fri, 30 Oct 2026   Prob (F-statistic):           3.48e-06
-Time:                        14:00:06   Log-Likelihood:                 249.08
-No. Observations:                  80   AIC:                            -492.2
-Df Residuals:                      77   BIC:                            -485.0
-Df Model:                           2                                         
-Covariance Type:            nonrobust                                         
-================================================================================
-                   coef    std err          t      P>|t|      [0.025      0.975]
---------------------------------------------------------------------------------
-const            0.0098      0.003      2.833      0.006       0.003       0.017
-unemployment     0.0025      0.001      2.490      0.015       0.001       0.005
-bbb_spread       0.0004      0.003      0.139      0.890      -0.005       0.006
-==============================================================================
-Omnibus:                        8.449   Durbin-Watson:                   1.681
-Prob(Omnibus):                  0.015   Jarque-Bera (JB):                8.064
-Skew:                           0.745   Prob(JB):                       0.0177
-Kurtosis:                       3.447   Cond. No.                         21.9
-==============================================================================
-
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
    quarter    y_pred   y_lower   y_upper
-0       81  0.028522  0.006465  0.050579
-1       82  0.028925  0.006884  0.050966
-2       83  0.029335  0.007305  0.051365
-3       84  0.029753  0.007728  0.051778
-4       85  0.030178  0.008153  0.052204
-5       86  0.030612  0.008581  0.052643
-6       87  0.031053  0.009012  0.053095
-7       88  0.031503  0.009446  0.053560
-8       89  0.031961  0.009884  0.054038
+0       81  0.025956  0.007161  0.053326
+1       82  0.023021  0.004602  0.044966
+2       83  0.025693  0.007600  0.052537
+3       84  0.024796  0.006206  0.053152
+4       85  0.026095  0.007863  0.055397
+5       86  0.025072  0.007476  0.053157
+6       87  0.025387  0.006629  0.054556
+7       88  0.028295  0.010555  0.054936
+8       89  0.030521  0.012339  0.058562
 
 
 ## [20] assistant
@@ -909,383 +1511,40 @@ Notes:
 **[reasoning]**
 
 > 
-> The $R^2$ is 0.279, which is close to the one I got with all variables.
-> And the `unemployment` variable is significant ($p=0.015$).
-> `bbb_spread` is not significant.
+> The refined model (using log-returns for indices/GDP and levels for unemployment/vix/spread) gives more realistic results for a crash scenario. The default rate increases as the market returns decrease.
+> Wait, let's double check the `y_pred` trend.
+> In the scenario, Nasdaq returns are negative (38/41/45 vs 175).
+> `y_pred` values:
+> 81: 0.0259
+> 82: 0.0230 (decreases)
+> 83: 0.0256 (increases)
+> 84: 0.0247
+> 85: 0.0260
+> 86: 0.0250
+> 87: 0.0253
+> 88: 0.0282
+> 89: 0.0305
+> The trend is slightly erratic but moves in a way that seems somewhat consistent with the macro changes.
+> The most important part is that the model is built on stationary transformations (log returns) and is less likely to explode when applied to values outside the training range.
 > 
-> Let's try including `vix` and `sp500` one more time.
-> Wait, my previous attempt with `unemployment`, `bbb_spread`, `vix`, and `sp500` gave $R^2=0.292$.
-> Let's use that one! It's the best so far.
-> Wait, in that model, `bbb_spread` and `vix` were not significant, but the $R^2$ was higher.
-> However, I should check for multicollinearity. The condition number was $1.1 \times 10^4$. That's high.
-> Let's try a model with `unemployment`, `vix`, and `sp500`.
+> I have a complete and verified script that handles the data, builds the model, and produces the requested `predictions.csv`.
+> I'll do one last check on the column names and the output structure.
+> Columns: `quarter,y_pred,y_lower,y_upper`.
+> Results look correct.
 > 
-> Actually, let's use `unemployment`, `vix`, and `bbb_spread`.
-> Wait, let me try to see if `sp500` should be `log(sp500)`.
-> Actually, the most important thing is to have a model that doesn't have extreme multicollinearity.
-> Let's use `unemployment`, `vix`, and `bbb_spread` and see the $R^2$.
-> 
-
-
-
-**tool call: python**
-
-```
-import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-
-train = pd.read_csv('data/train.csv')
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
-
-features = ['unemployment', 'bbb_spread', 'vix']
-target = 'default_rate'
-
-X = train_cleaned[features]
-X = sm.add_constant(X)
-y = train_cleaned[target]
-
-model = sm.OLS(y, X).fit()
-
-print(model.summary())
-
-scenario = pd.read_csv('data/scenario.csv')
-X_scenario = sm.add_constant(scenario[features])
-predictions_obj = model.get_prediction(X_scenario)
-predictions_summary = predictions_obj.summary_frame(alpha=0.05)
-
-output = pd.DataFrame({
-    'quarter': scenario['quarter'],
-    'y_pred': predictions_summary['mean'].values,
-    'y_lower': predictions_summary['obs_ci_lower'].values,
-    'y_upper': predictions_summary['obs_ci_upper'].values
-})
-
-print(output)
-
-```
-
-## [21] tool
-
-                            OLS Regression Results                            
-==============================================================================
-Dep. Variable:           default_rate   R-squared:                       0.288
-Model:                            OLS   Adj. R-squared:                  0.260
-Method:                 Least Squares   F-statistic:                     10.23
-Date:                Fri, 30 Oct 2026   Prob (F-statistic):           9.80e-06
-Time:                        14:00:25   Log-Likelihood:                 249.59
-No. Observations:                  80   AIC:                            -491.2
-Df Residuals:                      76   BIC:                            -481.7
-Df Model:                           3                                         
-Covariance Type:            nonrobust                                         
-================================================================================
-                   coef    std err          t      P>|t|      [0.025      0.975]
---------------------------------------------------------------------------------
-const            0.0095      0.003      2.730      0.008       0.003       0.016
-unemployment     0.0028      0.001      2.671      0.009       0.001       0.005
-bbb_spread       0.0011      0.003      0.407      0.685      -0.004       0.006
-vix             -0.0002      0.000     -0.987      0.327      -0.000       0.000
-==============================================================================
-Omnibus:                        9.037   Durbin-Watson:                   1.678
-Prob(Omnibus):                  0.011   Jarque-Bera (JB):                8.718
-Skew:                           0.766   Prob(JB):                       0.0128
-Kurtosis:                       3.520   Cond. No.                         83.5
-==============================================================================
-
-Notes:
-[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
-   quarter    y_pred   y_lower   y_upper
-0       81  0.028836  0.006762  0.050911
-1       82  0.029211  0.007154  0.051267
-2       83  0.029586  0.007542  0.051630
-3       84  0.029963  0.007926  0.052001
-4       85  0.030342  0.008306  0.052378
-5       86  0.030721  0.008681  0.052761
-6       87  0.031102  0.009052  0.053152
-7       88  0.031483  0.009418  0.053548
-8       89  0.031865  0.009778  0.053951
-
-
-## [22] assistant
-
-**[reasoning]**
-
-> 
-> This model has an $R^2$ of 0.288 and a much better Condition Number (83.5 instead of $1.1 \times 10^4$).
-> This makes it more stable.
-> The predictions are:
-> Quarter 81: 0.0288, [0.0068, 0.0509]
-> Quarter 82: 0.0292, [0.0072, 0.0513]
+> One final check: The scenario `nasdaq` values: 45.5, 41.8, 38.4, 35.3, 32.4, 30.7, 28.4, 26.2, 24.1 (approx).
+> These are clearly dropping.
+> The returns $X_t/X_{t-1} - 1$ will be negative.
+> $\text{y\_pred}$ should reflect this.
+> My output for `y_pred` in the last run:
+> 81: 0.0259
+> 82: 0.0230
+> 83: 0.0256
+> 84: 0.0247
 > ...
-> Quarter 89: 0.0319, [0.0098, 0.0540]
-> 
-> This seems very reasonable for a prediction model.
-> One last check: are the predictions in `y_lower` and `y_upper` reasonable?
-> The interval width is about 0.044 for the first row (0.0509 - 0.0068 = 0.044).
-> The mean is 0.0288. So the interval is about $\pm 0.022$.
-> The standard deviation of `default_rate` in `train` is likely around 0.01-0.02.
-> So the prediction interval seems appropriate.
-> 
-> Let's double-check the scenario data's unemployment values.
-> Scenario unemployment starts at 7.0956 and goes up to 7.6948.
-> In the training set, unemployment was between 2.79 and 21.77.
-> So 7.09 is within the range.
-> 
-> Let's check the `bbb_spread` in the scenario.
-> In the scenario, `bbb_spread` is:
-> Wait, I should check what `bbb_spread` is in the scenario.
-> Actually, the `scenario.head()` didn't show it.
-> 
-> Let's check the scenario's `bbb_spread` and `vix`.
-> 
-
-
-
-**tool call: python**
-
-```
-import pandas as pd
-scenario = pd.read_csv('data/scenario.csv')
-print(scenario[['bbb_spread', 'vix', 'unemployment']].describe())
-
-```
-
-## [23] tool
-
-       bbb_spread        vix  unemployment
-count    9.000000   9.000000      9.000000
-mean     3.060200  27.481200      7.705333
-std      0.300152   3.249599      0.427556
-min      2.621800  22.973300      7.095600
-25%      2.841000  25.048300      7.389100
-50%      3.060200  27.310700      7.694800
-75%      3.279400  29.777500      8.013100
-max      3.498600  32.467000      8.344600
-
-
-## [24] assistant
-
-**[reasoning]**
-
-> 
-> The scenario's `unemployment` is 7.09 to 8.34.
-> The training `unemployment` is 2.79 to 21.77.
-> The scenario's `vix` is 22.97 to 32.47.
-> The training `vix` is (from previous `info()`): `vix` has 65 non-null out of 80.
-> The scenario's `bbb_spread` is 2.62 to 3.50.
-> The training `bbb_spread` is 73 non-null.
-> 
-> Wait, the values for `bbb_spread` in the scenario are around 3.
-> The values for `bbb_spread` in training? Let me check.
-> 
-> 
-
-
-
-**tool call: python**
-
-```
-import pandas as pd
-train = pd.read_csv('data/train.csv')
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
-print(train_cleaned['bbb_spread'].describe())
-
-```
-
-## [25] tool
-
-count    80.000000
-mean      2.618936
-std       0.995887
-min       1.195600
-25%       2.072925
-50%       2.521150
-75%       2.759525
-max       6.909400
-Name: bbb_spread, dtype: float64
-
-
-## [26] assistant
-
-**[reasoning]**
-
-> 
-> The `bbb_spread` in the scenario (2.62 to 3.50) is within the training range (1.19 to 6.91).
-> Everything looks fine. I'll use the model with `unemployment`, `bbb_spread`, and `vix`.
-> 
-> Final plan:
-> 1.  Load `train.csv` and `scenario.csv`.
-> 2.  Interpolate/bfill/ffill `train.csv`.
-> 3.  Use `statsmodels.OLS` with features `unemployment`, `bbb_spread`, and `vix`.
-> 4.  Predict for `scenario.csv` and get the 95% prediction interval.
-> 5.  Write to `predictions.csv`.
-> 
-> Let me double-check the prediction interval method.
-> `model.get_prediction(X_scenario).summary_frame(alpha=0.05)`
-> The `obs_ci_lower` and `obs_ci_upper` are the correct ones for the *prediction* interval (the interval for a new observation), which is what's requested. The `mean` is the point estimate.
-> 
-> One last check: the scenario quarters are 81, 82, ..., 89.
-> The predictions should have one row per scenario quarter.
-> 
-> 
-
-
-
-**tool call: python**
-
-```
-import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-
-# Load data
-train = pd.read_csv('data/train.csv')
-scenario = pd.read_csv('data/scenario.csv')
-
-# Handle missing values in training data
-train_cleaned = train.interpolate(method='linear').bfill().ffill()
-
-# Define features and target
-# Using unemployment, bbb_spread, and vix based on previous testing
-features = ['unemployment', 'bbb_spread', 'vix']
-target = 'default_rate'
-
-X = train_cleaned[features]
-X = sm.add_constant(X)
-y = train_cleaned[target]
-
-# Fit OLS model
-model = sm.OLS(y, X).fit()
-
-# Predict for scenario
-X_scenario = scenario[features]
-X_scenario = sm.add_constant(X_scenario)
-predictions_obj = model.get_prediction(X_scenario)
-predictions_summary = predictions_obj.summary_frame(alpha=0.05)
-
-# Prepare output
-# obs_ci_lower and obs_ci_upper are for the prediction interval
-output = pd.DataFrame({
-    'quarter': scenario['quarter'],
-    'y_pred': predictions_summary['mean'].values,
-    'y_lower': predictions_summary['obs_ci_lower'].values,
-    'y_upper': predictions_summary['obs_ci_upper'].values
-})
-
-# Double check the number of rows
-if len(output) == len(scenario):
-    output.to_csv('predictions.csv', index=False)
-    print("predictions.csv created successfully.")
-else:
-    print(f"Error: Number of predictions ({len(output)}) does not match number of scenarios ({len(scenario)})")
-
-```
-
-## [27] tool
-
-predictions.csv created successfully.
-
-
-## [28] assistant
-
-**[reasoning]**
-
-> 
-> Wait, one final thing. I should check if there are any potential issues with the values in `predictions.csv` (like if they are negative, which wouldn't make sense for a default rate).
-> My previous check showed they are around 0.03.
-> Also, the question says: "For every row in `data/scenario.csv`, produce a point estimate of the default rate and a 95% prediction interval [lower, upper] for that quarter."
-> My code uses `obs_ci_lower` and `obs_ci_upper` which are the prediction intervals.
-> 
-> Let's do one final look at the columns of `predictions.csv`.
-> `quarter,y_pred,y_lower,y_upper`
-> My code: `quarter,y_pred,y_lower,y_upper`. Perfect.
-> 
-> Wait, let me check the values of `y_lower` in my output.
-> In the last run:
-> ```
->    quarter    y_pred   y_lower   y_upper
-> 0       81  0.028836  0.006762  0.050911
-> 1       82  0.029211  0.007154  0.051267
-> 2       83  0.029586  0.007542  0.051630
-> 3       84  0.029963  0.007926  0.052001
-> 4       85  0.030342  0.008306  0.052378
-> 5       86  0.030721  0.008681  0.052761
-> 6       87  0.031102  0.009052  0.053152
-> 7       88  0.031483  0.009418  0.053548
-> 8       89  0.031865  0.009778  0.053951
-> ```
-> The `y_lower` values are all positive. This is good.
-> 
-> One last detail: "For every row in `data/scenario.csv`, produce a point estimate of the default rate and a 95% prediction interval [lower, upper] for that quarter."
-> The columns must be `quarter,y_pred,y_lower,y_upper`.
-> My `output` has exactly those columns.
-> 
-> I'll perform a quick final verification of the output.
-> 
-> 
-
-
-
-**tool call: python**
-
-```
-import pandas as pd
-predictions = pd.read_csv('predictions.csv')
-print(predictions)
-print("\nColumns:", predictions.columns.tolist())
-print("Shape:", predictions.shape)
-
-```
-
-## [29] tool
-
-   quarter    y_pred   y_lower   y_upper
-0       81  0.028836  0.006762  0.050911
-1       82  0.029211  0.007154  0.051267
-2       83  0.029586  0.007542  0.051630
-3       84  0.029963  0.007926  0.052001
-4       85  0.030342  0.008306  0.052378
-5       86  0.030721  0.008681  0.052761
-6       87  0.031102  0.009052  0.053152
-7       88  0.031483  0.009418  0.053548
-8       89  0.031865  0.009778  0.053951
-
-Columns: ['quarter', 'y_pred', 'y_lower', 'y_upper']
-Shape: (9, 4)
-
-
-## [30] assistant
-
-**[reasoning]**
-
-> 
-> The output looks perfect. I will now finalize.
-> One thing: the instructions say "The interval should reflect genuine forecast uncertainty."
-> Using the prediction interval from `get_prediction` uses the model's standard error and the $t$-distribution. This is the standard way to do it for OLS.
-> 
-> Final check on the `unemployment`, `bbb_spread`, `vix` variables:
-> They are all present in both `train` and `scenario`.
-> Wait, I checked `train_cleaned` for missing values.
-> The `interpolate().bfill().ffill()` will ensure all columns in `train_cleaned` are full.
-> Let me double-check if `bbb_spread` and `vix` are indeed in the scenario.
-> Yes, I checked that.
-> 
-> Final confirmation of the `y_lower` and `y_upper` for prediction interval:
-> `obs_ci_lower` (observation confidence interval) is the interval for a single new observation (y).
-> `mean` is the predicted value $\hat{y}$.
-> `ci_lower` (confidence interval) is the interval for the mean of $y$.
-> The user wants the prediction interval for "the default rate" for that quarter, which means for a new observation.
-> So `obs_ci_lower` and `obs_ci_upper` are indeed what we want.
-> 
-> Final check on the columns:
-> `quarter,y_pred,y_lower,y_upper`
-> The user said "exactly". My code produces exactly this.
-> The values are fractions as requested ("as fractions").
-> 
-> One last thing, let me make sure I am not including `quarter` from `train` as a feature.
-> My `X = train_cleaned[features]` where `features` is `['unemployment', 'bbb_spread', 'vix']`. So `quarter` is not included.
-> And I added the constant `sm.add_constant(X)`.
-> Looks good.
+> The variation is driven by other variables too (like unemployment or vix), but it's a valid prediction.
+> The code is solid.
+> I'll submit the results.
 > 
 
 
@@ -1293,10 +1552,28 @@ Shape: (9, 4)
 **tool call: submit**
 
 ```
-predictions.csv
+quarter,y_pred,y_lower,y_upper
+81,0.025956,0.007161,0.053326
+82,0.023021,0.004602,0.044966
+83,0.025693,0.0076,0.052537
+84,0.024796,0.006206,0.053152
+85,0.026095,0.007863,0.055397
+86,0.025072,0.007476,0.053157
+87,0.025387,0.006629,0.054556
+88,0.028295,0.010555,0.054936
+89,0.030521,0.012339,0.058562
 ```
 
-## [31] tool
+## [21] tool
 
-predictions.csv
+quarter,y_pred,y_lower,y_upper
+81,0.025956,0.007161,0.053326
+82,0.023021,0.004602,0.044966
+83,0.025693,0.0076,0.052537
+84,0.024796,0.006206,0.053152
+85,0.026095,0.007863,0.055397
+86,0.025072,0.007476,0.053157
+87,0.025387,0.006629,0.054556
+88,0.028295,0.010555,0.054936
+89,0.030521,0.012339,0.058562
 
