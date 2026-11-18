@@ -30,6 +30,8 @@ Two consequences follow.
 | Credentials | `MACMINI_BASE_URL=http://<ip>:8081/v1` and `MACMINI_API_KEY` in `.env` |
 | Weight revisions | pinned below, because a repo name is not a version |
 
+That table covers the three rows in the results below, all served by `mlx_lm.server`. A fourth model is served by LM Studio on the same machine and has its own setup, findings and caveats under [A Second Serving Stack, LM Studio Instead of MLX](#a-second-serving-stack-lm-studio-instead-of-mlx), because nothing about the server behaviour carries across.
+
 ### The Weights Are Pinned By Commit, Not By Name
 
 A Hugging Face repo name does not identify a set of tensors. `mlx-community` and `unsloth` re-quantize in place, so "the same model" re-downloaded later can be different weights, and a published cell measured against the old ones stops being reproducible without anyone touching this repository.
@@ -443,6 +445,74 @@ The signals that do work, in order of cost:
 
 Two Gemma runs were killed on the strength of the `.eval` mtime, at 13 and 17 hours. Both were working. The first had completed 324 generate calls and was on its second instance when it was killed, and its trace log ends with a successful response seconds before the kill.
 
+## A Second Serving Stack, LM Studio Instead of MLX
+
+Everything above was served by `mlx_lm.server`. Recursive's Flint ships as GGUF rather than MLX, so it is served by LM Studio on the same machine, which is llama.cpp underneath. None of the server findings above transfer, because the allocator, the prefill path and the overflow behaviour are all different code. The findings below are that stack's, measured on 2026-11-17 and 2026-11-18, and each is a single probe unless it says otherwise.
+
+| | |
+| --- | --- |
+| Machine | the same Mac Mini, 48 GB unified memory |
+| Server | LM Studio, OpenAI-compatible endpoint on the same host and port the mlx server used, so `MACMINI_BASE_URL` needed no change |
+| Model | `recursivesi/flint`, GGUF `Q4_K_M`, Apache 2.0 |
+| Shape | 39.8B total and about 2.5B active, 49 layers as 2 dense plus 47 MoE, 256 routed experts with 6 per token and one shared, 32 query heads and 4 KV heads at head dimension 128 |
+| Attention | 35 sliding-window layers at a 513-token window, 14 full-attention layers |
+| Context | declares 262,144, and **loads at 8,192 unless the load says otherwise** |
+| Inspect model string | `openai-api/macmini/recursivesi/flint` |
+
+The shape figures come from the model card by way of aggregator pages rather than from the file served here, so treat them as the basis of the arithmetic below rather than as independently verified.
+
+### The Ceiling Is the Configured Window, Not the Memory
+
+One growing conversation at 10k resolution reached **260,722 tokens served intact**, at turn 26 of 30, with no out-of-memory death and no dead worker. This is the first local model on this page whose full declared window is reachable in a real growing conversation rather than in a probe: Gemma reached 298,658 under a probe but its agent loops died at 231,531 and 199,374, and the gap between those two numbers is the subject of [The Probe Ceiling Overstates What an Agent Loop Reaches](#the-probe-ceiling-overstates-what-an-agent-loop-reaches). Here there is no gap to explain, because nothing died.
+
+The arithmetic says why, and it is the sliding-window geometry rather than the quantization. At fp16 a full-attention layer holds `2 * 4 * 128 * 2 = 2,048` bytes per token, so the 14 full-attention layers hold 28 KiB per token and **7.0 GiB at the full 262,144**. The 35 sliding layers are capped at their own window, `35 * 513 * 2 KiB`, which is 37 MB and rounds to nothing. Against about 24 GB of weights that is 31 GB of 48, which is why it never came close to failing. Gemma, by contrast, held 8.7 GB across 5 full-attention layers at 212,734 tokens, because it has 16 KV heads where this model has 4.
+
+Turn cost is linear in the prompt, fitting `t = 4.3s + prompt / 4,073 tok/s` across all 26 turns: predicted against measured is 36.3s against 35.4s at turn 13, 53.5s against 53.0s at turn 20, and 68.3s against 68.3s at turn 26. The apparent prefill rate therefore rises with context, from 1,491 tok/s on a 10k prompt to 3,819 tok/s on a 260k one, because the fixed 4.3s dominates the small end.
+
+### There Is No Prefix Cache, and Every Turn Pays for the Whole Conversation
+
+That linear fit is itself the finding. A turn served from a prefix cache would prefill only its own new 10k and stay roughly flat; these turns scale with the total, and the implied full-prompt rate is constant. LM Studio does not report `prompt_tokens_details`, so there is no `cached_tokens` figure to read directly, and the timing is the proxy.
+
+The agent loop confirms it at scale. One eight-instance quantile run moved **61,878,964 input tokens against 498,005 output**, a ratio of 124 to 1, and its worst sample moved 45,562,632 input tokens by itself across 338 model calls. Total prefill is quadratic in turn count, so the cost of a long agent loop here is set by how many calls it makes rather than by how deep it goes. This is the one place where this stack is clearly worse than `mlx_lm.server`, which did cache prefixes and reported the hit rate per turn.
+
+### Overflow Truncated Silently Until the Policy Changed
+
+The dangerous finding, and it is a validity problem rather than a performance one. A 280,836-token conversation, past the configured window, originally returned **HTTP 200 after 258 seconds with `prompt_tokens` of 130,499**. It did not error. It discarded roughly half the conversation and answered on the remainder, which is llama.cpp context shift: keep the head, drop half the rest. Four successive turns of a growing conversation all came back pinned near 130,470, so it re-truncated every time.
+
+A sample that overflowed would therefore have been scored on a conversation that had quietly lost half its history, and it would have looked like a completed sample rather than a failure. `score_on_error` cannot catch it, because there is no error.
+
+Setting the Context Overflow Policy to **Stop at Limit** on the machine fixes it. The same request now returns `400 exceed_context_size_error` with `n_prompt_tokens 280836, n_ctx 262144`, in one second rather than 258. Two things worth recording about that setting:
+
+- It is **not a request field**. Sending `context_overflow_policy` and `contextOverflowPolicy` in the body changes nothing; the server ignores unknown fields silently and returns 200. The control, with both fields stripped, behaves identically to the request carrying them.
+- Because it is machine-side, **it does not appear in the eval log**, so a run's validity depends on unrecorded machine state. Every run here therefore fires one over-window request immediately before the sweep and records the response beside it, so the log carries its own proof that the policy was active.
+
+### The Backend Is Not Deterministic at Temperature Zero
+
+The same instance was run twice at `temperature=0`, once alone and once inside the eight-instance row:
+
+| | pinball regret | coverage | calls | peak context |
+| --- | --- | --- | --- | --- |
+| First run | 0.09755739 | 0.540 | 39 | 144,725 |
+| Second run | 0.09755739 | **0.720** | 36 | 111,454 |
+
+Identical regret to eight significant figures and a coverage difference of 0.18. MoE routing or batching is the likely cause and neither was tested. Two consequences. First, single draws on this stack carry run-to-run variance that greedy decoding does not remove, which is the opposite of the artifact recorded under [Identical Transcripts Across Runs Are a Server Artifact](#identical-transcripts-across-runs-are-a-server-artifact). Second, this is the cleanest evidence on the page that pinball regret cannot see the interval: one model, one dataset, two runs, the same score to eight digits and materially different intervals. The cross-model version of that argument is in [the quantile task page](tasks/quantile.md).
+
+### What Has Been Measured So Far
+
+One comparable quantile draw, and no publishable cell. The published quantile convention is three single-instance runs at seeds 1, 2 and 3, which is what all fifteen ranked rows were scored on, so the only draw here that is paired with them is **0.0976 on seed 1**. That draw reproduces the `type7` reference estimator, numpy's default linear-interpolation empirical quantile, exactly on regret, p90, p95, p99, hit rate, MAE and spread, differing only in coverage. It is the third row on this suite to land exactly on a reference estimator in that column, after the two that landed on the moment-matched normal.
+
+A separate eight-instance run was made before the convention was checked, and it is kept as a dispersion measurement rather than as a row. Its instances 1 through 7 are datasets no other model has been scored on, and five of its eight samples exceeded the protocol's `--token-limit 2500000`, so under the documented protocol they would have been terminated. Read only as spread, those eight draws run 0.0554 to 0.2094 with a median of 0.1226, a factor of 3.8 between best and worst on the same task and the same model.
+
+### Two Invocation Traps Found by Running It
+
+Neither is specific to this model, and both cost a run here.
+
+**`cecl` does not pin its instances by default.** Its signature is `seed: int | None = None`, so `SeedSequence(None)` draws from OS entropy and every invocation without `-T seed=1` generates a fresh portfolio. All 81 CECL samples in `logs/` before this one used the three seeds that `SeedSequence(1).generate_state(3)` produces, so the archive is consistent and the one deviation is recorded here. `quantile` is unaffected because its default is `seed=1`.
+
+That matters more than it looks, because the CECL cell is the worst of three scenarios and the scenarios are not equally hard. Taking each row's worst draw per instance, **the cell is set by instance-1-adverse in 10 of the 14 ranked rows**, by instance-0-baseline in 3 and by instance-2-benign in 1. For the ten set by the adverse instance, that instance's regret runs 5x to 537x the same row's baseline regret: 1.6e-05 against 0.000567 for gpt-6-luna, 8.9e-07 against 5.9e-05 for GLM-5.1, 1.61e-05 against 0.00865 for ling-3.0-flash. A draw on the baseline scenario alone understates the cell by one to two orders of magnitude for the typical row, which is the real reason a single-instance CECL run cannot be published, rather than anything about reproducibility.
+
+**`quantile` is three runs of one instance, not one run of three instances.** Every prior quantile log is `n=1` with sample id `quantile-0`. Passing `-T n_instances=8` produces `quantile-0` through `quantile-7`, which are seven datasets outside the comparison set and one that is inside it.
+
 ## Remaining Levers
 
 The gap is no longer context, and the fix was never a better model. One server flag moved the measured ceiling from 89,601 tokens to past 298,658, which settles six of the eight tasks outright, so for those the levers that remain are all about the scores. CCAR, migration and CECL are not settled. CCAR and migration reached 216,198 and 231,531 tokens, 72% and 78% of a ceiling that is itself optimistic, and migration crashed the server at that figure and again at 199,374. CECL is the worst of the three and the best measured: eight of its samples have crashed the server between 147,973 and 212,734 tokens, and the two draws that completed the column did so by taking 5 and 11 model calls rather than by surviving a long path ([detail](#the-cecl-column-cost-sixty-nine-hours-of-crashes-and-then-twenty-five-minutes)).
@@ -457,7 +527,7 @@ The gap is no longer context, and the fix was never a better model. One server f
 
 ## Candidates Still To Test
 
-Tested so far, all at 4-bit on the same 48 GB machine:
+Tested so far, all 4-bit on the same 48 GB machine, the first four under `mlx_lm.server` and the last under LM Studio:
 
 | Model | Ceiling at step 2048 | Weights | Decode | Prefill at 10k | Cells |
 | --- | --- | --- | --- | --- | --- |
@@ -465,6 +535,9 @@ Tested so far, all at 4-bit on the same 48 GB machine:
 | Qwen3.6-27B-OptiQ | 39,744 to 49,744 | 20.4 GB | 14 tok/s | 374 tok/s | none, screened out on the ceiling |
 | Gemma 4 26B A4B QAT | 89,601 to 99,601 | 15.6 GB | 74 tok/s | 2,100 tok/s | all eight tasks |
 | NVIDIA Nemotron 3.5 Lightning 30B A3B | 136,305 reached, not probed | 17.8 GB | not measured | not measured | all eight tasks |
+| Flint 39.8B A2.5B, GGUF | 260,722 served, no failure | about 24 GB | 71 tok/s | 1,491 tok/s | quantile seed 1 only, CECL running |
+
+The Flint row's ceiling is not comparable to the four above it. Those are `--prefill-step-size 2048` figures on `mlx_lm.server`, where the setting was the binding constraint; Flint is served by llama.cpp, which has no such setting, and its figure is the largest prompt a growing conversation served without failing. Its decode and prefill numbers are single probes at short context, and its apparent prefill rate rises to 3,819 tok/s at 260k for the reason given under [The Ceiling Is the Configured Window, Not the Memory](#the-ceiling-is-the-configured-window-not-the-memory).
 
 The Nemotron row is the one entry whose serving numbers are missing, and they are missing for a reason worth recording: its weights were reclaimed before anyone thought to probe it, so filling those three cells now means re-downloading 17.8 GB and restarting the server on a machine that is running another row. The ceiling figure given is not a probe but the largest context the agent loop actually reached, on migration instance 0, which is a floor on the ceiling rather than a measurement of it. The screening question those columns exist to answer was in any case answered by the row itself: the model completed all eight columns without hitting a context wall.
 
@@ -474,6 +547,6 @@ Still queued:
 
 - Qwen3.8-27B
 
-The thing to watch is interval coverage rather than the point estimates, because that is the component that has failed on all three models tested and it is the component a model risk function will not waive.
+The thing to watch is interval coverage rather than the point estimates, because that is the component that has failed on all three models measured across the full suite and it is the component a model risk function will not waive. Flint is not yet one of those three, and its one comparable draw under-covers as well, at 0.540 and 0.720 on two runs of the instance where the reference estimator reaches 0.840.
 
 The protocol for each: `--prefill-step-size 256 --prompt-cache-size 1` on the server, a real completion as the health check rather than `/v1/models`, and on the Inspect side `-T n_instances=3 -T seed=1 --max-tokens 16384 --max-connections 1 --token-limit 2500000 --time-limit 86400`, eight instances for CCAR, three single-instance runs at seeds 1, 2 and 3 for quantile, and a transcript saved to `runs/` per sample. Sampling goes in a `--generate-config` file, because Inspect's OpenAI provider forwards `temperature` and `top_p` but silently drops `top_k`, which has to ride in `extra_body` instead. Measure the ceiling first and report it alongside the cells, because a ceiling reached mid-suite costs a human restart and a ceiling measured first costs 15 minutes. Watch progress on `~/.local/share/inspect_ai/traces/trace-<pid>.log` rather than on the `.eval` file, for the reason given under [A Working Run and a Dead One Look Identical](#a-working-run-and-a-dead-one-look-identical).
