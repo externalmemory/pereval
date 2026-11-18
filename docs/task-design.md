@@ -89,7 +89,11 @@ The reproducibility study closes the argument: the same model on byte-identical 
 
 ### Anchoring and Non-Response
 
-Three anchors, not one. The oracle gives the achievable floor and a naive or competent reference gives the practical one, but neither answers the question "does this model carry any information at all". That needs a third: the **degenerate answer**, the least informative admissible response, taken here as one constant point estimate for the whole instance with no interval. It is computed from ground truth on every run and reported as `degenerate_regret`, so it costs nothing.
+Three anchors, not one. The oracle gives the achievable floor and a naive or competent reference gives the practical one, but neither answers the question "does this model carry any information at all". That needs a third: the **degenerate answer**, the least informative admissible response. It is a simple reference point chosen per task rather than one formula, because what counts as carrying no information depends on what the task hands the agent.
+
+Where the agent is given a scenario and asked for a path, that is one constant point estimate with a zero-width interval. CCAR, ballistic and the three orbital tasks take the mean of the true means, circular on the angular targets; CECL takes a constant loss rate; migration predicts zero defaults everywhere and is normalized so the degenerate scores exactly 1.000. The quantile task is the one where a constant would not be the unthinking answer but a non-answer, because each block hands the agent a sample and asks for a quantile of the population behind it. There the unthinking answer is `np.percentile`, Hyndman and Fan type 7, which is the numpy and pandas default and nothing more: it glosses over the difference between the sample quantile and the population quantile, and type 7 is not the estimator Hyndman and Fan argue for even as a sample quantile.
+
+Each of them is computed from ground truth on every run and reported alongside the score, as `degenerate_regret` everywhere except migration, which reports `score_degenerate`, so none of them costs a model call.
 
 It earns its place empirically. On the hyperbolic flyby task every measured model scores worse than a constant, which regret against the oracle alone cannot reveal, because a large regret and a *useless* regret look identical when the only reference is zero. On the two orbital tasks the same anchor sits in the thousands and real models beat it easily. Same metric, opposite verdicts, and only the degenerate anchor separates them.
 

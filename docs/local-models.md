@@ -495,13 +495,43 @@ The same instance was run twice at `temperature=0`, once alone and once inside t
 | First run | 0.09755739 | 0.540 | 39 | 144,725 |
 | Second run | 0.09755739 | **0.720** | 36 | 111,454 |
 
-Identical regret to eight significant figures and a coverage difference of 0.18. MoE routing or batching is the likely cause and neither was tested. Two consequences. First, single draws on this stack carry run-to-run variance that greedy decoding does not remove, which is the opposite of the artifact recorded under [Identical Transcripts Across Runs Are a Server Artifact](#identical-transcripts-across-runs-are-a-server-artifact). Second, this is the cleanest evidence on the page that pinball regret cannot see the interval: one model, one dataset, two runs, the same score to eight digits and materially different intervals. The cross-model version of that argument is in [the quantile task page](tasks/quantile.md).
+Identical regret to eight significant figures and a coverage difference of 0.18. MoE routing or batching is the likely cause and neither was tested. Single draws on this stack therefore carry run-to-run variance that greedy decoding does not remove, which is the opposite of the artifact recorded under [Identical Transcripts Across Runs Are a Server Artifact](#identical-transcripts-across-runs-are-a-server-artifact).
+
+**The matching regret is not the determinism evidence, and reading it as such would be a mistake.** Both runs submitted the `type7` answer on this dataset, numerically, so their point estimates came out of a deterministic `np.quantile` call inside the sandbox rather than out of the model. What differs run to run is everything the model actually decided: 39 calls against 36, a peak context of 144,725 against 111,454, and an interval covering 0.540 against 0.720. The claim rests on those three and not on the score.
+
+What the pair does show cleanly is that pinball regret cannot see the interval: one model, one dataset, two runs, the same score to eight digits and materially different intervals. The cross-model version of that argument is in [the quantile task page](tasks/quantile.md).
 
 ### What Has Been Measured So Far
 
-One comparable quantile draw, and no publishable cell. The published quantile convention is three single-instance runs at seeds 1, 2 and 3, which is what all fifteen ranked rows were scored on, so the only draw here that is paired with them is **0.0976 on seed 1**. That draw reproduces the `type7` reference estimator, numpy's default linear-interpolation empirical quantile, exactly on regret, p90, p95, p99, hit rate, MAE and spread, differing only in coverage. It is the third row on this suite to land exactly on a reference estimator in that column, after the two that landed on the moment-matched normal.
+Two columns on the published conventions, both on 2026-11-18: quantile as three single-instance runs at seeds 1, 2 and 3, and CECL as three instances under `-T seed=1`. The other six tasks are untouched, so there is no row and no rank.
 
-A separate eight-instance run was made before the convention was checked, and it is kept as a dispersion measurement rather than as a row. Its instances 1 through 7 are datasets no other model has been scored on, and five of its eight samples exceeded the protocol's `--token-limit 2500000`, so under the documented protocol they would have been terminated. Read only as spread, those eight draws run 0.0554 to 0.2094 with a median of 0.1226, a factor of 3.8 between best and worst on the same task and the same model.
+**Quantile is 0.098 (0.115).** The three draws, each beside the `type7` reference the scorer computes from ground truth on the same data:
+
+| Seed | Dataset | Flint | `type7` on the same data | Ratio | Coverage | Calls |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1835504127 | 0.09755739 | 0.09755739 | 1.0000 | 0.540 | 39 |
+| 2 | 2834126987 | 0.06989644 | 0.11375944 | 0.614 | 0.730 | 37 |
+| 3 | 1576890651 | 0.11452052 | 0.11491507 | 0.9966 | 0.380 | 25 |
+
+**It is submitting `np.quantile` output rather than estimating a tail.** On seed 1 the two columns agree to sixteen digits and differ only in the last bit, which is a floating-point tie and not a close call. The cell-setting draw on seed 3 improves on `type7` by 0.34 percent. Across all eleven quantile draws taken on this model, on ten distinct datasets, **seven are numerically identical to `type7`** and cover six of those datasets; one more is the 0.9966 above, one is 1.79x worse, and only two carry real information, at 0.614x and 0.641x. It is the third row on this suite to land exactly on a reference estimator in that column, after the two that landed on the moment-matched normal, and the first to land on `type7`.
+
+That also reframes the two-run split above. The point estimates come out of a library call and do not vary; the interval the model reasons about varies from 0.380 to 0.880 across these draws. A column scored on point estimates alone would record this model as mid-table and would be recording numpy's behaviour.
+
+**CECL is 0.00057**, set by the adverse instance exactly as the 10-of-14 pattern below predicts.
+
+| Instance | Regret | Coverage | Mean width | Loss-rate MAE |
+| --- | --- | --- | --- | --- |
+| 0 baseline | 1.54e-05 | 0.910 | 0.033 | 31.2 bps |
+| **1 adverse** | **0.000567046** | 0.691 | 0.053 | 201.7 bps |
+| 2 benign | 7.78e-08 | 0.950 | 0.020 | 2.5 bps |
+
+1h53m for 6.70M tokens, 49, 48 and 60 calls, no sample errored and none hit a limit.
+
+**The adverse instance is an attractor too, and the tightest one found anywhere in this suite.** Flint's 0.000567046 sits on gpt-6-luna's 0.000567030, agreeing to five significant figures, with a loss-rate MAE of 201.75 bps against 201.83. Two further rows land in the same place, nemotron-3-super at 0.000561840 and gemma at 0.000571262, so four models on three serving stacks fall inside a 1.7 percent band on one instance and coverage is the only thing that separates them, at 0.675 to 0.691. The published CECL column reads 0.00056, 0.00057 and 0.00057 as three ranked rows at the top of its second group; this makes four samples of one shared answer. It is also the first attractor found outside the quantile column. Whatever that estimator is, it misses the adverse loss rate by about 201 bps with intervals too narrow, which is what failing to condition on the stressed macro path would look like, but the transcripts have not been read and that mechanism is unconfirmed.
+
+**Two deliberate deviations from the protocol paragraph at the end of this page**, both in the quantile draws. The time limit was 86,400 rather than the 5,000 the seed-1 draw used, which never bound, since the three draws took 51, 28 and 31 minutes. And no `--token-limit 2500000` was set, because that limit does not transfer to a backend with no prefix cache: seed 1 alone moved 2,449,208 cumulative tokens and would have died about 2 percent short of finishing.
+
+**An eight-instance quantile run** was made before the convention was checked, and it is kept as a dispersion measurement rather than as a row. Its instances 1 through 7 are datasets no other model has been scored on, and five of its eight samples exceeded the 2,500,000 figure in that protocol paragraph. Read only as spread, those eight draws run 0.0554 to 0.2094 with a median of 0.1226, a factor of 3.8 between best and worst on the same task and the same model. Seven of the eight are also where most of the `type7` ties above come from.
 
 ### Two Invocation Traps Found by Running It
 
@@ -535,7 +565,7 @@ Tested so far, all 4-bit on the same 48 GB machine, the first four under `mlx_lm
 | Qwen3.6-27B-OptiQ | 39,744 to 49,744 | 20.4 GB | 14 tok/s | 374 tok/s | none, screened out on the ceiling |
 | Gemma 4 26B A4B QAT | 89,601 to 99,601 | 15.6 GB | 74 tok/s | 2,100 tok/s | all eight tasks |
 | NVIDIA Nemotron 3.5 Lightning 30B A3B | 136,305 reached, not probed | 17.8 GB | not measured | not measured | all eight tasks |
-| Flint 39.8B A2.5B, GGUF | 260,722 served, no failure | about 24 GB | 71 tok/s | 1,491 tok/s | quantile seed 1 only, CECL running |
+| Flint 39.8B A2.5B, GGUF | 260,722 served, no failure | about 24 GB | 71 tok/s | 1,491 tok/s | quantile and CECL, both on convention |
 
 The Flint row's ceiling is not comparable to the four above it. Those are `--prefill-step-size 2048` figures on `mlx_lm.server`, where the setting was the binding constraint; Flint is served by llama.cpp, which has no such setting, and its figure is the largest prompt a growing conversation served without failing. Its decode and prefill numbers are single probes at short context, and its apparent prefill rate rises to 3,819 tok/s at 260k for the reason given under [The Ceiling Is the Configured Window, Not the Memory](#the-ceiling-is-the-configured-window-not-the-memory).
 
@@ -547,6 +577,6 @@ Still queued:
 
 - Qwen3.8-27B
 
-The thing to watch is interval coverage rather than the point estimates, because that is the component that has failed on all three models measured across the full suite and it is the component a model risk function will not waive. Flint is not yet one of those three, and its one comparable draw under-covers as well, at 0.540 and 0.720 on two runs of the instance where the reference estimator reaches 0.840.
+The thing to watch is interval coverage rather than the point estimates, because that is the component that has failed on all three models measured across the full suite and it is the component a model risk function will not waive. Flint is not yet one of those three, and the two columns it has under-cover as well: its three quantile draws cover 0.380, 0.540 and 0.730 where the reference estimator on that task reaches 0.840, and its CECL cell is set by the one instance of three whose coverage falls to 0.691 against 0.950 on the benign pool.
 
 The protocol for each: `--prefill-step-size 256 --prompt-cache-size 1` on the server, a real completion as the health check rather than `/v1/models`, and on the Inspect side `-T n_instances=3 -T seed=1 --max-tokens 16384 --max-connections 1 --token-limit 2500000 --time-limit 86400`, eight instances for CCAR, three single-instance runs at seeds 1, 2 and 3 for quantile, and a transcript saved to `runs/` per sample. Sampling goes in a `--generate-config` file, because Inspect's OpenAI provider forwards `temperature` and `top_p` but silently drops `top_k`, which has to ride in `extra_body` instead. Measure the ceiling first and report it alongside the cells, because a ceiling reached mid-suite costs a human restart and a ceiling measured first costs 15 minutes. Watch progress on `~/.local/share/inspect_ai/traces/trace-<pid>.log` rather than on the `.eval` file, for the reason given under [A Working Run and a Dead One Look Identical](#a-working-run-and-a-dead-one-look-identical).
