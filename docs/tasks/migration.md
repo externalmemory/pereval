@@ -139,13 +139,14 @@ Worst-case regret over three instances, where 1.0 is the degenerate answer, besi
 | Qwen3.6-35B-A3B (local) | 1.267 | 2 / 16 |
 | nemotron-3-super | 1.400 | 10 / 16 |
 | ling-3.0-flash | 1.612 | 1 / 16 |
+| Flint-39.8B-A2.5B (local) | 3.121 | 2 / 16 |
 | Claude Haiku 4.5 | 4.068 | 5 / 16 |
 | gemma-4-26B-A4B (local) | 6.746 | 6 / 16 |
 | Nemotron-3.5-Lightning (local) | 7.648 | 2 / 16 |
 
 <!-- scores:end -->
 
-Read against two lines. The **competent one-factor reference scores 0.368**, and only two rows land inside it. The **degenerate answer is 1.000** by construction, and eight of the fifteen ranked rows are outside it. Only the flyby, at twelve of fifteen, has more.
+Read against two lines. The **competent one-factor reference scores 0.368**, and only two rows land inside it. The **degenerate answer is 1.000** by construction, and nine of the sixteen ranked rows are outside it. Only the flyby, at thirteen of sixteen, has more.
 
 That is the headline: on the suite's hardest column, half the field does worse than predicting that nothing migrates at all.
 
@@ -153,7 +154,7 @@ That is the headline: on the suite's hardest column, half the field does worse t
 
 **Ten of sixteen is one omission rather than ten findings.** The three rows at ten fail the identical ten checks, and the first of them is `matrices_readable`. An absent or unreadable artefact fails every check that reads it, so those rows filed a projection and never filed the matrices that document it. Read ten as no `matrices.csv`, and sixteen, which no published cell carries, as no submission at all.
 
-**The modal finding is a single check.** `pd_rises_as_rating_falls` fails in nine of the fifteen ranked rows, inside all three of the tens, and it is the only check Opus ever fails. On the suite's hardest column the most common defect is not a failure to answer the macro path but a submitted scenario whose default probability does not rise monotonically down the rating scale.
+**The modal finding is a single check.** `pd_rises_as_rating_falls` fails in nine of the sixteen ranked rows, inside all three of the tens, and it is the only check Opus ever fails. On the suite's hardest column the most common defect is not a failure to answer the macro path but a submitted scenario whose default probability does not rise monotonically down the rating scale.
 
 **gemma fails a different family, and one of its six is an omission rather than an error.** They are `matrices_readable`, `downgrades_rise_with_severity`, `pd_rises_with_severity`, `implied_pd_rises_with_severity`, `fitted_downgrades_rise_in_bad_years` and `historical_fit_identical_across_scenarios`: one integrity check, three of the four macro-response checks and both historical-fit checks, with all three shape checks passing. `matrices_readable` fires when a required scenario block or the `history` block is absent, and this sample filed three forward scenario blocks, so the reading consistent with both historical-fit checks also failing is that it documented the projection and left out the history block. That is inferred from the pattern of checks rather than read off the artefact. The cell is second worst in the suite behind the local Nemotron row, and what it describes is a matrix set that passes every shape test and answers neither the macro path nor its own history, which is what a regret nearly seven times the degenerate answer should look like.
 

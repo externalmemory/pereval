@@ -48,6 +48,7 @@ Worst-case regret over three instances. Lower is better.
 | ling-3.0-flash | 43 |
 | gemma-4-26B-A4B (local) | 58 |
 | Nemotron-3.5-Lightning (local) | 60 |
+| Flint-39.8B-A2.5B (local) | 60 |
 | nemotron-3-super | 60 |
 | *Degenerate answer* | *61* |
 | Claude Haiku 4.5 | 83 |

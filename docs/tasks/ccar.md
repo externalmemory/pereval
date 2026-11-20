@@ -79,6 +79,7 @@ Worst-case regret over eight instances. Lower is better.
 | ling-3.0-flash | 0.193 |
 | nemotron-3-ultra | 0.27 |
 | deepseek-v4-flash-0731 | 0.30 |
+| Flint-39.8B-A2.5B (local) | 0.314 |
 | Qwen3.6-35B-A3B (local) | 0.366 |
 | Claude Haiku 4.5 | 0.37 |
 | nemotron-3-super | 0.45 |

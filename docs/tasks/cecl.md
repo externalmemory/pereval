@@ -109,6 +109,7 @@ Worst-case regret over three instances. Lower is better.
 | mimo-v2.5 | 0.000029 |
 | GLM-5.1 | 0.000059 |
 | nemotron-3-super | 0.00056 |
+| Flint-39.8B-A2.5B (local) | 0.000567 |
 | gpt-6-luna | 0.00057 |
 | gemma-4-26B-A4B (local) | 0.000571 |
 | Qwen3.6-35B-A3B (local) | 0.001945 |
@@ -126,7 +127,7 @@ Those coverage figures are ranges over every clean draw in `logs/`, not the cove
 
 No model is worse than the degenerate answer here. Only the naive baseline is, which makes this the one column where the naive method is clearly the floor and nothing falls through it.
 
-The three local rows land in three different places. gemma's 0.000571 is within 0.3% of gpt-6-luna's 0.00057, which is stored to two significant figures, so those two cannot be ordered from the archive at all. Qwen sits alone at 0.001945. Nemotron-3.5-Lightning is lower down at 0.00905, inside a 14% window that also holds ling and Claude Haiku 4.5, so those three are not ordered by this column either ([detail](../local-models.md)).
+The four local rows land in three different places. Flint's 0.000567 and gemma's 0.000571 are within 0.8% of each other and of gpt-6-luna's 0.00057, which is stored to two significant figures, so those three cannot be ordered from the archive at all. Qwen sits alone at 0.001945. Nemotron-3.5-Lightning is lower down at 0.00905, inside a 14% window that also holds ling and Claude Haiku 4.5, so those three are not ordered by this column either ([detail](../local-models.md)).
 
 ## Solutions
 

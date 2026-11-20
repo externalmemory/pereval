@@ -66,6 +66,7 @@ Worst-case regret over three instances. Lower is better.
 | Claude Opus 5.5 | 0.083 |
 | nemotron-3-ultra | 0.099 |
 | Claude Haiku 4.5 | 0.10 |
+| Flint-39.8B-A2.5B (local) | 0.115 |
 | nemotron-3-super | 0.12 |
 | *Degenerate answer* | *0.12* |
 | gpt-6-luna | 0.128 |

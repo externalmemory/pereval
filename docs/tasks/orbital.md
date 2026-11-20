@@ -59,6 +59,7 @@ Worst-case regret over three instances per task, ordered by the two-body column.
 | *Naive baseline* | *17* | *332* | *20037* |
 | Claude Haiku 4.5 | 105 | 1850 | 1348 |
 | nemotron-3-super | 106 | 370 | 918 |
+| Flint-39.8B-A2.5B (local) | 482 | 3910 | 667 |
 | gemma-4-26B-A4B (local) | 1138 | 166 | 4353 |
 | Qwen3.6-35B-A3B (local) | 1193 | 2925 | 916 |
 | ling-3.0-flash | 1556 | 3309 | 591 |
@@ -72,7 +73,7 @@ Worst-case regret over three instances per task, ordered by the two-body column.
 
 **Three-body has a ceiling rather than headroom.** Claude Opus 5.5 sits on the oracle, so there is nothing left to win, and the next row is two orders of magnitude behind it. Most of the field is still worse than the naive harmonic fit, which is the shape of a task that needs a leap rather than more effort.
 
-**The flyby is the column where leading it is not solving it.** Twelve of the fifteen ranked rows are worse than the degenerate constant. The leader's cell averages three draws of 0.52, 70 and 0.44, so it is a model that usually solves the task and occasionally fails it outright, reported under a convention that keeps the failure. gpt-6-luna reaches a comparable cell by the opposite route, buying coverage with interval width rather than accuracy ([detail](../models.md#gpt-6-luna)).
+**The flyby is the column where leading it is not solving it.** Thirteen of the sixteen ranked rows are worse than the degenerate constant. The leader's cell averages three draws of 0.52, 70 and 0.44, so it is a model that usually solves the task and occasionally fails it outright, reported under a convention that keeps the failure. gpt-6-luna reaches a comparable cell by the opposite route, buying coverage with interval width rather than accuracy ([detail](../models.md#gpt-6-luna)).
 
 A low regret at a coverage near 1.00 is the signature to watch for: it means enormously wide intervals that always contain the truth and are crushed by the width penalty, rather than a fitted orbit.
 

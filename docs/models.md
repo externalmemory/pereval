@@ -2,7 +2,7 @@
 
 Everything about *how a row was measured* rather than *what a task asks*. The README's table carries the numbers; this file carries the conditions they were produced under, the places where one row's convention differs from another's, and the individual cells that need a caveat.
 
-Task-level scoring definitions live with the tasks: [CECL](tasks/cecl.md), [migration](tasks/migration.md), [quantile](tasks/quantile.md), [orbital](tasks/orbital.md). The three local rows are in [local-models.md](local-models.md). Known defects and unresolved questions are in [limitations.md](limitations.md).
+Task-level scoring definitions live with the tasks: [CECL](tasks/cecl.md), [migration](tasks/migration.md), [quantile](tasks/quantile.md), [orbital](tasks/orbital.md). The four local rows are in [local-models.md](local-models.md). Known defects and unresolved questions are in [limitations.md](limitations.md).
 
 ## Conventions That Apply To Every Row
 
@@ -64,7 +64,7 @@ On the archived instances alone the spread reads, as median (worst), CCAR 0.090 
 
 Measured on the archived convention, one draw per instance over the same instances every other row uses, so its cells are plain maxima and need no matched-convention adjustment. One pass, eight columns, 29 samples, every sample completing at `status=success` and none errored, 3h31m of wall clock for 38.4M tokens. Four samples hit the task message limit of 500 (CECL instances 0 and 2, CCAR instance 1, migration instance 1) and **none of them sets its column's cell**, so no number in this row rests on a truncated run.
 
-**The flyby cell is the row's only genuinely good result, and it is good in a different way from Opus.** 45 against Opus's 24 makes it one of three rows inside the degenerate answer's 138 in the column where twelve of fifteen are worse than a constant, and its three instances read 30.4, 15.7 and 44.8 where Opus's three draws of one instance read 0.52, 70 and 0.44. Opus usually solves the flyby and occasionally fails it outright; this row never does either. The mechanism is visible in the diagnostics: coverage 1.0, 0.9996 and 1.0 against mean widths of 32, 20 and 49 and point errors of 6.8, 4.7 and 4.7, so it buys coverage with width rather than accuracy, which is what keeps it mid-column rather than near the oracle's 0.31.
+**The flyby cell is the row's only genuinely good result, and it is good in a different way from Opus.** 45 against Opus's 24 makes it one of three rows inside the degenerate answer's 138 in the column where thirteen of sixteen are worse than a constant, and its three instances read 30.4, 15.7 and 44.8 where Opus's three draws of one instance read 0.52, 70 and 0.44. Opus usually solves the flyby and occasionally fails it outright; this row never does either. The mechanism is visible in the diagnostics: coverage 1.0, 0.9996 and 1.0 against mean widths of 32, 20 and 49 and point errors of 6.8, 4.7 and 4.7, so it buys coverage with width rather than accuracy, which is what keeps it mid-column rather than near the oracle's 0.31.
 
 **Its migration cell is worse than the degenerate answer, and not because it ran out of room.** 1.094 is set by instance 0, which submitted after 23 messages with no limit hit, while instance 1 ran into the 500-message limit and scored 0.309 and instance 2 scored 0.202 in 56 messages. The worst cell in the column's weakest group is the instance the agent tried least on, which is a different failure from the truncation that bounds minimax's 0.629 from above.
 
@@ -86,8 +86,16 @@ Paid, and not the only paid row: Claude Opus 5.5, Claude Haiku 4.5 and gpt-6-lun
 
 Replaces deepseek-v4-flash-free, a different and now-superseded model version whose row had three unmeasured cells. It beats the degenerate constant on every run of every task except two of three on the flyby ([detail](limitations.md#budget-confounds)).
 
-## Qwen3.6-35B-A3B, gemma-4-26B-A4B and Nemotron-3.5-Lightning
+## Qwen3.6-35B-A3B, gemma-4-26B-A4B, Nemotron-3.5-Lightning and Flint
 
-The three local rows, served from one 48 GB Mac Mini rather than a hosted provider. Their weights, serving configuration, decoder settings and per-cell caveats are in [local-models.md](local-models.md).
+The four local rows, served from one 48 GB Mac Mini rather than a hosted provider. Their weights, serving configuration, decoder settings and per-cell caveats are in [local-models.md](local-models.md).
 
-Nemotron-3.5-Lightning is `mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 30B total and 3B active, pinned at revision `55ac8c89`. It is the only row in the table measured at its own `generation_config.json` and nothing else, temperature 1.0 and top_p 0.95 with no `top_k`, `min_p` or presence penalty, which is the local equivalent of running a hosted row at its provider's default. All eight of its columns come from logs with no sample error, which is not true of either other local row.
+Nemotron-3.5-Lightning is `mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 30B total and 3B active, pinned at revision `55ac8c89`. It is the only row in the table measured at its own `generation_config.json` and nothing else, temperature 1.0 and top_p 0.95 with no `top_k`, `min_p` or presence penalty, which is the local equivalent of running a hosted row at its provider's default. All eight of its columns come from logs with no sample error, which is not true of any other local row.
+
+Flint is `recursivesi/flint` as GGUF `Q4_K_M`, 39.8B total and about 2.5B active, Apache 2.0. It is the only row in the table not served by `mlx_lm.server`: Flint ships as GGUF rather than MLX, so it runs under LM Studio, which is llama.cpp underneath, at a configured context of 262,144. None of its runs set a token limit or a `max_tokens`, because the suite's `--token-limit 2500000` does not transfer to a backend with no prefix cache ([detail](local-models.md#a-second-serving-stack-lm-studio-instead-of-mlx)).
+
+**Three of its twenty-six samples needed a second draw, and all three were tail draws rather than behaviour.** Ballistic instance-2 hit the 500-message cap at 248 model calls, two-body instance-1 hit a wall-clock cap at 106, and migration instance-1 died on a 262,144-token context overflow that ended the task. The next draw of each finished at 23, 35 and 84 calls, a tenth to a third of the first attempt, so every cell in the row is a first clean draw of a backend whose call counts move by an order of magnitude between runs of the same instance. The clean ballistic draw scores worse than the truncated one, 59.610 against 44.675, so the message cap had been hiding a worse number rather than costing a measurable one.
+
+Its migration column takes instance-0 from the run that errored on instance-1. That sample completed and scored, the cell is set by a different instance, and ten earlier logs already back published cells the same way.
+
+**Its quantile 0.115 records `np.percentile` rather than a tail estimate.** Seven of its eleven recorded draws are numerically identical to the Hyndman and Fan type 7 reference the scorer computes from ground truth, on six distinct datasets ([detail](local-models.md#what-has-been-measured-so-far)).
