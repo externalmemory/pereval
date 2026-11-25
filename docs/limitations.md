@@ -419,6 +419,22 @@ All scoring is objective and anchored to a known target: a Winkler interval scor
 
 The deliberate cost is that only the numeric prediction is scored, not the reasoning behind it: a model that reaches a well-calibrated answer for the wrong reason is not penalized except insofar as the flaw surfaces out of sample. Rubric scoring of methodology (did it check signs, handle the outlier, justify the transform) would need a judge and is out of scope here by choice.
 
+## A Model That Never Submits Cannot Be Measured
+
+deepseek-v4.1-flash-1017 was piloted on three-body at three instances, seed 1, the same instances that set deepseek-v4-flash-0731's published 269, and it is **not in the table**. Two attempts spent 73.3M tokens and produced no scored sample.
+
+The first attempt carried `--token-limit 2500000`, the figure the local protocol in [local-models.md](local-models.md#candidates-still-to-test) uses, and all three samples were stopped by it at 117, 104 and 124 messages against a message limit of 1200. Every score came back exactly equal to the degenerate penalty with `completion` 0.0.
+
+**A token limit does not transfer between serving endpoints.** On instance-0 the per-call reported prompt stayed between 241 and 1,264 tokens across all 58 calls of the 0731 run on OpenRouter, summing to 158,492, against 931 rising monotonically to 115,152 on tokenrouter, summing to 2,491,391. `basic_agent` resends the whole history on every call, so a flat curve means that path reported only the new tokens per turn and netted out the cache reads. Same conversation shape, 15.7x apart in reported total. This is the same class of problem as Flint's, where the suite's token limit does not survive the move to a backend with no prefix cache, and it means a token cap is a property of the endpoint rather than of the task.
+
+The second attempt dropped the token limit and kept everything else. All three samples died on `401 Unauthorized` after 1h32m and 65,640,471 tokens. That is a third free-tier failure signature beside the 403 `insufficient_user_quota` and 503 `provider_overloaded` recorded above, and unlike those it is transient: minutes later the free id answered a probe 200 while the paid id answered 403 at an account balance of $0.00. Pushing 65M tokens through a free endpoint in 92 minutes is the likely cause.
+
+**Neither cap is the reason the row is absent.** In five of the six samples across both attempts the model never wrote `predictions.csv` at all, after 51 to 69 tool calls each, against a system prompt that tells it to produce a complete file early from a rough model and refine afterwards. 0731 produced one on all three instances. On the sixth sample it did finish the work, and then declared completion in prose instead of calling the submit tool: 354 consecutive assistant turns with no tool call, answering `basic_agent`'s continue message with "Complete.", "The task is complete." and "The work is complete; nothing further remains to be done." That stretch consumed 59.8M of the attempt's 65.6M input tokens. A model that will not call submit cannot be scored by this harness, and fixing that means changing the agent loop, which would change what every archived column means.
+
+One measurement does survive the pilot. The release claims shorter outputs than its predecessor, and on matched instances it is the reverse: at an identical 58 tool calls on instance-0, output tokens were 94,895 against 0731's 46,990 and reasoning tokens 64,832 against 28,659, with instance-1 taking 51 tool calls against 36. Output accounting has no cache to net out, so that comparison does not suffer the defect the input comparison does.
+
+Both logs are archived, with the three transcripts of the second attempt. The first attempt's transcripts were overwritten by the second under the convention in `scripts/save_transcript.py` and can be rebuilt from its log.
+
 ## Budget Confounds
 
 A tight message or time limit silently truncates slow or verbose models and produces penalty-scored results that misrepresent capability rather than measuring it. This has bitten this project repeatedly:
